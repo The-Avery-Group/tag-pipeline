@@ -4,7 +4,7 @@ import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/your-repo-name/',
+  base: '/tag-pipeline/',
   resolve: {
     alias: { '@': resolve(__dirname, 'src') },
   },
