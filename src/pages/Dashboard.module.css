@@ -1,0 +1,174 @@
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.kpiCard {
+  background: var(--gray-50);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.kpiLabel {
+  font-size: 11px;
+  color: var(--gray-600);
+  margin-bottom: 6px;
+}
+
+.kpiValue {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--gray-900);
+  line-height: 1;
+}
+
+.kpiDanger { color: var(--red-600); }
+
+.kpiSub {
+  font-size: 14px;
+  color: var(--gray-400);
+}
+
+.kpiDelta {
+  font-size: 11px;
+  color: #3B6D11;
+  margin-top: 4px;
+}
+
+.kpiDeltaDanger { color: var(--red-600); }
+
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cardTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-600);
+  margin-bottom: 12px;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.barRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.barLabel {
+  font-size: 11px;
+  color: var(--gray-600);
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.barTrack {
+  flex: 1;
+  height: 7px;
+  background: var(--gray-100);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.barCount {
+  font-size: 11px;
+  color: var(--gray-400);
+  width: 18px;
+  text-align: right;
+}
+
+.oppRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 0.5px solid var(--gray-200);
+  cursor: pointer;
+}
+.oppRow:last-child { border-bottom: none; }
+.oppRow:hover .oppName { color: var(--blue-600); }
+
+.oppName {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-900);
+}
+
+.oppVal {
+  font-size: 11px;
+  color: var(--gray-400);
+  min-width: 50px;
+  text-align: right;
+}
+
+.taskRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 0.5px solid var(--gray-200);
+}
+.taskRow:last-child { border-bottom: none; }
+
+.taskCheck {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 0.5px solid var(--gray-400);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.taskCheckDone {
+  background: #3B6D11;
+  border-color: #3B6D11;
+}
+
+.taskTitle {
+  font-size: 12px;
+  color: var(--gray-900);
+  line-height: 1.4;
+}
+
+.taskMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+
+.taskContract { font-size: 10px; color: var(--gray-400); }
+
+.dueDate { font-size: 10px; color: var(--gray-600); }
+
+.dueDateOverdue { font-size: 10px; color: var(--red-600); font-weight: 500; }
+
+.taskAssignee { font-size: 11px; color: var(--gray-400); white-space: nowrap; }
+
+.chartSkeleton { height: 120px; width: 100%; }
+
+.rowSkeleton {
+  height: 32px;
+  width: 100%;
+  margin-bottom: 6px;
+}

@@ -1,0 +1,90 @@
+.topbar {
+  height: var(--topbar-height);
+  background: #fff;
+  border-bottom: 0.5px solid var(--gray-200);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 24px 10px;
+  flex-shrink: 0;
+}
+
+.left { display: flex; flex-direction: column; }
+
+.title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--gray-900);
+}
+
+.sub {
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-top: 1px;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-end;
+  padding-top: 1px;
+}
+
+.iconBtn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  border: 0.5px solid var(--gray-200);
+  background: #fff;
+  color: var(--gray-600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.iconBtn:hover {
+  background: var(--gray-100);
+  color: var(--gray-900);
+}
+
+.iconBtnActive {
+  background: var(--blue-50);
+  border-color: var(--blue-200);
+  color: var(--blue-800);
+}
+
+.iconBtnPrimary {
+  background: var(--blue-600);
+  border-color: var(--blue-600);
+  color: #fff;
+}
+
+.iconBtnPrimary:hover {
+  background: var(--blue-800);
+}
+
+.tipWrap {
+  position: relative;
+}
+
+.tooltip {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 34px;
+  background: var(--gray-900);
+  color: #fff;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.tipWrap:hover .tooltip {
+  display: block;
+}

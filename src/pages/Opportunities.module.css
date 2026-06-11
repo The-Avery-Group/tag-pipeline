@@ -1,0 +1,3 @@
+.sortIcon { font-size: 10px; color: var(--gray-400); margin-left: 3px; }
+.empty { padding: 24px; text-align: center; color: var(--gray-400); font-size: 13px; }
+.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
