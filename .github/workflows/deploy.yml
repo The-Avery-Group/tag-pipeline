@@ -24,12 +24,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Debug env vars
-        run: |
-          echo "APP_BASE_URL is set: ${{ secrets.VITE_APP_BASE_URL != '' }}"
-          echo "CLIENT_ID is set: ${{ secrets.VITE_AZURE_CLIENT_ID != '' }}"
-          echo "TENANT_ID is set: ${{ secrets.VITE_AZURE_TENANT_ID != '' }}"
-
       - name: Build
         env:
           VITE_AZURE_CLIENT_ID: ${{ secrets.VITE_AZURE_CLIENT_ID }}
@@ -39,6 +33,9 @@ jobs:
           VITE_GROQ_API_KEY: ${{ secrets.VITE_GROQ_API_KEY }}
           VITE_APP_BASE_URL: ${{ secrets.VITE_APP_BASE_URL }}
         run: npm run build
+
+      - name: Check built env vars
+        run: grep -r "the-avery-group" dist/ | head -20
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
