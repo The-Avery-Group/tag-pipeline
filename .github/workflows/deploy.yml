@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]   # or master, whatever your default branch is
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +23,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Debug env vars
+        run: |
+          echo "APP_BASE_URL is set: ${{ secrets.VITE_APP_BASE_URL != '' }}"
+          echo "CLIENT_ID is set: ${{ secrets.VITE_AZURE_CLIENT_ID != '' }}"
+          echo "TENANT_ID is set: ${{ secrets.VITE_AZURE_TENANT_ID != '' }}"
 
       - name: Build
         env:
