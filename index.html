@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TAG Capture · Pipeline Manager</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      const redirect = new URLSearchParams(window.location.search).get('redirect');
+      if (redirect) {
+        window.history.replaceState(null, '', '/tag-pipeline' + redirect);
+      }
+    </script>
     <script type="module" crossorigin src="/tag-pipeline/assets/index-BpD0juXp.js"></script>
     <link rel="modulepreload" crossorigin href="/tag-pipeline/assets/router-IEyAnAG6.js">
     <link rel="modulepreload" crossorigin href="/tag-pipeline/assets/msal-DzV7ihEN.js">
