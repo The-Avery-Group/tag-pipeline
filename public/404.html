@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script>
+      const repo = '/tag-pipeline';
+      const path = window.location.pathname.replace(repo, '') || '/';
+      window.location.replace(
+        repo + '/?redirect=' + encodeURIComponent(path + window.location.search)
+      );
+    </script>
+  </head>
+</html>
