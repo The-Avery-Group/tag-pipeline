@@ -1,0 +1,51 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.sectionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gray-600);
+  margin-bottom: 10px;
+}
+
+.itemList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.itemRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.itemRow .form-input {
+  flex: 1;
+  font-size: 13px;
+}
+
+.addBtn {
+  font-size: 12px;
+  color: var(--blue-600);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  font-family: var(--font);
+}
+.addBtn:hover { text-decoration: underline; }
+
+.saveRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0 16px;
+}

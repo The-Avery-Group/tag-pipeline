@@ -1,10 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useContacts } from '@/hooks/useContacts'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import styles from './Contacts.module.css'
 
-const BLANK = { Name: '', Title: '', Organization: '', Email: '', Phone: '', Notes: '' }
+const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '' }
 
 export default function Contacts({ toast }) {
   const { contacts, loading, add, update, remove } = useContacts()
@@ -15,11 +15,16 @@ export default function Contacts({ toast }) {
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
 
+  // Fix: use a stable setter that doesn't re-create the object on every keystroke
+  const setField = useCallback((field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }))
+  }, [])
+
   const filtered = useMemo(
     () => contacts.filter(
       (c) =>
         !search ||
-        [c.Name, c.Organization, c.Title, c.Email].some((v) =>
+        [c.Name, c.Agency, c.Organization, c.Title, c.Email].some((v) =>
           v?.toLowerCase().includes(search.toLowerCase())
         )
     ),
@@ -40,8 +45,6 @@ export default function Contacts({ toast }) {
     }
   }
 
-  const handleAdd = (e) => { e.preventDefault(); submitAdd() }
-
   const submitUpdate = async () => {
     setSaving(true)
     try {
@@ -56,9 +59,10 @@ export default function Contacts({ toast }) {
     }
   }
 
-  const handleUpdate = (e) => { e.preventDefault(); submitUpdate() }
-
-  const openEdit = (c) => { setEditing(c); setForm({ ...c }) }
+  const openEdit = (c) => {
+    setEditing(c)
+    setForm({ ...BLANK, ...c })
+  }
 
   const handleDelete = async () => {
     try {
@@ -71,22 +75,38 @@ export default function Contacts({ toast }) {
     }
   }
 
-  const ContactForm = ({ onSubmit }) => (
-    <form onSubmit={onSubmit}>
-      <div className={styles.formGrid}>
-        {[['Name', 'Name', true], ['Title', 'Title', false], ['Organization', 'Organization', false],
-          ['Email', 'Email', false], ['Phone', 'Phone', false]].map(([f, l, req]) => (
-          <div className="form-field" key={f}>
-            <label className="form-label">{l}{req && ' *'}</label>
-            <input className="form-input" required={req} value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })} />
-          </div>
-        ))}
-        <div className="form-field" style={{ gridColumn: '1 / -1' }}>
-          <label className="form-label">Notes / linked contract #</label>
-          <textarea className="form-input" rows={2} value={form.Notes} onChange={(e) => setForm({ ...form, Notes: e.target.value })} />
+  // ContactForm is rendered inline (not as a nested component) to avoid
+  // the re-mount on every keystroke that caused the one-char input bug
+  const renderContactForm = () => (
+    <div className={styles.formGrid}>
+      {[
+        ['Name',         'Name',                    true],
+        ['Title',        'Title',                   false],
+        ['Agency',       'Agency',                  false],
+        ['Organization', 'Department / Organization',false],
+        ['Email',        'Email',                   false],
+        ['Phone',        'Phone',                   false],
+      ].map(([field, label, required]) => (
+        <div className="form-field" key={field}>
+          <label className="form-label">{label}{required && ' *'}</label>
+          <input
+            className="form-input"
+            required={required}
+            value={form[field] ?? ''}
+            onChange={(e) => setField(field, e.target.value)}
+          />
         </div>
+      ))}
+      <div className="form-field" style={{ gridColumn: '1 / -1' }}>
+        <label className="form-label">Notes / linked contract #</label>
+        <textarea
+          className="form-input"
+          rows={2}
+          value={form.Notes ?? ''}
+          onChange={(e) => setField('Notes', e.target.value)}
+        />
       </div>
-    </form>
+    </div>
   )
 
   return (
@@ -123,7 +143,8 @@ export default function Contacts({ toast }) {
                     <tr>
                       <th>Name</th>
                       <th>Title</th>
-                      <th>Organization</th>
+                      <th>Agency</th>
+                      <th>Dept / Organization</th>
                       <th>Email</th>
                       <th>Phone</th>
                       <th>Notes</th>
@@ -140,19 +161,18 @@ export default function Contacts({ toast }) {
                           </div>
                         </td>
                         <td className="text-sm text-muted">{c.Title}</td>
+                        <td className="text-sm">{c.Agency}</td>
                         <td className="text-sm">{c.Organization}</td>
                         <td><a href={`mailto:${c.Email}`} onClick={(e) => e.stopPropagation()} className="text-sm">{c.Email}</a></td>
                         <td className="text-sm text-muted">{c.Phone}</td>
-                        <td className="text-sm text-muted" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.Notes}</td>
+                        <td className="text-sm text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.Notes}</td>
                         <td>
                           <button
                             className="btn btn-ghost btn-icon"
                             aria-label="Delete contact"
                             title="Delete"
                             onClick={(e) => { e.stopPropagation(); setConfirmDelete(c) }}
-                          >
-                            ✕
-                          </button>
+                          >✕</button>
                         </td>
                       </tr>
                     ))}
@@ -175,7 +195,7 @@ export default function Contacts({ toast }) {
             </>
           }
         >
-          <ContactForm onSubmit={handleAdd} />
+          {renderContactForm()}
         </Modal>
       )}
 
@@ -192,7 +212,7 @@ export default function Contacts({ toast }) {
             </>
           }
         >
-          <ContactForm onSubmit={handleUpdate} />
+          {renderContactForm()}
         </Modal>
       )}
 

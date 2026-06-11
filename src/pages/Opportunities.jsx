@@ -180,7 +180,7 @@ export default function Opportunities({ toast }) {
                         const due = opp[C.submDate]
                         const priority = opp[C.priority]
                         return (
-                          <tr key={cn} onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
+                          <tr key={`${cn}-${opp._rowIndex}`} onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
                             <td style={{ fontWeight: 500, maxWidth: 260 }}>{opp[C.title]}</td>
                             <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
                             <td>
@@ -318,5 +318,3 @@ export default function Opportunities({ toast }) {
     </>
   )
 }
-
-

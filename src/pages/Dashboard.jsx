@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -9,7 +9,6 @@ import { computeKPIs, getGreeting, formatDate, isOverdue, getPhaseOrder } from '
 import { buildPipelineSummaryPrompt } from '@/services/groqService'
 import styles from './Dashboard.module.css'
 
-// Real column names from Pipeline sheet
 const C = {
   phase:       'TAG Opportunity Phase',
   title:       'Project Title / Description*',
@@ -27,18 +26,79 @@ const PHASE_COLORS = {
   'Contract Awarded':  '#9FE1CB',
 }
 
+function formatCurrency(value) {
+  if (!value || isNaN(value)) return '$0'
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`
+  if (value >= 1_000_000)     return `$${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000)         return `$${(value / 1_000).toFixed(0)}K`
+  return `$${value.toFixed(0)}`
+}
+
+// Simple SVG pie chart
+function PieChart({ data }) {
+  const total = Object.values(data).reduce((s, v) => s + v, 0)
+  if (!total) return <p className="text-muted text-sm">No data</p>
+
+  const entries = Object.entries(data).filter(([, v]) => v > 0)
+  let cumAngle = -Math.PI / 2
+
+  const slices = entries.map(([label, value]) => {
+    const frac = value / total
+    const startAngle = cumAngle
+    const endAngle = cumAngle + frac * 2 * Math.PI
+    cumAngle = endAngle
+
+    const R = 80, cx = 100, cy = 100
+    const x1 = cx + R * Math.cos(startAngle)
+    const y1 = cy + R * Math.sin(startAngle)
+    const x2 = cx + R * Math.cos(endAngle)
+    const y2 = cy + R * Math.sin(endAngle)
+    const largeArc = frac > 0.5 ? 1 : 0
+    const d = `M${cx},${cy} L${x1},${y1} A${R},${R} 0 ${largeArc},1 ${x2},${y2} Z`
+    const midAngle = startAngle + (endAngle - startAngle) / 2
+    const lx = cx + 55 * Math.cos(midAngle)
+    const ly = cy + 55 * Math.sin(midAngle)
+
+    return { label, value, frac, d, lx, ly, color: PHASE_COLORS[label] || '#85B7EB' }
+  })
+
+  return (
+    <div className={styles.pieWrap}>
+      <svg viewBox="0 0 200 200" width="160" height="160" style={{ flexShrink: 0 }}>
+        {slices.map((s) => (
+          <path key={s.label} d={s.d} fill={s.color} stroke="#fff" strokeWidth="1.5" />
+        ))}
+        {slices.map((s) =>
+          s.frac > 0.08 ? (
+            <text key={s.label + 'txt'} x={s.lx} y={s.ly}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize="12" fontWeight="600" fill="#333">
+              {s.value}
+            </text>
+          ) : null
+        )}
+      </svg>
+      <div className={styles.pieLegend}>
+        {slices.map((s) => (
+          <div key={s.label} className={styles.legendItem}>
+            <span className={styles.legendDot} style={{ background: s.color }} />
+            <span className="text-sm">{s.label}</span>
+            <span className="text-xs text-muted">({Math.round(s.frac * 100)}%)</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const { pipeline, loading: pLoading } = usePipeline()
-  const { tasks, loading: tLoading } = useTasks()
+  const { tasks, loading: tLoading, update: updateTask } = useTasks()
+  const [closingTask, setClosingTask] = useState(null)
 
   const kpis = useMemo(() => computeKPIs(pipeline, tasks), [pipeline, tasks])
-
-  const phaseMax = useMemo(
-    () => Math.max(...Object.values(kpis.byPhase), 1),
-    [kpis.byPhase]
-  )
 
   const recentOpps = useMemo(
     () => [...pipeline]
@@ -65,16 +125,33 @@ export default function Dashboard() {
     [kpis]
   )
 
+  const handleCloseTask = async (task) => {
+    setClosingTask(task.TaskID)
+    try {
+      await updateTask(task._rowIndex, { Status: 'Done' })
+    } finally {
+      setClosingTask(null)
+    }
+  }
+
   const today = new Date()
   const dateStr = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 
-  // Phase badge mapping for real phase names
   const phaseBadgeClass = (phase) => {
     if (phase === 'Research')         return 'badge-qualify'
     if (phase === 'Indentified')      return 'badge-proposal'
     if (phase === 'Contract Awarded') return 'badge-award'
     return 'badge-tracking'
   }
+
+  // Parse pipeline total value correctly
+  const totalValue = useMemo(() => {
+    const sum = pipeline.reduce((acc, o) => {
+      const n = parseFloat(String(o[C.value] || '0').replace(/[^0-9.]/g, ''))
+      return acc + (isNaN(n) ? 0 : n)
+    }, 0)
+    return formatCurrency(sum)
+  }, [pipeline])
 
   return (
     <>
@@ -86,6 +163,7 @@ export default function Dashboard() {
         showNew={true}
         newLabel="New opportunity"
         onNew={() => navigate('/opportunities?new=1')}
+        greetingLarge
       />
       <div className="page-body">
         <AIPanel
@@ -103,7 +181,7 @@ export default function Dashboard() {
           </div>
           <div className={styles.kpiCard}>
             <div className={styles.kpiLabel}>Pipeline value</div>
-            <div className={styles.kpiValue}>{pLoading ? '—' : kpis.totalValueFormatted}</div>
+            <div className={styles.kpiValue}>{pLoading ? '—' : totalValue}</div>
             <div className={styles.kpiDelta}>Active opportunities</div>
           </div>
           <div className={styles.kpiCard}>
@@ -126,28 +204,13 @@ export default function Dashboard() {
         </div>
 
         <div className={styles.twoCol}>
-          {/* Phase chart */}
+          {/* Pie chart */}
           <div className="card">
             <div className={styles.cardTitle}>Opportunities by phase</div>
             {pLoading
               ? <div className={`skeleton ${styles.chartSkeleton}`} />
-              : getPhaseOrder().map((phase) => {
-                  const count = kpis.byPhase[phase] || 0
-                  if (!count) return null
-                  const pct = Math.round((count / phaseMax) * 100)
-                  return (
-                    <div key={phase} className={styles.barRow}>
-                      <div className={styles.barLabel}>{phase}</div>
-                      <div className={styles.barTrack}>
-                        <div
-                          className={styles.barFill}
-                          style={{ width: `${pct}%`, background: PHASE_COLORS[phase] || '#85B7EB' }}
-                        />
-                      </div>
-                      <div className={styles.barCount}>{count}</div>
-                    </div>
-                  )
-                })}
+              : <PieChart data={kpis.byPhase} />
+            }
           </div>
 
           {/* Recent opps */}
@@ -170,7 +233,9 @@ export default function Dashboard() {
                     <span className={`badge ${phaseBadgeClass(opp[C.phase])}`}>
                       {opp[C.phase]}
                     </span>
-                    <div className={styles.oppVal}>{formatCurrency(parseFloat(String(opp[C.value] || '0').replace(/[^0-9.]/g, '')) || 0)}</div>
+                    <div className={styles.oppVal}>
+                      {formatCurrency(parseFloat(String(opp[C.value] || '0').replace(/[^0-9.]/g, '')) || 0)}
+                    </div>
                   </div>
                 ))}
           </div>
@@ -190,9 +255,18 @@ export default function Dashboard() {
               ? <p className="text-muted text-sm" style={{ padding: '8px 0' }}>No open tasks — nice work!</p>
               : openTasks.map((task) => {
                   const overdue = isOverdue(task.DueDate)
+                  const isClosing = closingTask === task.TaskID
                   return (
                     <div key={task.TaskID} className={styles.taskRow}>
-                      <div className={`${styles.taskCheck} ${task.Status === 'Done' ? styles.taskCheckDone : ''}`} />
+                      <button
+                        className={`${styles.taskCheck} ${task.Status === 'Done' ? styles.taskCheckDone : ''}`}
+                        onClick={() => handleCloseTask(task)}
+                        disabled={isClosing}
+                        title="Mark as done"
+                        aria-label="Mark task done"
+                      >
+                        {isClosing ? '…' : task.Status === 'Done' ? '✓' : ''}
+                      </button>
                       <div style={{ flex: 1 }}>
                         <div className={styles.taskTitle}>{task.Title}</div>
                         <div className={styles.taskMeta}>
@@ -212,10 +286,3 @@ export default function Dashboard() {
     </>
   )
 }
-
-function formatCurrency(value) {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`
-  return `$${value.toFixed(0)}`
-}
-

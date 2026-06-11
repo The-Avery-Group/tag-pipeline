@@ -13,37 +13,36 @@ import { buildEmailDraftPrompt, buildCapabilityStatementPrompt } from '@/service
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
-// Real column names
 const C = {
-  phase:       'TAG Opportunity Phase',
-  actPhase:    'TAG Pipeline Activity Phase',
-  contractNum: 'Contract Number / Notice ID',
-  title:       'Project Title / Description*',
-  agency:      'Agency*',
-  department:  'Department*',
-  office:      'Office*',
-  value:       'Total Contract Value ($)*',
-  baseValue:   'Base Year Value ($)*',
-  assignedTo:  'Assigned To*',
-  lastMod:     'Last Modified*',
-  submDate:    'Submission Date (Response Date)*',
-  solNum:      'Solicitation Number',
-  naics:       'NAICS Code*',
-  outlook:     'Opportunity Outlook',
-  priority:    'Priority',
-  setAside:    'Set- Aside*',
-  poc:         'Contracting Officer / Specialist (POC)*',
-  endDate:     'Contract End Date*',
-  awardDate:   'Anticipated year for Award (MM/DD/YYYY)*',
-  bidNoBid:    'Bid / No Bid?',
-  partner:     'Partner',
-  primeOrSub:  'Prime or Sub?',
-  notes:       'Notes*',
-  govwin:      'GovWin Link*',
-  folder:      'Link to Folder',
-  incumbent:   'Incumbent (Company Name)',
-  fiscalYear:  'Fiscal Year',
-  vehicle:     'Contract Vehicle',
+  phase:          'TAG Opportunity Phase',
+  actPhase:       'TAG Pipeline Activity Phase',
+  contractNum:    'Contract Number / Notice ID',
+  title:          'Project Title / Description*',
+  agency:         'Agency*',
+  department:     'Department*',
+  office:         'Office*',
+  value:          'Total Contract Value ($)*',
+  baseValue:      'Base Year Value ($)*',
+  assignedTo:     'Assigned To*',
+  lastMod:        'Last Modified*',
+  submDate:       'Submission Date (Response Date)*',
+  solNum:         'Solicitation Number',
+  naics:          'NAICS Code*',
+  outlook:        'Opportunity Outlook',
+  priority:       'Priority',
+  setAside:       'Set- Aside*',
+  poc:            'Contracting Officer / Specialist (POC)*',
+  endDate:        'Contract End Date*',
+  awardDate:      'Anticipated year for Award (MM/DD/YYYY)*',
+  bidNoBid:       'Bid / No Bid?',
+  partner:        'Partner',
+  primeOrSub:     'Prime or Sub?',
+  notes:          'Notes*',
+  govwin:         'GovWin Link*',
+  folder:         'Link to Folder',
+  incumbent:      'Incumbent (Company Name)',
+  fiscalYear:     'Fiscal Year',
+  vehicle:        'Contract Vehicle',
   classification: 'Contract Classification*',
 }
 
@@ -53,15 +52,30 @@ const PHASE_BADGE = {
   'Contract Awarded': 'badge-award',
 }
 
+const STATUS_CYCLE = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
+const statusClass  = (s) => s === 'To Do' ? 'todo' : s === 'In Progress' ? 'progress' : 'done'
+
 export default function OpportunityDetail({ toast }) {
   const { contractNumber } = useParams()
   const decodedCN = decodeURIComponent(contractNumber)
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { pipeline, update: updateOpp } = usePipeline()
-  const { notes, add: addNote } = useNotes(decodedCN)
+
+  const { pipeline, loading: pipelineLoading, update: updateOpp } = usePipeline()
+  const { notes, loading: notesLoading, add: addNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts } = useContacts()
+
+  // ── ALL useState / useMemo / useCallback MUST be here, before any early return ──
+  const [form, setForm]             = useState(null)
+  const [editing, setEditing]       = useState(false)
+  const [saving, setSaving]         = useState(false)
+  const [newNote, setNewNote]       = useState('')
+  const [addingNote, setAddingNote] = useState(false)
+  const [showAddTask, setShowAddTask] = useState(false)
+  const [taskForm, setTaskForm]     = useState({
+    Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
+  })
 
   const opp = useMemo(
     () => pipeline.find((o) => o[C.contractNum] === decodedCN),
@@ -73,15 +87,44 @@ export default function OpportunityDetail({ toast }) {
     [contacts, decodedCN]
   )
 
-  const [form, setForm] = useState(null)
-  const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [newNote, setNewNote] = useState('')
-  const [addingNote, setAddingNote] = useState(false)
-  const [showAddTask, setShowAddTask] = useState(false)
-  const [taskForm, setTaskForm] = useState({
-    Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
-  })
+  // These must be unconditional — they cannot move below the early returns
+  const emailPrompt = useCallback(
+    () => buildEmailDraftPrompt({
+      ContractTitle: opp?.[C.title] ?? '',
+      Agency:        opp?.[C.agency] ?? '',
+      Phase:         opp?.[C.phase] ?? '',
+      ContractNumber: decodedCN,
+      recentNotes: notes.slice(0, 3).map((n) => n.NoteText).join(' | '),
+    }, contact),
+    [opp, notes, contact, decodedCN]
+  )
+
+  const capPrompt = useCallback(
+    () => buildCapabilityStatementPrompt({
+      ContractTitle:     opp?.[C.title] ?? '',
+      Agency:            opp?.[C.agency] ?? '',
+      NAICS:             opp?.[C.naics] ?? '',
+      ContractNumber:    decodedCN,
+      SolicitationNumber: opp?.[C.solNum] ?? '',
+      recentNotes: notes.slice(0, 3).map((n) => n.NoteText).join(' | '),
+    }),
+    [opp, notes, decodedCN]
+  )
+
+  // ── Early returns AFTER all hooks ──
+  if (pipelineLoading) {
+    return (
+      <div className="page-body">
+        <div className="skeleton" style={{ height: 40, marginBottom: 12, width: 160 }} />
+        <div className="skeleton" style={{ height: 28, marginBottom: 20, width: '60%' }} />
+        <div className="card">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 36, marginBottom: 10 }} />
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   if (!opp) {
     return (
@@ -92,9 +135,10 @@ export default function OpportunityDetail({ toast }) {
     )
   }
 
+  // ── Handlers (plain functions, not hooks — fine below early returns) ──
   const cur = form || opp
 
-  const handleEdit = () => { setForm({ ...opp }); setEditing(true) }
+  const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
   const handleCancel = () => { setForm(null); setEditing(false) }
 
   const handleSave = async () => {
@@ -125,12 +169,21 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
+  const handleTaskStatusChange = async (task, newStatus) => {
+    try {
+      await updateTask(task._rowIndex, { Status: newStatus })
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    }
+  }
+
   const submitTask = async () => {
     try {
       await addTask({
         ContractNumber: decodedCN,
-        ContractTitle: opp[C.title],
+        ContractTitle:  opp[C.title],
         ...taskForm,
+        DueDate: taskForm.DueDate || '',
       }, user.displayName)
       setShowAddTask(false)
       setTaskForm({ Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium' })
@@ -140,49 +193,19 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const handleAddTask = (e) => { e.preventDefault(); submitTask() }
-
-  const emailPrompt = useCallback(
-    () => buildEmailDraftPrompt({
-      ContractTitle: opp[C.title],
-      Agency: opp[C.agency],
-      Phase: opp[C.phase],
-      ContractNumber: decodedCN,
-      recentNotes: notes.slice(0, 3).map((n) => n.NoteText).join(' | '),
-    }, contact),
-    [opp, notes, contact, decodedCN]
-  )
-
-  const capPrompt = useCallback(
-    () => buildCapabilityStatementPrompt({
-      ContractTitle: opp[C.title],
-      Agency: opp[C.agency],
-      NAICS: opp[C.naics],
-      ContractNumber: decodedCN,
-      SolicitationNumber: opp[C.solNum],
-      recentNotes: notes.slice(0, 3).map((n) => n.NoteText).join(' | '),
-    }),
-    [opp, notes, decodedCN]
-  )
-
-  // Editable field renderer
   const field = (label, key, type = 'text', options = null) => (
     <div className="form-field" key={key}>
       <label className="form-label">{label}</label>
       {editing
         ? options
           ? (
-            <select className="form-input" value={cur[key] || ''} onChange={(e) => setForm({ ...form, [key]: e.target.value })}>
+            <select className="form-input" value={cur[key] || ''}
+              onChange={(e) => setForm({ ...form, [key]: e.target.value })}>
               {options.map((o) => <option key={o}>{o}</option>)}
             </select>
-          )
-          : (
-            <input
-              className="form-input"
-              type={type}
-              value={cur[key] || ''}
-              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-            />
+          ) : (
+            <input className="form-input" type={type} value={cur[key] || ''}
+              onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
           )
         : <div className="form-input" style={{ background: 'var(--gray-50)' }}>{formatFieldValue(cur[key])}</div>
       }
@@ -193,14 +216,16 @@ export default function OpportunityDetail({ toast }) {
     <>
       <Topbar
         title={opp[C.title]}
-        subtitle1={`${decodedCN} · ${opp[C.assignedTo] ? `Assigned: ${opp[C.assignedTo]}` : 'Unassigned'}`}
+        subtitle1={decodedCN}
+        subtitle2={opp[C.assignedTo] ? `Assigned: ${opp[C.assignedTo]}` : 'Unassigned'}
         showFilter={false}
         showNew={editing}
         newLabel={saving ? 'Saving…' : 'Save changes'}
         onNew={handleSave}
       />
       <div className="page-body">
-        <button className="btn btn-ghost text-sm" style={{ marginBottom: 14 }} onClick={() => navigate('/opportunities')}>
+        <button className="btn btn-ghost text-sm" style={{ marginBottom: 14 }}
+          onClick={() => navigate('/opportunities')}>
           ← Opportunities
         </button>
 
@@ -221,27 +246,26 @@ export default function OpportunityDetail({ toast }) {
         </div>
 
         <div className={`card ${styles.fieldGrid}`}>
-          {field('Total Contract Value ($)', C.value, 'text')}
-          {field('TAG Opportunity Phase', C.phase, 'text', OPPORTUNITY_PHASES)}
-          {field('Opportunity Outlook', C.outlook, 'text', OPPORTUNITY_OUTLOOK)}
-          {field('Priority', C.priority, 'text', PRIORITY_VALUES)}
-          {field('Department', C.department)}
-          {field('Agency', C.agency)}
-          {field('Office', C.office)}
-          {field('Solicitation Number', C.solNum)}
-          {field('NAICS Code', C.naics)}
-          {field('Set-Aside', C.setAside, 'text', SET_ASIDE_VALUES)}
+          {field('Total Contract Value ($)', C.value)}
+          {field('TAG Opportunity Phase',    C.phase,    'text', OPPORTUNITY_PHASES)}
+          {field('Opportunity Outlook',      C.outlook,  'text', OPPORTUNITY_OUTLOOK)}
+          {field('Priority',                 C.priority, 'text', PRIORITY_VALUES)}
+          {field('Department',               C.department)}
+          {field('Agency',                   C.agency)}
+          {field('Office',                   C.office)}
+          {field('Solicitation Number',      C.solNum)}
+          {field('NAICS Code',               C.naics)}
+          {field('Set-Aside',                C.setAside, 'text', SET_ASIDE_VALUES)}
           {field('Submission / Response Date', C.submDate, 'date')}
-          {field('Contract End Date', C.endDate, 'date')}
-          {field('Anticipated Award Date', C.awardDate, 'date')}
-          {field('Assigned To', C.assignedTo)}
-          {field('Incumbent', C.incumbent)}
-          {field('Partner', C.partner)}
-          {field('Prime or Sub?', C.primeOrSub, 'text', ['Prime', 'Sub'])}
-          {field('POC / Contracting Officer', C.poc)}
+          {field('Contract End Date',        C.endDate,  'date')}
+          {field('Anticipated Award Date',   C.awardDate,'date')}
+          {field('Assigned To',              C.assignedTo)}
+          {field('Incumbent',                C.incumbent)}
+          {field('Partner',                  C.partner)}
+          {field('Prime or Sub?',            C.primeOrSub, 'text', ['Prime', 'Sub'])}
+          {field('POC / Contracting Officer',C.poc)}
         </div>
 
-        {/* GovWin / Folder links */}
         {(opp[C.govwin] || opp[C.folder]) && (
           <div className="card" style={{ marginBottom: 14, display: 'flex', gap: 12 }}>
             {opp[C.govwin] && <a href={opp[C.govwin]} target="_blank" rel="noreferrer" className="btn text-sm">GovWin ↗</a>}
@@ -254,17 +278,20 @@ export default function OpportunityDetail({ toast }) {
           <div>
             <div className={styles.sectionTitle}>Notes</div>
             <div className="card">
-              {notes.length === 0
-                ? <p className="text-muted text-sm">No notes yet.</p>
-                : notes.map((n) => (
-                    <div key={n.NoteID} className={styles.noteItem}>
-                      <div className={styles.noteMeta}>{n.Date} · {n.Author}</div>
-                      <div className={styles.noteText}>{n.NoteText}</div>
-                    </div>
-                  ))}
+              {notesLoading
+                ? <div className="skeleton" style={{ height: 60 }} />
+                : notes.length === 0
+                  ? <p className="text-muted text-sm">No notes yet.</p>
+                  : notes.map((n) => (
+                      <div key={n.NoteID} className={styles.noteItem}>
+                        <div className={styles.noteMeta}>{n.Date} · {n.Author}</div>
+                        <div className={styles.noteText}>{n.NoteText}</div>
+                      </div>
+                    ))
+              }
               <div className={styles.noteAdd}>
-                <textarea className="form-input" placeholder="Add a note…" value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)} rows={2} />
+                <textarea className="form-input" placeholder="Add a note…"
+                  value={newNote} onChange={(e) => setNewNote(e.target.value)} rows={2} />
                 <button className="btn btn-primary text-sm" onClick={handleAddNote}
                   disabled={addingNote || !newNote.trim()}>
                   {addingNote ? 'Adding…' : 'Add note'}
@@ -297,12 +324,18 @@ export default function OpportunityDetail({ toast }) {
                             </button>
                           )}
                         </div>
-                        <span className={`badge badge-${t.Status === 'To Do' ? 'todo' : t.Status === 'In Progress' ? 'progress' : 'done'}`}>
+                        <button
+                          className={`badge badge-${statusClass(t.Status)}`}
+                          style={{ cursor: 'pointer', border: 'none' }}
+                          onClick={() => handleTaskStatusChange(t, STATUS_CYCLE[t.Status] || 'To Do')}
+                          title="Click to advance status"
+                        >
                           {t.Status}
-                        </span>
+                        </button>
                       </div>
                     )
-                  })}
+                  })
+              }
               <button className="btn text-sm w-full" style={{ marginTop: 8, justifyContent: 'center' }}
                 onClick={() => setShowAddTask(true)}>
                 + Add task
@@ -325,7 +358,6 @@ export default function OpportunityDetail({ toast }) {
               </>
             )}
 
-            {/* POC from pipeline if no contact card */}
             {!contact && opp[C.poc] && (
               <>
                 <div className={styles.sectionTitle}>Contracting Officer</div>
@@ -340,14 +372,12 @@ export default function OpportunityDetail({ toast }) {
           </div>
         </div>
 
-        <AIPanel title="Draft follow-up email" buildPrompt={emailPrompt} defaultCollapsed />
-        <AIPanel title="Generate capability statement" buildPrompt={capPrompt} defaultCollapsed />
+        <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
+        <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
       </div>
 
       {showAddTask && (
-        <Modal
-          title="Add task"
-          onClose={() => setShowAddTask(false)}
+        <Modal title="Add task" onClose={() => setShowAddTask(false)}
           footer={
             <>
               <button className="btn" onClick={() => setShowAddTask(false)}>Cancel</button>
@@ -355,7 +385,7 @@ export default function OpportunityDetail({ toast }) {
             </>
           }
         >
-          <form onSubmit={handleAddTask}>
+          <form onSubmit={(e) => { e.preventDefault(); submitTask() }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="form-field">
                 <label className="form-label">Title *</label>
@@ -400,4 +430,3 @@ function formatFieldValue(val) {
   if (typeof val === 'number') return val.toLocaleString()
   return String(val)
 }
-

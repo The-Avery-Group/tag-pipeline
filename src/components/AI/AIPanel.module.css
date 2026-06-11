@@ -87,3 +87,7 @@
   padding: 0;
 }
 .regenBtn:hover { text-decoration: underline; }
+
+.copied {
+  color: var(--green-600) !important;
+}

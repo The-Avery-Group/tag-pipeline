@@ -2,13 +2,6 @@ import { useState, useCallback } from 'react'
 import { groqChat } from '@/services/groqService'
 import styles from './AIPanel.module.css'
 
-/**
- * AIPanel
- * Props:
- *   buildPrompt: () => messages[]  — called lazily when user expands
- *   title: string
- *   defaultCollapsed: bool
- */
 export default function AIPanel({ buildPrompt, title = 'AI summary', defaultCollapsed = true }) {
   const [open, setOpen] = useState(!defaultCollapsed)
   const [content, setContent] = useState('')
@@ -16,6 +9,7 @@ export default function AIPanel({ buildPrompt, title = 'AI summary', defaultColl
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [fetched, setFetched] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const fetchSummary = useCallback(async () => {
     if (fetched) return
@@ -23,12 +17,12 @@ export default function AIPanel({ buildPrompt, title = 'AI summary', defaultColl
     setError(null)
     try {
       const messages = buildPrompt()
-      const { content: text, model } = await groqChat(messages, { maxTokens: 300 })
+      const { content: text, model } = await groqChat(messages, { maxTokens: 600 })
       setContent(text)
       setModelUsed(model)
       setFetched(true)
     } catch (err) {
-      if (err.name !== 'AbortError') setError('Failed to generate summary.')
+      if (err.name !== 'AbortError') setError('Failed to generate. Check your Groq API key.')
     } finally {
       setLoading(false)
     }
@@ -46,6 +40,25 @@ export default function AIPanel({ buildPrompt, title = 'AI summary', defaultColl
     fetchSummary()
   }
 
+  const handleCopy = async () => {
+    if (!content) return
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // fallback for older browsers
+      const el = document.createElement('textarea')
+      el.value = content
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <button className={styles.header} onClick={toggle} aria-expanded={open}>
@@ -60,7 +73,7 @@ export default function AIPanel({ buildPrompt, title = 'AI summary', defaultColl
           {loading && (
             <div className={styles.loading}>
               <span className={styles.dot} /><span className={styles.dot} /><span className={styles.dot} />
-              <span className={styles.loadingText}>Generating summary…</span>
+              <span className={styles.loadingText}>Generating…</span>
             </div>
           )}
           {error && <p className={styles.error}>{error}</p>}
@@ -68,8 +81,13 @@ export default function AIPanel({ buildPrompt, title = 'AI summary', defaultColl
             <>
               <p className={styles.content}>{content}</p>
               <div className={styles.meta}>
-                {modelUsed && <span className={styles.modelLabel}>Generated with {modelUsed}</span>}
-                <button className={styles.regenBtn} onClick={regenerate}>↺ Regenerate</button>
+                {modelUsed && <span className={styles.modelLabel}>via {modelUsed}</span>}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className={styles.regenBtn} onClick={regenerate}>↺ Regenerate</button>
+                  <button className={`${styles.regenBtn} ${copied ? styles.copied : ''}`} onClick={handleCopy}>
+                    {copied ? '✓ Copied' : '⎘ Copy'}
+                  </button>
+                </div>
               </div>
             </>
           )}

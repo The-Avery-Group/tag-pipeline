@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '@/services/graphService'
 import { notifyTaskDueSoon, notifyTaskOverdue } from '@/services/notifyService'
 import { isOverdue } from '@/utils/kpiHelpers'
+import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function useTasks(contractNumber = null) {
-  const [tasks, setTasks] = useState([])
+  const [tasks, setTasks]   = useState([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError]   = useState(null)
+  const notifiedIds = useRef(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -18,17 +20,21 @@ export function useTasks(contractNumber = null) {
         : all
       setTasks(filtered)
 
-      // Check for overdue / due-tomorrow and fire notifications (best-effort)
-      const today = new Date()
+      const today    = new Date()
       const tomorrow = new Date(today)
       tomorrow.setDate(tomorrow.getDate() + 1)
       filtered.forEach((t) => {
         if (t.Status === 'Done') return
-        if (isOverdue(t.DueDate)) notifyTaskOverdue(t).catch(() => {})
-        else {
+        const key = `${t.TaskID}-${t.DueDate}`
+        if (notifiedIds.current.has(key)) return
+        if (isOverdue(t.DueDate)) {
+          notifyTaskOverdue(t).catch(() => {})
+          notifiedIds.current.add(key)
+        } else {
           const due = new Date(t.DueDate)
           if (!isNaN(due) && due.toDateString() === tomorrow.toDateString()) {
             notifyTaskDueSoon(t).catch(() => {})
+            notifiedIds.current.add(key)
           }
         }
       })
@@ -41,28 +47,41 @@ export function useTasks(contractNumber = null) {
 
   useEffect(() => { load() }, [load])
 
-  const add = useCallback(async (data, createdBy) => {
-    // Auto-attach opportunity notes at creation time
-    const notes = await getNotesForContract(data.ContractNumber)
-    await addTask({ ...data, OpportunityNotes: notes }, createdBy)
-    await load()
+  useEffect(() => {
+    const unsub = onCacheRefresh(load)
+    return unsub
   }, [load])
 
+  const add = useCallback(async (data, createdBy) => {
+    const notes   = await getNotesForContract(data.ContractNumber)
+    const dueDate = data.DueDate
+      ? (data.DueDate instanceof Date
+          ? data.DueDate.toISOString().split('T')[0]
+          : String(data.DueDate))
+      : ''
+    await addTask({ ...data, DueDate: dueDate, OpportunityNotes: notes }, createdBy)
+    await invalidateCache()
+  }, [])
+
   const update = useCallback(async (rowIndex, patch) => {
-    await updateTask(rowIndex, patch)
-    await load()
-  }, [load])
+    const safePatch = { ...patch }
+    if (safePatch.DueDate instanceof Date) {
+      safePatch.DueDate = safePatch.DueDate.toISOString().split('T')[0]
+    }
+    await updateTask(rowIndex, safePatch)
+    await invalidateCache()
+  }, [])
 
   const remove = useCallback(async (rowIndex) => {
     await deleteTask(rowIndex)
-    await load()
-  }, [load])
+    await invalidateCache()
+  }, [])
 
   const refreshContext = useCallback(async (task) => {
     const notes = await getNotesForContract(task.ContractNumber)
     await updateTask(task._rowIndex, { OpportunityNotes: notes })
-    await load()
-  }, [load])
+    await invalidateCache()
+  }, [])
 
   return { tasks, loading, error, refresh: load, add, update, remove, refreshContext }
 }

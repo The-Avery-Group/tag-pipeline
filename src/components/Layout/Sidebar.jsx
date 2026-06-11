@@ -3,13 +3,14 @@ import { useAuth } from '@/auth/AuthContext'
 import styles from './Sidebar.module.css'
 
 const NAV = [
-  { to: '/',             icon: '⊞', label: 'Dashboard' },
-  { to: '/opportunities',icon: '◈', label: 'Opportunities' },
-  { to: '/tasks',        icon: '☑', label: 'Tasks' },
+  { to: '/',              icon: '⊞', label: 'Dashboard' },
+  { to: '/opportunities', icon: '◈', label: 'Opportunities' },
+  { to: '/tasks',         icon: '☑', label: 'Tasks' },
 ]
 
 const DIR = [
-  { to: '/contacts', icon: '◎', label: 'Contacts' },
+  { to: '/contacts',  icon: '◎', label: 'Contacts' },
+  { to: '/settings',  icon: '⚙', label: 'Settings' },
 ]
 
 export default function Sidebar() {
@@ -56,20 +57,20 @@ export default function Sidebar() {
             {item.label}
           </NavLink>
         ))}
-
-        <div className={styles.navSection}>Account</div>
-        <button className={`${styles.navItem} ${styles.navBtn}`} onClick={logout}>
-          <span className={styles.navIcon} aria-hidden="true">⬡</span>
-          Sign out
-        </button>
       </nav>
 
+      {/* Footer: user info + sign out at bottom */}
       <div className={styles.footer}>
-        <div className={styles.avatar}>{initials}</div>
-        <div>
-          <div className={styles.userName}>{user?.displayName}</div>
-          <div className={styles.userRole}>Editor</div>
+        <div className={styles.userInfo}>
+          <div className={styles.avatar}>{initials}</div>
+          <div>
+            <div className={styles.userName}>{user?.displayName}</div>
+            <div className={styles.userRole}>Editor</div>
+          </div>
         </div>
+        <button className={styles.signOutBtn} onClick={logout}>
+          <span aria-hidden="true">⬡</span> Sign out
+        </button>
       </div>
     </aside>
   )
