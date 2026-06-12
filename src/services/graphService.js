@@ -1,12 +1,12 @@
 import { msalInstance, loginRequest } from '@/auth/msalConfig'
 
-// VITE_ONEDRIVE_FILE_ID is now the raw item ID (GUID, no braces) of the workbook
+// VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook
 const ITEM_ID = import.meta.env.VITE_ONEDRIVE_FILE_ID
 
-// The driveId of the OneDrive that owns the workbook. This is a fixed
-// value tied to the workbook's location, not per-user, so it's safe to
-// hardcode here rather than make it an env var.
-const DRIVE_ID = 'b!fsCz46RelUmofs4VBsawjlcyB6xcoSxEgEaCivfaiM5xngQsti3aQZfpZZEKegBa'
+// The driveId of the SharePoint document library that owns the workbook.
+// This is a fixed value tied to the workbook's location, not per-user, so
+// it's safe to hardcode here rather than make it an env var.
+const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
 // Resolved once per session
 let _resolvedBase = null
