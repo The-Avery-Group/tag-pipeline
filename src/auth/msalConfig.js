@@ -25,7 +25,7 @@ export const msalConfig = {
 }
 
 export const loginRequest = {
-  scopes: ['User.Read', 'Files.ReadWrite'],
+  scopes: ['User.Read', 'Files.ReadWrite', 'Sites.ReadWrite.All'],
 }
 
 export const graphConfig = {
