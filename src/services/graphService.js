@@ -1,44 +1,19 @@
 import { msalInstance, loginRequest } from '@/auth/msalConfig'
 
-const SHARING_URL = import.meta.env.VITE_ONEDRIVE_FILE_ID
+// VITE_ONEDRIVE_FILE_ID is now the raw item ID (GUID, no braces) of the workbook
+const ITEM_ID = import.meta.env.VITE_ONEDRIVE_FILE_ID
 
-// Encode the OneDrive sharing URL into the Graph shares format.
-// VITE_ONEDRIVE_FILE_ID should now be set to the full sharing URL, e.g.:
-//   https://theaverygroupllc1-my.sharepoint.com/:x:/g/personal/...
-// If it is still a raw file ID (no "http"), the old me/drive path is used
-// as a fallback so nothing breaks for users with a working file ID.
-function buildSharingTokenBase(sharingUrl) {
-  const encoded = btoa(sharingUrl)
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-  return `https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`
-}
+// The driveId of the OneDrive that owns the workbook. This is a fixed
+// value tied to the workbook's location, not per-user, so it's safe to
+// hardcode here rather than make it an env var.
+const DRIVE_ID = 'b!fsCz46RelUmofs4VBsawjlcyB6xcoSxEgEaCivfaiM5xngQsti3aQZfpZZEKegBa'
 
-// Resolved once per session: { driveId, itemId }
+// Resolved once per session
 let _resolvedBase = null
 
-async function resolveWorkbookBase(token) {
+async function resolveWorkbookBase() {
   if (_resolvedBase) return _resolvedBase
-
-  const isUrl = SHARING_URL && SHARING_URL.startsWith('http')
-
-  if (isUrl) {
-    const driveItemUrl = buildSharingTokenBase(SHARING_URL)
-    const res = await fetch(driveItemUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err?.error?.message || `Could not resolve sharing URL: ${res.status}`)
-    }
-    const item = await res.json()
-    _resolvedBase = `https://graph.microsoft.com/v1.0/drives/${item.parentReference.driveId}/items/${item.id}/workbook`
-  } else {
-    // Legacy: VITE_ONEDRIVE_FILE_ID is a raw file ID
-    _resolvedBase = `https://graph.microsoft.com/v1.0/me/drive/items/${SHARING_URL}/workbook`
-  }
-
+  _resolvedBase = `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${ITEM_ID}/workbook`
   return _resolvedBase
 }
 
@@ -68,7 +43,7 @@ async function getToken() {
 
 async function graphFetch(path, options = {}) {
   const token = await getToken()
-  const base = await resolveWorkbookBase(token)
+  const base = await resolveWorkbookBase()
   const res = await fetch(`${base}${path}`, {
     ...options,
     headers: {
