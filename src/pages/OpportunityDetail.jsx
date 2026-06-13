@@ -10,6 +10,7 @@ import AIPanel from '@/components/AI/AIPanel'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { buildEmailDraftPrompt, buildCapabilityStatementPrompt } from '@/services/groqService'
+import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
@@ -40,6 +41,8 @@ const C = {
   notes:          'Notes*',
   govwin:         'GovWin Link*',
   folder:         'Link to Folder',
+  slideDeck:      'Link to Slide Deck',
+  otherLinks:     'Other Links*',
   incumbent:      'Incumbent (Company Name)',
   fiscalYear:     'Fiscal Year',
   vehicle:        'Contract Vehicle',
@@ -47,9 +50,13 @@ const C = {
 }
 
 const PHASE_BADGE = {
+  'Identified':       'badge-tracking',
   'Research':         'badge-qualify',
-  'Indentified':      'badge-proposal',
+  'Qualified':        'badge-qualify',
+  'Proposal':         'badge-proposal',
+  'Pending Award':    'badge-negotiation',
   'Contract Awarded': 'badge-award',
+  'Cancelled':        'badge-closed-lost',
 }
 
 const STATUS_CYCLE = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
@@ -65,6 +72,14 @@ export default function OpportunityDetail({ toast }) {
   const { notes, loading: notesLoading, add: addNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts } = useContacts()
+  const { lists } = useValidationLists()
+
+  const phaseOptions    = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const outlookOptions  = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
+  const priorityOptions = pickList(lists, 'Priority', PRIORITY_VALUES)
+  const setAsideOptions = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
+  const primeOrSubOptions = pickList(lists, 'Prime or Sub', ['Prime', 'Sub'])
+  const bidNoBidOptions   = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
 
   // ── ALL useState / useMemo / useCallback MUST be here, before any early return ──
   const [form, setForm]             = useState(null)
@@ -73,6 +88,8 @@ export default function OpportunityDetail({ toast }) {
   const [newNote, setNewNote]       = useState('')
   const [addingNote, setAddingNote] = useState(false)
   const [showAddTask, setShowAddTask] = useState(false)
+  const [savingTask, setSavingTask] = useState(false)
+  const [updatingTaskId, setUpdatingTaskId] = useState(null)
   const [taskForm, setTaskForm]     = useState({
     Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
   })
@@ -170,14 +187,18 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const handleTaskStatusChange = async (task, newStatus) => {
+    setUpdatingTaskId(task.TaskID)
     try {
       await updateTask(task._rowIndex, { Status: newStatus })
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setUpdatingTaskId(null)
     }
   }
 
   const submitTask = async () => {
+    setSavingTask(true)
     try {
       await addTask({
         ContractNumber: decodedCN,
@@ -190,10 +211,12 @@ export default function OpportunityDetail({ toast }) {
       toast?.success('Task added')
     } catch (err) {
       toast?.error(`Failed to add task: ${err.message}`)
+    } finally {
+      setSavingTask(false)
     }
   }
 
-  const field = (label, key, type = 'text', options = null) => (
+  const field = (label, key, type = 'text', options = null, raw = false) => (
     <div className="form-field" key={key}>
       <label className="form-label">{label}</label>
       {editing
@@ -207,7 +230,11 @@ export default function OpportunityDetail({ toast }) {
             <input className="form-input" type={type} value={cur[key] || ''}
               onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
           )
-        : <div className="form-input" style={{ background: 'var(--gray-50)' }}>{formatFieldValue(cur[key])}</div>
+        : <div className="form-input" style={{ background: 'var(--gray-50)' }}>
+            {raw
+              ? (cur[key] === null || cur[key] === undefined || cur[key] === '' ? '—' : String(cur[key]))
+              : formatFieldValue(cur[key])}
+          </div>
       }
     </div>
   )
@@ -219,9 +246,7 @@ export default function OpportunityDetail({ toast }) {
         subtitle1={decodedCN}
         subtitle2={opp[C.assignedTo] ? `Assigned: ${opp[C.assignedTo]}` : 'Unassigned'}
         showFilter={false}
-        showNew={editing}
-        newLabel={saving ? 'Saving…' : 'Save changes'}
-        onNew={handleSave}
+        showNew={false}
       />
       <div className="page-body">
         <button className="btn btn-ghost text-sm" style={{ marginBottom: 14 }}
@@ -241,37 +266,73 @@ export default function OpportunityDetail({ toast }) {
           </div>
           {!editing
             ? <button className="btn" onClick={handleEdit}>Edit</button>
-            : <button className="btn btn-ghost" onClick={handleCancel}>Cancel</button>
+            : (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost" onClick={handleCancel} disabled={saving}>Cancel</button>
+                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            )
           }
         </div>
 
         <div className={`card ${styles.fieldGrid}`}>
           {field('Total Contract Value ($)', C.value)}
-          {field('TAG Opportunity Phase',    C.phase,    'text', OPPORTUNITY_PHASES)}
-          {field('Opportunity Outlook',      C.outlook,  'text', OPPORTUNITY_OUTLOOK)}
-          {field('Priority',                 C.priority, 'text', PRIORITY_VALUES)}
+          {field('TAG Opportunity Phase',    C.phase,    'text', phaseOptions)}
+          {field('Opportunity Outlook',      C.outlook,  'text', outlookOptions)}
+          {field('Priority',                 C.priority, 'text', priorityOptions)}
           {field('Department',               C.department)}
           {field('Agency',                   C.agency)}
           {field('Office',                   C.office)}
           {field('Solicitation Number',      C.solNum)}
-          {field('NAICS Code',               C.naics)}
-          {field('Set-Aside',                C.setAside, 'text', SET_ASIDE_VALUES)}
+          {field('NAICS Code',               C.naics,    'text', null, true)}
+          {field('Set-Aside',                C.setAside, 'text', setAsideOptions)}
           {field('Submission / Response Date', C.submDate, 'date')}
           {field('Contract End Date',        C.endDate,  'date')}
           {field('Anticipated Award Date',   C.awardDate,'date')}
           {field('Assigned To',              C.assignedTo)}
           {field('Incumbent',                C.incumbent)}
           {field('Partner',                  C.partner)}
-          {field('Prime or Sub?',            C.primeOrSub, 'text', ['Prime', 'Sub'])}
+          {field('Prime or Sub?',            C.primeOrSub, 'text', primeOrSubOptions)}
+          {field('Bid / No Bid?',            C.bidNoBid, 'text', bidNoBidOptions)}
           {field('POC / Contracting Officer',C.poc)}
         </div>
 
-        {(opp[C.govwin] || opp[C.folder]) && (
-          <div className="card" style={{ marginBottom: 14, display: 'flex', gap: 12 }}>
-            {opp[C.govwin] && <a href={opp[C.govwin]} target="_blank" rel="noreferrer" className="btn text-sm">GovWin ↗</a>}
-            {opp[C.folder] && <a href={opp[C.folder]} target="_blank" rel="noreferrer" className="btn text-sm">📁 Folder ↗</a>}
-          </div>
-        )}
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className={styles.sectionTitle}>Links</div>
+          {editing
+            ? (
+              <div className={styles.fieldGrid}>
+                {field('GovWin Link',     C.govwin)}
+                {field('Link to Folder',  C.folder)}
+                {field('Link to Slide Deck', C.slideDeck)}
+                {field('Other Links',     C.otherLinks)}
+              </div>
+            )
+            : (
+              [
+                [C.govwin,     'GovWin ↗'],
+                [C.folder,     '📁 Folder ↗'],
+                [C.slideDeck,  '📊 Slide Deck ↗'],
+                [C.otherLinks, '🔗 Other Link ↗'],
+              ].some(([key]) => cur[key])
+                ? (
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    {[
+                      [C.govwin,     'GovWin ↗'],
+                      [C.folder,     '📁 Folder ↗'],
+                      [C.slideDeck,  '📊 Slide Deck ↗'],
+                      [C.otherLinks, '🔗 Other Link ↗'],
+                    ].map(([key, label]) => cur[key] && (
+                      <a key={key} href={cur[key]} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
+                    ))}
+                  </div>
+                )
+                : <p className="text-sm text-muted">No links added.</p>
+            )
+          }
+        </div>
 
         <div className={styles.twoCol}>
           {/* Notes */}
@@ -326,11 +387,12 @@ export default function OpportunityDetail({ toast }) {
                         </div>
                         <button
                           className={`badge badge-${statusClass(t.Status)}`}
-                          style={{ cursor: 'pointer', border: 'none' }}
+                          style={{ cursor: updatingTaskId === t.TaskID ? 'default' : 'pointer', border: 'none', opacity: updatingTaskId === t.TaskID ? 0.6 : 1 }}
                           onClick={() => handleTaskStatusChange(t, STATUS_CYCLE[t.Status] || 'To Do')}
+                          disabled={updatingTaskId === t.TaskID}
                           title="Click to advance status"
                         >
-                          {t.Status}
+                          {updatingTaskId === t.TaskID ? 'Updating…' : t.Status}
                         </button>
                       </div>
                     )
@@ -377,11 +439,13 @@ export default function OpportunityDetail({ toast }) {
       </div>
 
       {showAddTask && (
-        <Modal title="Add task" onClose={() => setShowAddTask(false)}
+        <Modal title="Add task" onClose={() => !savingTask && setShowAddTask(false)}
           footer={
             <>
-              <button className="btn" onClick={() => setShowAddTask(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitTask}>Add task</button>
+              <button className="btn" onClick={() => setShowAddTask(false)} disabled={savingTask}>Cancel</button>
+              <button className="btn btn-primary" onClick={submitTask} disabled={savingTask}>
+                {savingTask ? 'Adding…' : 'Add task'}
+              </button>
             </>
           }
         >
