@@ -1,13 +1,17 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useContacts } from '@/hooks/useContacts'
+import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import { CONTACT_TYPES } from '@/services/graphService'
 import styles from './Contacts.module.css'
 
-const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '' }
+const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '', Type: 'Customer' }
 
 export default function Contacts({ toast }) {
   const { contacts, loading, add, update, remove } = useContacts()
+  const { lists } = useValidationLists()
+  const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -24,7 +28,7 @@ export default function Contacts({ toast }) {
     () => contacts.filter(
       (c) =>
         !search ||
-        [c.Name, c.Agency, c.Organization, c.Title, c.Email].some((v) =>
+        [c.Name, c.Agency, c.Organization, c.Title, c.Email, c.Type].some((v) =>
           v?.toLowerCase().includes(search.toLowerCase())
         )
     ),
@@ -81,8 +85,8 @@ export default function Contacts({ toast }) {
     <div className={styles.formGrid}>
       {[
         ['Name',         'Name',                    true],
+        ['Agency',       'Agency / Company (Account)', false],
         ['Title',        'Title',                   false],
-        ['Agency',       'Agency',                  false],
         ['Organization', 'Department / Organization',false],
         ['Email',        'Email',                   false],
         ['Phone',        'Phone',                   false],
@@ -97,6 +101,16 @@ export default function Contacts({ toast }) {
           />
         </div>
       ))}
+      <div className="form-field">
+        <label className="form-label">Type</label>
+        <select
+          className="form-input"
+          value={form.Type ?? 'Customer'}
+          onChange={(e) => setField('Type', e.target.value)}
+        >
+          {contactTypeOptions.map((t) => <option key={t}>{t}</option>)}
+        </select>
+      </div>
       <div className="form-field" style={{ gridColumn: '1 / -1' }}>
         <label className="form-label">Notes / linked contract #</label>
         <textarea
@@ -142,8 +156,9 @@ export default function Contacts({ toast }) {
                   <thead>
                     <tr>
                       <th>Name</th>
+                      <th>Agency / Company</th>
                       <th>Title</th>
-                      <th>Agency</th>
+                      <th>Type</th>
                       <th>Dept / Organization</th>
                       <th>Email</th>
                       <th>Phone</th>
@@ -160,8 +175,11 @@ export default function Contacts({ toast }) {
                             <span style={{ fontWeight: 500 }}>{c.Name}</span>
                           </div>
                         </td>
-                        <td className="text-sm text-muted">{c.Title}</td>
                         <td className="text-sm">{c.Agency}</td>
+                        <td className="text-sm text-muted">{c.Title}</td>
+                        <td>
+                          {c.Type && <span className="badge badge-tracking">{c.Type}</span>}
+                        </td>
                         <td className="text-sm">{c.Organization}</td>
                         <td><a href={`mailto:${c.Email}`} onClick={(e) => e.stopPropagation()} className="text-sm">{c.Email}</a></td>
                         <td className="text-sm text-muted">{c.Phone}</td>
