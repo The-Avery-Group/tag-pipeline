@@ -1,3 +1,37 @@
 .sortIcon { font-size: 10px; color: var(--gray-400); margin-left: 3px; }
 .empty { padding: 24px; text-align: center; color: var(--gray-400); font-size: 13px; }
 .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.searchBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+
+.searchIcon { color: var(--gray-400); flex-shrink: 0; display: flex; align-items: center; }
+
+.searchInput {
+  font-size: 13px;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--gray-900);
+  flex: 1;
+  font-family: var(--font);
+}
+
+.searchClear {
+  font-size: 12px;
+  color: var(--gray-400);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-family: var(--font);
+}
+.searchClear:hover { color: var(--gray-900); }
