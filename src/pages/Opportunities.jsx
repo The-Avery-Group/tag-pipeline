@@ -59,6 +59,7 @@ export default function Opportunities({ toast }) {
   const PHASES = ['All', ...phaseOptions]
 
   const [phase, setPhase] = useState('All')
+  const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState(C.lastMod)
   const [sortDir, setSortDir] = useState('desc')
   const [showAdd, setShowAdd] = useState(searchParams.get('new') === '1')
@@ -83,13 +84,22 @@ export default function Opportunities({ toast }) {
 
   const filtered = useMemo(() => {
     let rows = phase === 'All' ? pipeline : pipeline.filter((o) => o[C.phase] === phase)
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      rows = rows.filter((o) =>
+        [
+          o[C.title], o[C.contractNum], o[C.agency], o[C.department],
+          o[C.assignedTo], o[C.solNum], o[C.naics], o[C.poc],
+        ].some((v) => v && String(v).toLowerCase().includes(q))
+      )
+    }
     return [...rows].sort((a, b) => {
       const va = a[sortKey] ?? ''
       const vb = b[sortKey] ?? ''
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, phase, sortKey, sortDir])
+  }, [pipeline, phase, search, sortKey, sortDir])
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -154,6 +164,24 @@ export default function Opportunities({ toast }) {
         onNew={() => setShowAdd(true)}
       />
       <div className="page-body">
+        <div className={styles.searchBar}>
+          <span className={styles.searchIcon} aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <input
+            className={styles.searchInput}
+            placeholder="Search by title, contract #, agency, assignee, NAICS, POC…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search opportunities"
+          />
+          {search && (
+            <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">✕</button>
+          )}
+        </div>
+
         <div className="filter-chips" style={{ marginBottom: 14 }}>
           {PHASES.map((p) => (
             <button key={p} className={`filter-chip ${phase === p ? 'active' : ''}`} onClick={() => setPhase(p)}>
@@ -166,7 +194,9 @@ export default function Opportunities({ toast }) {
           {loading
             ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
             : filtered.length === 0
-              ? <div className={styles.empty}>No opportunities match the current filter.</div>
+              ? <div className={styles.empty}>
+                  {search ? `No opportunities match "${search}".` : 'No opportunities match the current filter.'}
+                </div>
               : (
                 <div style={{ overflowX: 'auto' }}>
                   <table className="data-table">
