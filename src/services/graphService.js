@@ -1,6 +1,7 @@
 import { msalInstance, loginRequest } from '@/auth/msalConfig'
 
-// VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook
+// VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook,
+// e.g. 01FVYRIFDLMKLW3D4HKVE34O5ZGVXE4Y6H
 const ITEM_ID = import.meta.env.VITE_ONEDRIVE_FILE_ID
 
 // The driveId of the SharePoint document library that owns the workbook.
@@ -200,7 +201,7 @@ export async function deleteRow(tableName, rowIndex) {
 // ── Column header constants ────────────────────────────────────────────────
 // These match the exact column headers in the real Pipeline sheet (40 columns)
 export const PIPELINE_HEADERS = [
-  'TAG Opportunity Phase',            // [0]  col A — Research / Indentified / Contract Awarded
+  'TAG Opportunity Phase',            // [0]  col A — Identified / Research / Qualified / Proposal / Pending Award / Contract Awarded / Cancelled
   'TAG Pipeline Activity Phase',      // [1]  col B — Submitted RFI / Pre RFP / etc.
   'Fiscal Year',                      // [2]  col C
   'Opportunity Outlook',              // [3]  col D — Expiring / Forecasted / New
@@ -249,7 +250,7 @@ export const TASKS_HEADERS = [
 ]
 
 export const CONTACTS_HEADERS = [
-  'ContactID', 'Name', 'Title', 'Agency', 'Organization', 'Email', 'Phone', 'Notes',
+  'ContactID', 'Name', 'Title', 'Agency', 'Organization', 'Email', 'Phone', 'Notes', 'Type',
 ]
 
 export const NOTES_HEADERS = [
@@ -302,10 +303,108 @@ export const COL = {
 }
 
 // ── Phase / enum constants from real data ─────────────────────────────────
-export const OPPORTUNITY_PHASES = ['Research', 'Indentified', 'Contract Awarded']
-export const OPPORTUNITY_OUTLOOK = ['Expiring', 'Forecasted', 'New']
+// Matches the "TAG Opportunity Phase" column on the Data Validation sheet.
+// Note: "Identified" was previously misspelled "Indentified" — fixed here.
+export const OPPORTUNITY_PHASES = [
+  'Identified',
+  'Research',
+  'Qualified',
+  'Proposal',
+  'Pending Award',
+  'Contract Awarded',
+  'Cancelled',
+]
+export const OPPORTUNITY_OUTLOOK = ['Expiring', 'Forecasted', 'New', 'Tracking']
 export const PRIORITY_VALUES = ['Cold', 'Warm', 'Hot']
 export const SET_ASIDE_VALUES = ['-', '8A', '8AN', 'NONE', 'SBA', 'SDVOSBC', 'SDVOSBS']
+
+// Matches the "Types" column on the Data Validation sheet (Contacts).
+export const CONTACT_TYPES = ['Customer', 'Partner', 'Teammate', 'Competitor', 'Other']
+
+// ── Data Validation table ───────────────────────────────────────────────
+// "Data Validation" sheet is set up as a Table named DataValidationTable.
+// Each column header is a list name; non-empty cells below are the options.
+const VALIDATION_TABLE = 'DataValidationTable'
+const VALIDATION_SHEET = 'Data Validation'
+
+/**
+ * Read all Data Validation columns as { [header]: [non-empty values] }.
+ * Cached like other sheet reads via the generic cache (keyed by table name).
+ */
+export async function getValidationLists() {
+  const rows = await getSheetRows(VALIDATION_TABLE)
+  const headerData = await graphFetch(`/tables/${VALIDATION_TABLE}/columns`)
+  const headers = headerData.value.map((c) => c.name)
+  const lists = {}
+  headers.forEach((h) => {
+    lists[h] = rows
+      .map((r) => r[h])
+      .filter((v) => v !== null && v !== undefined && String(v).trim() !== '')
+  })
+  return lists
+}
+
+/**
+ * Convert a 0-based column index to an Excel column letter (0 -> A, 25 -> Z, 26 -> AA...).
+ */
+function colIndexToLetter(index) {
+  let letter = ''
+  let n = index
+  while (n >= 0) {
+    letter = String.fromCharCode((n % 26) + 65) + letter
+    n = Math.floor(n / 26) - 1
+  }
+  return letter
+}
+
+/**
+ * Overwrite one Data Validation column's values (below the header).
+ * Writes exactly `values.length` rows; any previously-longer column is
+ * padded with blanks below that so removed options don't linger.
+ */
+export async function updateValidationColumn(header, values) {
+  const headerData = await graphFetch(`/tables/${VALIDATION_TABLE}/columns`)
+  const headers = headerData.value.map((c) => c.name)
+  const colIndex = headers.indexOf(header)
+  if (colIndex === -1) throw new Error(`Column "${header}" not found in ${VALIDATION_TABLE}`)
+
+  // Existing row count, so we know how many trailing cells to blank out
+  const existingRows = await getSheetRows(VALIDATION_TABLE)
+  const totalRows = Math.max(existingRows.length, values.length)
+
+  const colLetter = colIndexToLetter(colIndex)
+  const startRow = 2 // row 1 is the header
+  const endRow = startRow + totalRows - 1
+  const address = `${colLetter}${startRow}:${colLetter}${endRow}`
+
+  const cellValues = []
+  for (let i = 0; i < totalRows; i++) {
+    cellValues.push([i < values.length ? values[i] : ''])
+  }
+
+  await graphFetch(
+    `/worksheets/${encodeURIComponent(VALIDATION_SHEET)}/range(address='${address}')`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ values: cellValues }),
+    }
+  )
+
+  invalidate(VALIDATION_TABLE)
+}
+
+// Maps Settings page section keys -> Data Validation column headers
+export const VALIDATION_KEY_MAP = {
+  opportunityPhases: 'TAG Opportunity Phase',
+  activityPhases:    'TAG Pipeline Activity Phase',
+  outlooks:          'Opportunity Outlook',
+  priorities:        'Priority',
+  setAsides:         'Set-Aside',
+  primeOrSub:        'Prime or Sub',
+  bidNoBid:          'Bid / No Bid?',
+  contactTypes:      'Types',
+}
+
 
 export async function getPipeline() {
   return getSheetRows('PipelineTable')
