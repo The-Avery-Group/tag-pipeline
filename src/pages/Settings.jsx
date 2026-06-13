@@ -1,83 +1,95 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Topbar from '@/components/Layout/Topbar'
+import { useValidationLists } from '@/hooks/useValidationLists'
+import {
+  VALIDATION_KEY_MAP,
+  OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
+  SET_ASIDE_VALUES, CONTACT_TYPES,
+} from '@/services/graphService'
 import styles from './Settings.module.css'
 
-// Default values — in a real app these would be persisted to a settings sheet
-const DEFAULTS = {
-  opportunityPhases: ['Research', 'Indentified', 'Contract Awarded'],
+// Fallback defaults used only if the Data Validation column is missing/empty
+const FALLBACKS = {
+  opportunityPhases: OPPORTUNITY_PHASES,
   activityPhases: ['Pre-RFP', 'Submitted RFI', 'RFP Released', 'Proposal Submitted', 'BAFO', 'Award Pending'],
-  outlooks: ['Expiring', 'Forecasted', 'New'],
-  priorities: ['Cold', 'Warm', 'Hot'],
-  taskStatuses: ['To Do', 'In Progress', 'Done'],
-  taskPriorities: ['Low', 'Medium', 'High'],
-  setAsides: ['-', '8A', '8AN', 'NONE', 'SBA', 'SDVOSBC', 'SDVOSBS'],
+  outlooks: OPPORTUNITY_OUTLOOK,
+  priorities: PRIORITY_VALUES,
+  setAsides: SET_ASIDE_VALUES,
   primeOrSub: ['Prime', 'Sub'],
   bidNoBid: ['Bid', 'No Bid', 'TBD'],
+  contactTypes: CONTACT_TYPES,
 }
 
-// Persist to localStorage so values survive page reload
-function loadSettings() {
-  try {
-    const saved = localStorage.getItem('tag_settings')
-    return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : { ...DEFAULTS }
-  } catch {
-    return { ...DEFAULTS }
-  }
-}
-
-export function saveSettings(settings) {
-  localStorage.setItem('tag_settings', JSON.stringify(settings))
-}
-
-export function useSettings() {
-  return loadSettings()
-}
+const SECTIONS = [
+  { key: 'opportunityPhases', label: 'Opportunity Phases (TAG Phase)' },
+  { key: 'activityPhases',    label: 'Activity Phases (Pipeline Activity)' },
+  { key: 'outlooks',          label: 'Opportunity Outlooks' },
+  { key: 'priorities',        label: 'Priority Values' },
+  { key: 'setAsides',         label: 'Set-Aside Values' },
+  { key: 'primeOrSub',        label: 'Prime or Sub Options' },
+  { key: 'bidNoBid',          label: 'Bid / No Bid Options' },
+  { key: 'contactTypes',      label: 'Contact Types' },
+]
 
 export default function Settings({ toast }) {
-  const [settings, setSettings] = useState(loadSettings)
-  const [saved, setSaved] = useState(false)
+  const { lists, loading, update } = useValidationLists()
+  const [drafts, setDrafts] = useState({})
+  const [savingKey, setSavingKey] = useState(null)
+  const [savedKey, setSavedKey] = useState(null)
 
-  const updateList = (key, index, value) => {
-    const list = [...settings[key]]
-    list[index] = value
-    setSettings({ ...settings, [key]: list })
-    setSaved(false)
+  // Initialize / refresh local drafts whenever live lists load or change,
+  // but don't clobber a section the user is actively editing.
+  useEffect(() => {
+    if (loading) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      SECTIONS.forEach(({ key }) => {
+        if (next[key] !== undefined) return // keep existing draft
+        const header = VALIDATION_KEY_MAP[key]
+        const live = lists[header]
+        next[key] = (live && live.length > 0) ? [...live] : [...FALLBACKS[key]]
+      })
+      return next
+    })
+  }, [lists, loading])
+
+  const updateItem = (key, index, value) => {
+    setDrafts((prev) => {
+      const list = [...(prev[key] || [])]
+      list[index] = value
+      return { ...prev, [key]: list }
+    })
+    setSavedKey(null)
   }
 
   const addItem = (key) => {
-    setSettings({ ...settings, [key]: [...settings[key], ''] })
-    setSaved(false)
+    setDrafts((prev) => ({ ...prev, [key]: [...(prev[key] || []), ''] }))
+    setSavedKey(null)
   }
 
   const removeItem = (key, index) => {
-    const list = settings[key].filter((_, i) => i !== index)
-    setSettings({ ...settings, [key]: list })
-    setSaved(false)
+    setDrafts((prev) => ({
+      ...prev,
+      [key]: (prev[key] || []).filter((_, i) => i !== index),
+    }))
+    setSavedKey(null)
   }
 
-  const handleSave = () => {
-    // Remove blank entries before saving
-    const cleaned = {}
-    Object.entries(settings).forEach(([k, v]) => {
-      cleaned[k] = v.filter((s) => s.trim() !== '')
-    })
-    saveSettings(cleaned)
-    setSettings(cleaned)
-    setSaved(true)
-    toast?.success('Settings saved')
+  const handleSave = async (key) => {
+    const header = VALIDATION_KEY_MAP[key]
+    const cleaned = (drafts[key] || []).map((s) => s.trim()).filter((s) => s !== '')
+    setSavingKey(key)
+    try {
+      await update(header, cleaned)
+      setDrafts((prev) => ({ ...prev, [key]: cleaned }))
+      setSavedKey(key)
+      toast?.success('Settings saved')
+    } catch (err) {
+      toast?.error(`Failed to save: ${err.message}`)
+    } finally {
+      setSavingKey(null)
+    }
   }
-
-  const SECTIONS = [
-    { key: 'opportunityPhases',  label: 'Opportunity Phases (TAG Phase)' },
-    { key: 'activityPhases',     label: 'Activity Phases (Pipeline Activity)' },
-    { key: 'outlooks',           label: 'Opportunity Outlooks' },
-    { key: 'priorities',         label: 'Priority Values' },
-    { key: 'taskStatuses',       label: 'Task Statuses' },
-    { key: 'taskPriorities',     label: 'Task Priorities' },
-    { key: 'setAsides',          label: 'Set-Aside Values' },
-    { key: 'primeOrSub',         label: 'Prime or Sub Options' },
-    { key: 'bidNoBid',           label: 'Bid / No Bid Options' },
-  ]
 
   return (
     <>
@@ -88,42 +100,52 @@ export default function Settings({ toast }) {
         showNew={false}
       />
       <div className="page-body">
-        <div className={styles.grid}>
-          {SECTIONS.map(({ key, label }) => (
-            <div key={key} className="card">
-              <div className={styles.sectionLabel}>{label}</div>
-              <div className={styles.itemList}>
-                {settings[key].map((val, i) => (
-                  <div key={i} className={styles.itemRow}>
-                    <input
-                      className="form-input"
-                      value={val}
-                      onChange={(e) => updateList(key, i, e.target.value)}
-                    />
-                    <button
-                      className="btn btn-ghost btn-icon"
-                      onClick={() => removeItem(key, i)}
-                      aria-label="Remove"
-                      title="Remove"
-                    >✕</button>
+        {loading
+          ? <div className="skeleton" style={{ height: 200 }} />
+          : (
+            <div className={styles.grid}>
+              {SECTIONS.map(({ key, label }) => (
+                <div key={key} className="card">
+                  <div className={styles.sectionLabel}>{label}</div>
+                  <div className={styles.itemList}>
+                    {(drafts[key] || []).map((val, i) => (
+                      <div key={i} className={styles.itemRow}>
+                        <input
+                          className="form-input"
+                          value={val}
+                          onChange={(e) => updateItem(key, i, e.target.value)}
+                        />
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          onClick={() => removeItem(key, i)}
+                          aria-label="Remove"
+                          title="Remove"
+                        >✕</button>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <button className={styles.addBtn} onClick={() => addItem(key)}>
-                + Add option
-              </button>
+                  <div className={styles.saveRow} style={{ paddingBottom: 0 }}>
+                    <button className={styles.addBtn} onClick={() => addItem(key)}>
+                      + Add option
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => handleSave(key)}
+                      disabled={savingKey === key}
+                    >
+                      {savingKey === key ? 'Saving…' : savedKey === key ? '✓ Saved' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-
-        <div className={styles.saveRow}>
-          <button className="btn btn-primary" onClick={handleSave}>
-            {saved ? '✓ Saved' : 'Save settings'}
-          </button>
-          <span className="text-xs text-muted">
-            Settings are stored locally in your browser.
-          </span>
-        </div>
+          )
+        }
+        <p className="text-xs text-muted">
+          These options are shared across all users and stored on the Data Validation sheet of the workbook.
+          Task statuses and task priorities are fixed and not configurable here.
+        </p>
       </div>
     </>
   )
