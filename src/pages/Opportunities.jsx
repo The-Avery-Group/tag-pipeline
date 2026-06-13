@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
+import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
@@ -35,18 +36,27 @@ const C = {
   govwin:      'GovWin Link*',
 }
 
-const PHASES = ['All', ...OPPORTUNITY_PHASES]
-
 const PHASE_BADGE = {
+  'Identified':       'badge-tracking',
   'Research':         'badge-qualify',
-  'Indentified':      'badge-proposal',
+  'Qualified':        'badge-qualify',
+  'Proposal':         'badge-proposal',
+  'Pending Award':    'badge-negotiation',
   'Contract Awarded': 'badge-award',
+  'Cancelled':        'badge-closed-lost',
 }
 
 export default function Opportunities({ toast }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { pipeline, loading, add, remove } = usePipeline()
+  const { lists } = useValidationLists()
+
+  const phaseOptions   = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const outlookOptions = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
+  const priorityOptions = pickList(lists, 'Priority', PRIORITY_VALUES)
+  const setAsideOptions = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
+  const PHASES = ['All', ...phaseOptions]
 
   const [phase, setPhase] = useState('All')
   const [sortKey, setSortKey] = useState(C.lastMod)
@@ -256,13 +266,13 @@ export default function Opportunities({ toast }) {
               <div className="form-field">
                 <label className="form-label">TAG Opportunity Phase</label>
                 <select className="form-input" value={form[C.phase]} onChange={(e) => setForm({ ...form, [C.phase]: e.target.value })}>
-                  {OPPORTUNITY_PHASES.map((p) => <option key={p}>{p}</option>)}
+                  {phaseOptions.map((p) => <option key={p}>{p}</option>)}
                 </select>
               </div>
               <div className="form-field">
                 <label className="form-label">Opportunity Outlook</label>
                 <select className="form-input" value={form[C.outlook]} onChange={(e) => setForm({ ...form, [C.outlook]: e.target.value })}>
-                  {OPPORTUNITY_OUTLOOK.map((o) => <option key={o}>{o}</option>)}
+                  {outlookOptions.map((o) => <option key={o}>{o}</option>)}
                 </select>
               </div>
               <div className="form-field">
@@ -280,13 +290,13 @@ export default function Opportunities({ toast }) {
               <div className="form-field">
                 <label className="form-label">Priority</label>
                 <select className="form-input" value={form[C.priority]} onChange={(e) => setForm({ ...form, [C.priority]: e.target.value })}>
-                  {PRIORITY_VALUES.map((p) => <option key={p}>{p}</option>)}
+                  {priorityOptions.map((p) => <option key={p}>{p}</option>)}
                 </select>
               </div>
               <div className="form-field">
                 <label className="form-label">Set-Aside</label>
                 <select className="form-input" value={form[C.setAside]} onChange={(e) => setForm({ ...form, [C.setAside]: e.target.value })}>
-                  {SET_ASIDE_VALUES.map((s) => <option key={s}>{s}</option>)}
+                  {setAsideOptions.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
               <div className="form-field">
