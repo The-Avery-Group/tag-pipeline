@@ -14,7 +14,7 @@
  */
 
 import {
-  getPipeline, getTasks, getNotes, getContacts,
+  getPipeline, getTasks, getNotes, getContacts, getValidationLists,
   invalidateAll,          // we'll add this to graphService below
 } from '@/services/graphService'
 
@@ -49,6 +49,7 @@ async function _fetchAll() {
     getTasks(),
     getNotes(),
     getContacts(),
+    getValidationLists(),
   ])
 }
 
