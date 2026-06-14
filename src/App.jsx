@@ -4,6 +4,7 @@ import { MsalProvider } from '@azure/msal-react'
 import { msalInstance } from '@/auth/msalConfig'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/hooks/useToast'
+import { useAgingNotifications } from '@/hooks/useAgingNotifications'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
 import '@/styles/global.css'
@@ -59,6 +60,7 @@ function AuthInitScreen() {
 function AppShell() {
   const { isAuthenticated, loading } = useAuth()
   const { toasts, toast } = useToast()
+  useAgingNotifications()
 
   // Only block the UI during true MSAL initialisation
   if (loading) return <AuthInitScreen />
