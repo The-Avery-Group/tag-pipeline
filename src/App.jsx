@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { MsalProvider } from '@azure/msal-react'
 import { msalInstance } from '@/auth/msalConfig'
@@ -7,11 +7,13 @@ import { useToast } from '@/hooks/useToast'
 import { useAgingNotifications } from '@/hooks/useAgingNotifications'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
+import { warmCache, startPolling, isCacheWarmed } from '@/services/dataCache'
 import '@/styles/global.css'
 
 const Dashboard         = lazy(() => import('@/pages/Dashboard'))
 const Opportunities     = lazy(() => import('@/pages/Opportunities'))
 const OpportunityDetail = lazy(() => import('@/pages/OpportunityDetail'))
+const PipelineBoard     = lazy(() => import('@/pages/PipelineBoard'))
 const Tasks             = lazy(() => import('@/pages/Tasks'))
 const Contacts          = lazy(() => import('@/pages/Contacts'))
 const Settings          = lazy(() => import('@/pages/Settings'))
@@ -60,10 +62,21 @@ function AuthInitScreen() {
 function AppShell() {
   const { isAuthenticated, loading } = useAuth()
   const { toasts, toast } = useToast()
+  const [cacheReady, setCacheReady] = useState(isCacheWarmed)
   useAgingNotifications()
 
-  // Only block the UI during true MSAL initialisation
-  if (loading) return <AuthInitScreen />
+  // After authentication, warm the cache before showing the app shell.
+  // This fills the gap between "user picked account" and "data is ready"
+  // with the same 3-dot animation instead of a blank/skeleton screen.
+  useEffect(() => {
+    if (!isAuthenticated || cacheReady) return
+    warmCache().then(() => {
+      startPolling()
+      setCacheReady(true)
+    })
+  }, [isAuthenticated, cacheReady])
+
+  if (loading || (isAuthenticated && !cacheReady)) return <AuthInitScreen />
 
   if (!isAuthenticated) {
     return (
@@ -82,6 +95,7 @@ function AppShell() {
             <Route path="/"                              element={<Dashboard toast={toast} />} />
             <Route path="/opportunities"                 element={<Opportunities toast={toast} />} />
             <Route path="/opportunities/:contractNumber" element={<OpportunityDetail toast={toast} />} />
+            <Route path="/pipeline-board"                element={<PipelineBoard toast={toast} />} />
             <Route path="/tasks"                         element={<Tasks toast={toast} />} />
             <Route path="/contacts"                      element={<Contacts toast={toast} />} />
             <Route path="/settings"                      element={<Settings toast={toast} />} />
