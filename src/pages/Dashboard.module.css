@@ -1,8 +1,9 @@
+/* ── KPI strip ── */
 .kpiGrid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .kpiCard {
@@ -14,88 +15,75 @@
 }
 .kpiCard:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 
-.kpiLabel { font-size: 11px; color: var(--gray-400); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
-.kpiValue { font-size: 26px; font-weight: 700; color: var(--gray-900); margin: 4px 0 2px; line-height: 1.1; }
-.kpiSub   { font-size: 16px; font-weight: 400; color: var(--gray-400); }
-.kpiDelta { font-size: 11px; color: var(--gray-400); }
+.kpiLabel  { font-size: 11px; color: var(--gray-400); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+.kpiValue  { font-size: 26px; font-weight: 700; color: var(--gray-900); margin: 4px 0 2px; line-height: 1.1; }
+.kpiDelta  { font-size: 11px; color: var(--gray-400); }
 .kpiDanger      { color: var(--red-600) !important; }
 .kpiDeltaDanger { color: var(--red-600) !important; }
 
-.twoCol {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
+/* ── Card chrome ── */
 .cardTitle    { font-size: 13px; font-weight: 600; color: var(--gray-900); margin-bottom: 12px; }
-.cardTitleRow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-
-/* Pie chart */
-.pieWrap {
+.cardTitleRow {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 4px 0;
+  justify-content: space-between;
+  margin-bottom: 10px;
 }
 
-.pieLegend {
+/* ── Skeletons ── */
+.chartSkeleton { height: 180px; margin: 8px 0; }
+.rowSkeleton   { height: 36px; margin-bottom: 6px; }
+
+/* ── Monday.com-style consistent rows ── */
+.consistentTable {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
-.legendItem {
+.consistentRow {
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.legendDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.chartSkeleton { height: 160px; margin: 8px 0; }
-
-.oppRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 0;
+  gap: 0;
+  padding: 7px 4px;
   border-bottom: 0.5px solid var(--gray-200);
   cursor: pointer;
   transition: background 0.1s;
   border-radius: var(--radius-sm);
-  padding-left: 4px;
 }
-.oppRow:last-child { border-bottom: none; }
-.oppRow:hover { background: var(--gray-50); }
+.consistentRow:last-child { border-bottom: none; }
+.consistentRow:hover { background: var(--gray-50); }
 
-.oppName {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.oppVal { font-size: 12px; color: var(--gray-600); flex-shrink: 0; }
-
-.rowSkeleton { height: 36px; margin-bottom: 6px; }
-
-/* Task rows */
-.taskRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
+.consistentRowHeader {
+  cursor: default;
+  padding: 4px 4px 6px;
   border-bottom: 0.5px solid var(--gray-200);
 }
-.taskRow:last-child { border-bottom: none; }
+.consistentRowHeader:hover { background: transparent; }
+.consistentRowHeader span {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
+/* Opportunity row column widths — fixed guardrails */
+.colTitle    { flex: 2; min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colPhase    { width: 110px; flex-shrink: 0; padding-right: 12px; }
+.colAgency   { width: 140px; flex-shrink: 0; font-size: 11px; color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colValue    { width: 72px; flex-shrink: 0; font-size: 11px; color: var(--gray-900); text-align: right; padding-right: 12px; }
+.colAssignee { width: 80px; flex-shrink: 0; font-size: 11px; color: var(--gray-400); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colDue      { width: 90px; flex-shrink: 0; font-size: 11px; }
+
+/* Task row column widths — fixed guardrails */
+.colTaskTitle    { flex: 2; min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colTaskContract { width: 120px; flex-shrink: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colTaskPriority { width: 72px; flex-shrink: 0; padding-right: 12px; }
+.colTaskDue      { width: 140px; flex-shrink: 0; font-size: 11px; padding-right: 12px; }
+.colTaskAssignee { width: 80px; flex-shrink: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colTaskAction   { width: 28px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+
+/* Task done button */
 .taskCheck {
   width: 18px;
   height: 18px;
@@ -112,14 +100,83 @@
   color: #fff;
   padding: 0;
 }
-.taskCheck:hover { border-color: var(--blue-600); background: var(--blue-50); }
-.taskCheckDone   { background: var(--green-600); border-color: var(--green-600); }
-.taskCheckDone:hover { background: var(--green-600); }
+.taskCheck:hover      { border-color: var(--blue-600); background: var(--blue-50); }
+.taskCheckDone        { background: var(--green-600); border-color: var(--green-600); }
+.taskCheckDone:hover  { background: var(--green-600); }
 
-.taskTitle    { font-size: 13px; font-weight: 500; }
-.taskMeta     { display: flex; align-items: center; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
-.taskContract { font-size: 11px; color: var(--gray-400); }
-.taskAssignee { font-size: 11px; color: var(--gray-400); flex-shrink: 0; }
+/* ── Tabs ── */
+.tabRow {
+  display: flex;
+  gap: 4px;
+}
 
-.dueDate        { font-size: 11px; color: var(--gray-400); }
-.dueDateOverdue { font-size: 11px; color: var(--red-600); font-weight: 500; }
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  border: 0.5px solid transparent;
+  background: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  font-family: var(--font);
+}
+.tab:hover    { background: var(--gray-100); color: var(--gray-900); }
+.tabActive    { background: var(--blue-50); color: var(--blue-800); border-color: var(--blue-200); }
+
+.tabBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--red-50);
+  color: var(--red-600);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+/* ── Agency chips ── */
+.agencyScroll {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+
+.agencyChip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: var(--gray-50);
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 8px 14px;
+  min-width: 72px;
+  transition: box-shadow 0.15s;
+}
+.agencyChip:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.06); }
+
+.agencyCount {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--blue-600);
+  line-height: 1;
+}
+
+.agencyName {
+  font-size: 10px;
+  color: var(--gray-600);
+  text-align: center;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
