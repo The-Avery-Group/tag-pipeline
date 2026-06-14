@@ -59,17 +59,29 @@ export function getGreeting(firstName) {
 // ── Phase ordering ────────────────────────────────────────────────────────
 
 export function getPhaseOrder() {
-  return ['Research', 'Indentified', 'Contract Awarded']
+  return [
+    'Identified', 'Research', 'Qualified', 'Proposal',
+    'Pending Award', 'Contract Awarded', 'Cancelled',
+  ]
 }
 
 // ── KPI computation ───────────────────────────────────────────────────────
 
-const C_PHASE  = 'TAG Opportunity Phase'
-const C_VALUE  = 'Total Contract Value ($)*'
-const C_OWNER  = 'Assigned To*'
-const C_LASTMOD = 'Last Modified*'
+const C_PHASE    = 'TAG Opportunity Phase'
+const C_VALUE    = 'Total Contract Value ($)*'
+const C_OWNER    = 'Assigned To*'
+const C_LASTMOD  = 'Last Modified*'
+const C_ENDDATE  = 'Contract End Date*'
+const C_AGENCY   = 'Agency*'
+const C_OUTLOOK  = 'Opportunity Outlook'
 
 export function computeKPIs(pipeline = [], tasks = []) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const in90Days = new Date(today)
+  in90Days.setDate(in90Days.getDate() + 90)
+
   const total  = pipeline.length
   const closed = pipeline.filter((o) => o[C_PHASE] === 'Contract Awarded').length
   const open   = total - closed
@@ -82,12 +94,44 @@ export function computeKPIs(pipeline = [], tasks = []) {
 
   const totalValueFormatted = formatCurrency(totalValueRaw)
 
-  // By phase
+  // By phase — count and total value
   const byPhase = {}
-  getPhaseOrder().forEach((p) => { byPhase[p] = 0 })
+  const byPhaseValue = {}
+  getPhaseOrder().forEach((p) => { byPhase[p] = 0; byPhaseValue[p] = 0 })
   pipeline.forEach((o) => {
     const p = o[C_PHASE]
-    if (p) byPhase[p] = (byPhase[p] || 0) + 1
+    if (!p) return
+    byPhase[p]      = (byPhase[p] || 0) + 1
+    const n = parseFloat(String(o[C_VALUE] || '0').replace(/[^0-9.]/g, ''))
+    byPhaseValue[p] = (byPhaseValue[p] || 0) + (isNaN(n) ? 0 : n)
+  })
+
+  // Expiring within 90 days (contract end date)
+  const expiringCount = pipeline.filter((o) => {
+    const d = parseLocalDate(o[C_ENDDATE])
+    if (isNaN(d.getTime())) return false
+    return d >= today && d <= in90Days
+  }).length
+
+  const expiringOpps = pipeline
+    .filter((o) => {
+      const d = parseLocalDate(o[C_ENDDATE])
+      if (isNaN(d.getTime())) return false
+      return d >= today && d <= in90Days
+    })
+    .sort((a, b) => parseLocalDate(a[C_ENDDATE]) - parseLocalDate(b[C_ENDDATE]))
+
+  // Tracked opportunities (Opportunity Outlook === 'Tracking')
+  const trackedOpps = pipeline.filter((o) => o[C_OUTLOOK] === 'Tracking')
+
+  // Agency counts (raw, no normalization)
+  const agencyCounts = {}
+  pipeline.forEach((o) => {
+    const ag = o[C_AGENCY]
+    if (ag && String(ag).trim()) {
+      const key = String(ag).trim()
+      agencyCounts[key] = (agencyCounts[key] || 0) + 1
+    }
   })
 
   // Overdue tasks
@@ -107,7 +151,11 @@ export function computeKPIs(pipeline = [], tasks = []) {
   return {
     total, open, closed,
     totalValueRaw, totalValueFormatted,
-    byPhase, overdueCount, topOwner,
+    byPhase, byPhaseValue,
+    expiringCount, expiringOpps,
+    trackedOpps,
+    agencyCounts,
+    overdueCount, topOwner,
   }
 }
 
