@@ -3,6 +3,19 @@ import { getTasks, getNotifLog, setNotifLog } from '@/services/graphService'
 import { notifyOverdueSummary, notifyDueSoonSummary } from '@/services/notifyService'
 
 const TODAY = () => new Date().toISOString().split('T')[0]
+const LS_KEY = (type) => `tag_notif_${type}`
+
+function localAlreadySentToday(type) {
+  try {
+    return localStorage.getItem(LS_KEY(type)) === TODAY()
+  } catch { return false }
+}
+
+function markLocalSentToday(type) {
+  try {
+    localStorage.setItem(LS_KEY(type), TODAY())
+  } catch {}
+}
 
 function isTomorrow(dateStr) {
   if (!dateStr) return false
@@ -23,10 +36,9 @@ function isPastDue(dateStr) {
 }
 
 /**
- * Called once in AppShell. Runs one check on mount (after a short delay
- * to allow the cache to warm), then never again in the same session.
- * Uses the DataValidationTable's Key/LastSent columns to ensure only
- * one user session per day actually sends each notification type.
+ * Called once in AppShell. Gate 1: localStorage (instant, blocks refresh
+ * re-fires). Gate 2: workbook NotifLog (shared across users/browsers).
+ * Only the first session of the day that passes both gates sends the card.
  */
 export function useAgingNotifications() {
   const ran = useRef(false)
@@ -35,34 +47,49 @@ export function useAgingNotifications() {
     if (ran.current) return
     ran.current = true
 
-    // Delay so cache has time to warm and token to resolve
+    // Skip entirely if both types already sent today in this browser
+    const overdueLocal  = localAlreadySentToday('overdue')
+    const dueSoonLocal  = localAlreadySentToday('duesoon')
+    if (overdueLocal && dueSoonLocal) return
+
     const timer = setTimeout(async () => {
       try {
-        const [allTasks, log] = await Promise.all([getTasks(), getNotifLog()])
         const today = TODAY()
+        const [allTasks, log] = await Promise.all([getTasks(), getNotifLog()])
         const active = allTasks.filter((t) => t.Status !== 'Done')
 
-        // ── Overdue summary ────────────────────────────────────────────
-        if (log['overdue'] !== today) {
-          const overdue = active.filter((t) => isPastDue(t.DueDate))
-          if (overdue.length > 0) {
-            await notifyOverdueSummary(overdue)
-            await setNotifLog('overdue', today)
+        // ── Overdue ────────────────────────────────────────────────────
+        if (!overdueLocal) {
+          if (log['overdue'] === today) {
+            // Another user already sent it today — just mark our localStorage
+            markLocalSentToday('overdue')
+          } else {
+            const overdue = active.filter((t) => isPastDue(t.DueDate))
+            if (overdue.length > 0) {
+              await notifyOverdueSummary(overdue)
+              await setNotifLog('overdue', today)
+            }
+            markLocalSentToday('overdue')
           }
         }
 
-        // ── Due-soon summary ───────────────────────────────────────────
-        if (log['duesoon'] !== today) {
-          const dueSoon = active.filter((t) => isTomorrow(t.DueDate))
-          if (dueSoon.length > 0) {
-            await notifyDueSoonSummary(dueSoon)
-            await setNotifLog('duesoon', today)
+        // ── Due soon ───────────────────────────────────────────────────
+        if (!dueSoonLocal) {
+          if (log['duesoon'] === today) {
+            markLocalSentToday('duesoon')
+          } else {
+            const dueSoon = active.filter((t) => isTomorrow(t.DueDate))
+            if (dueSoon.length > 0) {
+              await notifyDueSoonSummary(dueSoon)
+              await setNotifLog('duesoon', today)
+            }
+            markLocalSentToday('duesoon')
           }
         }
       } catch (err) {
         console.warn('[AgingNotif] Check failed:', err.message)
       }
-    }, 8000)  // 8-second delay — cache warm + token acquisition
+    }, 8000)
 
     return () => clearTimeout(timer)
   }, [])
