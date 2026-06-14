@@ -1,14 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '@/services/graphService'
-import { notifyTaskDueSoon, notifyTaskOverdue } from '@/services/notifyService'
-import { isOverdue } from '@/utils/kpiHelpers'
+import { notifyTaskCreated } from '@/services/notifyService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function useTasks(contractNumber = null) {
   const [tasks, setTasks]   = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState(null)
-  const notifiedIds = useRef(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -19,25 +17,6 @@ export function useTasks(contractNumber = null) {
         ? all.filter((t) => t.ContractNumber === contractNumber)
         : all
       setTasks(filtered)
-
-      const today    = new Date()
-      const tomorrow = new Date(today)
-      tomorrow.setDate(tomorrow.getDate() + 1)
-      filtered.forEach((t) => {
-        if (t.Status === 'Done') return
-        const key = `${t.TaskID}-${t.DueDate}`
-        if (notifiedIds.current.has(key)) return
-        if (isOverdue(t.DueDate)) {
-          notifyTaskOverdue(t).catch(() => {})
-          notifiedIds.current.add(key)
-        } else {
-          const due = new Date(t.DueDate)
-          if (!isNaN(due) && due.toDateString() === tomorrow.toDateString()) {
-            notifyTaskDueSoon(t).catch(() => {})
-            notifiedIds.current.add(key)
-          }
-        }
-      })
     } catch (err) {
       setError(err.message)
     } finally {
@@ -59,7 +38,9 @@ export function useTasks(contractNumber = null) {
           ? data.DueDate.toISOString().split('T')[0]
           : String(data.DueDate))
       : ''
-    await addTask({ ...data, DueDate: dueDate, OpportunityNotes: notes }, createdBy)
+    const taskData = { ...data, DueDate: dueDate, OpportunityNotes: notes }
+    await addTask(taskData, createdBy)
+    notifyTaskCreated({ ...taskData, CreatedBy: createdBy }).catch(() => {})
     await invalidateCache()
   }, [])
 
