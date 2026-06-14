@@ -105,38 +105,55 @@ export function notifyPhaseChange(opportunity, fromPhase, toPhase) {
   )
 }
 
-export function notifyTaskDueSoon(task) {
+export function notifyTaskCreated(task) {
   return sendCard(
     buildCard({
-      title: '⏰ Task Due Tomorrow',
+      title: '✅ New Task Created',
       subtitle: task.Title,
       facts: [
-        ['Contract', task.ContractTitle],
-        ['Contract #', task.ContractNumber],
-        ['Assigned to', task.AssignedTo],
-        ['Due date', task.DueDate],
-        ['Priority', task.Priority],
+        ['Contract', task.ContractTitle || task.ContractNumber],
+        ['Assigned to', task.AssignedTo || '—'],
+        ['Due date', task.DueDate || '—'],
+        ['Priority', task.Priority || '—'],
       ],
       deepLinkPath: `/tasks`,
-      color: 'warning',
+      color: 'good',
     })
   )
 }
 
-export function notifyTaskOverdue(task) {
+export function notifyOverdueSummary(tasks) {
+  if (!tasks.length) return Promise.resolve()
+  const shown = tasks.slice(0, 5)
+  const extra = tasks.length - shown.length
   return sendCard(
     buildCard({
-      title: '🚨 Task Overdue',
-      subtitle: task.Title,
+      title: `🚨 ${tasks.length} Overdue Task${tasks.length > 1 ? 's' : ''}`,
+      subtitle: extra > 0 ? `Showing ${shown.length} of ${tasks.length}` : `Requires immediate attention`,
       facts: [
-        ['Contract', task.ContractTitle],
-        ['Contract #', task.ContractNumber],
-        ['Assigned to', task.AssignedTo],
-        ['Was due', task.DueDate],
-        ['Priority', task.Priority],
+        ...shown.map((t) => [t.ContractTitle || t.ContractNumber, `${t.Title} · Due ${t.DueDate}`]),
+        ...(extra > 0 ? [['', `…and ${extra} more`]] : []),
       ],
       deepLinkPath: `/tasks`,
       color: 'attention',
+    })
+  )
+}
+
+export function notifyDueSoonSummary(tasks) {
+  if (!tasks.length) return Promise.resolve()
+  const shown = tasks.slice(0, 5)
+  const extra = tasks.length - shown.length
+  return sendCard(
+    buildCard({
+      title: `⏰ ${tasks.length} Task${tasks.length > 1 ? 's' : ''} Due Tomorrow`,
+      subtitle: extra > 0 ? `Showing ${shown.length} of ${tasks.length}` : `Due tomorrow`,
+      facts: [
+        ...shown.map((t) => [t.ContractTitle || t.ContractNumber, `${t.Title} · ${t.AssignedTo || 'Unassigned'}`]),
+        ...(extra > 0 ? [['', `…and ${extra} more`]] : []),
+      ],
+      deepLinkPath: `/tasks`,
+      color: 'warning',
     })
   )
 }
