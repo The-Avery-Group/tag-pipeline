@@ -32,23 +32,85 @@
 
 /* ── Skeletons ── */
 .chartSkeleton { height: 180px; margin: 8px 0; }
-.rowSkeleton   { height: 36px; margin-bottom: 6px; }
+.rowSkeleton   { height: 36px; margin-bottom: 6px; border-radius: var(--radius-md); }
+
+/* ── Responsive bar chart ── */
+.barChart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.barRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.barLabel {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--gray-600);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.barTrack {
+  flex: 1;
+  height: 20px;
+  background: var(--gray-100);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+  min-width: 4px;
+}
+
+.barCount {
+  width: 24px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-900);
+  text-align: right;
+}
+
+.barValue {
+  width: 52px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--gray-400);
+  text-align: right;
+}
 
 /* ── Monday.com-style consistent rows ── */
 .consistentTable {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
 }
 
 .consistentRow {
   display: flex;
   align-items: center;
-  gap: 0;
   padding: 7px 4px;
   border-bottom: 0.5px solid var(--gray-200);
   cursor: pointer;
   transition: background 0.1s;
   border-radius: var(--radius-sm);
+  min-width: 0;
 }
 .consistentRow:last-child { border-bottom: none; }
 .consistentRow:hover { background: var(--gray-50); }
@@ -67,16 +129,17 @@
   letter-spacing: 0.04em;
 }
 
-/* Opportunity row column widths — fixed guardrails */
+/* Opportunity row — fixed guardrail columns */
 .colTitle    { flex: 2; min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
 .colPhase    { width: 110px; flex-shrink: 0; padding-right: 12px; }
 .colAgency   { width: 140px; flex-shrink: 0; font-size: 11px; color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+.colAgencyFull { flex: 1; min-width: 0; font-size: 11px; color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
 .colValue    { width: 72px; flex-shrink: 0; font-size: 11px; color: var(--gray-900); text-align: right; padding-right: 12px; }
 .colAssignee { width: 80px; flex-shrink: 0; font-size: 11px; color: var(--gray-400); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
 .colDue      { width: 90px; flex-shrink: 0; font-size: 11px; }
 
-/* Task row column widths — fixed guardrails */
-.colTaskTitle    { flex: 2; min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+/* Task row — reduced title flex, fixed guardrails */
+.colTaskTitle    { flex: 1.75; min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
 .colTaskContract { width: 120px; flex-shrink: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
 .colTaskPriority { width: 72px; flex-shrink: 0; padding-right: 12px; }
 .colTaskDue      { width: 140px; flex-shrink: 0; font-size: 11px; padding-right: 12px; }
@@ -125,8 +188,8 @@
   transition: background 0.12s, color 0.12s;
   font-family: var(--font);
 }
-.tab:hover    { background: var(--gray-100); color: var(--gray-900); }
-.tabActive    { background: var(--blue-50); color: var(--blue-800); border-color: var(--blue-200); }
+.tab:hover  { background: var(--gray-100); color: var(--gray-900); }
+.tabActive  { background: var(--blue-50); color: var(--blue-800); border-color: var(--blue-200); }
 
 .tabBadge {
   display: inline-flex;
@@ -142,41 +205,49 @@
   padding: 0 4px;
 }
 
-/* ── Agency chips ── */
-.agencyScroll {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 4px 0;
-}
-
-.agencyChip {
+/* ── Agency list ── */
+.agencyList {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  background: var(--gray-50);
-  border: 0.5px solid var(--gray-200);
-  border-radius: var(--radius-md);
-  padding: 8px 14px;
-  min-width: 72px;
-  transition: box-shadow 0.15s;
+  width: 100%;
 }
-.agencyChip:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.06); }
 
-.agencyCount {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--blue-600);
-  line-height: 1;
+.agencyListHeader {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px 6px;
+  border-bottom: 0.5px solid var(--gray-200);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
+
+.agencyRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px;
+  border-bottom: 0.5px solid var(--gray-200);
+  transition: background 0.1s;
+}
+.agencyRow:last-child { border-bottom: none; }
+.agencyRow:hover { background: var(--gray-50); }
 
 .agencyName {
-  font-size: 10px;
-  color: var(--gray-600);
-  text-align: center;
-  max-width: 100px;
+  font-size: 12px;
+  color: var(--gray-900);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  padding-right: 12px;
+}
+
+.agencyCount {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue-600);
+  flex-shrink: 0;
 }
