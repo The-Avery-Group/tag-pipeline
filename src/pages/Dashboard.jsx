@@ -56,45 +56,34 @@ function KpiCard({ label, value, sub, danger }) {
   )
 }
 
-// Horizontal bar chart — pure SVG, no deps
+// Responsive CSS bar chart — no SVG, fills card width naturally
 function PhaseBarChart({ byPhase, byPhaseValue }) {
   const entries = Object.entries(byPhase).filter(([, v]) => v > 0)
   if (!entries.length) return <p className="text-sm text-muted">No data</p>
 
   const maxCount = Math.max(...entries.map(([, v]) => v))
-  const BAR_MAX_W = 340
-  const ROW_H = 32
-  const LABEL_W = 120
-  const COUNT_W = 32
-  const svgH = entries.length * ROW_H + 8
 
   return (
-    <svg viewBox={`0 0 ${LABEL_W + BAR_MAX_W + COUNT_W + 16} ${svgH}`}
-      style={{ width: '100%', height: svgH }}>
-      {entries.map(([phase, count], i) => {
-        const barW = maxCount > 0 ? (count / maxCount) * BAR_MAX_W : 0
-        const y = i * ROW_H
+    <div className={styles.barChart}>
+      {entries.map(([phase, count]) => {
+        const pct = maxCount > 0 ? (count / maxCount) * 100 : 0
         const color = PHASE_COLORS[phase] || '#85B7EB'
         const val = byPhaseValue[phase] ? formatCurrency(byPhaseValue[phase]) : ''
         return (
-          <g key={phase}>
-            <text x={LABEL_W - 6} y={y + ROW_H / 2 + 1}
-              textAnchor="end" dominantBaseline="middle"
-              fontSize="11" fill="var(--gray-600)">{phase}</text>
-            <rect x={LABEL_W} y={y + 6} width={Math.max(barW, 2)} height={ROW_H - 12}
-              rx="3" fill={color} />
-            <text x={LABEL_W + barW + 6} y={y + ROW_H / 2 + 1}
-              dominantBaseline="middle" fontSize="11" fontWeight="600"
-              fill="var(--gray-900)">{count}</text>
-            {val && (
-              <text x={LABEL_W + barW + COUNT_W + 10} y={y + ROW_H / 2 + 1}
-                dominantBaseline="middle" fontSize="10"
-                fill="var(--gray-400)">{val}</text>
-            )}
-          </g>
+          <div key={phase} className={styles.barRow}>
+            <span className={styles.barLabel}>{phase}</span>
+            <div className={styles.barTrack}>
+              <div
+                className={styles.barFill}
+                style={{ width: `${pct}%`, background: color }}
+              />
+            </div>
+            <span className={styles.barCount}>{count}</span>
+            {val && <span className={styles.barValue}>{val}</span>}
+          </div>
         )
       })}
-    </svg>
+    </div>
   )
 }
 
@@ -111,10 +100,6 @@ function OppRow({ opp, onClick }) {
       </span>
       <span className={styles.colAgency}>{opp[C.agency] || '—'}</span>
       <span className={styles.colValue}>{value ? formatCurrency(value) : '—'}</span>
-      <span className={styles.colAssignee}>{opp[C.assignedTo] || '—'}</span>
-      <span className={`${styles.colDue} ${isOverdue(opp[C.submDate]) ? 'text-danger' : 'text-muted'}`}>
-        {formatDate(opp[C.submDate])}
-      </span>
     </div>
   )
 }
@@ -126,8 +111,6 @@ function OppRowHeader() {
       <span className={styles.colPhase}>Phase</span>
       <span className={styles.colAgency}>Agency</span>
       <span className={styles.colValue}>Value</span>
-      <span className={styles.colAssignee}>Assigned to</span>
-      <span className={styles.colDue}>Due</span>
     </div>
   )
 }
@@ -178,12 +161,31 @@ function TaskRowHeader() {
   )
 }
 
-// Agency chip card
-function AgencyChip({ name, count }) {
+// Clean agency list row
+function AgencyRow({ name, count }) {
   return (
-    <div className={styles.agencyChip}>
-      <div className={styles.agencyCount}>{count}</div>
-      <div className={styles.agencyName}>{name}</div>
+    <div className={styles.agencyRow}>
+      <span className={styles.agencyName}>{name}</span>
+      <span className={styles.agencyCount}>{count}</span>
+    </div>
+  )
+}
+
+// Tracked opportunity — name + agency only
+function TrackedOppRow({ opp, onClick }) {
+  return (
+    <div className={styles.consistentRow} onClick={onClick}>
+      <span className={styles.colTitle}>{opp[C.title]}</span>
+      <span className={styles.colAgencyFull}>{opp[C.agency] || '—'}</span>
+    </div>
+  )
+}
+
+function TrackedOppRowHeader() {
+  return (
+    <div className={`${styles.consistentRow} ${styles.consistentRowHeader}`}>
+      <span className={styles.colTitle}>Opportunity</span>
+      <span className={styles.colAgencyFull}>Agency</span>
     </div>
   )
 }
@@ -196,7 +198,9 @@ export default function Dashboard({ toast }) {
   const { pipeline, loading: pLoading } = usePipeline()
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
   const [closingTask, setClosingTask] = useState(null)
-  const [taskTab, setTaskTab] = useState('overdue') // 'overdue' | 'active'
+  const [taskTab, setTaskTab] = useState('overdue')
+  const initialPLoad = pLoading && pipeline.length === 0
+  const initialTLoad = tLoading && tasks.length === 0
 
   const kpis = useMemo(() => computeKPIs(pipeline, tasks), [pipeline, tasks])
 
@@ -281,23 +285,23 @@ export default function Dashboard({ toast }) {
         <div className={styles.kpiGrid}>
           <KpiCard
             label="Total opportunities"
-            value={pLoading ? '—' : kpis.total}
+            value={initialPLoad ? '—' : kpis.total}
             sub={`${kpis.open} open · ${kpis.closed} awarded`}
           />
           <KpiCard
             label="Pipeline value"
-            value={pLoading ? '—' : kpis.totalValueFormatted}
+            value={initialPLoad ? '—' : kpis.totalValueFormatted}
             sub="Active opportunities"
           />
           <KpiCard
             label="Expiring ≤ 90 days"
-            value={pLoading ? '—' : kpis.expiringCount}
+            value={initialPLoad ? '—' : kpis.expiringCount}
             sub={kpis.expiringCount > 0 ? 'Review recompetes' : 'None expiring soon'}
             danger={kpis.expiringCount > 0}
           />
           <KpiCard
             label="Overdue tasks"
-            value={tLoading ? '—' : kpis.overdueCount}
+            value={initialTLoad ? '—' : kpis.overdueCount}
             sub={kpis.overdueCount > 0 ? 'Needs attention' : 'All on track'}
             danger={kpis.overdueCount > 0}
           />
@@ -308,7 +312,7 @@ export default function Dashboard({ toast }) {
           <div className={styles.cardTitleRow}>
             <div className={styles.cardTitle}>Pipeline by phase</div>
           </div>
-          {pLoading
+          {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} />
             : <PhaseBarChart byPhase={kpis.byPhase} byPhaseValue={kpis.byPhaseValue} />
           }
@@ -321,7 +325,7 @@ export default function Dashboard({ toast }) {
             <button className="btn btn-ghost text-sm"
               onClick={() => navigate('/opportunities')}>View all →</button>
           </div>
-          {pLoading
+          {initialPLoad
             ? [1, 2, 3].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
             : recentOpps.length === 0
               ? <p className="text-sm text-muted">No opportunities yet.</p>
@@ -340,17 +344,21 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* ── Row 4: Top agencies (full width, horizontal scroll) ── */}
+        {/* ── Row 4: Top agencies (full width, clean list) ── */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div className={styles.cardTitle}>Opportunities by agency</div>
-          {pLoading
+          {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} style={{ height: 80 }} />
             : sortedAgencies.length === 0
               ? <p className="text-sm text-muted">No agency data.</p>
               : (
-                <div className={styles.agencyScroll}>
+                <div className={styles.agencyList}>
+                  <div className={styles.agencyListHeader}>
+                    <span>Agency</span>
+                    <span>Opportunities</span>
+                  </div>
                   {sortedAgencies.map(([name, count]) => (
-                    <AgencyChip key={name} name={name} count={count} />
+                    <AgencyRow key={name} name={name} count={count} />
                   ))}
                 </div>
               )
@@ -383,7 +391,7 @@ export default function Dashboard({ toast }) {
             <button className="btn btn-ghost text-sm"
               onClick={() => navigate('/tasks')}>View all →</button>
           </div>
-          {tLoading
+          {initialTLoad
             ? [1, 2, 3].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
             : displayedTasks.length === 0
               ? <p className="text-sm text-muted" style={{ padding: '8px 0' }}>
@@ -412,7 +420,7 @@ export default function Dashboard({ toast }) {
             <button className="btn btn-ghost text-sm"
               onClick={() => navigate('/opportunities')}>View all →</button>
           </div>
-          {pLoading
+          {initialPLoad
             ? [1, 2].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
             : (kpis.trackedOpps || []).length === 0
               ? <p className="text-sm text-muted">
@@ -420,9 +428,9 @@ export default function Dashboard({ toast }) {
                 </p>
               : (
                 <div className={styles.consistentTable}>
-                  <OppRowHeader />
+                  <TrackedOppRowHeader />
                   {(kpis.trackedOpps || []).map((opp) => (
-                    <OppRow
+                    <TrackedOppRow
                       key={opp[C.contractNum]}
                       opp={opp}
                       onClick={() => navigate(`/opportunities/${encodeURIComponent(opp[C.contractNum])}`)}
