@@ -41,6 +41,15 @@ export function usePipeline() {
 
   const update = useCallback(async (rowIndex, patch, original) => {
     const phaseCol = 'TAG Opportunity Phase'
+
+    // Optimistic update — apply patch to local state immediately so
+    // the UI reflects the change before the API call completes
+    setPipeline((prev) =>
+      prev.map((opp) =>
+        opp._rowIndex === rowIndex ? { ...opp, ...patch } : opp
+      )
+    )
+
     if (
       patch[phaseCol] && original?.[phaseCol] &&
       patch[phaseCol] !== original[phaseCol] &&
@@ -50,8 +59,19 @@ export function usePipeline() {
       notifyPhaseChange({ ...original, ...patch }, original[phaseCol], patch[phaseCol])
         .finally(() => { notifyLock.current = false })
     }
-    await updateOpportunity(rowIndex, patch)
-    await invalidateCache()
+
+    try {
+      await updateOpportunity(rowIndex, patch)
+      await invalidateCache()
+    } catch (err) {
+      // Roll back optimistic update on failure
+      setPipeline((prev) =>
+        prev.map((opp) =>
+          opp._rowIndex === rowIndex ? { ...opp, ...original } : opp
+        )
+      )
+      throw err
+    }
   }, [])
 
   const remove = useCallback(async (rowIndex) => {
