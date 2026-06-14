@@ -406,6 +406,57 @@ export const VALIDATION_KEY_MAP = {
 }
 
 
+// ── Notification log (Key / LastSent columns on DataValidationTable) ───────
+// Valid keys: 'overdue' | 'duesoon'
+
+export async function getNotifLog() {
+  try {
+    const rows = await getSheetRows(VALIDATION_TABLE)
+    const log = {}
+    rows.forEach((r) => {
+      if (r['Key']) log[String(r['Key']).trim()] = String(r['LastSent'] || '').trim()
+    })
+    return log          // e.g. { overdue: '2026-06-13', duesoon: '2026-06-12' }
+  } catch {
+    return {}           // graceful fallback if columns don't exist yet
+  }
+}
+
+export async function setNotifLog(key, dateStr) {
+  try {
+    const headerData = await graphFetch(`/tables/${VALIDATION_TABLE}/columns`)
+    const headers = headerData.value.map((c) => c.name)
+    const keyColIdx     = headers.indexOf('Key')
+    const lastSentColIdx = headers.indexOf('LastSent')
+    if (keyColIdx === -1 || lastSentColIdx === -1) return  // columns not set up yet
+
+    const rows = await getSheetRows(VALIDATION_TABLE)
+    const rowIdx = rows.findIndex((r) => String(r['Key'] || '').trim() === key)
+    if (rowIdx === -1) {
+      // Key row doesn't exist yet — find first blank Key cell and write there
+      const blankIdx = rows.findIndex((r) => !r['Key'] || String(r['Key']).trim() === '')
+      const targetRow = (blankIdx !== -1 ? blankIdx : rows.length) + 2  // +2: 1-based + header
+      const keyLetter      = colIndexToLetter(keyColIdx)
+      const lastSentLetter = colIndexToLetter(lastSentColIdx)
+      await graphFetch(
+        `/worksheets/${encodeURIComponent(VALIDATION_SHEET)}/range(address='${keyLetter}${targetRow}:${lastSentLetter}${targetRow}')`,
+        { method: 'PATCH', body: JSON.stringify({ values: [[key, dateStr]] }) }
+      )
+    } else {
+      // Update the existing LastSent cell for this key
+      const targetRow = rowIdx + 2
+      const lastSentLetter = colIndexToLetter(lastSentColIdx)
+      await graphFetch(
+        `/worksheets/${encodeURIComponent(VALIDATION_SHEET)}/range(address='${lastSentLetter}${targetRow}')`,
+        { method: 'PATCH', body: JSON.stringify({ values: [[dateStr]] }) }
+      )
+    }
+    invalidate(VALIDATION_TABLE)
+  } catch (err) {
+    console.warn('[NotifLog] Failed to write:', err.message)
+  }
+}
+
 export async function getPipeline() {
   return getSheetRows('PipelineTable')
 }
