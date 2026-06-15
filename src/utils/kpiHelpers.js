@@ -74,6 +74,43 @@ const C_LASTMOD  = 'Last Modified*'
 const C_ENDDATE  = 'Contract End Date*'
 const C_AGENCY   = 'Agency*'
 const C_OUTLOOK  = 'Opportunity Outlook'
+const C_ACTPHASE = 'TAG Pipeline Activity Phase'
+const C_SUBMDATE = 'Submission Date (Response Date)*'
+
+// ── RFI by month ──────────────────────────────────────────────────────────
+
+/**
+ * Returns last 6 calendar months (including current) as an array of
+ * { label: 'Jan 25', count: N } objects, zero-filled for empty months.
+ * Counts opportunities where TAG Pipeline Activity Phase === 'Submitted RFI'
+ * using Submission Date (Response Date)* as the month reference.
+ */
+export function computeRFIByMonth(pipeline = []) {
+  const months = []
+  const now = new Date()
+
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    months.push({
+      year:  d.getFullYear(),
+      month: d.getMonth(),   // 0-based
+      label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+      count: 0,
+    })
+  }
+
+  pipeline.forEach((o) => {
+    if (o[C_ACTPHASE] !== 'Submitted RFI') return
+    const d = parseLocalDate(o[C_SUBMDATE])
+    if (isNaN(d.getTime())) return
+    const bucket = months.find(
+      (m) => m.year === d.getFullYear() && m.month === d.getMonth()
+    )
+    if (bucket) bucket.count++
+  })
+
+  return months
+}
 
 export function computeKPIs(pipeline = [], tasks = []) {
   const today = new Date()
