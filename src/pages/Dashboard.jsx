@@ -92,70 +92,95 @@ function RFILineChart({ data }) {
   if (!data || data.length === 0) return <p className="text-sm text-muted">No data</p>
 
   const maxCount = Math.max(...data.map((d) => d.count), 1)
-  const PAD_T = 16   // top padding
-  const PAD_B = 28   // bottom (for labels)
-  const PAD_L = 0    // no left padding — labels sit below points
-  const PAD_R = 0
-  const H     = 120
-  const W     = 600  // viewBox width — scales with container via width:100%
+
+  const W      = 600
+  const H      = 140
+  const PAD_L  = 12
+  const PAD_R  = 12
+  const PAD_T  = 24   // room for count labels above points
+  const PAD_B  = 24   // room for month labels below
   const innerW = W - PAD_L - PAD_R
   const innerH = H - PAD_T - PAD_B
 
-  const points = data.map((d, i) => ({
-    x: PAD_L + (i / (data.length - 1)) * innerW,
-    y: PAD_T + innerH - (maxCount > 0 ? (d.count / maxCount) * innerH : 0),
+  const pts = data.map((d, i) => ({
+    x: PAD_L + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW),
+    y: PAD_T + innerH - (d.count / maxCount) * innerH,
     count: d.count,
     label: d.label,
   }))
 
-  const pathD = points
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+  const linePath = pts
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`)
     .join(' ')
 
-  // Filled area under the line
-  const areaD = `${pathD} L${points[points.length - 1].x.toFixed(1)},${(PAD_T + innerH).toFixed(1)} L${PAD_L},${(PAD_T + innerH).toFixed(1)} Z`
+  const areaPath =
+    linePath +
+    ` L${pts[pts.length - 1].x.toFixed(2)},${(PAD_T + innerH).toFixed(2)}` +
+    ` L${pts[0].x.toFixed(2)},${(PAD_T + innerH).toFixed(2)} Z`
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      style={{ width: '100%', height: H, display: 'block', overflow: 'visible' }}
+      style={{ width: '100%', height: H, display: 'block' }}
     >
       <defs>
-        <linearGradient id="rfiGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="var(--blue-600)" stopOpacity="0.15" />
-          <stop offset="100%" stopColor="var(--blue-600)" stopOpacity="0"    />
+        <linearGradient id="rfiAreaGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor="var(--blue-600)" stopOpacity="0.12" />
+          <stop offset="100%" stopColor="var(--blue-600)" stopOpacity="0" />
         </linearGradient>
+        <clipPath id="rfiClip">
+          <rect x={PAD_L} y={PAD_T} width={innerW} height={innerH} />
+        </clipPath>
       </defs>
 
-      {/* Grid lines */}
-      {[0, 0.5, 1].map((frac) => {
-        const y = PAD_T + innerH * (1 - frac)
+      {/* Subtle horizontal grid lines */}
+      {[0, 0.5, 1].map((f) => {
+        const y = PAD_T + innerH * (1 - f)
         return (
-          <line key={frac} x1={PAD_L} x2={W - PAD_R} y1={y} y2={y}
-            stroke="var(--gray-200)" strokeWidth="0.5" />
+          <line key={f}
+            x1={PAD_L} x2={PAD_L + innerW}
+            y1={y.toFixed(2)} y2={y.toFixed(2)}
+            stroke="var(--gray-200)" strokeWidth="0.5"
+          />
         )
       })}
 
-      {/* Filled area */}
-      <path d={areaD} fill="url(#rfiGrad)" />
+      {/* Area fill clipped to chart bounds */}
+      <g clipPath="url(#rfiClip)">
+        <path d={areaPath} fill="url(#rfiAreaGrad)" />
+      </g>
 
       {/* Line */}
-      <path d={pathD} fill="none" stroke="var(--blue-600)" strokeWidth="2"
-        strokeLinejoin="round" strokeLinecap="round" />
+      <path d={linePath} fill="none"
+        stroke="var(--blue-600)" strokeWidth="1.8"
+        strokeLinejoin="round" strokeLinecap="round"
+      />
 
-      {/* Data points + labels */}
-      {points.map((p, i) => (
+      {/* Points, count labels, month labels */}
+      {pts.map((p, i) => (
         <g key={i}>
-          <circle cx={p.x} cy={p.y} r="4" fill="#fff" stroke="var(--blue-600)" strokeWidth="2" />
+          {/* Count above point — only when > 0 */}
           {p.count > 0 && (
-            <text x={p.x} y={p.y - 8} textAnchor="middle"
-              fontSize="11" fontWeight="600" fill="var(--blue-600)">
+            <text
+              x={p.x.toFixed(2)} y={(p.y - 7).toFixed(2)}
+              textAnchor="middle" dominantBaseline="auto"
+              fontSize="10" fontWeight="600" fill="var(--blue-600)"
+            >
               {p.count}
             </text>
           )}
-          <text x={p.x} y={PAD_T + innerH + 16} textAnchor="middle"
-            fontSize="11" fill="var(--gray-400)">
+          {/* Point circle — 2px radius (50% of original 4px) */}
+          <circle
+            cx={p.x.toFixed(2)} cy={p.y.toFixed(2)}
+            r="2"
+            fill="#fff" stroke="var(--blue-600)" strokeWidth="1.5"
+          />
+          {/* Month label below chart */}
+          <text
+            x={p.x.toFixed(2)} y={(PAD_T + innerH + 16).toFixed(2)}
+            textAnchor="middle" dominantBaseline="auto"
+            fontSize="10" fill="var(--gray-400)"
+          >
             {p.label}
           </text>
         </g>
