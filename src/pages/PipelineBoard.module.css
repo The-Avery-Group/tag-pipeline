@@ -118,7 +118,7 @@
 .colTitle    { flex: 2; min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 16px; color: var(--gray-900); }
 .colAgency   { width: 150px; flex-shrink: 0; font-size: 11px; color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 16px; }
 .colValue    { width: 80px; flex-shrink: 0; font-size: 11px; color: var(--gray-900); padding-right: 16px; }
-.colActivity { width: 160px; flex-shrink: 0; padding-right: 16px; }
+.colActivity { width: 180px; flex-shrink: 0; padding-right: 16px; }
 .colMove     { width: 150px; flex-shrink: 0; }
 
 /* ── Move dropdown ── */
