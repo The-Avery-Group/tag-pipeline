@@ -88,13 +88,18 @@ const C_SUBMDATE = 'Submission Date (Response Date)*'
 export function computeRFIByMonth(pipeline = []) {
   const months = []
   const now = new Date()
+  const currentYear = now.getFullYear()
 
   for (let i = 5; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const year = d.getFullYear()
+    const monthName = d.toLocaleDateString('en-US', { month: 'long' })
+    // Show year only when it differs from the current year (boundary crossing)
+    const label = year !== currentYear ? `${monthName} ${year}` : monthName
     months.push({
-      year:  d.getFullYear(),
-      month: d.getMonth(),   // 0-based
-      label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+      year,
+      month: d.getMonth(),
+      label,
       count: 0,
     })
   }
