@@ -49,8 +49,15 @@ const C = {
   classification: 'Contract Classification*',
 }
 
-const PHASE_BADGE = {
-  'Identified':       'badge-tracking',
+// Ensure external links always have a protocol so they don't resolve as relative paths
+function safeUrl(url) {
+  if (!url) return '#'
+  const s = String(url).trim()
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('//')) return s
+  return `https://${s}`
+}
+
+const PHASE_BADGE = {  'Identified':       'badge-tracking',
   'Research':         'badge-qualify',
   'Qualified':        'badge-qualify',
   'Proposal':         'badge-proposal',
@@ -325,7 +332,7 @@ export default function OpportunityDetail({ toast }) {
                       [C.slideDeck,  '📊 Slide Deck ↗'],
                       [C.otherLinks, '🔗 Other Link ↗'],
                     ].map(([key, label]) => cur[key] && (
-                      <a key={key} href={cur[key]} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
+                      <a key={key} href={safeUrl(cur[key])} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
                     ))}
                   </div>
                 )
