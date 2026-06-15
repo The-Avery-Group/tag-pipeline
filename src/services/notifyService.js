@@ -105,6 +105,48 @@ export function notifyPhaseChange(opportunity, fromPhase, toPhase) {
   )
 }
 
+export function notifyRFIFollowUp(opportunities) {
+  if (!opportunities.length) return Promise.resolve()
+  const shown = opportunities.slice(0, 5)
+  const extra = opportunities.length - shown.length
+  return sendCard(
+    buildCard({
+      title: `📋 ${opportunities.length} RFI Follow-Up${opportunities.length > 1 ? 's' : ''} Due`,
+      subtitle: '3 weeks since submission — follow up recommended',
+      facts: [
+        ...shown.map((o) => [
+          o['Agency*'] || o['Contract Number / Notice ID'] || '—',
+          o['Project Title / Description*'] || '—',
+        ]),
+        ...(extra > 0 ? [['', `…and ${extra} more`]] : []),
+      ],
+      deepLinkPath: `/opportunities`,
+      color: 'warning',
+    })
+  )
+}
+
+export function notifyStaleOpportunities(opportunities) {
+  if (!opportunities.length) return Promise.resolve()
+  const shown = opportunities.slice(0, 5)
+  const extra = opportunities.length - shown.length
+  return sendCard(
+    buildCard({
+      title: `⚠️ ${opportunities.length} Stale Opportunit${opportunities.length > 1 ? 'ies' : 'y'}`,
+      subtitle: 'No activity in the past 7 days',
+      facts: [
+        ...shown.map((o) => [
+          o['TAG Opportunity Phase'] || '—',
+          o['Project Title / Description*'] || '—',
+        ]),
+        ...(extra > 0 ? [['', `…and ${extra} more`]] : []),
+      ],
+      deepLinkPath: `/opportunities`,
+      color: 'warning',
+    })
+  )
+}
+
 export function notifyTaskCreated(task) {
   return sendCard(
     buildCard({
