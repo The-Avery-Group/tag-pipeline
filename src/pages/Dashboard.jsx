@@ -87,27 +87,80 @@ function PhaseBarChart({ byPhase, byPhaseValue }) {
   )
 }
 
-// RFI submissions per month — last 6 months, zero-filled
-function RFIBarChart({ data }) {
+// RFI submissions per month — last 6 months, line chart
+function RFILineChart({ data }) {
+  if (!data || data.length === 0) return <p className="text-sm text-muted">No data</p>
+
   const maxCount = Math.max(...data.map((d) => d.count), 1)
+  const PAD_T = 16   // top padding
+  const PAD_B = 28   // bottom (for labels)
+  const PAD_L = 0    // no left padding — labels sit below points
+  const PAD_R = 0
+  const H     = 120
+  const W     = 600  // viewBox width — scales with container via width:100%
+  const innerW = W - PAD_L - PAD_R
+  const innerH = H - PAD_T - PAD_B
+
+  const points = data.map((d, i) => ({
+    x: PAD_L + (i / (data.length - 1)) * innerW,
+    y: PAD_T + innerH - (maxCount > 0 ? (d.count / maxCount) * innerH : 0),
+    count: d.count,
+    label: d.label,
+  }))
+
+  const pathD = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+    .join(' ')
+
+  // Filled area under the line
+  const areaD = `${pathD} L${points[points.length - 1].x.toFixed(1)},${(PAD_T + innerH).toFixed(1)} L${PAD_L},${(PAD_T + innerH).toFixed(1)} Z`
+
   return (
-    <div className={styles.barChart}>
-      {data.map(({ label, count }) => {
-        const pct = (count / maxCount) * 100
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: H, display: 'block', overflow: 'visible' }}
+    >
+      <defs>
+        <linearGradient id="rfiGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor="var(--blue-600)" stopOpacity="0.15" />
+          <stop offset="100%" stopColor="var(--blue-600)" stopOpacity="0"    />
+        </linearGradient>
+      </defs>
+
+      {/* Grid lines */}
+      {[0, 0.5, 1].map((frac) => {
+        const y = PAD_T + innerH * (1 - frac)
         return (
-          <div key={label} className={styles.barRow}>
-            <span className={styles.barLabel}>{label}</span>
-            <div className={styles.barTrack}>
-              <div
-                className={styles.barFill}
-                style={{ width: `${pct}%`, background: 'var(--blue-200)' }}
-              />
-            </div>
-            <span className={styles.barCount}>{count}</span>
-          </div>
+          <line key={frac} x1={PAD_L} x2={W - PAD_R} y1={y} y2={y}
+            stroke="var(--gray-200)" strokeWidth="0.5" />
         )
       })}
-    </div>
+
+      {/* Filled area */}
+      <path d={areaD} fill="url(#rfiGrad)" />
+
+      {/* Line */}
+      <path d={pathD} fill="none" stroke="var(--blue-600)" strokeWidth="2"
+        strokeLinejoin="round" strokeLinecap="round" />
+
+      {/* Data points + labels */}
+      {points.map((p, i) => (
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r="4" fill="#fff" stroke="var(--blue-600)" strokeWidth="2" />
+          {p.count > 0 && (
+            <text x={p.x} y={p.y - 8} textAnchor="middle"
+              fontSize="11" fontWeight="600" fill="var(--blue-600)">
+              {p.count}
+            </text>
+          )}
+          <text x={p.x} y={PAD_T + innerH + 16} textAnchor="middle"
+            fontSize="11" fill="var(--gray-400)">
+            {p.label}
+          </text>
+        </g>
+      ))}
+    </svg>
   )
 }
 
@@ -375,7 +428,7 @@ export default function Dashboard({ toast }) {
           </div>
           {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} />
-            : <RFIBarChart data={rfiData} />
+            : <RFILineChart data={rfiData} />
           }
         </div>
 
