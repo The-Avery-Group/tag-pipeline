@@ -95,10 +95,10 @@ function RFILineChart({ data }) {
 
   const W      = 600
   const H      = 140
-  const PAD_L  = 12
-  const PAD_R  = 12
-  const PAD_T  = 24   // room for count labels above points
-  const PAD_B  = 24   // room for month labels below
+  const PAD_L  = 0    // card padding (14px 16px) handles outer spacing
+  const PAD_R  = 0
+  const PAD_T  = 20   // room for count labels above points
+  const PAD_B  = 20   // room for month labels below
   const innerW = W - PAD_L - PAD_R
   const innerH = H - PAD_T - PAD_B
 
@@ -133,19 +133,7 @@ function RFILineChart({ data }) {
         </clipPath>
       </defs>
 
-      {/* Subtle horizontal grid lines */}
-      {[0, 0.5, 1].map((f) => {
-        const y = PAD_T + innerH * (1 - f)
-        return (
-          <line key={f}
-            x1={PAD_L} x2={PAD_L + innerW}
-            y1={y.toFixed(2)} y2={y.toFixed(2)}
-            stroke="var(--gray-200)" strokeWidth="0.5"
-          />
-        )
-      })}
-
-      {/* Area fill clipped to chart bounds */}
+      {/* Area fill */}
       <g clipPath="url(#rfiClip)">
         <path d={areaPath} fill="url(#rfiAreaGrad)" />
       </g>
@@ -159,27 +147,25 @@ function RFILineChart({ data }) {
       {/* Points, count labels, month labels */}
       {pts.map((p, i) => (
         <g key={i}>
-          {/* Count above point — only when > 0 */}
           {p.count > 0 && (
             <text
               x={p.x.toFixed(2)} y={(p.y - 7).toFixed(2)}
               textAnchor="middle" dominantBaseline="auto"
-              fontSize="10" fontWeight="600" fill="var(--blue-600)"
+              fontSize="11" fontWeight="600" fill="var(--blue-600)"
             >
               {p.count}
             </text>
           )}
-          {/* Point circle — 2px radius (50% of original 4px) */}
           <circle
             cx={p.x.toFixed(2)} cy={p.y.toFixed(2)}
             r="2"
             fill="#fff" stroke="var(--blue-600)" strokeWidth="1.5"
           />
-          {/* Month label below chart */}
+          {/* Month label — matches barLabel: 11px, var(--gray-600) */}
           <text
-            x={p.x.toFixed(2)} y={(PAD_T + innerH + 16).toFixed(2)}
+            x={p.x.toFixed(2)} y={(PAD_T + innerH + 14).toFixed(2)}
             textAnchor="middle" dominantBaseline="auto"
-            fontSize="10" fill="var(--gray-400)"
+            fontSize="11" fill="var(--gray-600)"
           >
             {p.label}
           </text>
