@@ -38,11 +38,16 @@ export default function PipelineBoard({ toast }) {
   const { pipeline, loading, update } = usePipeline()
   const { lists } = useValidationLists()
   const phases = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const activityPhases = pickList(lists, 'TAG Pipeline Activity Phase', [
+    'Pre-RFP', 'Submitted RFI', 'RFP Released', 'Proposal Submitted',
+    'BAFO', 'Award Pending',
+  ])
 
   // Which sections are expanded — all collapsed by default
   const [expanded, setExpanded] = useState({})
   // Track which opportunity is currently being moved: { [contractNum]: true }
   const [moving, setMoving] = useState({})
+  const [movingActivity, setMovingActivity] = useState({})
 
   const toggleSection = useCallback((phase) => {
     setExpanded((prev) => ({ ...prev, [phase]: !prev[phase] }))
@@ -71,6 +76,22 @@ export default function PipelineBoard({ toast }) {
     })
     return t
   }, [grouped])
+
+  const handleActivityMove = useCallback(async (opp, newActivity, e) => {
+    e.stopPropagation()
+    const cn = opp[C.contractNum]
+    if (movingActivity[cn]) return
+    if (newActivity === opp[C.actPhase]) return
+    setMovingActivity((prev) => ({ ...prev, [cn]: true }))
+    try {
+      await update(opp._rowIndex, { [C.actPhase]: newActivity }, opp)
+      toast?.success(`Activity phase updated`)
+    } catch (err) {
+      toast?.error(`Failed to update: ${err.message}`)
+    } finally {
+      setMovingActivity((prev) => { const n = { ...prev }; delete n[cn]; return n })
+    }
+  }, [movingActivity, update, toast])
 
   const handleMove = useCallback(async (opp, newPhase, e) => {
     e.stopPropagation()
@@ -158,7 +179,7 @@ export default function PipelineBoard({ toast }) {
                               <span className={styles.colAgency}>Agency</span>
                               <span className={styles.colValue}>Value</span>
                               <span className={styles.colActivity}>Activity phase</span>
-                              <span className={styles.colMove}>Move to</span>
+                              <span className={styles.colMove}>Move to phase</span>
                             </div>
                             {/* Opportunity rows */}
                             {opps.map((opp) => {
@@ -181,10 +202,29 @@ export default function PipelineBoard({ toast }) {
                                   <span className={styles.colValue}>
                                     {val ? formatCurrency(val) : '—'}
                                   </span>
-                                  <span className={styles.colActivity}>
-                                    {opp[C.actPhase]
-                                      ? <span className="badge badge-tracking">{opp[C.actPhase]}</span>
-                                      : <span className="text-muted">—</span>
+                                  <span className={styles.colActivity} onClick={(e) => e.stopPropagation()}>
+                                    {movingActivity[cn]
+                                      ? (
+                                        <span className={styles.movingDots}>
+                                          {[0, 1, 2].map((i) => (
+                                            <span key={i} className={styles.movingDot}
+                                              style={{ animationDelay: `${i * 0.2}s` }} />
+                                          ))}
+                                        </span>
+                                      )
+                                      : (
+                                        <select
+                                          className={styles.moveSelect}
+                                          value={opp[C.actPhase] || ''}
+                                          onChange={(e) => handleActivityMove(opp, e.target.value, e)}
+                                          disabled={isMoving || !!movingActivity[cn]}
+                                        >
+                                          <option value="">— Select —</option>
+                                          {activityPhases.map((p) => (
+                                            <option key={p} value={p}>{p}</option>
+                                          ))}
+                                        </select>
+                                      )
                                     }
                                   </span>
                                   <span className={styles.colMove} onClick={(e) => e.stopPropagation()}>
