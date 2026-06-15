@@ -5,7 +5,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
-import { computeKPIs, getGreeting, formatDate, isOverdue, formatCurrency } from '@/utils/kpiHelpers'
+import { computeKPIs, computeRFIByMonth, getGreeting, formatDate, isOverdue, formatCurrency } from '@/utils/kpiHelpers'
 import { buildPipelineSummaryPrompt } from '@/services/groqService'
 import styles from './Dashboard.module.css'
 
@@ -87,7 +87,54 @@ function PhaseBarChart({ byPhase, byPhaseValue }) {
   )
 }
 
-// Monday.com-style consistent row — invisible guardrails via fixed flex widths
+// RFI submissions per month — last 6 months, zero-filled
+function RFIBarChart({ data }) {
+  const maxCount = Math.max(...data.map((d) => d.count), 1)
+  return (
+    <div className={styles.barChart}>
+      {data.map(({ label, count }) => {
+        const pct = (count / maxCount) * 100
+        return (
+          <div key={label} className={styles.barRow}>
+            <span className={styles.barLabel}>{label}</span>
+            <div className={styles.barTrack}>
+              <div
+                className={styles.barFill}
+                style={{ width: `${pct}%`, background: 'var(--blue-200)' }}
+              />
+            </div>
+            <span className={styles.barCount}>{count}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Collapsible card wrapper — same visual language as PipelineBoard sections
+function CollapsibleCard({ title, count, defaultOpen = false, children, onViewAll }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className={styles.collapsibleCard}>
+      <button className={styles.collapsibleHeader} onClick={() => setOpen((v) => !v)}>
+        <span className={styles.collapsibleTitle}>{title}</span>
+        {count !== undefined && (
+          <span className={styles.collapsibleCount}>{count}</span>
+        )}
+        {onViewAll && open && (
+          <span
+            className={styles.collapsibleViewAll}
+            onClick={(e) => { e.stopPropagation(); onViewAll() }}
+          >
+            View all
+          </span>
+        )}
+        <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>›</span>
+      </button>
+      {open && <div className={styles.collapsibleBody}>{children}</div>}
+    </div>
+  )
+}
 function OppRow({ opp, onClick }) {
   const value = parseFloat(String(opp[C.value] || '0').replace(/[^0-9.]/g, ''))
   return (
@@ -199,8 +246,11 @@ export default function Dashboard({ toast }) {
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
   const [closingTask, setClosingTask] = useState(null)
   const [taskTab, setTaskTab] = useState('overdue')
+  const [expandExpiring, setExpandExpiring] = useState(false)
   const initialPLoad = pLoading && pipeline.length === 0
   const initialTLoad = tLoading && tasks.length === 0
+
+  const rfiData = useMemo(() => computeRFIByMonth(pipeline), [pipeline])
 
   const kpis = useMemo(() => computeKPIs(pipeline, tasks), [pipeline, tasks])
 
@@ -318,7 +368,18 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* ── Row 3: Recent opportunities (full width) ── */}
+        {/* ── Row 3: RFI submissions by month (full width) ── */}
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className={styles.cardTitleRow}>
+            <div className={styles.cardTitle}>RFI submissions — last 6 months</div>
+          </div>
+          {initialPLoad
+            ? <div className={`skeleton ${styles.chartSkeleton}`} />
+            : <RFIBarChart data={rfiData} />
+          }
+        </div>
+
+        {/* ── Row 4: Recent opportunities (full width) ── */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div className={styles.cardTitleRow}>
             <div className={styles.cardTitle}>Recent opportunities</div>
@@ -344,9 +405,57 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* ── Row 4: Top agencies (full width, clean list) ── */}
-        <div className="card" style={{ marginBottom: 12 }}>
-          <div className={styles.cardTitle}>Opportunities by agency</div>
+        {/* ── Row 5: Expiring contracts (collapsible, first 5 + expand) ── */}
+        <CollapsibleCard
+          title="Expiring contracts"
+          count={kpis.expiringCount}
+          onViewAll={kpis.expiringCount > 5 ? () => setExpandExpiring(true) : null}
+        >
+          {initialPLoad
+            ? [1, 2].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
+            : (kpis.expiringOpps || []).length === 0
+              ? <p className="text-sm text-muted" style={{ padding: '8px 0' }}>
+                  No contracts expiring within 90 days.
+                </p>
+              : (
+                <div className={styles.consistentTable}>
+                  <div className={`${styles.consistentRow} ${styles.consistentRowHeader}`}>
+                    <span className={styles.colTitle}>Opportunity</span>
+                    <span className={styles.colDue}>Expires</span>
+                  </div>
+                  {(expandExpiring
+                    ? kpis.expiringOpps
+                    : (kpis.expiringOpps || []).slice(0, 5)
+                  ).map((opp) => (
+                    <div
+                      key={opp[C.contractNum]}
+                      className={styles.consistentRow}
+                      onClick={() => navigate(`/opportunities/${encodeURIComponent(opp[C.contractNum])}`)}
+                    >
+                      <span className={styles.colTitle}>{opp[C.title]}</span>
+                      <span className={`${styles.colDue} text-muted`}>
+                        {formatDate(opp[C.endDate])}
+                      </span>
+                    </div>
+                  ))}
+                  {!expandExpiring && (kpis.expiringOpps || []).length > 5 && (
+                    <button
+                      className={styles.expandBtn}
+                      onClick={() => setExpandExpiring(true)}
+                    >
+                      Show {(kpis.expiringOpps || []).length - 5} more
+                    </button>
+                  )}
+                </div>
+              )
+          }
+        </CollapsibleCard>
+
+        {/* ── Row 6: Top agencies (collapsible) ── */}
+        <CollapsibleCard
+          title="Opportunities by agency"
+          count={sortedAgencies.length}
+        >
           {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} style={{ height: 80 }} />
             : sortedAgencies.length === 0
@@ -363,11 +472,15 @@ export default function Dashboard({ toast }) {
                 </div>
               )
           }
-        </div>
+        </CollapsibleCard>
 
-        {/* ── Row 5: Tasks (tabbed overdue / active) ── */}
-        <div className="card" style={{ marginBottom: 12 }}>
-          <div className={styles.cardTitleRow}>
+        {/* ── Row 7: Tasks (collapsible, tabbed overdue / active) ── */}
+        <CollapsibleCard
+          title="Tasks"
+          count={overdueTasks.length + activeTasks.length}
+          onViewAll={() => navigate('/tasks')}
+        >
+          <div className={styles.cardTitleRow} style={{ marginBottom: 8 }}>
             <div className={styles.tabRow}>
               <button
                 className={`${styles.tab} ${taskTab === 'overdue' ? styles.tabActive : ''}`}
@@ -388,8 +501,6 @@ export default function Dashboard({ toast }) {
                 )}
               </button>
             </div>
-            <button className="btn btn-ghost text-sm"
-              onClick={() => navigate('/tasks')}>View all →</button>
           </div>
           {initialTLoad
             ? [1, 2, 3].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
@@ -411,15 +522,14 @@ export default function Dashboard({ toast }) {
                 </div>
               )
           }
-        </div>
+        </CollapsibleCard>
 
-        {/* ── Row 6: Tracked opportunities ── */}
-        <div className="card" style={{ marginBottom: 12 }}>
-          <div className={styles.cardTitleRow}>
-            <div className={styles.cardTitle}>Tracked opportunities</div>
-            <button className="btn btn-ghost text-sm"
-              onClick={() => navigate('/opportunities')}>View all →</button>
-          </div>
+        {/* ── Row 8: Tracked opportunities (collapsible) ── */}
+        <CollapsibleCard
+          title="Tracked opportunities"
+          count={(kpis.trackedOpps || []).length}
+          onViewAll={() => navigate('/opportunities')}
+        >
           {initialPLoad
             ? [1, 2].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
             : (kpis.trackedOpps || []).length === 0
@@ -439,7 +549,7 @@ export default function Dashboard({ toast }) {
                 </div>
               )
           }
-        </div>
+        </CollapsibleCard>
       </div>
     </>
   )
