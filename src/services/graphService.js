@@ -241,6 +241,7 @@ export const PIPELINE_HEADERS = [
   'Link to Folder',                   // [37] col AL
   'Identification PWIN',              // [38] col AM
   'Qualification PWIN',               // [39] col AN
+  'RFI Notified',                     // [40] col AO — date notification was sent, blank = not yet sent
 ]
 
 export const TASKS_HEADERS = [
@@ -300,6 +301,7 @@ export const COL = {
   folder:         'Link to Folder',
   idPWIN:         'Identification PWIN',
   qualPWIN:       'Qualification PWIN',
+  rfiNotified:    'RFI Notified',
 }
 
 // ── Phase / enum constants from real data ─────────────────────────────────
