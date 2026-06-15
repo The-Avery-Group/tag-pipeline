@@ -121,6 +121,7 @@ function RFILineChart({ data }) {
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
       style={{ width: '100%', height: H, display: 'block' }}
     >
       <defs>
@@ -129,7 +130,7 @@ function RFILineChart({ data }) {
           <stop offset="100%" stopColor="var(--blue-600)" stopOpacity="0" />
         </linearGradient>
         <clipPath id="rfiClip">
-          <rect x={PAD_L} y={PAD_T} width={innerW} height={innerH} />
+          <rect x={PAD_L} y={0} width={innerW} height={H} />
         </clipPath>
       </defs>
 
@@ -138,10 +139,11 @@ function RFILineChart({ data }) {
         <path d={areaPath} fill="url(#rfiAreaGrad)" />
       </g>
 
-      {/* Line */}
+      {/* Line — rendered in a non-scaled group so strokeWidth stays consistent */}
       <path d={linePath} fill="none"
         stroke="var(--blue-600)" strokeWidth="1.8"
         strokeLinejoin="round" strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
       />
 
       {/* Points, count labels, month labels */}
@@ -152,6 +154,7 @@ function RFILineChart({ data }) {
               x={p.x.toFixed(2)} y={(p.y - 7).toFixed(2)}
               textAnchor="middle" dominantBaseline="auto"
               fontSize="11" fontWeight="600" fill="var(--blue-600)"
+              style={{ font: '600 11px var(--font)' }}
             >
               {p.count}
             </text>
@@ -160,12 +163,13 @@ function RFILineChart({ data }) {
             cx={p.x.toFixed(2)} cy={p.y.toFixed(2)}
             r="2"
             fill="#fff" stroke="var(--blue-600)" strokeWidth="1.5"
+            vectorEffect="non-scaling-stroke"
           />
-          {/* Month label — matches barLabel: 11px, var(--gray-600) */}
           <text
             x={p.x.toFixed(2)} y={(PAD_T + innerH + 14).toFixed(2)}
             textAnchor="middle" dominantBaseline="auto"
             fontSize="11" fill="var(--gray-600)"
+            style={{ font: '11px var(--font)' }}
           >
             {p.label}
           </text>
