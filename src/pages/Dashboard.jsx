@@ -87,97 +87,152 @@ function PhaseBarChart({ byPhase, byPhaseValue }) {
   )
 }
 
-// RFI submissions per month — last 6 months, line chart
+// Generate smooth cubic bezier path through SVG points
+function makeSmoothPath(pts) {
+  if (pts.length < 2) return pts.length === 1
+    ? `M${pts[0].x},${pts[0].y}` : ''
+  const t = 0.35
+  let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(i - 1, 0)]
+    const p1 = pts[i]
+    const p2 = pts[i + 1]
+    const p3 = pts[Math.min(i + 2, pts.length - 1)]
+    const cp1x = p1.x + (p2.x - p0.x) * t
+    const cp1y = p1.y + (p2.y - p0.y) * t
+    const cp2x = p2.x - (p3.x - p1.x) * t
+    const cp2y = p2.y - (p3.y - p1.y) * t
+    d += ` C${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`
+  }
+  return d
+}
+
+// RFI line chart — two-layer design:
+//   SVG (preserveAspectRatio="none") → stretches line + area to full card width
+//   HTML overlay → renders dots + labels at natural size with no distortion
 function RFILineChart({ data }) {
   if (!data || data.length === 0) return <p className="text-sm text-muted">No data</p>
 
   const maxCount = Math.max(...data.map((d) => d.count), 1)
+  const CHART_H  = 96    // px height of the SVG chart area
+  const LABEL_H  = 24    // px height reserved for month labels below
+  const PAD_T    = 20    // px from top for count labels
+  const innerH   = CHART_H - PAD_T
+  const SVG_W    = 1000  // arbitrary wide viewBox — stretches to fill
 
-  const W      = 600
-  const H      = 140
-  const PAD_L  = 0    // card padding (14px 16px) handles outer spacing
-  const PAD_R  = 0
-  const PAD_T  = 20   // room for count labels above points
-  const PAD_B  = 20   // room for month labels below
-  const innerW = W - PAD_L - PAD_R
-  const innerH = H - PAD_T - PAD_B
-
-  const pts = data.map((d, i) => ({
-    x: PAD_L + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW),
-    y: PAD_T + innerH - (d.count / maxCount) * innerH,
+  // % positions along x axis (0–100)
+  const items = data.map((d, i) => ({
+    pct:   data.length === 1 ? 50 : (i / (data.length - 1)) * 100,
+    yFrac: maxCount > 0 ? 1 - d.count / maxCount : 0.5,
     count: d.count,
     label: d.label,
   }))
 
-  const linePath = pts
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`)
-    .join(' ')
+  // SVG coordinate points
+  const svgPts = items.map((p) => ({
+    x: (p.pct / 100) * SVG_W,
+    y: PAD_T + p.yFrac * innerH,
+  }))
 
-  const areaPath =
-    linePath +
-    ` L${pts[pts.length - 1].x.toFixed(2)},${(PAD_T + innerH).toFixed(2)}` +
-    ` L${pts[0].x.toFixed(2)},${(PAD_T + innerH).toFixed(2)} Z`
+  const linePath = makeSmoothPath(svgPts)
+  const areaPath = svgPts.length > 0
+    ? linePath
+      + ` L${SVG_W},${PAD_T + innerH} L0,${PAD_T + innerH} Z`
+    : ''
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      style={{ width: '100%', height: H, display: 'block' }}
-    >
-      <defs>
-        <linearGradient id="rfiAreaGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="var(--blue-600)" stopOpacity="0.12" />
-          <stop offset="100%" stopColor="var(--blue-600)" stopOpacity="0" />
-        </linearGradient>
-        <clipPath id="rfiClip">
-          <rect x={PAD_L} y={0} width={innerW} height={H} />
-        </clipPath>
-      </defs>
+    <div style={{ position: 'relative', width: '100%' }}>
+      {/* SVG layer — stretches full width, renders only line + area */}
+      <svg
+        viewBox={`0 0 ${SVG_W} ${CHART_H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: CHART_H, display: 'block' }}
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="rfiGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="var(--blue-600)" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="var(--blue-600)" stopOpacity="0"    />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#rfiGrad)" />
+        <path d={linePath} fill="none"
+          stroke="var(--blue-600)" strokeWidth="2.5"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
 
-      {/* Area fill */}
-      <g clipPath="url(#rfiClip)">
-        <path d={areaPath} fill="url(#rfiAreaGrad)" />
-      </g>
+      {/* HTML overlay — dots + labels at native size, no distortion */}
+      <div style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0,
+        height: CHART_H + LABEL_H,
+        pointerEvents: 'none',
+      }}>
+        {items.map((p, i) => {
+          const dotTop = PAD_T + p.yFrac * innerH
+          return (
+            <div key={i} style={{
+              position: 'absolute',
+              left: `${p.pct}%`,
+              top: 0,
+              transform: 'translateX(-50%)',
+            }}>
+              {/* Count label */}
+              {p.count > 0 && (
+                <div style={{
+                  position: 'absolute',
+                  top: dotTop - 17,
+                  width: 'max-content',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'var(--blue-600)',
+                  fontFamily: 'var(--font)',
+                  lineHeight: 1,
+                }}>
+                  {p.count}
+                </div>
+              )}
+              {/* Dot */}
+              <div style={{
+                position: 'absolute',
+                top: dotTop - 3,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: '#fff',
+                border: '1.5px solid var(--blue-600)',
+                boxSizing: 'border-box',
+              }} />
+              {/* Month label */}
+              <div style={{
+                position: 'absolute',
+                top: CHART_H + 6,
+                width: 'max-content',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                fontSize: 11,
+                color: 'var(--gray-600)',
+                fontFamily: 'var(--font)',
+                lineHeight: 1,
+              }}>
+                {p.label}
+              </div>
+            </div>
+          )
+        })}
+      </div>
 
-      {/* Line — rendered in a non-scaled group so strokeWidth stays consistent */}
-      <path d={linePath} fill="none"
-        stroke="var(--blue-600)" strokeWidth="1.8"
-        strokeLinejoin="round" strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
-
-      {/* Points, count labels, month labels */}
-      {pts.map((p, i) => (
-        <g key={i}>
-          {p.count > 0 && (
-            <text
-              x={p.x.toFixed(2)} y={(p.y - 7).toFixed(2)}
-              textAnchor="middle" dominantBaseline="auto"
-              fontSize="11" fontWeight="600" fill="var(--blue-600)"
-              style={{ font: '600 11px var(--font)' }}
-            >
-              {p.count}
-            </text>
-          )}
-          <circle
-            cx={p.x.toFixed(2)} cy={p.y.toFixed(2)}
-            r="2"
-            fill="#fff" stroke="var(--blue-600)" strokeWidth="1.5"
-            vectorEffect="non-scaling-stroke"
-          />
-          <text
-            x={p.x.toFixed(2)} y={(PAD_T + innerH + 14).toFixed(2)}
-            textAnchor="middle" dominantBaseline="auto"
-            fontSize="11" fill="var(--gray-600)"
-            style={{ font: '11px var(--font)' }}
-          >
-            {p.label}
-          </text>
-        </g>
-      ))}
-    </svg>
+      {/* Spacer so parent knows total height */}
+      <div style={{ height: LABEL_H }} />
+    </div>
   )
 }
+
 
 // Collapsible card wrapper — same visual language as PipelineBoard sections
 function CollapsibleCard({ title, count, defaultOpen = false, children, onViewAll }) {
