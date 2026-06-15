@@ -208,6 +208,85 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast }) {
   )
 }
 
+// ── Searchable opportunity picker ─────────────────────────────────────────
+function OppPicker({ pipeline, value, onChange }) {
+  const [search, setSearch] = useState('')
+  const C_CN    = 'Contract Number / Notice ID'
+  const C_TITLE = 'Project Title / Description*'
+
+  const selected = pipeline.find((o) => o[C_CN] === value)
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return pipeline.slice(0, 50) // cap unfiltered list for perf
+    return pipeline.filter((o) =>
+      [o[C_CN], o[C_TITLE]].some((v) => v && String(v).toLowerCase().includes(q))
+    ).slice(0, 50)
+  }, [pipeline, search])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Search input */}
+      <input
+        className="form-input"
+        placeholder="Search by contract # or title…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        autoComplete="off"
+      />
+      {/* Scrollable results list */}
+      <div style={{
+        border: '0.5px solid var(--gray-200)',
+        borderRadius: 'var(--radius-md)',
+        maxHeight: 200,
+        overflowY: 'auto',
+        background: '#fff',
+      }}>
+        {filtered.length === 0
+          ? (
+            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--gray-400)' }}>
+              No opportunities match your search.
+            </div>
+          )
+          : filtered.map((o) => {
+              const cn = o[C_CN]
+              const t  = o[C_TITLE]
+              const isSelected = cn === value
+              return (
+                <div
+                  key={`${cn}-${o._rowIndex}`}
+                  onClick={() => { onChange(cn); setSearch('') }}
+                  style={{
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    borderBottom: '0.5px solid var(--gray-100)',
+                    background: isSelected ? 'var(--blue-50)' : 'transparent',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'var(--gray-50)' }}
+                  onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent' }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue-800)', marginBottom: 2 }}>
+                    {cn || '—'}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--gray-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t || '—'}
+                  </div>
+                </div>
+              )
+            })
+        }
+      </div>
+      {/* Selected value summary */}
+      {selected && (
+        <div style={{ fontSize: 11, color: 'var(--gray-400)', paddingLeft: 2 }}>
+          Selected: <strong style={{ color: 'var(--blue-800)' }}>{selected[C_CN]}</strong> — {selected[C_TITLE]}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 export default function Tasks({ toast }) {
   const navigate = useNavigate()
@@ -411,23 +490,11 @@ export default function Tasks({ toast }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="form-field">
               <label className="form-label">Opportunity *</label>
-              <select className="form-input" required value={taskForm.ContractNumber}
-                onChange={(e) => setFormField('ContractNumber', e.target.value)}>
-                <option value="">Select opportunity…</option>
-                {pipeline.map((o) => {
-                  const cn = o['Contract Number / Notice ID']
-                  const t  = o['Project Title / Description*']
-                  return <option key={`${cn}-${o._rowIndex}`} value={cn}>{cn} — {t}</option>
-                })}
-              </select>
-              {taskForm.ContractNumber && (() => {
-                const opp = pipeline.find(o => o['Contract Number / Notice ID'] === taskForm.ContractNumber)
-                return opp ? (
-                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--gray-400)', paddingLeft: 2 }}>
-                    {opp['Project Title / Description*']}
-                  </div>
-                ) : null
-              })()}
+              <OppPicker
+                pipeline={pipeline}
+                value={taskForm.ContractNumber}
+                onChange={(cn) => setFormField('ContractNumber', cn)}
+              />
             </div>
             <div className="form-field">
               <label className="form-label">Title *</label>
