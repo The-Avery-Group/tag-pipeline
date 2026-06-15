@@ -1,20 +1,25 @@
 import { useEffect, useRef } from 'react'
-import { getTasks, getNotifLog, setNotifLog } from '@/services/graphService'
-import { notifyOverdueSummary, notifyDueSoonSummary } from '@/services/notifyService'
+import {
+  getTasks, getPipeline,
+  getNotifLog, setNotifLog,
+  updateOpportunity,
+} from '@/services/graphService'
+import {
+  notifyOverdueSummary,
+  notifyDueSoonSummary,
+  notifyRFIFollowUp,
+  notifyStaleOpportunities,
+} from '@/services/notifyService'
 
 const TODAY = () => new Date().toISOString().split('T')[0]
 const LS_KEY = (type) => `tag_notif_${type}`
 
 function localAlreadySentToday(type) {
-  try {
-    return localStorage.getItem(LS_KEY(type)) === TODAY()
-  } catch { return false }
+  try { return localStorage.getItem(LS_KEY(type)) === TODAY() } catch { return false }
 }
 
 function markLocalSentToday(type) {
-  try {
-    localStorage.setItem(LS_KEY(type), TODAY())
-  } catch {}
+  try { localStorage.setItem(LS_KEY(type), TODAY()) } catch {}
 }
 
 function isTomorrow(dateStr) {
@@ -35,10 +40,22 @@ function isPastDue(dateStr) {
   return due < today
 }
 
+function daysAgo(dateStr) {
+  if (!dateStr) return Infinity
+  const d = new Date(dateStr + 'T00:00:00')
+  if (isNaN(d.getTime())) return Infinity
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.floor((today - d) / (1000 * 60 * 60 * 24))
+}
+
+const EARLY_PHASES = new Set(['Identified', 'Research'])
+
 /**
- * Called once in AppShell. Gate 1: localStorage (instant, blocks refresh
- * re-fires). Gate 2: workbook NotifLog (shared across users/browsers).
- * Only the first session of the day that passes both gates sends the card.
+ * Called once in AppShell after authentication.
+ * Two-gate system: localStorage (instant, per-browser) then workbook NotifLog (shared).
+ * RFI follow-up is per-opportunity (one-time), tracked via RFI Notified column.
+ * Stale opportunity auto-updates Last Modified* silently after notifying.
  */
 export function useAgingNotifications() {
   const ran = useRef(false)
@@ -47,45 +64,96 @@ export function useAgingNotifications() {
     if (ran.current) return
     ran.current = true
 
-    // Skip entirely if both types already sent today in this browser
     const overdueLocal  = localAlreadySentToday('overdue')
     const dueSoonLocal  = localAlreadySentToday('duesoon')
-    if (overdueLocal && dueSoonLocal) return
+    const staleLocal    = localAlreadySentToday('opp_stale')
+
+    // Skip entirely if all daily types already sent in this browser today
+    const needsDailyCheck = !overdueLocal || !dueSoonLocal || !staleLocal
 
     const timer = setTimeout(async () => {
       try {
         const today = TODAY()
-        const [allTasks, log] = await Promise.all([getTasks(), getNotifLog()])
-        const active = allTasks.filter((t) => t.Status !== 'Done')
+        const [allTasks, allOpps, log] = await Promise.all([
+          getTasks(),
+          getPipeline(),
+          getNotifLog(),
+        ])
 
-        // ── Overdue ────────────────────────────────────────────────────
+        // ── Overdue tasks ──────────────────────────────────────────────
         if (!overdueLocal) {
           if (log['overdue'] === today) {
-            // Another user already sent it today — just mark our localStorage
             markLocalSentToday('overdue')
           } else {
-            const overdue = active.filter((t) => isPastDue(t.DueDate))
-            if (overdue.length > 0) {
-              await notifyOverdueSummary(overdue)
-              await setNotifLog('overdue', today)
-            }
+            const overdue = allTasks.filter(
+              (t) => t.Status !== 'Done' && isPastDue(t.DueDate)
+            )
+            if (overdue.length > 0) await notifyOverdueSummary(overdue)
+            await setNotifLog('overdue', today)
             markLocalSentToday('overdue')
           }
         }
 
-        // ── Due soon ───────────────────────────────────────────────────
+        // ── Due soon tasks ─────────────────────────────────────────────
         if (!dueSoonLocal) {
           if (log['duesoon'] === today) {
             markLocalSentToday('duesoon')
           } else {
-            const dueSoon = active.filter((t) => isTomorrow(t.DueDate))
-            if (dueSoon.length > 0) {
-              await notifyDueSoonSummary(dueSoon)
-              await setNotifLog('duesoon', today)
-            }
+            const dueSoon = allTasks.filter(
+              (t) => t.Status !== 'Done' && isTomorrow(t.DueDate)
+            )
+            if (dueSoon.length > 0) await notifyDueSoonSummary(dueSoon)
+            await setNotifLog('duesoon', today)
             markLocalSentToday('duesoon')
           }
         }
+
+        // ── Stale opportunities (early phases, no activity ≥7 days) ──
+        if (!staleLocal) {
+          if (log['opp_stale'] === today) {
+            markLocalSentToday('opp_stale')
+          } else {
+            const stale = allOpps.filter((o) => {
+              if (!EARLY_PHASES.has(o['TAG Opportunity Phase'])) return false
+              return daysAgo(o['Last Modified*']) >= 7
+            })
+
+            if (stale.length > 0) {
+              await notifyStaleOpportunities(stale)
+              // Silently write today to Last Modified* for each stale opp
+              // so the clock resets — fire all in parallel, catch per item
+              await Promise.all(
+                stale.map((o) =>
+                  updateOpportunity(o._rowIndex, { 'Last Modified*': today })
+                    .catch((err) => console.warn('[AgingNotif] Last Modified update failed:', err.message))
+                )
+              )
+            }
+            await setNotifLog('opp_stale', today)
+            markLocalSentToday('opp_stale')
+          }
+        }
+
+        // ── RFI follow-up (per-opportunity, truly one-time) ───────────
+        // No daily gate — check every session but only notify each opp once
+        const rfiDue = allOpps.filter((o) => {
+          if (o['TAG Pipeline Activity Phase'] !== 'Submitted RFI') return false
+          if (o['RFI Notified']) return false           // already notified
+          return daysAgo(o['Submission Date (Response Date)*']) >= 21
+        })
+
+        if (rfiDue.length > 0) {
+          await notifyRFIFollowUp(rfiDue)
+          // Write notification date to RFI Notified column for each opp
+          // Use Promise.all — fast, Graph API handles small team volume
+          await Promise.all(
+            rfiDue.map((o) =>
+              updateOpportunity(o._rowIndex, { 'RFI Notified': today })
+                .catch((err) => console.warn('[AgingNotif] RFI Notified update failed:', err.message))
+            )
+          )
+        }
+
       } catch (err) {
         console.warn('[AgingNotif] Check failed:', err.message)
       }
