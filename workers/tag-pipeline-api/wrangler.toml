@@ -1,0 +1,21 @@
+name = "tag-pipeline-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (set via `wrangler secret put` or Cloudflare dashboard):
+#   TEAMS_WEBHOOK_URL   — Teams incoming webhook URL
+#   GROQ_API_KEY        — Groq API key
+#   DATABANK_API_KEY    — Databank/SAM API key (add when ready)
+
+# KV namespace for caching Databank responses (create with `wrangler kv:namespace create CACHE`)
+# Uncomment and fill in the id once created:
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "YOUR_KV_NAMESPACE_ID"
+
+[vars]
+ENVIRONMENT = "production"
+# ALLOWED_ORIGIN is set here for non-secret config.
+# Update this to your GitHub Pages URL.
+ALLOWED_ORIGIN = "https://YOUR_GITHUB_USERNAME.github.io"
