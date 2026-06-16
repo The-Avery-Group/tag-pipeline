@@ -91,7 +91,7 @@ function PhaseBarChart({ byPhase, byPhaseValue }) {
 function makeSmoothPath(pts) {
   if (pts.length < 2) return pts.length === 1
     ? `M${pts[0].x},${pts[0].y}` : ''
-  const t = 0.35
+  const t = 0.18  // subtle tension — curves when values differ, near-flat when equal
   let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`
   for (let i = 0; i < pts.length - 1; i++) {
     const p0 = pts[Math.max(i - 1, 0)]
@@ -114,15 +114,17 @@ function RFILineChart({ data }) {
   if (!data || data.length === 0) return <p className="text-sm text-muted">No data</p>
 
   const maxCount = Math.max(...data.map((d) => d.count), 1)
-  const CHART_H  = 96    // px height of the SVG chart area
-  const LABEL_H  = 24    // px height reserved for month labels below
-  const PAD_T    = 20    // px from top for count labels
+  const CHART_H  = 96
+  const LABEL_H  = 24
+  const PAD_T    = 20
   const innerH   = CHART_H - PAD_T
-  const SVG_W    = 1000  // arbitrary wide viewBox — stretches to fill
+  const SVG_W    = 1000
+  const INSET    = 20   // inset edge points so labels don't clip card edges
 
-  // % positions along x axis (0–100)
   const items = data.map((d, i) => ({
-    pct:   data.length === 1 ? 50 : (i / (data.length - 1)) * 100,
+    pct: data.length === 1
+      ? 50
+      : INSET + (i / (data.length - 1)) * (100 - INSET * 2),  // inset first+last
     yFrac: maxCount > 0 ? 1 - d.count / maxCount : 0.5,
     count: d.count,
     label: d.label,
@@ -370,10 +372,33 @@ export default function Dashboard({ toast }) {
   const [closingTask, setClosingTask] = useState(null)
   const [taskTab, setTaskTab] = useState('overdue')
   const [expandExpiring, setExpandExpiring] = useState(false)
+  const [expiringPreset, setExpiringPreset] = useState(90)   // days
+  const [expiringFrom, setExpiringFrom] = useState('')
+  const [expiringTo, setExpiringTo] = useState('')
+  const [expiringCustom, setExpiringCustom] = useState(false)
   const initialPLoad = pLoading && pipeline.length === 0
   const initialTLoad = tLoading && tasks.length === 0
 
   const rfiData = useMemo(() => computeRFIByMonth(pipeline), [pipeline])
+
+  const filteredExpiringOpps = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const C_END = 'Contract End Date*'
+    if (expiringCustom && expiringFrom && expiringTo) {
+      const from = new Date(expiringFrom + 'T00:00:00')
+      const to   = new Date(expiringTo   + 'T00:00:00')
+      return pipeline.filter((o) => {
+        const d = new Date((o[C_END] || '') + 'T00:00:00')
+        return !isNaN(d) && d >= from && d <= to
+      }).sort((a, b) => new Date(a[C_END]) - new Date(b[C_END]))
+    }
+    const end = new Date(today)
+    end.setDate(end.getDate() + expiringPreset)
+    return pipeline.filter((o) => {
+      const d = new Date((o[C_END] || '') + 'T00:00:00')
+      return !isNaN(d) && d >= today && d <= end
+    }).sort((a, b) => new Date(a[C_END]) - new Date(b[C_END]))
+  }, [pipeline, expiringPreset, expiringFrom, expiringTo, expiringCustom])
 
   const kpis = useMemo(() => computeKPIs(pipeline, tasks), [pipeline, tasks])
 
@@ -528,17 +553,48 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* ── Row 5: Expiring contracts (collapsible, first 5 + expand) ── */}
+        {/* ── Row 5: Expiring contracts (collapsible, date selector) ── */}
         <CollapsibleCard
           title="Expiring contracts"
-          count={kpis.expiringCount}
-          onViewAll={kpis.expiringCount > 5 ? () => setExpandExpiring(true) : null}
+          count={filteredExpiringOpps.length}
+          onViewAll={filteredExpiringOpps.length > 5 ? () => setExpandExpiring(true) : null}
         >
+          {/* Date selector */}
+          <div className={styles.expiringControls}>
+            {[
+              { label: '30 days', days: 30 },
+              { label: '60 days', days: 60 },
+              { label: '90 days', days: 90 },
+              { label: '6 months', days: 182 },
+              { label: '12 months', days: 365 },
+              { label: '24 months', days: 730 },
+            ].map(({ label, days }) => (
+              <button key={days}
+                className={`filter-chip ${!expiringCustom && expiringPreset === days ? 'active' : ''}`}
+                onClick={() => { setExpiringPreset(days); setExpiringCustom(false); setExpandExpiring(false) }}>
+                {label}
+              </button>
+            ))}
+            <button
+              className={`filter-chip ${expiringCustom ? 'active' : ''}`}
+              onClick={() => setExpiringCustom(true)}>
+              Custom range
+            </button>
+          </div>
+          {expiringCustom && (
+            <div style={{ display: 'flex', gap: 8, margin: '8px 0', alignItems: 'center' }}>
+              <input type="date" className="form-input" style={{ flex: 1 }}
+                value={expiringFrom} onChange={(e) => setExpiringFrom(e.target.value)} />
+              <span className="text-sm text-muted">to</span>
+              <input type="date" className="form-input" style={{ flex: 1 }}
+                value={expiringTo} onChange={(e) => setExpiringTo(e.target.value)} />
+            </div>
+          )}
           {initialPLoad
             ? [1, 2].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
-            : (kpis.expiringOpps || []).length === 0
+            : filteredExpiringOpps.length === 0
               ? <p className="text-sm text-muted" style={{ padding: '8px 0' }}>
-                  No contracts expiring within 90 days.
+                  No contracts expiring in this period.
                 </p>
               : (
                 <div className={styles.consistentTable}>
@@ -546,27 +602,23 @@ export default function Dashboard({ toast }) {
                     <span className={styles.colTitle}>Opportunity</span>
                     <span className={styles.colDue}>Expires</span>
                   </div>
-                  {(expandExpiring
-                    ? kpis.expiringOpps
-                    : (kpis.expiringOpps || []).slice(0, 5)
-                  ).map((opp) => (
-                    <div
-                      key={opp[C.contractNum]}
-                      className={styles.consistentRow}
-                      onClick={() => navigate(`/opportunities/${encodeURIComponent(opp[C.contractNum])}`)}
-                    >
-                      <span className={styles.colTitle}>{opp[C.title]}</span>
-                      <span className={`${styles.colDue} text-muted`}>
-                        {formatDate(opp[C.endDate])}
-                      </span>
-                    </div>
-                  ))}
-                  {!expandExpiring && (kpis.expiringOpps || []).length > 5 && (
-                    <button
-                      className={styles.expandBtn}
-                      onClick={() => setExpandExpiring(true)}
-                    >
-                      Show {(kpis.expiringOpps || []).length - 5} more
+                  {(expandExpiring ? filteredExpiringOpps : filteredExpiringOpps.slice(0, 5))
+                    .map((opp) => (
+                      <div key={opp[C.contractNum]}
+                        className={styles.consistentRow}
+                        onClick={() => navigate(`/opportunities/${encodeURIComponent(opp[C.contractNum])}`)}
+                      >
+                        <span className={styles.colTitle}>{opp[C.title]}</span>
+                        <span className={`${styles.colDue} text-muted`}>
+                          {formatDate(opp[C.endDate])}
+                        </span>
+                      </div>
+                    ))
+                  }
+                  {!expandExpiring && filteredExpiringOpps.length > 5 && (
+                    <button className={styles.expandBtn}
+                      onClick={() => setExpandExpiring(true)}>
+                      Show {filteredExpiringOpps.length - 5} more
                     </button>
                   )}
                 </div>
