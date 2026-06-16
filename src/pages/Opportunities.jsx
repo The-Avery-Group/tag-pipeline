@@ -60,6 +60,11 @@ export default function Opportunities({ toast }) {
 
   const [phase, setPhase] = useState('All')
   const [search, setSearch] = useState('')
+  const [showFilter, setShowFilter] = useState(false)
+  const [filters, setFilters] = useState({
+    outlook: '', priority: '', assignedTo: '', agency: '', setAside: '', bidNoBid: '',
+  })
+  const bidNoBidOptions = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
   const [sortKey, setSortKey] = useState(C.lastMod)
   const [sortDir, setSortDir] = useState('desc')
   const [showAdd, setShowAdd] = useState(searchParams.get('new') === '1')
@@ -82,24 +87,31 @@ export default function Opportunities({ toast }) {
     [C.primeOrSub]: 'Prime',
   })
 
+  const activeFilterCount = Object.values(filters).filter(Boolean).length
+
   const filtered = useMemo(() => {
     let rows = phase === 'All' ? pipeline : pipeline.filter((o) => o[C.phase] === phase)
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       rows = rows.filter((o) =>
-        [
-          o[C.title], o[C.contractNum], o[C.agency], o[C.department],
-          o[C.assignedTo], o[C.solNum], o[C.naics], o[C.poc],
-        ].some((v) => v && String(v).toLowerCase().includes(q))
+        [o[C.title], o[C.contractNum], o[C.agency], o[C.department],
+         o[C.assignedTo], o[C.solNum], o[C.naics], o[C.poc]]
+          .some((v) => v && String(v).toLowerCase().includes(q))
       )
     }
+    if (filters.outlook)    rows = rows.filter((o) => o[C.outlook] === filters.outlook)
+    if (filters.priority)   rows = rows.filter((o) => o[C.priority] === filters.priority)
+    if (filters.assignedTo) rows = rows.filter((o) => String(o[C.assignedTo] || '').toLowerCase().includes(filters.assignedTo.toLowerCase()))
+    if (filters.agency)     rows = rows.filter((o) => String(o[C.agency] || '').toLowerCase().includes(filters.agency.toLowerCase()))
+    if (filters.setAside)   rows = rows.filter((o) => o[C.setAside] === filters.setAside)
+    if (filters.bidNoBid)   rows = rows.filter((o) => o[C.bidNoBid] === filters.bidNoBid)
     return [...rows].sort((a, b) => {
       const va = a[sortKey] ?? ''
       const vb = b[sortKey] ?? ''
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, phase, search, sortKey, sortDir])
+  }, [pipeline, phase, search, filters, sortKey, sortDir])
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -162,6 +174,7 @@ export default function Opportunities({ toast }) {
         showNew={true}
         newLabel="New opportunity"
         onNew={() => setShowAdd(true)}
+        onFilter={() => setShowFilter((v) => !v)}
       />
       <div className="page-body">
         <div className={styles.searchBar}>
@@ -181,6 +194,77 @@ export default function Opportunities({ toast }) {
             <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">✕</button>
           )}
         </div>
+
+        {/* ── Filter panel ── */}
+        {showFilter && (
+          <div className={styles.filterPanel}>
+            <div className={styles.filterGrid}>
+              <div className="form-field">
+                <label className="form-label">Outlook</label>
+                <select className="form-input" value={filters.outlook}
+                  onChange={(e) => setFilters((f) => ({ ...f, outlook: e.target.value }))}>
+                  <option value="">All</option>
+                  {outlookOptions.map((o) => <option key={o}>{o}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Priority</label>
+                <select className="form-input" value={filters.priority}
+                  onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}>
+                  <option value="">All</option>
+                  {priorityOptions.map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Set-Aside</label>
+                <select className="form-input" value={filters.setAside}
+                  onChange={(e) => setFilters((f) => ({ ...f, setAside: e.target.value }))}>
+                  <option value="">All</option>
+                  {setAsideOptions.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Bid / No Bid</label>
+                <select className="form-input" value={filters.bidNoBid}
+                  onChange={(e) => setFilters((f) => ({ ...f, bidNoBid: e.target.value }))}>
+                  <option value="">All</option>
+                  {bidNoBidOptions.map((b) => <option key={b}>{b}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Agency</label>
+                <input className="form-input" placeholder="Filter by agency…"
+                  value={filters.agency}
+                  onChange={(e) => setFilters((f) => ({ ...f, agency: e.target.value }))} />
+              </div>
+              <div className="form-field">
+                <label className="form-label">Assigned To</label>
+                <input className="form-input" placeholder="Filter by assignee…"
+                  value={filters.assignedTo}
+                  onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))} />
+              </div>
+            </div>
+            {activeFilterCount > 0 && (
+              <button className="btn btn-ghost text-sm" style={{ marginTop: 8, color: 'var(--red-600)' }}
+                onClick={() => setFilters({ outlook: '', priority: '', assignedTo: '', agency: '', setAside: '', bidNoBid: '' })}>
+                Clear all filters ({activeFilterCount})
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Active filter chips */}
+        {activeFilterCount > 0 && (
+          <div className="filter-chips" style={{ marginBottom: 8 }}>
+            {Object.entries(filters).filter(([, v]) => v).map(([key, val]) => (
+              <button key={key}
+                className="filter-chip active"
+                onClick={() => setFilters((f) => ({ ...f, [key]: '' }))}>
+                {val} ✕
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="filter-chips" style={{ marginBottom: 14 }}>
           {PHASES.map((p) => (
