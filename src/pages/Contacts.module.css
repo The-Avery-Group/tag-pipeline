@@ -1,3 +1,4 @@
+/* ── Search bar ── */
 .searchBar {
   display: flex;
   align-items: center;
@@ -16,6 +17,7 @@
   font-family: var(--font);
 }
 
+/* ── Table ── */
 .nameCell {
   display: flex;
   align-items: center;
@@ -36,8 +38,207 @@
   flex-shrink: 0;
 }
 
+.rowActive td { background: var(--blue-50) !important; }
+
+/* ── Form grid ── */
 .formGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+/* ── Side panel backdrop ── */
+.panelBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+
+/* ── Side panel ── */
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  background: #fff;
+  border-left: 0.5px solid var(--gray-200);
+  box-shadow: -4px 0 32px rgba(0,0,0,0.08);
+  z-index: 201;
+  display: flex;
+  flex-direction: column;
+  animation: panelSlideIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+@keyframes panelSlideIn {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Panel header ── */
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 20px 16px;
+  border-bottom: 0.5px solid var(--gray-200);
+  flex-shrink: 0;
+}
+
+.panelAvatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--blue-50);
+  color: var(--blue-800);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.panelHeaderInfo { flex: 1; min-width: 0; }
+
+.panelName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panelSub {
+  font-size: 12px;
+  color: var(--gray-400);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panelClose {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--gray-400);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.panelClose:hover { background: var(--gray-100); color: var(--gray-900); }
+
+/* ── Panel body ── */
+.panelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.panelSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panelSectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gray-400);
+  margin-bottom: 4px;
+}
+
+.panelField {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panelLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gray-400);
+}
+
+.panelValue {
+  font-size: 13px;
+  color: var(--gray-900);
+}
+
+/* ── Linked opportunity rows ── */
+.linkedOppRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+  transition: background 0.1s;
+}
+.linkedOppRow:hover { background: var(--gray-100); }
+
+.linkedOppTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.linkedOppMeta {
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-top: 2px;
+}
+
+/* ── Opp search dropdown ── */
+.oppDropdown {
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: #fff;
+  max-height: 180px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.oppDropdownEmpty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--gray-400);
+}
+
+.oppDropdownRow {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 0.5px solid var(--gray-100);
+  transition: background 0.1s;
+}
+.oppDropdownRow:last-child { border-bottom: none; }
+.oppDropdownRow:hover { background: var(--blue-50); }
+
+/* ── Panel footer actions ── */
+.panelActions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 0.5px solid var(--gray-200);
+  margin-top: auto;
 }
