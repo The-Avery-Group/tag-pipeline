@@ -35,3 +35,18 @@
   font-family: var(--font);
 }
 .searchClear:hover { color: var(--gray-900); }
+
+
+.filterPanel {
+  background: #fff;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.filterGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
