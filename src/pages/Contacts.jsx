@@ -1,39 +1,103 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useContacts } from '@/hooks/useContacts'
-import { useValidationLists, pickList } from '@/hooks/useValidationLists'
+import { usePipeline } from '@/hooks/usePipeline'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
+import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
+import { formatDate } from '@/utils/kpiHelpers'
 import styles from './Contacts.module.css'
 
 const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '', Type: 'Customer' }
 
+const C_CN    = 'Contract Number / Notice ID'
+const C_TITLE = 'Project Title / Description*'
+const C_PHASE = 'TAG Opportunity Phase'
+const C_POC   = 'Contracting Officer / Specialist (POC)*'
+
 export default function Contacts({ toast }) {
   const { contacts, loading, add, update, remove } = useContacts()
+  const { pipeline, update: updateOpp } = usePipeline()
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
+
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [selected, setSelected] = useState(null)   // contact shown in panel
+  const [editing, setEditing] = useState(false)    // panel edit mode
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [oppSearch, setOppSearch] = useState('')
+  const [linkingOpp, setLinkingOpp] = useState(false)
 
-  // Fix: use a stable setter that doesn't re-create the object on every keystroke
   const setField = useCallback((field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }))
   }, [])
 
+  // Close panel on Escape
+  useEffect(() => {
+    const fn = (e) => { if (e.key === 'Escape') { setSelected(null); setEditing(false) } }
+    document.addEventListener('keydown', fn)
+    return () => document.removeEventListener('keydown', fn)
+  }, [])
+
   const filtered = useMemo(
     () => contacts.filter(
-      (c) =>
-        !search ||
-        [c.Name, c.Agency, c.Organization, c.Title, c.Email, c.Type].some((v) =>
-          v?.toLowerCase().includes(search.toLowerCase())
-        )
+      (c) => !search || [c.Name, c.Agency, c.Organization, c.Title, c.Email, c.Type]
+        .some((v) => v?.toLowerCase().includes(search.toLowerCase()))
     ),
     [contacts, search]
   )
+
+  // Opportunities linked to the selected contact (POC column contains their name)
+  const linkedOpps = useMemo(() => {
+    if (!selected) return []
+    return pipeline.filter((o) => parsePOCNames(o[C_POC]).includes(selected.Name))
+  }, [selected, pipeline])
+
+  // Opportunities NOT yet linked to selected contact (for search/add)
+  const unlinkableOpps = useMemo(() => {
+    if (!selected) return []
+    const linked = new Set(linkedOpps.map((o) => o[C_CN]))
+    const q = oppSearch.trim().toLowerCase()
+    return pipeline.filter((o) => {
+      if (linked.has(o[C_CN])) return false
+      if (!q) return true
+      return [o[C_TITLE], o[C_CN]].some((v) => v?.toLowerCase().includes(q))
+    }).slice(0, 30)
+  }, [pipeline, linkedOpps, oppSearch, selected])
+
+  const openPanel = (c) => {
+    setSelected(c)
+    setEditing(false)
+    setOppSearch('')
+  }
+
+  const startEdit = () => {
+    setForm({ ...BLANK, ...selected })
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setForm(BLANK)
+  }
+
+  const saveEdit = async () => {
+    setSaving(true)
+    try {
+      await update(selected._rowIndex, form)
+      setSelected((prev) => ({ ...prev, ...form }))
+      setEditing(false)
+      toast?.success('Contact updated')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const submitAdd = async () => {
     setSaving(true)
@@ -49,29 +113,12 @@ export default function Contacts({ toast }) {
     }
   }
 
-  const submitUpdate = async () => {
-    setSaving(true)
-    try {
-      await update(editing._rowIndex, form)
-      toast?.success('Contact updated')
-      setEditing(null)
-      setForm(BLANK)
-    } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const openEdit = (c) => {
-    setEditing(c)
-    setForm({ ...BLANK, ...c })
-  }
-
   const handleDelete = async () => {
     try {
-      await remove(confirmDelete._rowIndex)
+      await remove(selected._rowIndex)
       toast?.success('Contact deleted')
+      setSelected(null)
+      setEditing(false)
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
@@ -79,49 +126,63 @@ export default function Contacts({ toast }) {
     }
   }
 
-  // ContactForm is rendered inline (not as a nested component) to avoid
-  // the re-mount on every keystroke that caused the one-char input bug
-  const renderContactForm = () => (
+  const handleLinkOpp = async (opp) => {
+    if (linkingOpp) return
+    setLinkingOpp(true)
+    try {
+      await addContactToPOC(opp._rowIndex, opp[C_POC], selected.Name)
+      toast?.success('Opportunity linked')
+      setOppSearch('')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setLinkingOpp(false)
+    }
+  }
+
+  const handleUnlinkOpp = async (opp) => {
+    try {
+      await removeContactFromPOC(opp._rowIndex, opp[C_POC], selected.Name)
+      toast?.success('Opportunity unlinked')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    }
+  }
+
+  const contactFormFields = () => (
     <div className={styles.formGrid}>
       {[
-        ['Name',         'Name',                    true],
+        ['Name',         'Name',                     true],
         ['Agency',       'Agency / Company (Account)', false],
-        ['Title',        'Title',                   false],
-        ['Organization', 'Department / Organization',false],
-        ['Email',        'Email',                   false],
-        ['Phone',        'Phone',                   false],
+        ['Title',        'Title',                    false],
+        ['Organization', 'Department / Organization', false],
+        ['Email',        'Email',                    false],
+        ['Phone',        'Phone',                    false],
       ].map(([field, label, required]) => (
         <div className="form-field" key={field}>
           <label className="form-label">{label}{required && ' *'}</label>
-          <input
-            className="form-input"
-            required={required}
+          <input className="form-input" required={required}
             value={form[field] ?? ''}
-            onChange={(e) => setField(field, e.target.value)}
-          />
+            onChange={(e) => setField(field, e.target.value)} />
         </div>
       ))}
       <div className="form-field">
         <label className="form-label">Type</label>
-        <select
-          className="form-input"
-          value={form.Type ?? 'Customer'}
-          onChange={(e) => setField('Type', e.target.value)}
-        >
+        <select className="form-input" value={form.Type ?? 'Customer'}
+          onChange={(e) => setField('Type', e.target.value)}>
           {contactTypeOptions.map((t) => <option key={t}>{t}</option>)}
         </select>
       </div>
       <div className="form-field" style={{ gridColumn: '1 / -1' }}>
         <label className="form-label">Notes / linked contract #</label>
-        <textarea
-          className="form-input"
-          rows={2}
+        <textarea className="form-input" rows={2}
           value={form.Notes ?? ''}
-          onChange={(e) => setField('Notes', e.target.value)}
-        />
+          onChange={(e) => setField('Notes', e.target.value)} />
       </div>
     </div>
   )
+
+  const avatar = (name) => name?.split(' ').map((n) => n[0]).slice(0, 2).join('') || '?'
 
   return (
     <>
@@ -133,15 +194,13 @@ export default function Contacts({ toast }) {
         newLabel="New contact"
         onNew={() => { setForm(BLANK); setShowAdd(true) }}
       />
-      <div className="page-body">
+      <div className="page-body" style={{ position: 'relative' }}>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div className={styles.searchBar}>
-            <input
-              className={styles.searchInput}
+            <input className={styles.searchInput}
               placeholder="Search contacts…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+              onChange={(e) => setSearch(e.target.value)} />
             <span className="text-xs text-muted">{filtered.length} contacts</span>
           </div>
 
@@ -162,48 +221,166 @@ export default function Contacts({ toast }) {
                       <th>Dept / Organization</th>
                       <th>Email</th>
                       <th>Phone</th>
-                      <th>Notes</th>
-                      <th />
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.map((c) => (
-                      <tr key={c.ContactID} onClick={() => openEdit(c)}>
+                      <tr key={c.ContactID}
+                        className={selected?.ContactID === c.ContactID ? styles.rowActive : ''}
+                        onClick={() => openPanel(c)}>
                         <td>
                           <div className={styles.nameCell}>
-                            <div className={styles.avatar}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
+                            <div className={styles.avatar}>{avatar(c.Name)}</div>
                             <span style={{ fontWeight: 500 }}>{c.Name}</span>
                           </div>
                         </td>
                         <td className="text-sm">{c.Agency}</td>
                         <td className="text-sm text-muted">{c.Title}</td>
-                        <td>
-                          {c.Type && <span className="badge badge-tracking">{c.Type}</span>}
-                        </td>
+                        <td>{c.Type && <span className="badge badge-tracking">{c.Type}</span>}</td>
                         <td className="text-sm">{c.Organization}</td>
-                        <td><a href={`mailto:${c.Email}`} onClick={(e) => e.stopPropagation()} className="text-sm">{c.Email}</a></td>
-                        <td className="text-sm text-muted">{c.Phone}</td>
-                        <td className="text-sm text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.Notes}</td>
                         <td>
-                          <button
-                            className="btn btn-ghost btn-icon"
-                            aria-label="Delete contact"
-                            title="Delete"
-                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(c) }}
-                          >✕</button>
+                          <a href={`mailto:${c.Email}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-sm">{c.Email}</a>
                         </td>
+                        <td className="text-sm text-muted">{c.Phone}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              )}
+              )
+          }
         </div>
+
+        {/* ── Side panel ── */}
+        {selected && (
+          <>
+            <div className={styles.panelBackdrop} onClick={() => { setSelected(null); setEditing(false) }} />
+            <div className={styles.panel}>
+              {/* Panel header */}
+              <div className={styles.panelHeader}>
+                <div className={styles.panelAvatar}>{avatar(selected.Name)}</div>
+                <div className={styles.panelHeaderInfo}>
+                  <div className={styles.panelName}>{selected.Name}</div>
+                  {selected.Title && (
+                    <div className={styles.panelSub}>{selected.Title}{selected.Agency ? ` · ${selected.Agency}` : ''}</div>
+                  )}
+                </div>
+                <button className={styles.panelClose}
+                  onClick={() => { setSelected(null); setEditing(false) }}>✕</button>
+              </div>
+
+              <div className={styles.panelBody}>
+                {!editing ? (
+                  <>
+                    {/* View mode */}
+                    <div className={styles.panelSection}>
+                      {[
+                        ['Email',        selected.Email],
+                        ['Phone',        selected.Phone],
+                        ['Agency',       selected.Agency],
+                        ['Organization', selected.Organization],
+                        ['Type',         selected.Type],
+                        ['Notes',        selected.Notes],
+                      ].filter(([, v]) => v).map(([label, value]) => (
+                        <div key={label} className={styles.panelField}>
+                          <span className={styles.panelLabel}>{label}</span>
+                          <span className={styles.panelValue}>
+                            {label === 'Email'
+                              ? <a href={`mailto:${value}`} className="text-sm">{value}</a>
+                              : value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Linked opportunities */}
+                    <div className={styles.panelSection}>
+                      <div className={styles.panelSectionTitle}>Linked opportunities</div>
+                      {linkedOpps.length === 0
+                        ? <p className="text-sm text-muted">No linked opportunities.</p>
+                        : linkedOpps.map((o) => (
+                          <div key={o[C_CN]} className={styles.linkedOppRow}>
+                            <div>
+                              <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
+                              <div className={styles.linkedOppMeta}>{o[C_CN]} · {o[C_PHASE]}</div>
+                            </div>
+                          </div>
+                        ))
+                      }
+                    </div>
+
+                    {/* Footer actions */}
+                    <div className={styles.panelActions}>
+                      <button className="btn btn-primary" onClick={startEdit}>Edit contact</button>
+                      <button className="btn btn-ghost"
+                        style={{ color: 'var(--red-600)' }}
+                        onClick={() => setConfirmDelete(true)}>Delete</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Edit mode */}
+                    {contactFormFields()}
+
+                    {/* Link opportunities in edit mode */}
+                    <div className={styles.panelSection}>
+                      <div className={styles.panelSectionTitle}>Linked opportunities</div>
+                      {linkedOpps.map((o) => (
+                        <div key={o[C_CN]} className={styles.linkedOppRow}>
+                          <div style={{ flex: 1 }}>
+                            <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
+                            <div className={styles.linkedOppMeta}>{o[C_CN]}</div>
+                          </div>
+                          <button
+                            className="btn btn-ghost btn-icon"
+                            title="Unlink"
+                            onClick={() => handleUnlinkOpp(o)}
+                          >✕</button>
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 8 }}>
+                        <input
+                          className="form-input"
+                          placeholder="Search opportunities to link…"
+                          value={oppSearch}
+                          onChange={(e) => setOppSearch(e.target.value)}
+                          style={{ marginBottom: 6 }}
+                        />
+                        {oppSearch && (
+                          <div className={styles.oppDropdown}>
+                            {unlinkableOpps.length === 0
+                              ? <div className={styles.oppDropdownEmpty}>No results</div>
+                              : unlinkableOpps.map((o) => (
+                                <div key={o[C_CN]} className={styles.oppDropdownRow}
+                                  onClick={() => !linkingOpp && handleLinkOpp(o)}>
+                                  <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
+                                  <div className={styles.linkedOppMeta}>{o[C_CN]}</div>
+                                </div>
+                              ))
+                            }
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className={styles.panelActions}>
+                      <button className="btn btn-primary" onClick={saveEdit} disabled={saving}>
+                        {saving ? 'Saving…' : 'Save changes'}
+                      </button>
+                      <button className="btn" onClick={cancelEdit} disabled={saving}>Cancel</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
+      {/* Add contact modal */}
       {showAdd && (
-        <Modal
-          title="New contact"
-          onClose={() => setShowAdd(false)}
+        <Modal title="New contact" onClose={() => setShowAdd(false)}
           footer={
             <>
               <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
@@ -213,31 +390,13 @@ export default function Contacts({ toast }) {
             </>
           }
         >
-          {renderContactForm()}
+          {contactFormFields()}
         </Modal>
       )}
 
-      {editing && (
-        <Modal
-          title="Edit contact"
-          onClose={() => setEditing(null)}
-          footer={
-            <>
-              <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitUpdate} disabled={saving}>
-                {saving ? 'Saving…' : 'Save changes'}
-              </button>
-            </>
-          }
-        >
-          {renderContactForm()}
-        </Modal>
-      )}
-
+      {/* Delete confirm modal */}
       {confirmDelete && (
-        <Modal
-          title="Delete contact"
-          onClose={() => setConfirmDelete(null)}
+        <Modal title="Delete contact" onClose={() => setConfirmDelete(null)}
           footer={
             <>
               <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
@@ -245,7 +404,9 @@ export default function Contacts({ toast }) {
             </>
           }
         >
-          <p className="text-sm">Delete <strong>{confirmDelete.Name}</strong>? This cannot be undone.</p>
+          <p className="text-sm">
+            Delete <strong>{selected?.Name}</strong>? This cannot be undone.
+          </p>
         </Modal>
       )}
     </>
