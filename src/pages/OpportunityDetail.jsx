@@ -11,7 +11,7 @@ import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { buildEmailDraftPrompt, buildCapabilityStatementPrompt } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
-import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES } from '@/services/graphService'
+import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
 const C = {
@@ -100,11 +100,31 @@ export default function OpportunityDetail({ toast }) {
   const [taskForm, setTaskForm]     = useState({
     Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
   })
+  const [contactSearch, setContactSearch] = useState('')
+  const [linkingContact, setLinkingContact] = useState(false)
 
   const opp = useMemo(
     () => pipeline.find((o) => o[C.contractNum] === decodedCN),
     [pipeline, decodedCN]
   )
+
+  // Contacts linked via POC column (comma-separated names)
+  const linkedContacts = useMemo(() => {
+    if (!opp) return []
+    const names = parsePOCNames(opp[C.poc])
+    return names.map((name) => contacts.find((c) => c.Name === name)).filter(Boolean)
+  }, [opp, contacts])
+
+  // Contacts NOT yet linked — for search/add
+  const unlinkedContacts = useMemo(() => {
+    const linked = new Set(linkedContacts.map((c) => c.Name))
+    const q = contactSearch.trim().toLowerCase()
+    if (!q) return []
+    return contacts.filter((c) => {
+      if (linked.has(c.Name)) return false
+      return [c.Name, c.Agency, c.Email].some((v) => v?.toLowerCase().includes(q))
+    }).slice(0, 20)
+  }, [contacts, linkedContacts, contactSearch])
 
   const contact = useMemo(
     () => contacts.find((c) => c.Notes?.includes(decodedCN)),
@@ -201,6 +221,29 @@ export default function OpportunityDetail({ toast }) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
       setUpdatingTaskId(null)
+    }
+  }
+
+  const handleLinkContact = async (contact) => {
+    if (linkingContact) return
+    setLinkingContact(true)
+    try {
+      await addContactToPOC(opp._rowIndex, opp[C.poc], contact.Name)
+      setContactSearch('')
+      toast?.success(`${contact.Name} linked`)
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setLinkingContact(false)
+    }
+  }
+
+  const handleUnlinkContact = async (contact) => {
+    try {
+      await removeContactFromPOC(opp._rowIndex, opp[C.poc], contact.Name)
+      toast?.success(`${contact.Name} unlinked`)
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
     }
   }
 
@@ -411,33 +454,76 @@ export default function OpportunityDetail({ toast }) {
               </button>
             </div>
 
-            {contact && (
-              <>
-                <div className={styles.sectionTitle}>Contact</div>
-                <div className={`card ${styles.contactCard}`}>
-                  <div className={styles.contactAv}>
-                    {contact.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>{contact.Name}</div>
-                    <div className="text-muted text-sm">{contact.Title} · {contact.Organization}</div>
-                    <a href={`mailto:${contact.Email}`} className="text-sm">{contact.Email}</a>
+            {/* ── Contacts / POC ── */}
+            <div className={styles.sectionTitle}>Contacts</div>
+            {linkedContacts.length > 0 && linkedContacts.map((c) => (
+              <div key={c.ContactID} className={`card ${styles.contactCard}`}
+                style={{ marginBottom: 6 }}>
+                <div className={styles.contactAv}>
+                  {c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13 }}>{c.Name}</div>
+                  <div className="text-sm" style={{ color: 'var(--gray-400)', marginTop: 2 }}>
+                    {c.Email
+                      ? <a href={`mailto:${c.Email}`} className="text-sm">{c.Email}</a>
+                      : c.Title || '—'}
                   </div>
                 </div>
-              </>
+                {editing && (
+                  <button className="btn btn-ghost btn-icon"
+                    title="Unlink contact"
+                    onClick={() => handleUnlinkContact(c)}>✕</button>
+                )}
+              </div>
+            ))}
+            {linkedContacts.length === 0 && (
+              <p className="text-sm text-muted" style={{ marginBottom: 8 }}>
+                No contacts linked.
+              </p>
             )}
-
-            {!contact && opp[C.poc] && (
-              <>
-                <div className={styles.sectionTitle}>Contracting Officer</div>
-                <div className="card">
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{opp[C.poc]}</div>
-                  {opp[C.poc].includes('@') && (
-                    <a href={`mailto:${opp[C.poc]}`} className="text-sm">{opp[C.poc]}</a>
-                  )}
+            {/* Add contact search — always visible */}
+            <div style={{ position: 'relative' }}>
+              <input
+                className="form-input"
+                placeholder="Search contacts to link…"
+                value={contactSearch}
+                onChange={(e) => setContactSearch(e.target.value)}
+              />
+              {contactSearch && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0,
+                  background: '#fff', border: '0.5px solid var(--gray-200)',
+                  borderRadius: 'var(--radius-md)', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                  maxHeight: 180, overflowY: 'auto', zIndex: 10, marginTop: 4,
+                }}>
+                  {unlinkedContacts.length === 0
+                    ? <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--gray-400)' }}>
+                        No contacts found.
+                      </div>
+                    : unlinkedContacts.map((c) => (
+                      <div key={c.ContactID}
+                        onClick={() => !linkingContact && handleLinkContact(c)}
+                        style={{
+                          padding: '8px 12px', cursor: 'pointer',
+                          borderBottom: '0.5px solid var(--gray-100)',
+                          transition: 'background 0.1s',
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--blue-50)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--gray-900)' }}>
+                          {c.Name}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 2 }}>
+                          {c.Agency || c.Email || '—'}
+                        </div>
+                      </div>
+                    ))
+                  }
                 </div>
-              </>
-            )}
+              )}
+            </div>
           </div>
         </div>
 
