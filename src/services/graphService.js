@@ -459,6 +459,31 @@ export async function setNotifLog(key, dateStr) {
   }
 }
 
+// ── POC / Contact linking helpers ─────────────────────────────────────────
+
+const POC_COL = 'Contracting Officer / Specialist (POC)*'
+const POC_SEP = ', '
+
+/** Parse POC column into array of trimmed names */
+export function parsePOCNames(pocValue) {
+  if (!pocValue) return []
+  return String(pocValue).split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/** Add a contact name to an opportunity's POC column */
+export async function addContactToPOC(rowIndex, currentPOC, contactName) {
+  const names = parsePOCNames(currentPOC)
+  if (names.includes(contactName)) return  // already linked
+  const newValue = [...names, contactName].join(POC_SEP)
+  return updateOpportunity(rowIndex, { [POC_COL]: newValue })
+}
+
+/** Remove a contact name from an opportunity's POC column */
+export async function removeContactFromPOC(rowIndex, currentPOC, contactName) {
+  const names = parsePOCNames(currentPOC).filter((n) => n !== contactName)
+  return updateOpportunity(rowIndex, { [POC_COL]: names.join(POC_SEP) })
+}
+
 export async function getPipeline() {
   return getSheetRows('PipelineTable')
 }
