@@ -1,144 +1,90 @@
 /**
  * groqService.js
- * Calls Groq's OpenAI-compatible API with automatic model fallback.
- * Priority: openai/gpt-oss-120b → openai/gpt-oss-20b → llama-3.3-70b-versatile → llama-3.1-8b-instant
+ * Calls the Cloudflare Worker AI endpoint — Groq API key stays server-side.
+ * The Worker handles model selection, fallback, and prompt assembly.
  */
 
-const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
-const API_KEY = import.meta.env.VITE_GROQ_API_KEY
-
-const MODEL_PRIORITY = [
-  'openai/gpt-oss-120b',
-  'openai/gpt-oss-20b',
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
-]
+const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
 /**
- * Send a chat completion request to Groq with automatic fallback.
- * @param {Array} messages  - OpenAI-format messages array
- * @param {Object} options  - { modelOverride, maxTokens, signal }
+ * Send a chat request to the Worker AI endpoint.
+ * @param {string} promptType — 'pipeline_summary' | 'opportunity_detail' | 'email_draft' | 'capability_statement'
+ * @param {object} context   — Data context (kpis, opportunity, contact, etc.)
+ * @param {string} question  — Optional user question (for opportunity_detail)
  * @returns {{ content: string, model: string }}
  */
-export async function groqChat(messages, options = {}) {
-  const { modelOverride, maxTokens = 1000, signal } = options
-  const models = modelOverride ? [modelOverride] : MODEL_PRIORITY
-
-  let lastError = null
-  for (const model of models) {
-    try {
-      const res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
-        method: 'POST',
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${API_KEY}`,
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          messages,
-        }),
-      })
-
-      if (res.status === 429 || res.status === 503) {
-        const body = await res.json().catch(() => ({}))
-        lastError = new Error(body?.error?.message || `Rate limited on ${model}`)
-        continue // try next model
-      }
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body?.error?.message || `Groq error: ${res.status}`)
-      }
-
-      const data = await res.json()
-      const content = data.choices?.[0]?.message?.content ?? ''
-      return { content, model }
-    } catch (err) {
-      if (err.name === 'AbortError') throw err
-      lastError = err
-      // Network errors or non-rate-limit errors — don't fallback, rethrow
-      if (!err.message.includes('Rate limited') && err.message !== `Rate limited on ${model}`) {
-        throw err
-      }
-    }
+export async function groqChat(promptType, context = {}, question = '') {
+  if (!WORKER_URL) {
+    throw new Error('VITE_API_BASE_URL not set — Worker URL missing')
   }
 
-  throw lastError || new Error('All Groq models failed')
+  const res = await fetch(`${WORKER_URL}/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ promptType, context, question }),
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Worker AI error: ${res.status}`)
+  }
+
+  return res.json()   // { content, model }
 }
 
-/**
- * Build a pipeline summary prompt from KPI data.
- */
+// ── Context builders — called by components before groqChat ───────────────
+// These stay in the frontend since they assemble data the frontend already has.
+// The Worker receives the assembled context, not raw pipeline data.
+
+export function buildPipelineSummaryContext(kpis) {
+  return {
+    kpis: {
+      total:          kpis.total,
+      totalValue:     kpis.totalValueFormatted,
+      open:           kpis.open,
+      closed:         kpis.closed,
+      byPhase:        kpis.byPhase,
+      overdueTasks:   kpis.overdueCount,
+      topOwner:       kpis.topOwner,
+    },
+  }
+}
+
+export function buildOpportunityContext(opportunity, recentNotes) {
+  return {
+    opportunity: {
+      title:          opportunity['Project Title / Description*']           || '',
+      contractNumber: opportunity['Contract Number / Notice ID']            || '',
+      agency:         opportunity['Agency*']                                || '',
+      phase:          opportunity['TAG Opportunity Phase']                  || '',
+      value:          opportunity['Total Contract Value ($)*']              || '',
+      naics:          opportunity['NAICS Code*']                            || '',
+      assignedTo:     opportunity['Assigned To*']                           || '',
+      recentNotes:    recentNotes || '',
+    },
+  }
+}
+
+export function buildEmailDraftContext(opportunity, contact, recentNotes) {
+  return {
+    ...buildOpportunityContext(opportunity, recentNotes),
+    contact: contact
+      ? { name: contact.Name, title: contact.Title }
+      : null,
+  }
+}
+
+export function buildCapabilityStatementContext(opportunity, recentNotes) {
+  return buildOpportunityContext(opportunity, recentNotes)
+}
+
+// ── Legacy compat — keep buildPipelineSummaryPrompt so AIPanel still works ──
+// AIPanel calls buildPrompt() which returns messages[]. We'll keep this shim
+// until AIPanel is updated to use the new Worker-based approach.
 export function buildPipelineSummaryPrompt(kpis) {
+  console.warn('[groqService] buildPipelineSummaryPrompt is deprecated — update AIPanel to use groqChat()')
   return [
-    {
-      role: 'system',
-      content:
-        'You are a concise business analyst assistant. Write plain, professional summaries in 2–4 sentences. No bullet points. No markdown.',
-    },
-    {
-      role: 'user',
-      content: `Summarize the current state of this government contracting pipeline:
-Total active opportunities: ${kpis.total}
-Total pipeline value: ${kpis.totalValue}
-Open opportunities: ${kpis.open}
-Closed opportunities: ${kpis.closed}
-Phase breakdown: ${JSON.stringify(kpis.byPhase)}
-Overdue tasks: ${kpis.overdueTasks}
-Top owner by deal count: ${kpis.topOwner}
-
-Write a 2–4 sentence plain-English summary covering the overall pipeline state, any phase concentrations, and any urgent items.`,
-    },
-  ]
-}
-
-/**
- * Build a follow-up email draft prompt.
- */
-export function buildEmailDraftPrompt(opportunity, contact) {
-  return [
-    {
-      role: 'system',
-      content:
-        'You are a professional proposal writer for a government contracting firm. Draft concise, professional follow-up emails. No placeholders — use the data provided.',
-    },
-    {
-      role: 'user',
-      content: `Draft a follow-up email for this opportunity:
-Opportunity: ${opportunity.ContractTitle}
-Agency: ${opportunity.Agency}
-Phase: ${opportunity.Phase}
-Contract #: ${opportunity.ContractNumber}
-Contact name: ${contact?.Name || 'the contracting officer'}
-Contact title: ${contact?.Title || ''}
-Recent notes: ${opportunity.recentNotes || 'None'}
-
-Write a professional, brief follow-up email from our team to the contact.`,
-    },
-  ]
-}
-
-/**
- * Build a capability statement prompt.
- */
-export function buildCapabilityStatementPrompt(opportunity) {
-  return [
-    {
-      role: 'system',
-      content:
-        'You are a proposal writer for a government contracting firm. Write targeted capability statements that match the firm\'s services to a specific opportunity. Keep it to 3–4 concise paragraphs.',
-    },
-    {
-      role: 'user',
-      content: `Write a capability statement for this opportunity:
-Opportunity: ${opportunity.ContractTitle}
-Agency: ${opportunity.Agency}
-NAICS: ${opportunity.NAICS}
-Contract #: ${opportunity.ContractNumber}
-Solicitation #: ${opportunity.SolicitationNumber || 'TBD'}
-Notes: ${opportunity.recentNotes || 'None'}`,
-    },
+    { role: 'system', content: 'You are a concise business analyst. Write plain 2-4 sentence summaries.' },
+    { role: 'user',   content: `Pipeline: ${JSON.stringify(kpis)}` },
   ]
 }
