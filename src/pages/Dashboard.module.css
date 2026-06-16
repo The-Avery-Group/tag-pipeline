@@ -333,3 +333,11 @@
   margin-top: 4px;
 }
 .expandBtn:hover { background: var(--blue-50); }
+
+/* ── Expiring contracts controls ── */
+.expiringControls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
