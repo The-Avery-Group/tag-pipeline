@@ -26,7 +26,7 @@ function corsHeaders(env, req) {
 
   return {
     'Access-Control-Allow-Origin':  isAllowed ? origin : allowed,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age':       '86400',
   }
@@ -69,6 +69,9 @@ export default {
         response = await handleNotify(req, env)
 
       } else if (path === '/ai/chat' && req.method === 'POST') {
+        response = await handleAIChat(req, env)
+
+      } else if (path === '/ai/history' && (req.method === 'GET' || req.method === 'DELETE')) {
         response = await handleAIChat(req, env)
 
       } else if (path === '/sam/search' && req.method === 'GET') {
