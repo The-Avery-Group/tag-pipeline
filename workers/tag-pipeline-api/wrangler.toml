@@ -10,9 +10,9 @@ compatibility_flags = ["nodejs_compat"]
 
 # KV namespace for caching Databank responses (create with `wrangler kv:namespace create CACHE`)
 # Uncomment and fill in the id once created:
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = "YOUR_KV_NAMESPACE_ID"
+[[kv_namespaces]]
+binding = "CACHE"
+id = "8e2b634e99384d5d9e9c0880fce935b0"
 
 [vars]
 ENVIRONMENT = "production"
