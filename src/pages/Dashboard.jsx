@@ -6,7 +6,7 @@ import { useTasks } from '@/hooks/useTasks'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import { computeKPIs, computeRFIByMonth, getGreeting, formatDate, isOverdue, formatCurrency } from '@/utils/kpiHelpers'
-import { buildPipelineSummaryPrompt } from '@/services/groqService'
+import { buildPipelineSummaryContext } from '@/services/groqService'
 import styles from './Dashboard.module.css'
 
 const C = {
@@ -430,16 +430,8 @@ export default function Dashboard({ toast }) {
   )
 
   const aiPrompt = useCallback(
-    () => buildPipelineSummaryPrompt({
-      total: kpis.total,
-      totalValue: kpis.totalValueFormatted,
-      open: kpis.open,
-      closed: kpis.closed,
-      byPhase: kpis.byPhase,
-      overdueTasks: kpis.overdueCount,
-      topOwner: kpis.topOwner,
-    }),
-    [kpis]
+    () => buildPipelineSummaryContext(kpis, pipeline),
+    [kpis, pipeline]
   )
 
   const handleCloseTask = async (task) => {
@@ -475,6 +467,7 @@ export default function Dashboard({ toast }) {
       <div className="page-body">
         <AIPanel
           title="AI pipeline summary"
+          promptType="pipeline_summary"
           buildPrompt={aiPrompt}
           defaultCollapsed={true}
         />
