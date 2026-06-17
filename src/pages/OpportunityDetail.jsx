@@ -9,7 +9,7 @@ import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
-import { buildEmailDraftPrompt, buildCapabilityStatementPrompt } from '@/services/groqService'
+import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
@@ -131,27 +131,15 @@ export default function OpportunityDetail({ toast }) {
     [contacts, decodedCN]
   )
 
-  // These must be unconditional — they cannot move below the early returns
+  const recentNotesStr = notes.slice(0, 3).map((n) => n.NoteText).join(' | ')
+
   const emailPrompt = useCallback(
-    () => buildEmailDraftPrompt({
-      ContractTitle: opp?.[C.title] ?? '',
-      Agency:        opp?.[C.agency] ?? '',
-      Phase:         opp?.[C.phase] ?? '',
-      ContractNumber: decodedCN,
-      recentNotes: notes.slice(0, 3).map((n) => n.NoteText).join(' | '),
-    }, contact),
+    () => buildEmailDraftContext(opp ?? {}, contact, recentNotesStr),
     [opp, notes, contact, decodedCN]
   )
 
   const capPrompt = useCallback(
-    () => buildCapabilityStatementPrompt({
-      ContractTitle:     opp?.[C.title] ?? '',
-      Agency:            opp?.[C.agency] ?? '',
-      NAICS:             opp?.[C.naics] ?? '',
-      ContractNumber:    decodedCN,
-      SolicitationNumber: opp?.[C.solNum] ?? '',
-      recentNotes: notes.slice(0, 3).map((n) => n.NoteText).join(' | '),
-    }),
+    () => buildCapabilityStatementContext(opp ?? {}, recentNotesStr),
     [opp, notes, decodedCN]
   )
 
