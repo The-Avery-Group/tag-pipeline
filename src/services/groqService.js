@@ -88,3 +88,23 @@ export function buildPipelineSummaryPrompt(kpis) {
     { role: 'user',   content: `Pipeline: ${JSON.stringify(kpis)}` },
   ]
 }
+
+// ── AIPanel compatibility shims ───────────────────────────────────────────
+// AIPanel expects buildPrompt() to return an array of messages.
+// These wrappers maintain that contract while using the new context structure.
+
+export function buildEmailDraftPrompt(opportunity, contact) {
+  const ctx = buildEmailDraftContext(opportunity, contact, opportunity.recentNotes || '')
+  return [
+    { role: 'system', content: 'You are a professional proposal writer for a government contracting firm. Draft concise, professional follow-up emails. No placeholders — use the data provided.' },
+    { role: 'user',   content: `Draft a follow-up email for this opportunity:\n${JSON.stringify(ctx)}` },
+  ]
+}
+
+export function buildCapabilityStatementPrompt(opportunity) {
+  const ctx = buildCapabilityStatementContext(opportunity, opportunity.recentNotes || '')
+  return [
+    { role: 'system', content: "You are a proposal writer for a government contracting firm. Write targeted capability statements. Keep it to 3-4 concise paragraphs." },
+    { role: 'user',   content: `Write a capability statement for:\n${JSON.stringify(ctx)}` },
+  ]
+}
