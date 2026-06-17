@@ -8,6 +8,7 @@ const NAV = [
   { to: '/pipeline-board', icon: '⬦', label: 'Pipeline Board' },
   { to: '/tasks',          icon: '☑', label: 'Tasks' },
   { to: '/contacts',       icon: '◎', label: 'Contacts' },
+  { to: '/ai-chat',        icon: '✦', label: 'AI Advisor' },
 ]
 
 export default function Sidebar() {
