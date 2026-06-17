@@ -303,7 +303,17 @@ export default function OpportunityDetail({ toast }) {
             )}
           </div>
           {!editing
-            ? <button className="btn" onClick={handleEdit}>Edit</button>
+            ? (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 12, color: 'var(--blue-600)' }}
+                  onClick={() => navigate(`/ai-chat?opportunity=${encodeURIComponent(decodedCN)}`)}
+                  title="Discuss this opportunity with AI"
+                >✦ Discuss with AI</button>
+                <button className="btn" onClick={handleEdit}>Edit</button>
+              </div>
+            )
             : (
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn-ghost" onClick={handleCancel} disabled={saving}>Cancel</button>
