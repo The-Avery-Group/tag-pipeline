@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { sendAIMessage } from '@/services/groqService'
+import MarkdownText from './MarkdownText'
 import styles from './AIPanel.module.css'
 
 export default function AIPanel({
@@ -90,7 +91,7 @@ export default function AIPanel({
           {error && <p className={styles.error}>{error}</p>}
           {!loading && !error && content && (
             <>
-              <p className={styles.content}>{content}</p>
+              <MarkdownText content={content} className={styles.content} />
               <div className={styles.meta}>
                 {modelUsed && <span className={styles.modelLabel}>via {modelUsed}</span>}
                 <div style={{ display: 'flex', gap: 8 }}>
