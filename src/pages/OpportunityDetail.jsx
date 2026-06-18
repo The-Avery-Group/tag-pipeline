@@ -481,7 +481,7 @@ export default function OpportunityDetail({ toast }) {
               </p>
             )}
             {/* Add contact search — always visible */}
-            <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative', marginTop: 8 }}>
               <input
                 className="form-input"
                 placeholder="Search contacts to link…"
@@ -493,14 +493,14 @@ export default function OpportunityDetail({ toast }) {
                   position: 'absolute', top: '100%', left: 0, right: 0,
                   background: '#fff', border: '0.5px solid var(--gray-200)',
                   borderRadius: 'var(--radius-md)', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                  maxHeight: 180, overflowY: 'auto', zIndex: 10, marginTop: 4,
+                  maxHeight: 180, overflowY: 'auto', zIndex: 50, marginTop: 4,
                 }}>
                   {unlinkedContacts.length === 0
                     ? <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--gray-400)' }}>
                         No contacts found.
                       </div>
                     : unlinkedContacts.map((c) => (
-                      <div key={c.ContactID}
+                      <div key={c.ContactID || c.Name}
                         onClick={() => !linkingContact && handleLinkContact(c)}
                         style={{
                           padding: '8px 12px', cursor: 'pointer',
@@ -511,7 +511,7 @@ export default function OpportunityDetail({ toast }) {
                         onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                       >
                         <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--gray-900)' }}>
-                          {c.Name}
+                          {c.Name || '—'}
                         </div>
                         <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 2 }}>
                           {c.Agency || c.Email || '—'}
