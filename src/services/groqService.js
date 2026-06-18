@@ -60,8 +60,10 @@ export async function clearConversation(conversationId) {
 export function buildPipelineSummaryContext(kpis, pipeline = []) {
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const in90 = new Date(today); in90.setDate(in90.getDate() + 90)
+  const in30 = new Date(today); in30.setDate(in30.getDate() + 30)
 
   // Stale: early-phase opps with no modification in 7+ days
+  // Ranked by: most days stale first, ties broken by value descending
   const staleOpportunities = pipeline
     .filter((o) => {
       const phase = o['TAG Opportunity Phase']
@@ -71,39 +73,49 @@ export function buildPipelineSummaryContext(kpis, pipeline = []) {
       const d = new Date(mod + 'T00:00:00')
       return (today - d) / 86400000 >= 7
     })
-    .slice(0, 10)
     .map((o) => ({
       title:        o['Project Title / Description*'],
       phase:        o['TAG Opportunity Phase'],
       lastModified: o['Last Modified*'],
+      value:        parseFloat(String(o['Total Contract Value ($)*'] || '0').replace(/[^0-9.]/g, '')) || 0,
+      daysStale:    o['Last Modified*']
+        ? Math.floor((today - new Date(o['Last Modified*'] + 'T00:00:00')) / 86400000)
+        : 999,
     }))
+    .sort((a, b) => b.daysStale - a.daysStale || b.value - a.value)
+    .slice(0, 5)
 
   // Expiring within 90 days
+  // Ranked by: soonest expiring first (most urgent)
   const expiringOpportunities = pipeline
     .filter((o) => {
       const d = new Date((o['Contract End Date*'] || '') + 'T00:00:00')
       return !isNaN(d) && d >= today && d <= in90
     })
-    .slice(0, 10)
     .map((o) => ({
       title:   o['Project Title / Description*'],
       endDate: o['Contract End Date*'],
       value:   o['Total Contract Value ($)*'],
+      daysLeft: Math.floor((new Date(o['Contract End Date*'] + 'T00:00:00') - today) / 86400000),
     }))
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 5)
 
-  // Upcoming deadlines (submission within 30 days)
-  const in30 = new Date(today); in30.setDate(in30.getDate() + 30)
+  // Upcoming submission deadlines within 30 days
+  // Ranked by: soonest deadline first
   const upcomingDeadlines = pipeline
     .filter((o) => {
       const d = new Date((o['Submission Date (Response Date)*'] || '') + 'T00:00:00')
       return !isNaN(d) && d >= today && d <= in30
     })
-    .slice(0, 10)
     .map((o) => ({
       title:    o['Project Title / Description*'],
       submDate: o['Submission Date (Response Date)*'],
       phase:    o['TAG Opportunity Phase'],
+      daysLeft: Math.floor((new Date(o['Submission Date (Response Date)*'] + 'T00:00:00') - today) / 86400000),
     }))
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 5)
 
   return {
     kpis: {
