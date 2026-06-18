@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
+import { useTasks } from '@/hooks/useTasks'
 import { useAIChat } from '@/hooks/useAIChat'
 import Topbar from '@/components/Layout/Topbar'
-import { buildOpportunityContext } from '@/services/groqService'
+import MarkdownText from '@/components/AI/MarkdownText'
+import { buildPipelineSummaryContext, buildOpportunityContext } from '@/services/groqService'
+import { computeKPIs } from '@/utils/kpiHelpers'
 import styles from './AIChat.module.css'
 
 const C_CN    = 'Contract Number / Notice ID'
@@ -18,8 +21,9 @@ export default function AIChat({ toast }) {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { pipeline } = usePipeline()
+  const { tasks } = useTasks()
 
-  const oppCN     = searchParams.get('opportunity')
+  const oppCN      = searchParams.get('opportunity')
   const freshParam = searchParams.get('fresh') === '1'
 
   // Find opportunity if opened from OpportunityDetail
@@ -29,8 +33,21 @@ export default function AIChat({ toast }) {
   )
 
   const promptType = opp ? 'opportunity_detail' : 'general'
-  const context    = opp ? buildOpportunityContext(opp, '') : {}
-  const convId     = opp
+
+  // Build context — always include pipeline summary for general chat
+  const context = useMemo(() => {
+    if (opp) {
+      // Opportunity-specific: include the opp details + pipeline summary for broader questions
+      return {
+        ...buildOpportunityContext(opp, ''),
+        ...buildPipelineSummaryContext(computeKPIs(pipeline, tasks), pipeline),
+      }
+    }
+    // General chat: full pipeline context so AI can answer any operational question
+    return buildPipelineSummaryContext(computeKPIs(pipeline, tasks), pipeline)
+  }, [opp, pipeline, tasks])
+
+  const convId = opp
     ? makeConvId(oppCN.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40))
     : makeConvId('general')
 
@@ -150,7 +167,10 @@ export default function AIChat({ toast }) {
                 <div className={styles.assistantIcon}>✦</div>
               )}
               <div className={styles.bubble}>
-                <p className={styles.messageText}>{m.content}</p>
+                {m.role === 'assistant'
+                  ? <MarkdownText content={m.content} />
+                  : <p className={styles.messageText}>{m.content}</p>
+                }
               </div>
             </div>
           ))}
