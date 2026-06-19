@@ -341,10 +341,34 @@ export default function OpportunityDetail({ toast }) {
         {/* ── Page header ── */}
         <div className={styles.pageHeader}>
           <div className={styles.pageHeaderLeft}>
-            {/* Badges row */}
+            {/* Badges row — Phase and Outlook become dropdowns in edit mode */}
             <div className={styles.badgeRow}>
-              <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
-              {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
+              {editing
+                ? (
+                  <>
+                    <select
+                      className={styles.badgeSelect}
+                      value={f(C.phase) || ''}
+                      onChange={(e) => set(C.phase)(e.target.value)}
+                    >
+                      {phaseOptions.map((p) => <option key={p}>{p}</option>)}
+                    </select>
+                    <select
+                      className={styles.badgeSelect}
+                      value={f(C.outlook) || ''}
+                      onChange={(e) => set(C.outlook)(e.target.value)}
+                    >
+                      {outlookOptions.map((o) => <option key={o}>{o}</option>)}
+                    </select>
+                  </>
+                )
+                : (
+                  <>
+                    <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
+                    {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
+                  </>
+                )
+              }
               {opp[C.priority] && (
                 <span className={`badge ${opp[C.priority] === 'Hot' ? 'badge-high' : opp[C.priority] === 'Warm' ? 'badge-medium' : 'badge-low'}`}>
                   {opp[C.priority]}
@@ -397,10 +421,8 @@ export default function OpportunityDetail({ toast }) {
         {/* ── Section 1: Opportunity Details ── */}
         <Section title="Opportunity Details">
           <div className={styles.fieldGrid}>
-            <Field label="TAG Opportunity Phase"   value={f(C.phase)}          editing={editing} onChange={set(C.phase)}          options={phaseOptions} />
-            <Field label="Opportunity Outlook"     value={f(C.outlook)}        editing={editing} onChange={set(C.outlook)}        options={outlookOptions} />
-            <Field label="Agency"                  value={f(C.agency)}         editing={editing} onChange={set(C.agency)} />
-            <Field label="Department"              value={f(C.department)}     editing={editing} onChange={set(C.department)} />
+            <Field label="Agency"      value={f(C.agency)}     editing={editing} onChange={set(C.agency)} />
+            <Field label="Department"  value={f(C.department)} editing={editing} onChange={set(C.department)} />
             <Field label="Office"                  value={f(C.office)}         editing={editing} onChange={set(C.office)} />
             <Field label="NAICS Code"              value={f(C.naics)}          editing={editing} onChange={set(C.naics)}           raw />
             <Field label="Set-Aside"               value={f(C.setAside)}       editing={editing} onChange={set(C.setAside)}       options={setAsideOptions} />
