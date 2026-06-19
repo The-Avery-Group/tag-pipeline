@@ -218,3 +218,19 @@
   display: block;
 }
 .refreshCtx:hover { text-decoration: underline; }
+
+/* ── Badge-style select (phase/outlook in edit mode) ── */
+.badgeSelect {
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font);
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 0.5px solid var(--gray-200);
+  background: var(--gray-50);
+  color: var(--gray-900);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.badgeSelect:focus { border-color: var(--blue-600); }
