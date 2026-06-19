@@ -60,7 +60,6 @@ export async function clearConversation(conversationId) {
 export function buildPipelineSummaryContext(kpis, pipeline = []) {
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const in90 = new Date(today); in90.setDate(in90.getDate() + 90)
-  const in30 = new Date(today); in30.setDate(in30.getDate() + 30)
 
   // Stale: early-phase opps with no modification in 7+ days
   // Ranked by: most days stale first, ties broken by value descending
@@ -101,22 +100,6 @@ export function buildPipelineSummaryContext(kpis, pipeline = []) {
     .sort((a, b) => a.daysLeft - b.daysLeft)
     .slice(0, 5)
 
-  // Upcoming submission deadlines within 30 days
-  // Ranked by: soonest deadline first
-  const upcomingDeadlines = pipeline
-    .filter((o) => {
-      const d = new Date((o['Submission Date (Response Date)*'] || '') + 'T00:00:00')
-      return !isNaN(d) && d >= today && d <= in30
-    })
-    .map((o) => ({
-      title:    o['Project Title / Description*'],
-      submDate: o['Submission Date (Response Date)*'],
-      phase:    o['TAG Opportunity Phase'],
-      daysLeft: Math.floor((new Date(o['Submission Date (Response Date)*'] + 'T00:00:00') - today) / 86400000),
-    }))
-    .sort((a, b) => a.daysLeft - b.daysLeft)
-    .slice(0, 5)
-
   return {
     kpis: {
       total:        kpis.total,
@@ -129,7 +112,6 @@ export function buildPipelineSummaryContext(kpis, pipeline = []) {
     },
     staleOpportunities,
     expiringOpportunities,
-    upcomingDeadlines,
   }
 }
 
@@ -143,7 +125,7 @@ export function buildOpportunityContext(opportunity, recentNotes = '') {
       value:          opportunity['Total Contract Value ($)*']              || '',
       naics:          opportunity['NAICS Code*']                            || '',
       assignedTo:     opportunity['Assigned To*']                           || '',
-      submissionDate: opportunity['Submission Date (Response Date)*']       || '',
+      rfiSubmissionDate: opportunity['Submission Date (Response Date)*']       || '',
       outlook:        opportunity['Opportunity Outlook']                    || '',
       recentNotes,
     },
