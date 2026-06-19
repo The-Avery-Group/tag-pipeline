@@ -50,3 +50,45 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
+/* ── Tabs ── */
+.tabRow {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  border: 0.5px solid transparent;
+  background: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  font-family: var(--font);
+}
+.tab:hover { background: var(--gray-100); color: var(--gray-900); }
+.tabActive  { background: var(--blue-50); color: var(--blue-800); border-color: var(--blue-200); }
+
+.tabBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+.tabActive .tabBadge {
+  background: var(--blue-200);
+  color: var(--blue-800);
+}
