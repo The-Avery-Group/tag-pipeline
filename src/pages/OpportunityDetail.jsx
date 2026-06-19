@@ -11,9 +11,13 @@ import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
-import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
+import {
+  OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES,
+  parsePOCNames, addContactToPOC, removeContactFromPOC,
+} from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
+// ── Column constants ──────────────────────────────────────────────────────
 const C = {
   phase:          'TAG Opportunity Phase',
   actPhase:       'TAG Pipeline Activity Phase',
@@ -49,7 +53,7 @@ const C = {
   classification: 'Contract Classification*',
 }
 
-// Ensure external links always have a protocol so they don't resolve as relative paths
+// ── Helpers ───────────────────────────────────────────────────────────────
 function safeUrl(url) {
   if (!url) return '#'
   const s = String(url).trim()
@@ -57,7 +61,24 @@ function safeUrl(url) {
   return `https://${s}`
 }
 
-const PHASE_BADGE = {  'Identified':       'badge-tracking',
+function formatFieldValue(val) {
+  if (val === null || val === undefined || val === '') return '—'
+  if (val instanceof Date) return formatDate(val)
+  if (typeof val === 'number') return val.toLocaleString()
+  return String(val)
+}
+
+function fmtValue(v) {
+  const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''))
+  if (!n) return null
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`
+  if (n >= 1_000_000)     return `$${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000)         return `$${(n / 1_000).toFixed(0)}K`
+  return `$${n.toFixed(0)}`
+}
+
+const PHASE_BADGE = {
+  'Identified':       'badge-tracking',
   'Research':         'badge-qualify',
   'Qualified':        'badge-qualify',
   'Proposal':         'badge-proposal',
@@ -69,53 +90,90 @@ const PHASE_BADGE = {  'Identified':       'badge-tracking',
 const STATUS_CYCLE = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
 const statusClass  = (s) => s === 'To Do' ? 'todo' : s === 'In Progress' ? 'progress' : 'done'
 
+// ── Section wrapper ───────────────────────────────────────────────────────
+function Section({ title, children }) {
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionHeader}>{title}</div>
+      <div className={`card ${styles.sectionCard}`}>{children}</div>
+    </div>
+  )
+}
+
+// ── Individual read/edit field ────────────────────────────────────────────
+function Field({ label, value, editing, onChange, type = 'text', options = null, raw = false, span = false }) {
+  return (
+    <div className={`form-field ${span ? styles.spanFull : ''}`}>
+      <label className="form-label">{label}</label>
+      {editing
+        ? options
+          ? (
+            <select className="form-input" value={value || ''}
+              onChange={(e) => onChange(e.target.value)}>
+              {options.map((o) => <option key={o}>{o}</option>)}
+            </select>
+          ) : (
+            <input className="form-input" type={type} value={value || ''}
+              onChange={(e) => onChange(e.target.value)} />
+          )
+        : (
+          <div className="form-input" style={{ background: 'var(--gray-50)', color: 'var(--gray-900)' }}>
+            {raw
+              ? (value === null || value === undefined || value === '' ? '—' : String(value))
+              : formatFieldValue(value)}
+          </div>
+        )
+      }
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────
 export default function OpportunityDetail({ toast }) {
   const { contractNumber } = useParams()
   const decodedCN = decodeURIComponent(contractNumber)
-  const navigate = useNavigate()
-  const { user } = useAuth()
+  const navigate  = useNavigate()
+  const { user }  = useAuth()
 
   const { pipeline, loading: pipelineLoading, update: updateOpp } = usePipeline()
-  const { notes, loading: notesLoading, add: addNote } = useNotes(decodedCN)
+  const { notes, loading: notesLoading, add: addNote }            = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
-  const { contacts } = useContacts()
-  const { lists } = useValidationLists()
+  const { contacts }  = useContacts()
+  const { lists }     = useValidationLists()
 
-  const phaseOptions    = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
-  const outlookOptions  = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
-  const priorityOptions = pickList(lists, 'Priority', PRIORITY_VALUES)
-  const setAsideOptions = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
-  const primeOrSubOptions = pickList(lists, 'Prime or Sub', ['Prime', 'Sub'])
-  const bidNoBidOptions   = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
+  const phaseOptions      = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const outlookOptions    = pickList(lists, 'Opportunity Outlook',   OPPORTUNITY_OUTLOOK)
+  const priorityOptions   = pickList(lists, 'Priority',              PRIORITY_VALUES)
+  const setAsideOptions   = pickList(lists, 'Set-Aside',             SET_ASIDE_VALUES)
+  const primeOrSubOptions = pickList(lists, 'Prime or Sub',          ['Prime', 'Sub'])
+  const bidNoBidOptions   = pickList(lists, 'Bid / No Bid?',         ['Bid', 'No Bid', 'TBD'])
 
-  // ── ALL useState / useMemo / useCallback MUST be here, before any early return ──
-  const [form, setForm]             = useState(null)
-  const [editing, setEditing]       = useState(false)
-  const [saving, setSaving]         = useState(false)
-  const [newNote, setNewNote]       = useState('')
-  const [addingNote, setAddingNote] = useState(false)
-  const [showAddTask, setShowAddTask] = useState(false)
-  const [savingTask, setSavingTask] = useState(false)
-  const [updatingTaskId, setUpdatingTaskId] = useState(null)
-  const [taskForm, setTaskForm]     = useState({
+  // ── All hooks before any early return ────────────────────────────────
+  const [form,            setForm]            = useState(null)
+  const [editing,         setEditing]         = useState(false)
+  const [saving,          setSaving]          = useState(false)
+  const [newNote,         setNewNote]         = useState('')
+  const [addingNote,      setAddingNote]      = useState(false)
+  const [showAddTask,     setShowAddTask]     = useState(false)
+  const [savingTask,      setSavingTask]      = useState(false)
+  const [updatingTaskId,  setUpdatingTaskId]  = useState(null)
+  const [taskForm,        setTaskForm]        = useState({
     Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
   })
-  const [contactSearch, setContactSearch] = useState('')
-  const [linkingContact, setLinkingContact] = useState(false)
+  const [contactSearch,   setContactSearch]   = useState('')
+  const [linkingContact,  setLinkingContact]  = useState(false)
 
   const opp = useMemo(
     () => pipeline.find((o) => o[C.contractNum] === decodedCN),
     [pipeline, decodedCN]
   )
 
-  // Contacts linked via POC column (comma-separated names)
   const linkedContacts = useMemo(() => {
     if (!opp) return []
     const names = parsePOCNames(opp[C.poc])
     return names.map((name) => contacts.find((c) => c.Name === name)).filter(Boolean)
   }, [opp, contacts])
 
-  // Contacts NOT yet linked — for search/add
   const unlinkedContacts = useMemo(() => {
     const linked = new Set(linkedContacts.map((c) => c.Name))
     const q = contactSearch.trim().toLowerCase()
@@ -143,7 +201,7 @@ export default function OpportunityDetail({ toast }) {
     [opp, notes, decodedCN]
   )
 
-  // ── Early returns AFTER all hooks ──
+  // ── Early returns after all hooks ─────────────────────────────────────
   if (pipelineLoading) {
     return (
       <div className="page-body">
@@ -167,8 +225,11 @@ export default function OpportunityDetail({ toast }) {
     )
   }
 
-  // ── Handlers (plain functions, not hooks — fine below early returns) ──
+  // ── Helpers that depend on opp (safe below early returns) ─────────────
   const cur = form || opp
+
+  const f = (key) => cur[key]
+  const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
   const handleCancel = () => { setForm(null); setEditing(false) }
@@ -212,13 +273,13 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const handleLinkContact = async (contact) => {
+  const handleLinkContact = async (c) => {
     if (linkingContact) return
     setLinkingContact(true)
     try {
-      await addContactToPOC(opp._rowIndex, opp[C.poc], contact.Name)
+      await addContactToPOC(opp._rowIndex, opp[C.poc], c.Name)
       setContactSearch('')
-      toast?.success(`${contact.Name} linked`)
+      toast?.success(`${c.Name} linked`)
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
@@ -226,10 +287,10 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const handleUnlinkContact = async (contact) => {
+  const handleUnlinkContact = async (c) => {
     try {
-      await removeContactFromPOC(opp._rowIndex, opp[C.poc], contact.Name)
-      toast?.success(`${contact.Name} unlinked`)
+      await removeContactFromPOC(opp._rowIndex, opp[C.poc], c.Name)
+      toast?.success(`${c.Name} unlinked`)
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     }
@@ -254,281 +315,304 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const field = (label, key, type = 'text', options = null, raw = false) => (
-    <div className="form-field" key={key}>
-      <label className="form-label">{label}</label>
-      {editing
-        ? options
-          ? (
-            <select className="form-input" value={cur[key] || ''}
-              onChange={(e) => setForm({ ...form, [key]: e.target.value })}>
-              {options.map((o) => <option key={o}>{o}</option>)}
-            </select>
-          ) : (
-            <input className="form-input" type={type} value={cur[key] || ''}
-              onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
-          )
-        : <div className="form-input" style={{ background: 'var(--gray-50)' }}>
-            {raw
-              ? (cur[key] === null || cur[key] === undefined || cur[key] === '' ? '—' : String(cur[key]))
-              : formatFieldValue(cur[key])}
-          </div>
-      }
-    </div>
-  )
+  const valueFormatted = fmtValue(opp[C.value])
 
+  // ── Render ────────────────────────────────────────────────────────────
   return (
     <>
       <Topbar
         title={opp[C.title]}
         subtitle1={decodedCN}
-        subtitle2={opp[C.assignedTo] ? `Assigned: ${opp[C.assignedTo]}` : 'Unassigned'}
+        subtitle2={
+          editing
+            ? undefined   // replaced by inline input below
+            : opp[C.assignedTo] ? `Assigned: ${opp[C.assignedTo]}` : 'Unassigned'
+        }
         showFilter={false}
         showNew={false}
       />
+
       <div className="page-body">
         <button className="btn btn-ghost text-sm" style={{ marginBottom: 14 }}
           onClick={() => navigate('/opportunities')}>
           ← Opportunities
         </button>
 
-        <div className={styles.headerRow}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
-            {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
-            {opp[C.priority] && (
-              <span className={`badge ${opp[C.priority] === 'Hot' ? 'badge-high' : opp[C.priority] === 'Warm' ? 'badge-medium' : 'badge-low'}`}>
-                {opp[C.priority]}
-              </span>
+        {/* ── Page header ── */}
+        <div className={styles.pageHeader}>
+          <div className={styles.pageHeaderLeft}>
+            {/* Badges row */}
+            <div className={styles.badgeRow}>
+              <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
+              {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
+              {opp[C.priority] && (
+                <span className={`badge ${opp[C.priority] === 'Hot' ? 'badge-high' : opp[C.priority] === 'Warm' ? 'badge-medium' : 'badge-low'}`}>
+                  {opp[C.priority]}
+                </span>
+              )}
+              {valueFormatted && (
+                <span className={styles.valueChip}>{valueFormatted}</span>
+              )}
+            </div>
+
+            {/* Assigned To inline edit when editing */}
+            {editing && (
+              <div className={styles.assignedEditRow}>
+                <label className="form-label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Assigned To</label>
+                <input
+                  className="form-input"
+                  style={{ maxWidth: 220 }}
+                  value={f(C.assignedTo) || ''}
+                  onChange={(e) => set(C.assignedTo)(e.target.value)}
+                />
+              </div>
             )}
           </div>
-          {!editing
-            ? (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  className="btn btn-ghost"
-                  style={{ fontSize: 12, color: 'var(--blue-600)' }}
-                  onClick={() => navigate(`/ai-chat?opportunity=${encodeURIComponent(decodedCN)}`)}
-                  title="Discuss this opportunity with AI"
-                >✦ Discuss with AI</button>
-                <button className="btn" onClick={handleEdit}>Edit</button>
+
+          <div className={styles.pageHeaderActions}>
+            {!editing
+              ? (
+                <>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 12, color: 'var(--blue-600)' }}
+                    onClick={() => navigate(`/ai-chat?opportunity=${encodeURIComponent(decodedCN)}`)}
+                    title="Discuss this opportunity with AI"
+                  >✦ Discuss with AI</button>
+                  <button className="btn" onClick={handleEdit}>Edit</button>
+                </>
+              )
+              : (
+                <>
+                  <button className="btn btn-ghost" onClick={handleCancel} disabled={saving}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                </>
+              )
+            }
+          </div>
+        </div>
+
+        {/* ── Section 1: Opportunity Details ── */}
+        <Section title="Opportunity Details">
+          <div className={styles.fieldGrid}>
+            <Field label="TAG Opportunity Phase"   value={f(C.phase)}          editing={editing} onChange={set(C.phase)}          options={phaseOptions} />
+            <Field label="Opportunity Outlook"     value={f(C.outlook)}        editing={editing} onChange={set(C.outlook)}        options={outlookOptions} />
+            <Field label="Agency"                  value={f(C.agency)}         editing={editing} onChange={set(C.agency)} />
+            <Field label="Department"              value={f(C.department)}     editing={editing} onChange={set(C.department)} />
+            <Field label="Office"                  value={f(C.office)}         editing={editing} onChange={set(C.office)} />
+            <Field label="NAICS Code"              value={f(C.naics)}          editing={editing} onChange={set(C.naics)}           raw />
+            <Field label="Set-Aside"               value={f(C.setAside)}       editing={editing} onChange={set(C.setAside)}       options={setAsideOptions} />
+            <Field label="Contract Vehicle"        value={f(C.vehicle)}        editing={editing} onChange={set(C.vehicle)} />
+            <Field label="Contract Classification" value={f(C.classification)} editing={editing} onChange={set(C.classification)} />
+            <Field label="Incumbent"               value={f(C.incumbent)}      editing={editing} onChange={set(C.incumbent)} />
+          </div>
+        </Section>
+
+        {/* ── Section 2: Contract Value ── */}
+        <Section title="Contract Value">
+          <div className={styles.fieldGrid}>
+            <Field label="Total Contract Value ($)" value={f(C.value)}     editing={editing} onChange={set(C.value)}     type="number" />
+            <Field label="Base Year Value ($)"      value={f(C.baseValue)} editing={editing} onChange={set(C.baseValue)} type="number" />
+          </div>
+        </Section>
+
+        {/* ── Section 3: Timeline ── */}
+        {(() => {
+          const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
+          return (
+            <Section title="Timeline">
+              <div className={styles.fieldGrid}>
+                {isRFI && (
+                  <Field label="RFI Submission Date" value={f(C.submDate)} editing={editing} onChange={set(C.submDate)} type="date" />
+                )}
+                <Field label="Contract End Date"      value={f(C.endDate)}    editing={editing} onChange={set(C.endDate)}    type="date" />
+                <Field label="Anticipated Award Date" value={f(C.awardDate)}  editing={editing} onChange={set(C.awardDate)}  type="date" />
+                <Field label="Fiscal Year"            value={f(C.fiscalYear)} editing={editing} onChange={set(C.fiscalYear)} />
               </div>
-            )
-            : (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-ghost" onClick={handleCancel} disabled={saving}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            )
+            </Section>
+          )
+        })()}
+
+        {/* ── Section 4: Pursuit ── */}
+        <Section title="Pursuit">
+          <div className={styles.fieldGrid}>
+            <Field label="Solicitation Number"   value={f(C.solNum)}    editing={editing} onChange={set(C.solNum)} />
+            <Field label="Activity Phase"        value={f(C.actPhase)}  editing={editing} onChange={set(C.actPhase)} />
+            <Field label="Bid / No Bid?"         value={f(C.bidNoBid)}  editing={editing} onChange={set(C.bidNoBid)}  options={bidNoBidOptions} />
+            <Field label="Prime or Sub?"         value={f(C.primeOrSub)} editing={editing} onChange={set(C.primeOrSub)} options={primeOrSubOptions} />
+            <Field label="Partner"               value={f(C.partner)}   editing={editing} onChange={set(C.partner)} />
+            <Field label="Priority"              value={f(C.priority)}  editing={editing} onChange={set(C.priority)}  options={priorityOptions} />
+          </div>
+        </Section>
+
+        {/* ── Section 5: Contacts ── */}
+        <Section title="Contacts">
+          {linkedContacts.length > 0
+            ? linkedContacts.map((c) => (
+                <div key={c.ContactID} className={styles.contactCard}>
+                  <div className={styles.contactAv}>
+                    {c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}
+                  </div>
+                  <div className={styles.contactInfo}>
+                    <div className={styles.contactName}>{c.Name}</div>
+                    <div className={styles.contactSub}>
+                      {c.Email
+                        ? <a href={`mailto:${c.Email}`} className="text-sm">{c.Email}</a>
+                        : c.Title || '—'}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    title="Unlink contact"
+                    onClick={() => handleUnlinkContact(c)}
+                  >✕</button>
+                </div>
+              ))
+            : <p className="text-sm text-muted" style={{ marginBottom: 8 }}>No contacts linked.</p>
           }
-        </div>
 
-        <div className={`card ${styles.fieldGrid}`}>
-          {field('Total Contract Value ($)', C.value)}
-          {field('TAG Opportunity Phase',    C.phase,    'text', phaseOptions)}
-          {field('Opportunity Outlook',      C.outlook,  'text', outlookOptions)}
-          {field('Priority',                 C.priority, 'text', priorityOptions)}
-          {field('Department',               C.department)}
-          {field('Agency',                   C.agency)}
-          {field('Office',                   C.office)}
-          {field('Solicitation Number',      C.solNum)}
-          {field('NAICS Code',               C.naics,    'text', null, true)}
-          {field('Set-Aside',                C.setAside, 'text', setAsideOptions)}
-          {field('Submission / Response Date', C.submDate, 'date')}
-          {field('Contract End Date',        C.endDate,  'date')}
-          {field('Anticipated Award Date',   C.awardDate,'date')}
-          {field('Assigned To',              C.assignedTo)}
-          {field('Incumbent',                C.incumbent)}
-          {field('Partner',                  C.partner)}
-          {field('Prime or Sub?',            C.primeOrSub, 'text', primeOrSubOptions)}
-          {field('Bid / No Bid?',            C.bidNoBid, 'text', bidNoBidOptions)}
-          {field('POC / Contracting Officer',C.poc)}
-        </div>
+          {/* Contact search — always visible */}
+          <div style={{ position: 'relative', marginTop: linkedContacts.length > 0 ? 10 : 0 }}>
+            <input
+              className="form-input"
+              placeholder="Search contacts to link…"
+              value={contactSearch}
+              onChange={(e) => setContactSearch(e.target.value)}
+            />
+            {contactSearch && (
+              <div className={styles.contactDropdown}>
+                {unlinkedContacts.length === 0
+                  ? <div className={styles.contactDropdownEmpty}>No contacts found.</div>
+                  : unlinkedContacts.map((c) => (
+                      <div
+                        key={c.ContactID || c.Name}
+                        className={styles.contactDropdownRow}
+                        onClick={() => !linkingContact && handleLinkContact(c)}
+                      >
+                        <div className={styles.contactDropdownName}>{c.Name || '—'}</div>
+                        <div className={styles.contactDropdownSub}>{c.Agency || c.Email || '—'}</div>
+                      </div>
+                    ))
+                }
+              </div>
+            )}
+          </div>
+        </Section>
 
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div className={styles.sectionTitle}>Links</div>
+        {/* ── Section 6: Links ── */}
+        <Section title="Links">
           {editing
             ? (
               <div className={styles.fieldGrid}>
-                {field('GovWin Link',     C.govwin)}
-                {field('Link to Folder',  C.folder)}
-                {field('Link to Slide Deck', C.slideDeck)}
-                {field('Other Links',     C.otherLinks)}
+                <Field label="GovWin Link"       value={f(C.govwin)}     editing onChange={set(C.govwin)} />
+                <Field label="Link to Folder"    value={f(C.folder)}     editing onChange={set(C.folder)} />
+                <Field label="Link to Slide Deck" value={f(C.slideDeck)} editing onChange={set(C.slideDeck)} />
+                <Field label="Other Links"       value={f(C.otherLinks)} editing onChange={set(C.otherLinks)} />
               </div>
             )
-            : (
-              [
+            : [
                 [C.govwin,     'GovWin ↗'],
                 [C.folder,     '📁 Folder ↗'],
                 [C.slideDeck,  '📊 Slide Deck ↗'],
                 [C.otherLinks, '🔗 Other Link ↗'],
               ].some(([key]) => cur[key])
-                ? (
-                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    {[
-                      [C.govwin,     'GovWin ↗'],
-                      [C.folder,     '📁 Folder ↗'],
-                      [C.slideDeck,  '📊 Slide Deck ↗'],
-                      [C.otherLinks, '🔗 Other Link ↗'],
-                    ].map(([key, label]) => cur[key] && (
-                      <a key={key} href={safeUrl(cur[key])} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
-                    ))}
+              ? (
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {[
+                    [C.govwin,     'GovWin ↗'],
+                    [C.folder,     '📁 Folder ↗'],
+                    [C.slideDeck,  '📊 Slide Deck ↗'],
+                    [C.otherLinks, '🔗 Other Link ↗'],
+                  ].map(([key, label]) => cur[key] && (
+                    <a key={key} href={safeUrl(cur[key])} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
+                  ))}
+                </div>
+              )
+              : <p className="text-sm text-muted">No links added.</p>
+          }
+        </Section>
+
+        {/* ── Section 7: Notes ── */}
+        <Section title="Notes">
+          {notesLoading
+            ? <div className="skeleton" style={{ height: 60 }} />
+            : notes.length === 0
+              ? <p className="text-muted text-sm" style={{ marginBottom: 10 }}>No notes yet.</p>
+              : notes.map((n) => (
+                  <div key={n.NoteID} className={styles.noteItem}>
+                    <div className={styles.noteMeta}>{n.Date} · {n.Author}</div>
+                    <div className={styles.noteText}>{n.NoteText}</div>
+                  </div>
+                ))
+          }
+          <div className={styles.noteAdd}>
+            <textarea
+              className="form-input"
+              placeholder="Add a note…"
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              rows={2}
+            />
+            <button className="btn btn-primary text-sm" onClick={handleAddNote}
+              disabled={addingNote || !newNote.trim()}>
+              {addingNote ? 'Adding…' : 'Add note'}
+            </button>
+          </div>
+        </Section>
+
+        {/* ── Section 8: Tasks ── */}
+        <Section title="Tasks">
+          {tasks.length === 0
+            ? <p className="text-muted text-sm" style={{ marginBottom: 8 }}>No tasks for this opportunity.</p>
+            : tasks.map((t) => {
+                const over = isOverdue(t.DueDate) && t.Status !== 'Done'
+                return (
+                  <div key={t.TaskID} className={styles.taskRow}>
+                    <div style={{ flex: 1 }}>
+                      <div className={styles.taskTitle}>{t.Title}</div>
+                      <div className={styles.taskMeta}>
+                        <span className={`badge badge-${t.Priority?.toLowerCase()}`}>{t.Priority}</span>
+                        <span className={over ? 'text-danger text-xs' : 'text-muted text-xs'}>
+                          {formatDate(t.DueDate)}{over ? ' · overdue' : ''}
+                        </span>
+                      </div>
+                      {t.OpportunityNotes && (
+                        <button className={styles.refreshCtx} onClick={() => refreshContext(t)}>
+                          ↺ Refresh context
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      className={`badge badge-${statusClass(t.Status)}`}
+                      style={{
+                        cursor: updatingTaskId === t.TaskID ? 'default' : 'pointer',
+                        border: 'none',
+                        opacity: updatingTaskId === t.TaskID ? 0.6 : 1,
+                      }}
+                      onClick={() => handleTaskStatusChange(t, STATUS_CYCLE[t.Status] || 'To Do')}
+                      disabled={updatingTaskId === t.TaskID}
+                      title="Click to advance status"
+                    >
+                      {updatingTaskId === t.TaskID ? 'Updating…' : t.Status}
+                    </button>
                   </div>
                 )
-                : <p className="text-sm text-muted">No links added.</p>
-            )
+              })
           }
-        </div>
+          <button className="btn text-sm w-full" style={{ marginTop: 8, justifyContent: 'center' }}
+            onClick={() => setShowAddTask(true)}>
+            + Add task
+          </button>
+        </Section>
 
-        <div className={styles.twoCol}>
-          {/* Notes */}
-          <div>
-            <div className={styles.sectionTitle}>Notes</div>
-            <div className="card">
-              {notesLoading
-                ? <div className="skeleton" style={{ height: 60 }} />
-                : notes.length === 0
-                  ? <p className="text-muted text-sm">No notes yet.</p>
-                  : notes.map((n) => (
-                      <div key={n.NoteID} className={styles.noteItem}>
-                        <div className={styles.noteMeta}>{n.Date} · {n.Author}</div>
-                        <div className={styles.noteText}>{n.NoteText}</div>
-                      </div>
-                    ))
-              }
-              <div className={styles.noteAdd}>
-                <textarea className="form-input" placeholder="Add a note…"
-                  value={newNote} onChange={(e) => setNewNote(e.target.value)} rows={2} />
-                <button className="btn btn-primary text-sm" onClick={handleAddNote}
-                  disabled={addingNote || !newNote.trim()}>
-                  {addingNote ? 'Adding…' : 'Add note'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Tasks + Contact */}
-          <div>
-            <div className={styles.sectionTitle}>Tasks</div>
-            <div className="card" style={{ marginBottom: 12 }}>
-              {tasks.length === 0
-                ? <p className="text-muted text-sm">No tasks for this opportunity.</p>
-                : tasks.map((t) => {
-                    const over = isOverdue(t.DueDate) && t.Status !== 'Done'
-                    return (
-                      <div key={t.TaskID} className={styles.taskRow}>
-                        <div style={{ flex: 1 }}>
-                          <div className={styles.taskTitle}>{t.Title}</div>
-                          <div className={styles.taskMeta}>
-                            <span className={`badge badge-${t.Priority?.toLowerCase()}`}>{t.Priority}</span>
-                            <span className={over ? 'text-danger text-xs' : 'text-muted text-xs'}>
-                              {formatDate(t.DueDate)}{over ? ' · overdue' : ''}
-                            </span>
-                          </div>
-                          {t.OpportunityNotes && (
-                            <button className={styles.refreshCtx} onClick={() => refreshContext(t)}>
-                              ↺ Refresh context
-                            </button>
-                          )}
-                        </div>
-                        <button
-                          className={`badge badge-${statusClass(t.Status)}`}
-                          style={{ cursor: updatingTaskId === t.TaskID ? 'default' : 'pointer', border: 'none', opacity: updatingTaskId === t.TaskID ? 0.6 : 1 }}
-                          onClick={() => handleTaskStatusChange(t, STATUS_CYCLE[t.Status] || 'To Do')}
-                          disabled={updatingTaskId === t.TaskID}
-                          title="Click to advance status"
-                        >
-                          {updatingTaskId === t.TaskID ? 'Updating…' : t.Status}
-                        </button>
-                      </div>
-                    )
-                  })
-              }
-              <button className="btn text-sm w-full" style={{ marginTop: 8, justifyContent: 'center' }}
-                onClick={() => setShowAddTask(true)}>
-                + Add task
-              </button>
-            </div>
-
-            {/* ── Contacts / POC ── */}
-            <div className={styles.sectionTitle}>Contacts</div>
-            {linkedContacts.length > 0 && linkedContacts.map((c) => (
-              <div key={c.ContactID} className={`card ${styles.contactCard}`}
-                style={{ marginBottom: 6 }}>
-                <div className={styles.contactAv}>
-                  {c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 500, fontSize: 13 }}>{c.Name}</div>
-                  <div className="text-sm" style={{ color: 'var(--gray-400)', marginTop: 2 }}>
-                    {c.Email
-                      ? <a href={`mailto:${c.Email}`} className="text-sm">{c.Email}</a>
-                      : c.Title || '—'}
-                  </div>
-                </div>
-                {editing && (
-                  <button className="btn btn-ghost btn-icon"
-                    title="Unlink contact"
-                    onClick={() => handleUnlinkContact(c)}>✕</button>
-                )}
-              </div>
-            ))}
-            {linkedContacts.length === 0 && (
-              <p className="text-sm text-muted" style={{ marginBottom: 8 }}>
-                No contacts linked.
-              </p>
-            )}
-            {/* Add contact search — always visible */}
-            <div style={{ position: 'relative', marginTop: 8 }}>
-              <input
-                className="form-input"
-                placeholder="Search contacts to link…"
-                value={contactSearch}
-                onChange={(e) => setContactSearch(e.target.value)}
-              />
-              {contactSearch && (
-                <div style={{
-                  position: 'absolute', top: '100%', left: 0, right: 0,
-                  background: '#fff', border: '0.5px solid var(--gray-200)',
-                  borderRadius: 'var(--radius-md)', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                  maxHeight: 180, overflowY: 'auto', zIndex: 50, marginTop: 4,
-                }}>
-                  {unlinkedContacts.length === 0
-                    ? <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--gray-400)' }}>
-                        No contacts found.
-                      </div>
-                    : unlinkedContacts.map((c) => (
-                      <div key={c.ContactID || c.Name}
-                        onClick={() => !linkingContact && handleLinkContact(c)}
-                        style={{
-                          padding: '8px 12px', cursor: 'pointer',
-                          borderBottom: '0.5px solid var(--gray-100)',
-                          transition: 'background 0.1s',
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--blue-50)'}
-                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--gray-900)' }}>
-                          {c.Name || '—'}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 2 }}>
-                          {c.Agency || c.Email || '—'}
-                        </div>
-                      </div>
-                    ))
-                  }
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
+        {/* ── AI panels ── */}
         <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
         <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
       </div>
 
+      {/* ── Add task modal ── */}
       {showAddTask && (
         <Modal title="Add task" onClose={() => !savingTask && setShowAddTask(false)}
           footer={
@@ -577,11 +661,4 @@ export default function OpportunityDetail({ toast }) {
       )}
     </>
   )
-}
-
-function formatFieldValue(val) {
-  if (val === null || val === undefined || val === '') return '—'
-  if (val instanceof Date) return formatDate(val)
-  if (typeof val === 'number') return val.toLocaleString()
-  return String(val)
 }
