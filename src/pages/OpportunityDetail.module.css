@@ -1,80 +1,88 @@
-.headerRow {
+/* ── Page header ── */
+.pageHeader {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 14px;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
+.pageHeaderLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pageHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.badgeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.valueChip {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-900);
+  background: var(--gray-100);
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+
+.assignedEditRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* ── Sections ── */
+.section {
+  margin-bottom: 16px;
+}
+
+.sectionHeader {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-400);
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.sectionCard {
+  padding: 16px 18px;
+}
+
+/* ── Field grid ── */
 .fieldGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-  margin-bottom: 16px;
 }
 
-.twoCol {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 14px;
-  margin-bottom: 14px;
+.spanFull {
+  grid-column: 1 / -1;
 }
 
-.sectionTitle {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--gray-600);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 8px;
-}
-
-.noteItem {
-  padding: 8px 0;
-  border-bottom: 0.5px solid var(--gray-200);
-}
-.noteItem:last-of-type { border-bottom: none; }
-
-.noteMeta { font-size: 10px; color: var(--gray-400); margin-bottom: 3px; }
-
-.noteText { font-size: 13px; color: var(--gray-900); line-height: 1.5; }
-
-.noteAdd {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.taskRow {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 7px 0;
-  border-bottom: 0.5px solid var(--gray-200);
-}
-.taskRow:last-of-type { border-bottom: none; }
-
-.taskTitle { font-size: 12px; font-weight: 500; color: var(--gray-900); }
-
-.taskMeta { display: flex; gap: 6px; align-items: center; margin-top: 3px; }
-
-.refreshCtx {
-  font-size: 11px;
-  color: var(--blue-600);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  margin-top: 4px;
-  display: block;
-}
-.refreshCtx:hover { text-decoration: underline; }
-
+/* ── Contacts ── */
 .contactCard {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
+  padding: 8px 0;
+  border-bottom: 0.5px solid var(--gray-100);
 }
+.contactCard:last-of-type { border-bottom: none; }
 
 .contactAv {
   width: 34px;
@@ -89,3 +97,124 @@
   font-weight: 500;
   flex-shrink: 0;
 }
+
+.contactInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.contactName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gray-900);
+}
+
+.contactSub {
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-top: 1px;
+}
+
+.contactDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  z-index: 50;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.contactDropdownEmpty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--gray-400);
+}
+
+.contactDropdownRow {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 0.5px solid var(--gray-100);
+  transition: background 0.1s;
+}
+.contactDropdownRow:last-child { border-bottom: none; }
+.contactDropdownRow:hover { background: var(--blue-50); }
+
+.contactDropdownName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-900);
+}
+
+.contactDropdownSub {
+  font-size: 11px;
+  color: var(--gray-400);
+  margin-top: 1px;
+}
+
+/* ── Notes ── */
+.noteItem {
+  padding: 8px 0;
+  border-bottom: 0.5px solid var(--gray-100);
+}
+.noteItem:last-of-type { border-bottom: none; }
+
+.noteMeta {
+  font-size: 10px;
+  color: var(--gray-400);
+  margin-bottom: 3px;
+}
+
+.noteText {
+  font-size: 13px;
+  color: var(--gray-900);
+  line-height: 1.5;
+}
+
+.noteAdd {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Tasks ── */
+.taskRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 0.5px solid var(--gray-100);
+}
+.taskRow:last-of-type { border-bottom: none; }
+
+.taskTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gray-900);
+  margin-bottom: 4px;
+}
+
+.taskMeta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.refreshCtx {
+  font-size: 11px;
+  color: var(--blue-600);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 4px;
+  display: block;
+}
+.refreshCtx:hover { text-decoration: underline; }
