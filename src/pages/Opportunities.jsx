@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
-import { useSAMOpportunities, checkSAMKeyExpired } from '@/hooks/useSAMOpportunities'
+import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hooks/useSAMOpportunities'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate } from '@/utils/kpiHelpers'
@@ -238,9 +238,14 @@ export default function Opportunities({ toast }) {
   const [showDismissed, setShowDismissed] = useState(false)
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
+  const [samRunStatus,  setSamRunStatus]  = useState(null)
 
   useEffect(() => {
-    checkSAMKeyExpired().then(setSamKeyExpired)
+    Promise.all([checkSAMKeyExpired(), getSAMRunStatus()])
+      .then(([expired, runStatus]) => {
+        setSamKeyExpired(expired)
+        setSamRunStatus(runStatus)
+      })
   }, [])
 
   const visibleSAMOpps = useMemo(() => samOpps.filter((o) => {
@@ -321,19 +326,36 @@ export default function Opportunities({ toast }) {
               onClick={() => setShowDismissed(false)}>Hide dismissed</button></>
           )}
         </span>
-        <span className="text-xs text-muted">Refreshed nightly at 3 AM EST</span>
+        <span className="text-xs text-muted" style={{ textAlign: 'right' }}>
+          {samRunStatus === null
+            ? 'Refreshed nightly at 3 AM EST'
+            : samRunStatus.success === null
+              ? 'No pull has run yet'
+              : samRunStatus.success
+                ? (
+                  <>
+                    Last pulled: {new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    {samRunStatus.written > 0 && ` · ${samRunStatus.written} new`}
+                    {samRunStatus.warnings?.length > 0 && (
+                      <span style={{ color: 'var(--amber-600)' }}> · {samRunStatus.warnings.length} warning{samRunStatus.warnings.length > 1 ? 's' : ''}</span>
+                    )}
+                  </>
+                )
+                : <span style={{ color: 'var(--red-600)' }}>Last run failed: {samRunStatus.error || 'Unknown error'}</span>
+          }
+        </span>
       </div>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {samLoading
           ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
           : visibleSAMOpps.length === 0
             ? (
-              <div className={styles.empty} style={{ padding: '48px 24px' }}>
+              <div className={styles.empty}>
                 <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }}>◈</div>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-900)', marginBottom: 4 }}>
                   {samOpps.length === 0 ? 'No new opportunities yet' : 'Nothing to show'}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360, textAlign: 'center' }}>
+                <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360 }}>
                   {samOpps.length === 0
                     ? 'Opportunities from SAM.gov matching your NAICS codes will appear here after the nightly pull.'
                     : 'All opportunities have been dismissed. Toggle "Show dismissed" to see them.'}
