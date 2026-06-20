@@ -45,6 +45,8 @@ export default function Settings({ toast }) {
   const [samLoaded,     setSamLoaded]     = useState(false)
   const [savingSAM,     setSavingSAM]     = useState(false)
   const [savedSAM,      setSavedSAM]      = useState(false)
+  const [triggering,    setTriggering]    = useState(false)
+  const [triggerResult, setTriggerResult] = useState(null)
 
   useEffect(() => {
     Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
@@ -74,6 +76,32 @@ export default function Settings({ toast }) {
       toast?.error(`Failed to save: ${err.message}`)
     } finally {
       setSavingSAM(false)
+    }
+  }
+
+  const handleTriggerSAM = async () => {
+    const workerUrl = import.meta.env.VITE_API_BASE_URL
+    const secret    = import.meta.env.VITE_SAM_TRIGGER_SECRET
+    if (!workerUrl || !secret) {
+      toast?.error('VITE_API_BASE_URL or VITE_SAM_TRIGGER_SECRET not set in .env')
+      return
+    }
+    setTriggering(true)
+    setTriggerResult(null)
+    try {
+      const res = await fetch(`${workerUrl}/sam/trigger`, {
+        method: 'POST',
+        headers: { 'X-Trigger-Secret': secret },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
+      setTriggerResult({ ok: true, message: data.message })
+      toast?.success('SAM pull started')
+    } catch (err) {
+      setTriggerResult({ ok: false, message: err.message })
+      toast?.error(`Trigger failed: ${err.message}`)
+    } finally {
+      setTriggering(false)
     }
   }
 
@@ -261,7 +289,18 @@ export default function Settings({ toast }) {
             )
           }
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button className="btn" onClick={handleTriggerSAM} disabled={triggering}
+                title="Manually run the SAM.gov pull now without waiting for the nightly cron">
+                {triggering ? '⏳ Running…' : '▶ Trigger pull now'}
+              </button>
+              {triggerResult && (
+                <span style={{ fontSize: 12, color: triggerResult.ok ? 'var(--green-600)' : 'var(--red-600)' }}>
+                  {triggerResult.ok ? '✓ ' : '✗ '}{triggerResult.message}
+                </span>
+              )}
+            </div>
             <button className="btn btn-primary" onClick={handleSaveSAM} disabled={savingSAM}>
               {savingSAM ? 'Saving…' : savedSAM ? '✓ Saved' : 'Save SAM settings'}
             </button>
