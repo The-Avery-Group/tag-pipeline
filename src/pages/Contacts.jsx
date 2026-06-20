@@ -9,7 +9,7 @@ import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services
 import { formatDate } from '@/utils/kpiHelpers'
 import styles from './Contacts.module.css'
 
-const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '', Type: 'Customer' }
+const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '', Type: '' }
 
 const C_CN    = 'Contract Number / Notice ID'
 const C_TITLE = 'Project Title / Description*'
@@ -168,9 +168,9 @@ export default function Contacts({ toast }) {
       ))}
       <div className="form-field">
         <label className="form-label">Type</label>
-        <select className="form-input" value={form.Type ?? 'Customer'}
+        <select className="form-input" value={form.Type || contactTypeOptions[0] || ''}
           onChange={(e) => setField('Type', e.target.value)}>
-          {contactTypeOptions.map((t) => <option key={t}>{t}</option>)}
+          {contactTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
       <div className="form-field" style={{ gridColumn: '1 / -1' }}>
