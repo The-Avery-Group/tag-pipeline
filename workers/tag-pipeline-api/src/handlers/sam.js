@@ -31,7 +31,6 @@
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 const PAGE_SIZE = 500
-const REQ_DELAY = 500   // ms between paginated calls per NAICS
 
 // Hardcoded — matches frontend graphService.js constant exactly
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
@@ -207,7 +206,7 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
     records.push(...page)
     if (page.length === 0 || records.length >= total) break
     offset += PAGE_SIZE
-    await sleep(REQ_DELAY)
+    await sleep(PAGE_DELAY)
   }
 
   return records
@@ -305,38 +304,49 @@ async function runSAMPull(env, token, config) {
   const seen        = new Set(existingIds)
   const naicsErrors = []
 
-  for (const naics of naicsCodes) {
-    let records
-    try {
-      records = await fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo)
-      console.log(`[SAM] NAICS ${naics}: ${records.length} record(s)`)
-      totalFetched += records.length
-    } catch (err) {
+  // Fetch all NAICS codes in parallel — no sleep between codes,
+  // only between paginated pages within the same NAICS stream.
+  // This keeps total runtime well within the 30s waitUntil limit.
+  const naicsResults = await Promise.allSettled(
+    naicsCodes.map((naics) =>
+      fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo)
+        .then((records) => ({ naics, records }))
+    )
+  )
+
+  for (const result of naicsResults) {
+    if (result.status === 'rejected') {
+      const err = result.reason
       if (err.code === 'KEY_EXPIRED') {
         const msg = 'SAM API key expired or invalid'
         await setRunLog(env, { success: false, timestamp: runStart, error: msg })
         throw new Error(msg)
       }
-      const msg = `NAICS ${naics}: ${err.message}`
-      naicsErrors.push(msg)
-      console.error(`[SAM] Fetch error for ${msg}`)
+      naicsErrors.push(err.message)
+      console.error('[SAM] Fetch error:', err.message)
       continue
     }
+    const { naics, records } = result.value
+    console.log(`[SAM] NAICS ${naics}: ${records.length} record(s)`)
+    totalFetched += records.length
 
-    for (const raw of records) {
+    // Collect new records (deduplicate against existing + already-seen)
+    const newRecords = records.filter((raw) => {
       const noticeId = String(raw.noticeId || '').trim()
-      if (!noticeId || seen.has(noticeId)) continue
-      if (String(raw.active || '').toLowerCase() !== 'yes') continue
+      if (!noticeId || seen.has(noticeId)) return false
+      if (String(raw.active || '').toLowerCase() !== 'yes') return false
       seen.add(noticeId)
-      try {
-        await appendOpportunity(env, token, mapRecord(raw, naics))
-        totalWritten++
-      } catch (err) {
-        console.error(`[SAM] Failed to write ${noticeId}:`, err.message)
-      }
-    }
+      return true
+    })
 
-    await sleep(REQ_DELAY)
+    // Write new rows in parallel — Graph API handles concurrent appends fine
+    const writeResults = await Promise.allSettled(
+      newRecords.map((raw) => appendOpportunity(env, token, mapRecord(raw, naics)))
+    )
+    const written = writeResults.filter((r) => r.status === 'fulfilled').length
+    const failed  = writeResults.filter((r) => r.status === 'rejected')
+    totalWritten += written
+    failed.forEach((r) => console.error('[SAM] Write failed:', r.reason?.message))
   }
 
   // Clear key-expired flag
