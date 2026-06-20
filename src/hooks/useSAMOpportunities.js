@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   getSAMOpportunities, updateSAMOpportunity,
   getContacts, addContact, addOpportunity,
@@ -92,19 +92,36 @@ export function useSAMOpportunities() {
     return poc.name || poc.email || 'Unknown'
   }, [])
 
+  // ── Debounced cache invalidation ────────────────────────────────────
+  // Prevents rapid-fire dismissals from each triggering a full cache reload,
+  // which causes visible table flicker. The cache is refreshed once, 800ms
+  // after the last status update in a burst.
+  const invalidateRef = useRef(null)
+  const debouncedInvalidate = useCallback(() => {
+    if (invalidateRef.current) clearTimeout(invalidateRef.current)
+    invalidateRef.current = setTimeout(() => {
+      invalidateCache().catch(() => {})
+      invalidateRef.current = null
+    }, 800)
+  }, [])
+
   // ── Optimistic status update ─────────────────────────────────────────
   const updateStatus = useCallback(async (rowIndex, status) => {
+    // Update local state immediately — no wait, no flicker
     setOpportunities((prev) =>
       prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
     )
     try {
       await updateSAMOpportunity(rowIndex, { Status: status })
-      await invalidateCache()
+      debouncedInvalidate()   // refresh cache once, after burst settles
     } catch (err) {
-      await load()
+      // Roll back this row only
+      setOpportunities((prev) =>
+        prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: o.Status } : o)
+      )
       throw err
     }
-  }, [load])
+  }, [debouncedInvalidate])
 
   // ── Add to pipeline ──────────────────────────────────────────────────
   const addToPipeline = useCallback(async (row, outlook = 'New') => {
