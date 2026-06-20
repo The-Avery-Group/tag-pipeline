@@ -27,7 +27,7 @@ function corsHeaders(env, req) {
   return {
     'Access-Control-Allow-Origin':  isAllowed ? origin : allowed,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Trigger-Secret',
     'Access-Control-Max-Age':       '86400',
   }
 }
