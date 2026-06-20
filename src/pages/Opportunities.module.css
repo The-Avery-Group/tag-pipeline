@@ -1,5 +1,15 @@
 .sortIcon { font-size: 10px; color: var(--gray-400); margin-left: 3px; }
-.empty { padding: 24px; text-align: center; color: var(--gray-400); font-size: 13px; }
+.empty {
+  padding: 48px 24px;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--gray-400);
+  font-size: 13px;
+}
 .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .searchBar {
