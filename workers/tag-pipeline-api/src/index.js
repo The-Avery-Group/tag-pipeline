@@ -10,7 +10,7 @@
 
 import { handleNotify }             from './handlers/notify.js'
 import { handleAIChat }             from './handlers/ai.js'
-import { handleSAM, handleSAMCron } from './handlers/sam.js'
+import { handleSAM } from './handlers/sam.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -98,10 +98,5 @@ export default {
     }
 
     return cors(env, req, response)
-  },
-
-  // Cron trigger: 0 8 * * * UTC (= 3 AM EST / 4 AM EDT)
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(handleSAMCron(env))
   },
 }
