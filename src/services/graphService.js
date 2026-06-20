@@ -32,7 +32,7 @@ export function invalidateAll() {
 }
 
 // ── Token helper ───────────────────────────────────────────────────────────
-async function getToken() {
+export async function getToken() {
   const account = msalInstance.getAllAccounts()[0]
   if (!account) throw new Error('No authenticated account')
   const response = await msalInstance.acquireTokenSilent({
