@@ -233,12 +233,15 @@ export default function Opportunities({ toast }) {
     addToPipeline,
     dismiss,
     undismiss,
+    triggerPull,
   } = useSAMOpportunities()
 
   const [showDismissed, setShowDismissed] = useState(false)
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
   const [samRunStatus,  setSamRunStatus]  = useState(null)
+  const [pulling,       setPulling]       = useState(false)
+  const [pullMessage,   setPullMessage]   = useState(null)
 
   useEffect(() => {
     Promise.all([checkSAMKeyExpired(), getSAMRunStatus()])
@@ -293,6 +296,26 @@ export default function Opportunities({ toast }) {
     }
   }
 
+  const handlePull = async ({ force = false } = {}) => {
+    if (pulling) return
+    setPulling(true)
+    setPullMessage(null)
+    try {
+      const result = await triggerPull({ force })
+      if (result.throttled) {
+        setPullMessage({ type: 'info', text: result.message })
+      } else {
+        setPullMessage({ type: 'success', text: 'Pull started — new opportunities will appear shortly.' })
+        // Refresh run status
+        getSAMRunStatus().then(setSamRunStatus)
+      }
+    } catch (err) {
+      setPullMessage({ type: 'error', text: `Pull failed: ${err.message}` })
+    } finally {
+      setPulling(false)
+    }
+  }
+
   const samStatusBadge = (status) => {
     if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>Added</span>
     if (status === 'tracked')           return <span className="badge badge-proposal" style={{ fontSize: 10 }}>Tracked</span>
@@ -314,36 +337,40 @@ export default function Opportunities({ toast }) {
             onClick={() => setSamKeyExpired(false)}>✕</button>
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <span className="text-sm text-muted">
-          {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
-          {!showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
-            <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
-              onClick={() => setShowDismissed(true)}>Show dismissed</button></>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="text-sm text-muted">
+            {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
+            {!showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
+              <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
+                onClick={() => setShowDismissed(true)}>Show dismissed</button></>
+            )}
+            {showDismissed && (
+              <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
+                onClick={() => setShowDismissed(false)}>Hide dismissed</button></>
+            )}
+          </span>
+          <button className="btn text-xs" style={{ padding: '3px 10px' }}
+            onClick={() => handlePull()} disabled={pulling}>
+            {pulling ? '⏳ Pulling…' : '↻ Refresh'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+          <span className="text-xs text-muted">
+            {samRunStatus?.success
+              ? `Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+              : samRunStatus?.success === false
+                ? <span style={{ color: 'var(--red-600)' }}>Last run failed</span>
+                : 'Not yet pulled'
+            }
+            {samRunStatus?.written > 0 && <> · {samRunStatus.written} new</>}
+          </span>
+          {pullMessage && (
+            <span style={{ fontSize: 11, color: pullMessage.type === 'error' ? 'var(--red-600)' : pullMessage.type === 'success' ? 'var(--green-600)' : 'var(--gray-600)' }}>
+              {pullMessage.text}
+            </span>
           )}
-          {showDismissed && (
-            <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
-              onClick={() => setShowDismissed(false)}>Hide dismissed</button></>
-          )}
-        </span>
-        <span className="text-xs text-muted" style={{ textAlign: 'right' }}>
-          {samRunStatus === null
-            ? 'Refreshed nightly at 3 AM EST'
-            : samRunStatus.success === null
-              ? 'No pull has run yet'
-              : samRunStatus.success
-                ? (
-                  <>
-                    Last pulled: {new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                    {samRunStatus.written > 0 && ` · ${samRunStatus.written} new`}
-                    {samRunStatus.warnings?.length > 0 && (
-                      <span style={{ color: 'var(--amber-600)' }}> · {samRunStatus.warnings.length} warning{samRunStatus.warnings.length > 1 ? 's' : ''}</span>
-                    )}
-                  </>
-                )
-                : <span style={{ color: 'var(--red-600)' }}>Last run failed: {samRunStatus.error || 'Unknown error'}</span>
-          }
-        </span>
+        </div>
       </div>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {samLoading
@@ -369,11 +396,10 @@ export default function Opportunities({ toast }) {
                     <tr>
                       <th>Title</th>
                       <th>Agency</th>
-                      <th>Set-Aside</th>
                       <th>NAICS</th>
                       <th>Response Date</th>
                       <th>POC</th>
-                      <th style={{ width: 230 }}>Actions</th>
+                      <th style={{ width: 160 }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -382,59 +408,57 @@ export default function Opportunities({ toast }) {
                       const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
                       const isActioning = actioningRow === opp._rowIndex
                       const pocDisplay  = (opp['Point of Contact'] || '').split('|')[0].trim()
+                      const btnSm       = { padding: '2px 6px', fontSize: '10.5px' }
                       return (
                         <tr key={opp['Notice ID'] || opp._rowIndex}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
-                          <td style={{ fontWeight: 500, maxWidth: 280 }}>
+                          <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
                               {samStatusBadge(opp.Status)}
                             </div>
                           </td>
                           <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
-                          <td className="text-sm text-muted">{opp['Set-Aside Type'] || '—'}</td>
                           <td className="text-xs text-muted">{opp['NAICS Code'] || '—'}</td>
                           <td className="text-sm">{formatDate(opp['Response Date'])}</td>
                           <td className="text-xs text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {pocDisplay || '—'}
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
-                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                              {isDismissed
-                                ? (
-                                  <button className="btn text-xs" style={{ padding: '3px 8px' }}
-                                    disabled={isActioning} onClick={() => handleUndismiss(opp)}>
-                                    {isActioning ? '\u2026' : 'Restore'}
-                                  </button>
-                                )
-                                : (
-                                  <>
-                                    {!isActioned && (
-                                      <>
-                                        <button className="btn btn-primary text-xs" style={{ padding: '3px 8px' }}
-                                          disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
-                                          {isActioning ? '\u2026' : '+ Pipeline'}
-                                        </button>
-                                        <button className="btn text-xs" style={{ padding: '3px 8px' }}
-                                          disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'Tracking')}>
-                                          {isActioning ? '\u2026' : 'Track'}
-                                        </button>
-                                        <button className="btn btn-ghost text-xs" style={{ padding: '3px 8px', color: 'var(--gray-400)' }}
-                                          disabled={isActioning} onClick={() => handleDismiss(opp)}>
-                                          Dismiss
-                                        </button>
-                                      </>
-                                    )}
-                                    {opp['SAM.gov URL'] && (
-                                      <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
-                                        className="btn btn-ghost text-xs" style={{ padding: '3px 8px' }}>
-                                        SAM \u2197
-                                      </a>
-                                    )}
-                                  </>
-                                )
-                              }
-                            </div>
+                            {isDismissed
+                              ? (
+                                <button className="btn" style={btnSm}
+                                  disabled={isActioning} onClick={() => handleUndismiss(opp)}>
+                                  {isActioning ? '…' : 'Restore'}
+                                </button>
+                              )
+                              : (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                                  {!isActioned && (
+                                    <>
+                                      <button className="btn btn-primary" style={btnSm}
+                                        disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
+                                        {isActioning ? '…' : '+ Pipeline'}
+                                      </button>
+                                      <button className="btn" style={btnSm}
+                                        disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'Tracking')}>
+                                        {isActioning ? '…' : 'Track'}
+                                      </button>
+                                      <button className="btn btn-ghost" style={{ ...btnSm, color: 'var(--gray-400)' }}
+                                        disabled={isActioning} onClick={() => handleDismiss(opp)}>
+                                        Dismiss
+                                      </button>
+                                    </>
+                                  )}
+                                  {opp['SAM.gov URL'] && (
+                                    <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
+                                      className="btn btn-ghost" style={{ ...btnSm, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      SAM.gov ↗
+                                    </a>
+                                  )}
+                                </div>
+                              )
+                            }
                           </td>
                         </tr>
                       )
