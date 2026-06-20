@@ -75,6 +75,9 @@ const DATE_COLUMNS = new Set([
   'Questions Due',
   '8(a) Exit Date',
   'Last Modified*',
+  'Response Date',   // NewOpportunitiesTable
+  'Posted Date',     // NewOpportunitiesTable
+  'Date Added',      // NewOpportunitiesTable
 ])
 
 /**
@@ -320,8 +323,9 @@ export const OPPORTUNITY_OUTLOOK = ['Expiring', 'Forecasted', 'New', 'Tracking']
 export const PRIORITY_VALUES = ['Cold', 'Warm', 'Hot']
 export const SET_ASIDE_VALUES = ['-', '8A', '8AN', 'NONE', 'SBA', 'SDVOSBC', 'SDVOSBS']
 
-// Matches the "Types" column on the Data Validation sheet (Contacts).
-export const CONTACT_TYPES = ['Customer', 'Partner', 'Teammate', 'Competitor', 'Other']
+// Contact type fallback — only used if the Data Validation sheet Types column
+// is empty. The live list is always pulled from DataValidationTable first.
+export const CONTACT_TYPES = ['Government', 'Private']
 
 // ── Data Validation table ───────────────────────────────────────────────
 // "Data Validation" sheet is set up as a Table named DataValidationTable.
@@ -580,4 +584,94 @@ export async function getNotesForContract(contractNumber) {
       return `[${dateStr} - ${n.Author}] ${n.NoteText}`
     })
     .join('\n')
+}
+// ── NewOpportunities table ────────────────────────────────────────────────
+
+export const NEW_OPP_HEADERS = [
+  'Notice ID',
+  'Solicitation Number',
+  'Title',
+  'Set-Aside Type',
+  'Department',
+  'Agency',
+  'Office',
+  'Response Date',
+  'Point of Contact',
+  'NAICS Code',
+  'Posted Date',
+  'SAM.gov URL',
+  'Date Added',
+  'Status',
+]
+
+export async function getSAMOpportunities() {
+  return getSheetRows('NewOpportunitiesTable')
+}
+
+export async function addSAMOpportunity(data) {
+  return appendRow('NewOpportunitiesTable', data, NEW_OPP_HEADERS)
+}
+
+export async function updateSAMOpportunity(rowIndex, patch) {
+  return updateRow('NewOpportunitiesTable', rowIndex, patch, NEW_OPP_HEADERS)
+}
+
+export async function deleteSAMOpportunity(rowIndex) {
+  return deleteRow('NewOpportunitiesTable', rowIndex)
+}
+
+// ── SAMConfig tables ──────────────────────────────────────────────────────
+
+export const SAM_NAICS_HEADERS = ['NAICS Code']
+
+export const SAM_SETTINGS_HEADERS = ['Setting', 'Value']
+
+export async function getSAMNAICS() {
+  const rows = await getSheetRows('SAMNAICSTable')
+  return rows.map((r) => String(r['NAICS Code'] || '').trim()).filter(Boolean)
+}
+
+export async function updateSAMNAICS(codes) {
+  // Read current row count so we can blank out any removed rows
+  const existing = await getSheetRows('SAMNAICSTable')
+  const totalRows = Math.max(existing.length, codes.length)
+  // Write via range PATCH on the worksheet so we can zero-fill removed rows
+  const headerData = await graphFetch('/tables/SAMNAICSTable/columns')
+  const headers = headerData.value.map((c) => c.name)
+  const colIdx = headers.indexOf('NAICS Code')
+  const colLetter = colIndexToLetter(colIdx)
+  const startRow = 2
+  const endRow = startRow + totalRows - 1
+  const address = `${colLetter}${startRow}:${colLetter}${endRow}`
+  const cellValues = []
+  for (let i = 0; i < totalRows; i++) {
+    cellValues.push([i < codes.length ? codes[i] : ''])
+  }
+  await graphFetch(
+    `/worksheets/${encodeURIComponent('SAMConfig')}/range(address='${address}')`,
+    { method: 'PATCH', body: JSON.stringify({ values: cellValues }) }
+  )
+  invalidate('SAMNAICSTable')
+}
+
+export async function getSAMSettings() {
+  const rows = await getSheetRows('SAMSettingsTable')
+  const settings = {}
+  rows.forEach((r) => {
+    const key = String(r['Setting'] || '').trim()
+    const val = r['Value']
+    if (key) settings[key] = val
+  })
+  return {
+    skipDays:   Number(settings['Skip Days']   ?? 3),
+    windowDays: Number(settings['Window Days'] ?? 90),
+  }
+}
+
+export async function updateSAMSettings(skipDays, windowDays) {
+  const rows = await getSheetRows('SAMSettingsTable')
+  const skipRow   = rows.find((r) => String(r['Setting'] || '').trim() === 'Skip Days')
+  const windowRow = rows.find((r) => String(r['Setting'] || '').trim() === 'Window Days')
+  if (skipRow)   await updateRow('SAMSettingsTable', skipRow._rowIndex,   { Setting: 'Skip Days',   Value: skipDays },   SAM_SETTINGS_HEADERS)
+  if (windowRow) await updateRow('SAMSettingsTable', windowRow._rowIndex, { Setting: 'Window Days', Value: windowDays }, SAM_SETTINGS_HEADERS)
 }
