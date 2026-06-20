@@ -22,10 +22,6 @@ compatibility_flags = ["nodejs_compat"]
 binding = "CACHE"
 id = "8e2b634e99384d5d9e9c0880fce935b0"
 
-# Cron trigger: 3 AM EST (8 AM UTC) daily — SAM.gov opportunity pull
-[triggers]
-crons = ["0 8 * * *"]
-
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
