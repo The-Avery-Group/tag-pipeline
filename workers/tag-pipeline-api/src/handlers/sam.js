@@ -148,10 +148,20 @@ async function getTableRows(env, token, tableName) {
 }
 
 async function readConfig(env, token) {
-  const [naicsRows, settingsRows] = await Promise.all([
-    getTableRows(env, token, 'SAMNAICSTable'),
-    getTableRows(env, token, 'SAMSettingsTable'),
-  ])
+  // Test each table separately so we can identify exactly which one fails
+  let naicsRows, settingsRows
+
+  try {
+    naicsRows = await getTableRows(env, token, 'SAMNAICSTable')
+  } catch (err) {
+    throw new Error(`SAMNAICSTable: ${err.message}`)
+  }
+
+  try {
+    settingsRows = await getTableRows(env, token, 'SAMSettingsTable')
+  } catch (err) {
+    throw new Error(`SAMSettingsTable: ${err.message}`)
+  }
 
   const naicsCodes = naicsRows
     .map((r) => String(r['NAICS Code'] || '').trim())
@@ -436,6 +446,72 @@ export async function handleSAMCron(env) {
 
 export async function handleSAM(req, env, ctx) {
   const url = new URL(req.url)
+
+  // GET /sam/debug — step-by-step diagnostic (requires X-Trigger-Secret)
+  if (url.pathname === '/sam/debug' && req.method === 'GET') {
+    if (!env.SAM_TRIGGER_SECRET) return json({ error: 'SAM_TRIGGER_SECRET not configured' }, 503)
+    const provided = req.headers.get('X-Trigger-Secret') || ''
+    if (provided !== env.SAM_TRIGGER_SECRET) return json({ error: 'Unauthorized' }, 401)
+
+    const result = { steps: {} }
+
+    // Step 1: token
+    let token
+    try {
+      token = await getGraphToken(env)
+      result.steps.token = { ok: true }
+    } catch (err) {
+      result.steps.token = { ok: false, error: err.message }
+      return json(result)
+    }
+
+    // Step 2: workbook reachable
+    try {
+      const wb = await graphFetch(env, token, '')
+      result.steps.workbook = { ok: true, name: wb?.name || '(no name)' }
+    } catch (err) {
+      result.steps.workbook = { ok: false, error: err.message }
+      return json(result)
+    }
+
+    // Step 3: list all tables in workbook
+    try {
+      const tables = await graphFetch(env, token, '/tables')
+      result.steps.tables = {
+        ok: true,
+        names: (tables?.value || []).map((t) => t.name),
+      }
+    } catch (err) {
+      result.steps.tables = { ok: false, error: err.message }
+      return json(result)
+    }
+
+    // Step 4: read SAMNAICSTable
+    try {
+      const rows = await getTableRows(env, token, 'SAMNAICSTable')
+      result.steps.SAMNAICSTable = { ok: true, rowCount: rows.length, sample: rows[0] || null }
+    } catch (err) {
+      result.steps.SAMNAICSTable = { ok: false, error: err.message }
+    }
+
+    // Step 5: read SAMSettingsTable
+    try {
+      const rows = await getTableRows(env, token, 'SAMSettingsTable')
+      result.steps.SAMSettingsTable = { ok: true, rowCount: rows.length, rows }
+    } catch (err) {
+      result.steps.SAMSettingsTable = { ok: false, error: err.message }
+    }
+
+    // Step 6: read NewOpportunitiesTable
+    try {
+      const rows = await getTableRows(env, token, 'NewOpportunitiesTable')
+      result.steps.NewOpportunitiesTable = { ok: true, rowCount: rows.length }
+    } catch (err) {
+      result.steps.NewOpportunitiesTable = { ok: false, error: err.message }
+    }
+
+    return json(result)
+  }
 
   // GET /sam/key-status — frontend polls for rotation reminder
   if (url.pathname === '/sam/key-status' && req.method === 'GET') {
