@@ -703,7 +703,6 @@ export default function Opportunities({ toast }) {
             }
           </div>
         )}
-        </div>
       </div>
 
       {/* ── New opportunity modal ── */}
