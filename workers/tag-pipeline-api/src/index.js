@@ -8,9 +8,9 @@
  *   GET  /health      → Health check
  */
 
-import { handleNotify }  from './handlers/notify.js'
-import { handleAIChat }  from './handlers/ai.js'
-import { handleSAM }     from './handlers/sam.js'
+import { handleNotify }             from './handlers/notify.js'
+import { handleAIChat }             from './handlers/ai.js'
+import { handleSAM, handleSAMCron } from './handlers/sam.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -74,6 +74,9 @@ export default {
       } else if (path === '/ai/history' && (req.method === 'GET' || req.method === 'DELETE')) {
         response = await handleAIChat(req, env)
 
+      } else if (path === '/sam/key-status' && req.method === 'GET') {
+        response = await handleSAM(req, env)
+
       } else if (path === '/sam/search' && req.method === 'GET') {
         response = await handleSAM(req, env)
 
@@ -86,5 +89,10 @@ export default {
     }
 
     return cors(env, req, response)
+  },
+
+  // Cron trigger: 0 8 * * * UTC (= 3 AM EST / 4 AM EDT)
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(handleSAMCron(env))
   },
 }
