@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   getSAMOpportunities, updateSAMOpportunity,
   getContacts, addContact, addOpportunity,
+  getSAMNAICS, getSAMSettings,
+  getToken,
 } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
@@ -20,11 +22,8 @@ export async function checkSAMKeyExpired() {
   try {
     const res = await fetch(`${WORKER_URL}/sam/key-status`)
     if (!res.ok) return false
-    const data = await res.json()
-    return data.expired === true
-  } catch {
-    return false
-  }
+    return (await res.json()).expired === true
+  } catch { return false }
 }
 
 export async function getSAMRunStatus() {
@@ -33,9 +32,7 @@ export async function getSAMRunStatus() {
     const res = await fetch(`${WORKER_URL}/sam/run-status`)
     if (!res.ok) return null
     return res.json()
-  } catch {
-    return null
-  }
+  } catch { return null }
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────
@@ -81,7 +78,7 @@ export function useSAMOpportunities() {
       if (byName) return byName.Name
     }
 
-    // 3. Create new
+    // 3. Create new contact
     await addContact({
       Name:         poc.name  || poc.email || 'Unknown',
       Email:        poc.email || '',
@@ -97,7 +94,6 @@ export function useSAMOpportunities() {
 
   // ── Optimistic status update ─────────────────────────────────────────
   const updateStatus = useCallback(async (rowIndex, status) => {
-    // Optimistic — update local state immediately
     setOpportunities((prev) =>
       prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
     )
@@ -105,7 +101,6 @@ export function useSAMOpportunities() {
       await updateSAMOpportunity(rowIndex, { Status: status })
       await invalidateCache()
     } catch (err) {
-      // Roll back
       await load()
       throw err
     }
@@ -116,7 +111,7 @@ export function useSAMOpportunities() {
     const poc = parsePOC(row['Point of Contact'])
     const contactName = await resolveContact(poc, row['Agency'], row['Department'])
 
-    const pipelineData = {
+    await addOpportunity({
       'TAG Opportunity Phase':                   'Identified',
       'Opportunity Outlook':                     outlook,
       'Contract Number / Notice ID':             row['Solicitation Number'] || row['Notice ID'] || '',
@@ -128,13 +123,58 @@ export function useSAMOpportunities() {
       'Office*':                                 row['Office']              || '',
       'NAICS Code*':                             row['NAICS Code']          || '',
       'Contracting Officer / Specialist (POC)*': contactName                || '',
-    }
+    })
 
-    await addOpportunity(pipelineData)
-
-    const status = outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline'
-    await updateStatus(row._rowIndex, status)
+    await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
   }, [resolveContact, updateStatus])
+
+  // ── Trigger SAM pull ─────────────────────────────────────────────────
+  // force=true bypasses the 12h throttle (used by Settings page force pull)
+  const triggerPull = useCallback(async ({ force = false } = {}) => {
+    if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
+    const secret = import.meta.env.VITE_SAM_TRIGGER_SECRET
+    if (!secret) throw new Error('VITE_SAM_TRIGGER_SECRET not set')
+
+    // Get the user's current MSAL token
+    const token = await getToken()
+
+    // Read SAM config from the workbook (frontend already has access)
+    const [naicsCodes, settings] = await Promise.all([getSAMNAICS(), getSAMSettings()])
+
+    if (!naicsCodes.length) throw new Error('No NAICS codes found in SAMNAICSTable')
+
+    const res = await fetch(`${WORKER_URL}/sam/trigger`, {
+      method: 'POST',
+      headers: {
+        'Content-Type':    'application/json',
+        'X-Trigger-Secret': secret,
+      },
+      body: JSON.stringify({
+        token,
+        config: {
+          naicsCodes,
+          skipDays:   settings.skipDays,
+          windowDays: settings.windowDays,
+        },
+        force,
+      }),
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
+
+    // If throttled, return the throttle info so the UI can show the message
+    if (data.throttled) return { throttled: true, message: data.message, lastRun: data.lastRun }
+
+    // Pull started in background — reload opportunities after a short delay
+    // so the user sees updated data without having to refresh manually
+    setTimeout(async () => {
+      await invalidateCache()
+    }, 5000)
+
+    return { throttled: false, message: data.message }
+  }, [])
 
   const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
   const undismiss = useCallback((rowIndex) => updateStatus(rowIndex, 'new'),       [updateStatus])
@@ -148,5 +188,6 @@ export function useSAMOpportunities() {
     dismiss,
     undismiss,
     updateStatus,
+    triggerPull,
   }
 }
