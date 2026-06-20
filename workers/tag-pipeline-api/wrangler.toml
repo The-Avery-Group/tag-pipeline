@@ -6,18 +6,26 @@ compatibility_flags = ["nodejs_compat"]
 # Secrets (set via `wrangler secret put` or Cloudflare dashboard):
 #   TEAMS_WEBHOOK_URL   — Teams incoming webhook URL
 #   GROQ_API_KEY        — Groq API key
-#   DATABANK_API_KEY    — Databank/SAM API key (add when ready)
+#   SAM_API_KEY         — SAM.gov public API key (expires every 90 days)
+#                         Rotate: wrangler secret put SAM_API_KEY
+#   WORKBOOK_ID         — SharePoint workbook item ID (same as VITE_ONEDRIVE_FILE_ID)
+#                         Add: wrangler secret put WORKBOOK_ID
+#   MS_TENANT_ID        — Azure AD tenant ID (already set)
+#   MS_CLIENT_ID        — App registration client ID (already set)
+#   MS_CLIENT_SECRET    — App registration client secret (already set)
+#   DRIVE_ID            — SharePoint drive ID (already set)
 
-# KV namespace for caching Databank responses (create with `wrangler kv:namespace create CACHE`)
-# Uncomment and fill in the id once created:
+# KV namespace for caching (AI conversation history + SAM key status)
 [[kv_namespaces]]
 binding = "CACHE"
 id = "8e2b634e99384d5d9e9c0880fce935b0"
 
+# Cron trigger: 3 AM EST (8 AM UTC) daily — SAM.gov opportunity pull
+[triggers]
+crons = ["0 8 * * *"]
+
 [vars]
 ENVIRONMENT = "production"
-# ALLOWED_ORIGIN is set here for non-secret config.
-# Update this to your GitHub Pages URL.
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 
 [observability]
