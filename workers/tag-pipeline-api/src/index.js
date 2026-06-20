@@ -77,6 +77,9 @@ export default {
       } else if (path === '/sam/key-status' && req.method === 'GET') {
         response = await handleSAM(req, env)
 
+      } else if (path === '/sam/run-status' && req.method === 'GET') {
+        response = await handleSAM(req, env)
+
       } else if (path === '/sam/search' && req.method === 'GET') {
         response = await handleSAM(req, env)
 
