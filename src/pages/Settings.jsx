@@ -5,6 +5,7 @@ import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
   SET_ASIDE_VALUES, CONTACT_TYPES,
+  getSAMNAICS, updateSAMNAICS, getSAMSettings, updateSAMSettings,
 } from '@/services/graphService'
 import styles from './Settings.module.css'
 
@@ -36,6 +37,45 @@ export default function Settings({ toast }) {
   const [drafts, setDrafts] = useState({})
   const [savingKey, setSavingKey] = useState(null)
   const [savedKey, setSavedKey] = useState(null)
+
+  // ── SAM config state ─────────────────────────────────────────────────
+  const [naicsCodes,    setNaicsCodes]    = useState([])
+  const [skipDays,      setSkipDays]      = useState(3)
+  const [windowDays,    setWindowDays]    = useState(90)
+  const [samLoaded,     setSamLoaded]     = useState(false)
+  const [savingSAM,     setSavingSAM]     = useState(false)
+  const [savedSAM,      setSavedSAM]      = useState(false)
+
+  useEffect(() => {
+    Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
+      setNaicsCodes(codes)
+      setSkipDays(settings.skipDays)
+      setWindowDays(settings.windowDays)
+      setSamLoaded(true)
+    }).catch((err) => {
+      console.warn('[Settings] Failed to load SAM config:', err.message)
+      setSamLoaded(true)
+    })
+  }, [])
+
+  const handleSaveSAM = async () => {
+    setSavingSAM(true)
+    setSavedSAM(false)
+    try {
+      const cleanedCodes = naicsCodes.map((c) => String(c).trim()).filter(Boolean)
+      await Promise.all([
+        updateSAMNAICS(cleanedCodes),
+        updateSAMSettings(Number(skipDays), Number(windowDays)),
+      ])
+      setNaicsCodes(cleanedCodes)
+      setSavedSAM(true)
+      toast?.success('SAM.gov settings saved')
+    } catch (err) {
+      toast?.error(`Failed to save: ${err.message}`)
+    } finally {
+      setSavingSAM(false)
+    }
+  }
 
   // Initialize / refresh local drafts whenever live lists load or change,
   // but don't clobber a section the user is actively editing.
@@ -146,6 +186,100 @@ export default function Settings({ toast }) {
           These options are shared across all users and stored on the Data Validation sheet of the workbook.
           Task statuses and task priorities are fixed and not configurable here.
         </p>
+
+        {/* ── SAM.gov API settings ── */}
+        <div style={{ marginTop: 28 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', marginBottom: 4 }}>
+            SAM.gov API
+          </div>
+          <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
+            Controls the nightly pull of Sources Sought opportunities from SAM.gov.
+            Changes take effect on the next scheduled run (3 AM EST).
+          </p>
+
+          {!samLoaded
+            ? <div className="skeleton" style={{ height: 120 }} />
+            : (
+              <div className={styles.grid}>
+                {/* NAICS codes */}
+                <div className="card">
+                  <div className={styles.sectionLabel}>NAICS Codes</div>
+                  <div className={styles.itemList}>
+                    {naicsCodes.map((code, i) => (
+                      <div key={i} className={styles.itemRow}>
+                        <input
+                          className="form-input"
+                          value={code}
+                          onChange={(e) => {
+                            const next = [...naicsCodes]
+                            next[i] = e.target.value
+                            setNaicsCodes(next)
+                            setSavedSAM(false)
+                          }}
+                        />
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          onClick={() => { setNaicsCodes(naicsCodes.filter((_, j) => j !== i)); setSavedSAM(false) }}
+                          aria-label="Remove"
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className={styles.saveRow}>
+                    <button className={styles.addBtn}
+                      onClick={() => { setNaicsCodes([...naicsCodes, '']); setSavedSAM(false) }}>
+                      + Add NAICS code
+                    </button>
+                  </div>
+                </div>
+
+                {/* Window settings */}
+                <div className="card">
+                  <div className={styles.sectionLabel}>Response Deadline Window</div>
+                  <div className={styles.itemList}>
+                    <div className="form-field">
+                      <label className="form-label">Skip Days</label>
+                      <input className="form-input" type="number" min={0} max={30}
+                        value={skipDays}
+                        onChange={(e) => { setSkipDays(e.target.value); setSavedSAM(false) }} />
+                      <span className="text-xs text-muted" style={{ marginTop: 3 }}>
+                        Exclude opportunities with a deadline within this many days (avoids noise on imminent deadlines)
+                      </span>
+                    </div>
+                    <div className="form-field" style={{ marginTop: 10 }}>
+                      <label className="form-label">Window Days</label>
+                      <input className="form-input" type="number" min={7} max={365}
+                        value={windowDays}
+                        onChange={(e) => { setWindowDays(e.target.value); setSavedSAM(false) }} />
+                      <span className="text-xs text-muted" style={{ marginTop: 3 }}>
+                        Pull opportunities whose deadline falls within this many days from today
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+            <button className="btn btn-primary" onClick={handleSaveSAM} disabled={savingSAM}>
+              {savingSAM ? 'Saving…' : savedSAM ? '✓ Saved' : 'Save SAM settings'}
+            </button>
+          </div>
+
+          {/* API key note */}
+          <div style={{
+            marginTop: 16, padding: '12px 14px',
+            background: 'var(--gray-50)', border: '0.5px solid var(--gray-200)',
+            borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--gray-600)', lineHeight: 1.6,
+          }}>
+            <strong style={{ color: 'var(--gray-900)' }}>API key rotation</strong><br />
+            SAM.gov public API keys expire every 90 days. When yours expires, the nightly pull will stop
+            and a warning banner will appear on the New Opportunities tab.<br />
+            To rotate: run <code style={{ background: 'var(--gray-200)', padding: '1px 5px', borderRadius: 3 }}>wrangler secret put SAM_API_KEY</code> in your terminal, paste your new key, and deploy.
+            No code changes required.
+          </div>
+        </div>
       </div>
     </>
   )
