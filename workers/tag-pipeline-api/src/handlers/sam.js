@@ -19,13 +19,16 @@
  *   MS_TENANT_ID        — Azure AD tenant
  *   MS_CLIENT_ID        — App registration client ID
  *   MS_CLIENT_SECRET    — App registration secret
- *   DRIVE_ID            — SharePoint drive ID (already set)
- *   WORKBOOK_ID         — SharePoint workbook item ID
+ *   WORKBOOK_ID         — SharePoint workbook item ID (same as VITE_ONEDRIVE_FILE_ID)
  */
 
 const SAM_BASE   = 'https://api.sam.gov/opportunities/v2/search'
 const PAGE_SIZE  = 500
 const REQ_DELAY  = 500   // ms between paginated calls per NAICS
+
+// Hardcoded — matches the frontend graphService.js constant exactly.
+// This is a fixed value tied to the workbook's SharePoint location, not per-user.
+const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -110,7 +113,7 @@ async function getGraphToken(env) {
 }
 
 function workbookBase(env) {
-  return `https://graph.microsoft.com/v1.0/drives/${env.DRIVE_ID}/items/${env.WORKBOOK_ID}/workbook`
+  return `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${env.WORKBOOK_ID}/workbook`
 }
 
 async function graphFetch(env, token, path, options = {}) {
@@ -431,7 +434,7 @@ export async function handleSAMCron(env) {
 
 // ── HTTP handler ──────────────────────────────────────────────────────────
 
-export async function handleSAM(req, env) {
+export async function handleSAM(req, env, ctx) {
   const url = new URL(req.url)
 
   // GET /sam/key-status — frontend polls for rotation reminder
@@ -444,6 +447,29 @@ export async function handleSAM(req, env) {
   if (url.pathname === '/sam/run-status' && req.method === 'GET') {
     const log = await getRunLog(env)
     return json(log || { success: null, timestamp: null })
+  }
+
+  // POST /sam/trigger — manual cron trigger (requires X-Trigger-Secret header)
+  // Runs handleSAMCron in the background so response returns immediately.
+  // Set SAM_TRIGGER_SECRET via: wrangler secret put SAM_TRIGGER_SECRET
+  if (url.pathname === '/sam/trigger' && req.method === 'POST') {
+    if (!env.SAM_TRIGGER_SECRET) {
+      return json({ error: 'SAM_TRIGGER_SECRET not configured' }, 503)
+    }
+    const provided = req.headers.get('X-Trigger-Secret') || ''
+    if (provided !== env.SAM_TRIGGER_SECRET) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    if (ctx?.waitUntil) {
+      ctx.waitUntil(handleSAMCron(env))
+    } else {
+      // Fallback: fire without waitUntil (wrangler dev without ctx)
+      handleSAMCron(env).catch((err) => console.error('[SAM] Manual trigger error:', err))
+    }
+    return json({
+      ok: true,
+      message: 'SAM pull triggered — check /sam/run-status in a few minutes for results',
+    })
   }
 
   return json({ error: 'Not found' }, 404)
