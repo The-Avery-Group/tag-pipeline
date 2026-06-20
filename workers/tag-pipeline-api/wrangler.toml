@@ -8,12 +8,14 @@ compatibility_flags = ["nodejs_compat"]
 #   GROQ_API_KEY        — Groq API key
 #   SAM_API_KEY         — SAM.gov public API key (expires every 90 days)
 #                         Rotate: wrangler secret put SAM_API_KEY
+#   SAM_TRIGGER_SECRET  — Any string you choose; sent as X-Trigger-Secret header to POST /sam/trigger
+#                         Set: wrangler secret put SAM_TRIGGER_SECRET
 #   WORKBOOK_ID         — SharePoint workbook item ID (same as VITE_ONEDRIVE_FILE_ID)
 #                         Add: wrangler secret put WORKBOOK_ID
 #   MS_TENANT_ID        — Azure AD tenant ID (already set)
 #   MS_CLIENT_ID        — App registration client ID (already set)
 #   MS_CLIENT_SECRET    — App registration client secret (already set)
-#   DRIVE_ID            — SharePoint drive ID (already set)
+#   Note: DRIVE_ID is hardcoded in sam.js (matches frontend graphService.js constant)
 
 # KV namespace for caching (AI conversation history + SAM key status)
 [[kv_namespaces]]
