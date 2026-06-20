@@ -47,6 +47,7 @@ export default function Settings({ toast }) {
   const [savedSAM,      setSavedSAM]      = useState(false)
   const [triggering,    setTriggering]    = useState(false)
   const [triggerResult, setTriggerResult] = useState(null)
+  const [triggerSecret, setTriggerSecret] = useState('')
 
   useEffect(() => {
     Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
@@ -81,9 +82,12 @@ export default function Settings({ toast }) {
 
   const handleTriggerSAM = async () => {
     const workerUrl = import.meta.env.VITE_API_BASE_URL
-    const secret    = import.meta.env.VITE_SAM_TRIGGER_SECRET
-    if (!workerUrl || !secret) {
-      toast?.error('VITE_API_BASE_URL or VITE_SAM_TRIGGER_SECRET not set in .env')
+    if (!workerUrl) {
+      toast?.error('VITE_API_BASE_URL not set')
+      return
+    }
+    if (!triggerSecret.trim()) {
+      toast?.error('Enter the trigger secret first')
       return
     }
     setTriggering(true)
@@ -91,7 +95,7 @@ export default function Settings({ toast }) {
     try {
       const res = await fetch(`${workerUrl}/sam/trigger`, {
         method: 'POST',
-        headers: { 'X-Trigger-Secret': secret },
+        headers: { 'X-Trigger-Secret': triggerSecret.trim() },
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
@@ -290,8 +294,17 @@ export default function Settings({ toast }) {
           }
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button className="btn" onClick={handleTriggerSAM} disabled={triggering}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <input
+                className="form-input"
+                type="password"
+                placeholder="Trigger secret…"
+                value={triggerSecret}
+                onChange={(e) => setTriggerSecret(e.target.value)}
+                style={{ width: 160, fontSize: 12 }}
+                disabled={triggering}
+              />
+              <button className="btn" onClick={handleTriggerSAM} disabled={triggering || !triggerSecret.trim()}
                 title="Manually run the SAM.gov pull now without waiting for the nightly cron">
                 {triggering ? '⏳ Running…' : '▶ Trigger pull now'}
               </button>
