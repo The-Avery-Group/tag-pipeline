@@ -15,7 +15,8 @@
 
 import {
   getPipeline, getTasks, getNotes, getContacts, getValidationLists,
-  invalidateAll,          // we'll add this to graphService below
+  getSAMOpportunities,
+  invalidateAll,
 } from '@/services/graphService'
 
 // How often to poll for external changes (default: 2 minutes)
@@ -50,6 +51,7 @@ async function _fetchAll() {
     getNotes(),
     getContacts(),
     getValidationLists(),
+    getSAMOpportunities(),
   ])
 }
 
