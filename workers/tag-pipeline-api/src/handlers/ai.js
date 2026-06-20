@@ -233,11 +233,6 @@ ${context.staleOpportunities.map((o) => `- ${o.title} | ${o.phase} | Last modifi
 ${context.expiringOpportunities.map((o) => `- ${o.title} | Expires: ${o.endDate} | Value: ${o.value}`).join('\n')}`)
   }
 
-  if (context.upcomingDeadlines?.length > 0) {
-    parts.push(`UPCOMING SUBMISSION DEADLINES:
-${context.upcomingDeadlines.map((o) => `- ${o.title} | Due: ${o.submDate} | Phase: ${o.phase}`).join('\n')}`)
-  }
-
   if (context.opportunity) {
     const o = context.opportunity
     parts.push(`OPPORTUNITY:
