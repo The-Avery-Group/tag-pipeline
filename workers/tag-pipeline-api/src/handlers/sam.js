@@ -293,19 +293,37 @@ async function getKeyExpired(env) {
   return val?.expired === true
 }
 
+async function setRunLog(env, log) {
+  if (!env.CACHE) return
+  await env.CACHE.put('sam_run_log', JSON.stringify(log), {
+    expirationTtl: 60 * 60 * 24 * 180,  // 180 days
+  })
+}
+
+async function getRunLog(env) {
+  if (!env.CACHE) return null
+  return env.CACHE.get('sam_run_log', 'json')
+}
+
 // ── Cron handler ──────────────────────────────────────────────────────────
 
 export async function handleSAMCron(env) {
-  console.log('[SAM] Cron started:', new Date().toISOString())
+  const runStart = new Date().toISOString()
+  console.log('[SAM] Cron started:', runStart)
 
-  if (!env.SAM_API_KEY)    return console.error('[SAM] SAM_API_KEY secret not set')
-  if (!env.MS_TENANT_ID)   return console.error('[SAM] MS_TENANT_ID not set')
-  if (!env.WORKBOOK_ID)    return console.error('[SAM] WORKBOOK_ID not set')
+  const failLog = async (error) => {
+    await setRunLog(env, { success: false, timestamp: runStart, error }).catch(() => {})
+  }
+
+  if (!env.SAM_API_KEY)  { await failLog('SAM_API_KEY secret not set');  return console.error('[SAM] SAM_API_KEY secret not set') }
+  if (!env.MS_TENANT_ID) { await failLog('MS_TENANT_ID not set');         return console.error('[SAM] MS_TENANT_ID not set') }
+  if (!env.WORKBOOK_ID)  { await failLog('WORKBOOK_ID not set');          return console.error('[SAM] WORKBOOK_ID not set') }
 
   let token
   try {
     token = await getGraphToken(env)
   } catch (err) {
+    await failLog(`Failed to get Graph token: ${err.message}`)
     return console.error('[SAM] Failed to get Graph token:', err.message)
   }
 
@@ -315,11 +333,12 @@ export async function handleSAMCron(env) {
     config = await readConfig(env, token)
     console.log(`[SAM] ${config.naicsCodes.length} NAICS codes | Skip ${config.skipDays}d | Window ${config.windowDays}d`)
   } catch (err) {
+    await failLog(`Failed to read SAMConfig: ${err.message}`)
     return console.error('[SAM] Failed to read SAMConfig:', err.message)
   }
 
   // Build date ranges
-  const now       = new Date()
+  const now        = new Date()
   const postedFrom = formatDateParam(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, now.getUTCDate())))
   const postedTo   = formatDateParam(now)
   const rdlStart   = new Date(now)
@@ -337,13 +356,15 @@ export async function handleSAMCron(env) {
     existingIds = await getExistingNoticeIds(env, token)
     console.log(`[SAM] ${existingIds.size} existing notice(s) in sheet`)
   } catch (err) {
+    await failLog(`Failed to read existing rows: ${err.message}`)
     return console.error('[SAM] Failed to read existing rows:', err.message)
   }
 
   // Fetch and write
-  let totalFetched  = 0
-  let totalWritten  = 0
-  const seen = new Set(existingIds)
+  let totalFetched = 0
+  let totalWritten = 0
+  const seen       = new Set(existingIds)
+  const naicsErrors = []
 
   for (const naics of config.naicsCodes) {
     let records
@@ -354,10 +375,13 @@ export async function handleSAMCron(env) {
     } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
         await setKeyExpired(env, true)
+        await failLog('SAM API key expired or invalid')
         console.error('[SAM] API key expired — stopping run, frontend notified')
         return
       }
-      console.error(`[SAM] Fetch error for NAICS ${naics}:`, err.message)
+      const msg = `NAICS ${naics}: ${err.message}`
+      naicsErrors.push(msg)
+      console.error(`[SAM] Fetch error for ${msg}`)
       continue
     }
 
@@ -380,7 +404,7 @@ export async function handleSAMCron(env) {
     await sleep(REQ_DELAY)
   }
 
-  // Clear key-expired flag if run succeeded
+  // Clear key-expired flag — run got this far without a 401
   await setKeyExpired(env, false)
 
   // Delete expired rows
@@ -391,7 +415,18 @@ export async function handleSAMCron(env) {
     console.error('[SAM] Cleanup error:', err.message)
   }
 
-  console.log(`[SAM] Done. Fetched: ${totalFetched} | Written: ${totalWritten} | Deleted: ${deleted}`)
+  const summary = `Fetched: ${totalFetched} | Written: ${totalWritten} | Deleted: ${deleted}`
+  console.log(`[SAM] Done. ${summary}`)
+
+  // Write success run log (include any per-NAICS errors as warnings)
+  await setRunLog(env, {
+    success:      true,
+    timestamp:    runStart,
+    fetched:      totalFetched,
+    written:      totalWritten,
+    deleted,
+    warnings:     naicsErrors.length > 0 ? naicsErrors : undefined,
+  }).catch(() => {})
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────────
@@ -403,6 +438,12 @@ export async function handleSAM(req, env) {
   if (url.pathname === '/sam/key-status' && req.method === 'GET') {
     const expired = await getKeyExpired(env)
     return json({ expired })
+  }
+
+  // GET /sam/run-status — last cron run result (timestamp, counts, error)
+  if (url.pathname === '/sam/run-status' && req.method === 'GET') {
+    const log = await getRunLog(env)
+    return json(log || { success: null, timestamp: null })
   }
 
   return json({ error: 'Not found' }, 404)
