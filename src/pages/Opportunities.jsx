@@ -390,16 +390,16 @@ export default function Opportunities({ toast }) {
               </div>
             )
             : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="data-table">
-                  <thead>
+              <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 300px)' }}>
+                <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                  <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                     <tr>
-                      <th>Title</th>
-                      <th>Agency</th>
-                      <th>NAICS</th>
-                      <th>Response Date</th>
-                      <th>POC</th>
-                      <th style={{ width: 160 }}>Actions</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Title</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Agency</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>NAICS</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Response Date</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
+                      <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -408,7 +408,8 @@ export default function Opportunities({ toast }) {
                       const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
                       const isActioning = actioningRow === opp._rowIndex
                       const pocDisplay  = (opp['Point of Contact'] || '').split('|')[0].trim()
-                      const btnSm       = { padding: '2px 6px', fontSize: '10.5px' }
+                      // All buttons same size, text centered
+                      const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
                         <tr key={opp['Notice ID'] || opp._rowIndex}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
@@ -433,18 +434,20 @@ export default function Opportunities({ toast }) {
                                 </button>
                               )
                               : (
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
                                   {!isActioned && (
                                     <>
+                                      {/* Row 1: + Pipeline (blue) | Track (amber/white) */}
                                       <button className="btn btn-primary" style={btnSm}
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
                                         {isActioning ? '…' : '+ Pipeline'}
                                       </button>
-                                      <button className="btn" style={btnSm}
+                                      <button style={{ ...btnSm, background: 'var(--amber-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'Tracking')}>
                                         {isActioning ? '…' : 'Track'}
                                       </button>
-                                      <button className="btn btn-ghost" style={{ ...btnSm, color: 'var(--gray-400)' }}
+                                      {/* Row 2: Dismiss (red/white) | SAM.gov (blue) */}
+                                      <button style={{ ...btnSm, background: 'var(--red-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                         disabled={isActioning} onClick={() => handleDismiss(opp)}>
                                         Dismiss
                                       </button>
@@ -452,8 +455,8 @@ export default function Opportunities({ toast }) {
                                   )}
                                   {opp['SAM.gov URL'] && (
                                     <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
-                                      className="btn btn-ghost" style={{ ...btnSm, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                                      SAM.gov ↗
+                                      style={{ ...btnSm, background: 'var(--blue-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                                      SAM.gov
                                     </a>
                                   )}
                                 </div>
