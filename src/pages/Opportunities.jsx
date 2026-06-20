@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
+import { useSAMOpportunities, checkSAMKeyExpired } from '@/hooks/useSAMOpportunities'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate } from '@/utils/kpiHelpers'
@@ -224,6 +225,206 @@ export default function Opportunities({ toast }) {
       setConfirmDelete(null)
     }
   }
+
+  // ── SAM opportunities (New tab) ───────────────────────────────────────
+  const {
+    opportunities: samOpps,
+    loading: samLoading,
+    addToPipeline,
+    dismiss,
+    undismiss,
+  } = useSAMOpportunities()
+
+  const [showDismissed, setShowDismissed] = useState(false)
+  const [samKeyExpired, setSamKeyExpired] = useState(false)
+  const [actioningRow,  setActioningRow]  = useState(null)
+
+  useEffect(() => {
+    checkSAMKeyExpired().then(setSamKeyExpired)
+  }, [])
+
+  const visibleSAMOpps = useMemo(() => samOpps.filter((o) => {
+    const s = o.Status || 'new'
+    if (s === 'dismissed') return showDismissed
+    return true
+  }), [samOpps, showDismissed])
+
+  const handleAddToPipeline = async (row, outlook) => {
+    if (actioningRow === row._rowIndex) return
+    setActioningRow(row._rowIndex)
+    try {
+      await addToPipeline(row, outlook)
+      toast?.success(outlook === 'Tracking' ? 'Added to pipeline as Tracking' : 'Added to pipeline')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setActioningRow(null)
+    }
+  }
+
+  const handleDismiss = async (row) => {
+    if (actioningRow === row._rowIndex) return
+    setActioningRow(row._rowIndex)
+    try {
+      await dismiss(row._rowIndex)
+      toast?.success('Dismissed')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setActioningRow(null)
+    }
+  }
+
+  const handleUndismiss = async (row) => {
+    if (actioningRow === row._rowIndex) return
+    setActioningRow(row._rowIndex)
+    try {
+      await undismiss(row._rowIndex)
+      toast?.success('Restored')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setActioningRow(null)
+    }
+  }
+
+  const samStatusBadge = (status) => {
+    if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>Added</span>
+    if (status === 'tracked')           return <span className="badge badge-proposal" style={{ fontSize: 10 }}>Tracked</span>
+    if (status === 'dismissed')         return <span className="badge badge-tracking" style={{ fontSize: 10, opacity: 0.6 }}>Dismissed</span>
+    return null
+  }
+
+  const NewTab = () => (
+    <div>
+      {samKeyExpired && (
+        <div style={{
+          background: 'var(--amber-50)', border: '0.5px solid var(--amber-600)',
+          borderRadius: 'var(--radius-md)', padding: '10px 14px', marginBottom: 12,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          fontSize: 13, color: 'var(--amber-600)',
+        }}>
+          <span>⚠️ Your SAM.gov API key may have expired. Rotate it via <code>wrangler secret put SAM_API_KEY</code>.</span>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--amber-600)', fontSize: 16 }}
+            onClick={() => setSamKeyExpired(false)}>✕</button>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <span className="text-sm text-muted">
+          {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
+          {!showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
+            <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
+              onClick={() => setShowDismissed(true)}>Show dismissed</button></>
+          )}
+          {showDismissed && (
+            <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
+              onClick={() => setShowDismissed(false)}>Hide dismissed</button></>
+          )}
+        </span>
+        <span className="text-xs text-muted">Refreshed nightly at 3 AM EST</span>
+      </div>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        {samLoading
+          ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
+          : visibleSAMOpps.length === 0
+            ? (
+              <div className={styles.empty} style={{ padding: '48px 24px' }}>
+                <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }}>◈</div>
+                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-900)', marginBottom: 4 }}>
+                  {samOpps.length === 0 ? 'No new opportunities yet' : 'Nothing to show'}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360, textAlign: 'center' }}>
+                  {samOpps.length === 0
+                    ? 'Opportunities from SAM.gov matching your NAICS codes will appear here after the nightly pull.'
+                    : 'All opportunities have been dismissed. Toggle "Show dismissed" to see them.'}
+                </div>
+              </div>
+            )
+            : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Agency</th>
+                      <th>Set-Aside</th>
+                      <th>NAICS</th>
+                      <th>Response Date</th>
+                      <th>POC</th>
+                      <th style={{ width: 230 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleSAMOpps.map((opp) => {
+                      const isDismissed = opp.Status === 'dismissed'
+                      const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
+                      const isActioning = actioningRow === opp._rowIndex
+                      const pocDisplay  = (opp['Point of Contact'] || '').split('|')[0].trim()
+                      return (
+                        <tr key={opp['Notice ID'] || opp._rowIndex}
+                          style={{ opacity: isDismissed ? 0.55 : 1 }}>
+                          <td style={{ fontWeight: 500, maxWidth: 280 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              {opp['Title']}
+                              {samStatusBadge(opp.Status)}
+                            </div>
+                          </td>
+                          <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
+                          <td className="text-sm text-muted">{opp['Set-Aside Type'] || '—'}</td>
+                          <td className="text-xs text-muted">{opp['NAICS Code'] || '—'}</td>
+                          <td className="text-sm">{formatDate(opp['Response Date'])}</td>
+                          <td className="text-xs text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {pocDisplay || '—'}
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {isDismissed
+                                ? (
+                                  <button className="btn text-xs" style={{ padding: '3px 8px' }}
+                                    disabled={isActioning} onClick={() => handleUndismiss(opp)}>
+                                    {isActioning ? '\u2026' : 'Restore'}
+                                  </button>
+                                )
+                                : (
+                                  <>
+                                    {!isActioned && (
+                                      <>
+                                        <button className="btn btn-primary text-xs" style={{ padding: '3px 8px' }}
+                                          disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
+                                          {isActioning ? '\u2026' : '+ Pipeline'}
+                                        </button>
+                                        <button className="btn text-xs" style={{ padding: '3px 8px' }}
+                                          disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'Tracking')}>
+                                          {isActioning ? '\u2026' : 'Track'}
+                                        </button>
+                                        <button className="btn btn-ghost text-xs" style={{ padding: '3px 8px', color: 'var(--gray-400)' }}
+                                          disabled={isActioning} onClick={() => handleDismiss(opp)}>
+                                          Dismiss
+                                        </button>
+                                      </>
+                                    )}
+                                    {opp['SAM.gov URL'] && (
+                                      <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
+                                        className="btn btn-ghost text-xs" style={{ padding: '3px 8px' }}>
+                                        SAM \u2197
+                                      </a>
+                                    )}
+                                  </>
+                                )
+                              }
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+        }
+      </div>
+    </div>
+  )
 
   // ── Sort icon ─────────────────────────────────────────────────────────
   const SortIcon = ({ col }) => (
@@ -482,25 +683,13 @@ export default function Opportunities({ toast }) {
           </div>
         )}
 
-        {/* ── Table card ── */}
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        {/* ── New tab: SAM.gov opportunities ── */}
+        {activeTab === 'New' && <NewTab />}
 
-          {/* New tab — coming soon placeholder */}
-          {activeTab === 'New' && (
-            <div className={styles.empty} style={{ padding: '48px 24px' }}>
-              <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }}>◈</div>
-              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-900)', marginBottom: 4 }}>
-                New opportunities coming soon
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360, textAlign: 'center' }}>
-                This tab will surface opportunities pulled from SAM.gov that match your NAICS and set-aside profile.
-              </div>
-            </div>
-          )}
-
-          {/* All other tabs */}
-          {activeTab !== 'New' && (
-            loading
+        {/* ── Pipeline tabs: RFIs / Expiring / Tracked ── */}
+        {activeTab !== 'New' && (
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {loading
               ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
               : filtered.length === 0
                 ? <div className={styles.empty}>{emptyMsg}</div>
@@ -511,7 +700,9 @@ export default function Opportunities({ toast }) {
                     {activeTab === 'Tracked'  && <TrackedTable />}
                   </div>
                 )
-          )}
+            }
+          </div>
+        )}
         </div>
       </div>
 
