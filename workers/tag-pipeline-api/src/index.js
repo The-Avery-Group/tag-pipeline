@@ -75,13 +75,16 @@ export default {
         response = await handleAIChat(req, env)
 
       } else if (path === '/sam/key-status' && req.method === 'GET') {
-        response = await handleSAM(req, env)
+        response = await handleSAM(req, env, ctx)
 
       } else if (path === '/sam/run-status' && req.method === 'GET') {
-        response = await handleSAM(req, env)
+        response = await handleSAM(req, env, ctx)
+
+      } else if (path === '/sam/trigger' && req.method === 'POST') {
+        response = await handleSAM(req, env, ctx)
 
       } else if (path === '/sam/search' && req.method === 'GET') {
-        response = await handleSAM(req, env)
+        response = await handleSAM(req, env, ctx)
 
       } else {
         response = json({ error: 'Not found' }, 404)
