@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Topbar from '@/components/Layout/Topbar'
 import { useValidationLists } from '@/hooks/useValidationLists'
+import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
@@ -34,6 +35,7 @@ const SECTIONS = [
 
 export default function Settings({ toast }) {
   const { lists, loading, update } = useValidationLists()
+  const { triggerPull } = useSAMOpportunities()
   const [drafts, setDrafts] = useState({})
   const [savingKey, setSavingKey] = useState(null)
   const [savedKey, setSavedKey] = useState(null)
@@ -80,22 +82,11 @@ export default function Settings({ toast }) {
   }
 
   const handleTriggerSAM = async () => {
-    const workerUrl = import.meta.env.VITE_API_BASE_URL
-    const secret    = import.meta.env.VITE_SAM_TRIGGER_SECRET
-    if (!workerUrl || !secret) {
-      toast?.error('VITE_API_BASE_URL or VITE_SAM_TRIGGER_SECRET not set')
-      return
-    }
     setTriggering(true)
     setTriggerResult(null)
     try {
-      const res = await fetch(`${workerUrl}/sam/trigger`, {
-        method: 'POST',
-        headers: { 'X-Trigger-Secret': secret },
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
-      setTriggerResult({ ok: true, message: data.message })
+      const result = await triggerPull({ force: true })   // force=true bypasses 12h throttle
+      setTriggerResult({ ok: true, message: result.message || 'Pull started' })
       toast?.success('SAM pull started')
     } catch (err) {
       setTriggerResult({ ok: false, message: err.message })
