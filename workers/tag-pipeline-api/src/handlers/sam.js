@@ -1,33 +1,39 @@
 /**
  * sam.js — SAM.gov Get Opportunities integration
  *
- * Cron: 0 8 * * * (UTC) = 3 AM EST / 4 AM EDT daily
+ * Triggered on demand via POST /sam/trigger from the frontend.
+ * The frontend supplies its own MSAL token (used for Graph API writes)
+ * and the SAM config (NAICS codes, window settings) read from SAMConfig tables.
+ * No app-only credentials needed — workbook access uses the user's delegated token.
  *
- * Flow per run:
- *   1. Read SAMNAICSTable + SAMSettingsTable from workbook via Graph API
- *   2. For each NAICS code: paginate SAM.gov API (ptype=r, Sources Sought only)
- *   3. Deduplicate by noticeId across all NAICS calls
- *   4. Map fields, append new rows to NewOpportunitiesTable (skip existing noticeIds)
- *   5. Delete rows where Response Date < today (all statuses)
- *   6. On 401 from SAM API: set sam_key_expired=true in KV
+ * POST /sam/trigger body:
+ *   {
+ *     token:  string,           // MSAL access token from frontend
+ *     config: {
+ *       naicsCodes:  string[],  // from SAMNAICSTable
+ *       skipDays:    number,    // from SAMSettingsTable
+ *       windowDays:  number,    // from SAMSettingsTable
+ *     },
+ *     force:  boolean,          // if true, skip 12h throttle check (Settings page force pull)
+ *   }
  *
- * HTTP handler (GET /sam/key-status):
- *   Returns { expired: bool } — frontend polls this to show rotation reminder.
+ * GET  /sam/key-status   — { expired: bool }
+ * GET  /sam/run-status   — last run log from KV
+ * GET  /sam/debug        — step-by-step diagnostic (requires X-Trigger-Secret)
  *
  * Secrets required:
- *   SAM_API_KEY         — SAM.gov public API key (rotate every 90 days)
- *   MS_TENANT_ID        — Azure AD tenant
- *   MS_CLIENT_ID        — App registration client ID
- *   MS_CLIENT_SECRET    — App registration secret
+ *   SAM_API_KEY         — SAM.gov public API key (expires every 90 days)
+ *                         Rotate: wrangler secret put SAM_API_KEY
+ *   SAM_TRIGGER_SECRET  — Any string; sent as X-Trigger-Secret header
+ *                         Set: wrangler secret put SAM_TRIGGER_SECRET
  *   WORKBOOK_ID         — SharePoint workbook item ID (same as VITE_ONEDRIVE_FILE_ID)
  */
 
-const SAM_BASE   = 'https://api.sam.gov/opportunities/v2/search'
-const PAGE_SIZE  = 500
-const REQ_DELAY  = 500   // ms between paginated calls per NAICS
+const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
+const PAGE_SIZE = 500
+const REQ_DELAY = 500   // ms between paginated calls per NAICS
 
-// Hardcoded — matches the frontend graphService.js constant exactly.
-// This is a fixed value tied to the workbook's SharePoint location, not per-user.
+// Hardcoded — matches frontend graphService.js constant exactly
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -48,24 +54,19 @@ function todayISO() {
 }
 
 function formatDateParam(d) {
-  // MM/DD/YYYY as required by SAM API
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const dd = String(d.getUTCDate()).padStart(2, '0')
+  const mm   = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const dd   = String(d.getUTCDate()).padStart(2, '0')
   const yyyy = d.getUTCFullYear()
   return `${mm}/${dd}/${yyyy}`
 }
 
 function parseResponseDate(val) {
-  // SAM returns various formats — normalise to YYYY-MM-DD
   if (!val) return ''
   const s = String(val).trim()
-  // Try ISO-like
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
-  // Try with time component
   const dt = s.match(/^(\d{4}-\d{2}-\d{2})T/)
   if (dt) return dt[1]
-  // Try MM/DD/YYYY
   const us = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
   if (us) return `${us[3]}-${us[1]}-${us[2]}`
   return s.slice(0, 10)
@@ -78,8 +79,7 @@ function parsePOC(pocList) {
   const name  = String(primary.fullName || primary.fullname || '').trim()
   const email = String(primary.email  || '').trim()
   const phone = String(primary.phone  || '').trim()
-  const parts = [name, email, phone].filter(Boolean)
-  return parts.join(' | ')
+  return [name, email, phone].filter(Boolean).join(' | ')
 }
 
 function parseOrg(fullParentPathName) {
@@ -91,26 +91,7 @@ function parseOrg(fullParentPathName) {
   }
 }
 
-// ── Graph API helpers ─────────────────────────────────────────────────────
-
-async function getGraphToken(env) {
-  const res = await fetch(
-    `https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type:    'client_credentials',
-        client_id:     env.MS_CLIENT_ID,
-        client_secret: env.MS_CLIENT_SECRET,
-        scope:         'https://graph.microsoft.com/.default',
-      }),
-    }
-  )
-  if (!res.ok) throw new Error(`Graph token error: ${res.status}`)
-  const { access_token } = await res.json()
-  return access_token
-}
+// ── Graph API helpers (using frontend-supplied delegated token) ────────────
 
 function workbookBase(env) {
   return `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${env.WORKBOOK_ID}/workbook`
@@ -131,8 +112,6 @@ async function graphFetch(env, token, path, options = {}) {
   return data
 }
 
-// ── Read workbook tables ──────────────────────────────────────────────────
-
 async function getTableRows(env, token, tableName) {
   const [rowsData, colsData] = await Promise.all([
     graphFetch(env, token, `/tables/${tableName}/rows`),
@@ -147,39 +126,6 @@ async function getTableRows(env, token, tableName) {
   })
 }
 
-async function readConfig(env, token) {
-  // Test each table separately so we can identify exactly which one fails
-  let naicsRows, settingsRows
-
-  try {
-    naicsRows = await getTableRows(env, token, 'SAMNAICSTable')
-  } catch (err) {
-    throw new Error(`SAMNAICSTable: ${err.message}`)
-  }
-
-  try {
-    settingsRows = await getTableRows(env, token, 'SAMSettingsTable')
-  } catch (err) {
-    throw new Error(`SAMSettingsTable: ${err.message}`)
-  }
-
-  const naicsCodes = naicsRows
-    .map((r) => String(r['NAICS Code'] || '').trim())
-    .filter(Boolean)
-
-  const settingsMap = {}
-  settingsRows.forEach((r) => {
-    const k = String(r['Setting'] || '').trim()
-    if (k) settingsMap[k] = r['Value']
-  })
-
-  return {
-    naicsCodes,
-    skipDays:   Number(settingsMap['Skip Days']   ?? 3),
-    windowDays: Number(settingsMap['Window Days'] ?? 90),
-  }
-}
-
 // ── Read existing noticeIds to avoid duplicates ───────────────────────────
 
 async function getExistingNoticeIds(env, token) {
@@ -192,13 +138,12 @@ async function getExistingNoticeIds(env, token) {
 async function deleteExpiredRows(env, token) {
   const rows = await getTableRows(env, token, 'NewOpportunitiesTable')
   const today = todayISO()
-  // Collect in descending order so indices stay valid as we delete
   const toDelete = rows
     .filter((r) => {
       const rd = String(r['Response Date'] || '').trim().slice(0, 10)
       return rd && rd < today
     })
-    .sort((a, b) => b._rowIndex - a._rowIndex)
+    .sort((a, b) => b._rowIndex - a._rowIndex)   // descending so indices stay valid
 
   for (const row of toDelete) {
     await graphFetch(env, token,
@@ -206,7 +151,6 @@ async function deleteExpiredRows(env, token) {
       { method: 'DELETE' }
     )
   }
-  console.log(`[SAM] Deleted ${toDelete.length} expired row(s)`)
   return toDelete.length
 }
 
@@ -236,7 +180,7 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
   while (true) {
     const params = new URLSearchParams({
       api_key:    env.SAM_API_KEY,
-      ptype:      'r',              // Sources Sought only
+      ptype:      'r',
       ncode:      naicsCode,
       postedFrom,
       postedTo,
@@ -248,8 +192,10 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
 
     const res = await fetch(`${SAM_BASE}?${params}`)
 
-    // 401 = key expired or invalid
-    if (res.status === 401) throw Object.assign(new Error('SAM API key expired or invalid'), { code: 'KEY_EXPIRED' })
+    if (res.status === 401) {
+      await setKeyExpired(env, true)
+      throw Object.assign(new Error('SAM API key expired or invalid'), { code: 'KEY_EXPIRED' })
+    }
     if (!res.ok) {
       const body = await res.text()
       throw new Error(`SAM API error ${res.status}: ${body.slice(0, 200)}`)
@@ -257,10 +203,8 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
 
     const data = await res.json()
     const page = data.opportunitiesData || []
-
     if (total === null) total = data.totalRecords || 0
     records.push(...page)
-
     if (page.length === 0 || records.length >= total) break
     offset += PAGE_SIZE
     await sleep(REQ_DELAY)
@@ -296,7 +240,7 @@ function mapRecord(raw, naicsCode) {
 async function setKeyExpired(env, expired) {
   if (!env.CACHE) return
   await env.CACHE.put('sam_key_expired', JSON.stringify({ expired }), {
-    expirationTtl: 60 * 60 * 24 * 100,  // 100 days — longer than key lifetime
+    expirationTtl: 60 * 60 * 24 * 100,
   })
 }
 
@@ -309,7 +253,7 @@ async function getKeyExpired(env) {
 async function setRunLog(env, log) {
   if (!env.CACHE) return
   await env.CACHE.put('sam_run_log', JSON.stringify(log), {
-    expirationTtl: 60 * 60 * 24 * 180,  // 180 days
+    expirationTtl: 60 * 60 * 24 * 180,
   })
 }
 
@@ -318,36 +262,18 @@ async function getRunLog(env) {
   return env.CACHE.get('sam_run_log', 'json')
 }
 
-// ── Cron handler ──────────────────────────────────────────────────────────
+// ── Core pull logic (shared by trigger) ──────────────────────────────────
 
-export async function handleSAMCron(env) {
+async function runSAMPull(env, token, config) {
   const runStart = new Date().toISOString()
-  console.log('[SAM] Cron started:', runStart)
+  console.log('[SAM] Pull started:', runStart)
 
-  const failLog = async (error) => {
-    await setRunLog(env, { success: false, timestamp: runStart, error }).catch(() => {})
-  }
+  const { naicsCodes = [], skipDays = 3, windowDays = 90 } = config
 
-  if (!env.SAM_API_KEY)  { await failLog('SAM_API_KEY secret not set');  return console.error('[SAM] SAM_API_KEY secret not set') }
-  if (!env.MS_TENANT_ID) { await failLog('MS_TENANT_ID not set');         return console.error('[SAM] MS_TENANT_ID not set') }
-  if (!env.WORKBOOK_ID)  { await failLog('WORKBOOK_ID not set');          return console.error('[SAM] WORKBOOK_ID not set') }
-
-  let token
-  try {
-    token = await getGraphToken(env)
-  } catch (err) {
-    await failLog(`Failed to get Graph token: ${err.message}`)
-    return console.error('[SAM] Failed to get Graph token:', err.message)
-  }
-
-  // Read config
-  let config
-  try {
-    config = await readConfig(env, token)
-    console.log(`[SAM] ${config.naicsCodes.length} NAICS codes | Skip ${config.skipDays}d | Window ${config.windowDays}d`)
-  } catch (err) {
-    await failLog(`Failed to read SAMConfig: ${err.message}`)
-    return console.error('[SAM] Failed to read SAMConfig:', err.message)
+  if (!naicsCodes.length) {
+    const err = 'No NAICS codes provided'
+    await setRunLog(env, { success: false, timestamp: runStart, error: err })
+    throw new Error(err)
   }
 
   // Build date ranges
@@ -355,31 +281,31 @@ export async function handleSAMCron(env) {
   const postedFrom = formatDateParam(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, now.getUTCDate())))
   const postedTo   = formatDateParam(now)
   const rdlStart   = new Date(now)
-  rdlStart.setUTCDate(rdlStart.getUTCDate() + config.skipDays)
+  rdlStart.setUTCDate(rdlStart.getUTCDate() + skipDays)
   const rdlEnd     = new Date(rdlStart)
-  rdlEnd.setUTCDate(rdlEnd.getUTCDate() + config.windowDays)
+  rdlEnd.setUTCDate(rdlEnd.getUTCDate() + windowDays)
   const rdlFrom    = formatDateParam(rdlStart)
   const rdlTo      = formatDateParam(rdlEnd)
 
-  console.log(`[SAM] Posted: ${postedFrom}→${postedTo} | Deadline: ${rdlFrom}→${rdlTo}`)
+  console.log(`[SAM] ${naicsCodes.length} NAICS | Posted: ${postedFrom}→${postedTo} | Deadline: ${rdlFrom}→${rdlTo}`)
 
-  // Get existing notice IDs to skip duplicates
+  // Get existing notice IDs
   let existingIds
   try {
     existingIds = await getExistingNoticeIds(env, token)
-    console.log(`[SAM] ${existingIds.size} existing notice(s) in sheet`)
   } catch (err) {
-    await failLog(`Failed to read existing rows: ${err.message}`)
-    return console.error('[SAM] Failed to read existing rows:', err.message)
+    const msg = `Failed to read NewOpportunitiesTable: ${err.message}`
+    await setRunLog(env, { success: false, timestamp: runStart, error: msg })
+    throw new Error(msg)
   }
 
   // Fetch and write
-  let totalFetched = 0
-  let totalWritten = 0
-  const seen       = new Set(existingIds)
+  let totalFetched  = 0
+  let totalWritten  = 0
+  const seen        = new Set(existingIds)
   const naicsErrors = []
 
-  for (const naics of config.naicsCodes) {
+  for (const naics of naicsCodes) {
     let records
     try {
       records = await fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo)
@@ -387,10 +313,9 @@ export async function handleSAMCron(env) {
       totalFetched += records.length
     } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
-        await setKeyExpired(env, true)
-        await failLog('SAM API key expired or invalid')
-        console.error('[SAM] API key expired — stopping run, frontend notified')
-        return
+        const msg = 'SAM API key expired or invalid'
+        await setRunLog(env, { success: false, timestamp: runStart, error: msg })
+        throw new Error(msg)
       }
       const msg = `NAICS ${naics}: ${err.message}`
       naicsErrors.push(msg)
@@ -402,12 +327,9 @@ export async function handleSAMCron(env) {
       const noticeId = String(raw.noticeId || '').trim()
       if (!noticeId || seen.has(noticeId)) continue
       if (String(raw.active || '').toLowerCase() !== 'yes') continue
-
       seen.add(noticeId)
-      const mapped = mapRecord(raw, naics)
-
       try {
-        await appendOpportunity(env, token, mapped)
+        await appendOpportunity(env, token, mapRecord(raw, naics))
         totalWritten++
       } catch (err) {
         console.error(`[SAM] Failed to write ${noticeId}:`, err.message)
@@ -417,7 +339,7 @@ export async function handleSAMCron(env) {
     await sleep(REQ_DELAY)
   }
 
-  // Clear key-expired flag — run got this far without a 401
+  // Clear key-expired flag
   await setKeyExpired(env, false)
 
   // Delete expired rows
@@ -428,24 +350,35 @@ export async function handleSAMCron(env) {
     console.error('[SAM] Cleanup error:', err.message)
   }
 
-  const summary = `Fetched: ${totalFetched} | Written: ${totalWritten} | Deleted: ${deleted}`
-  console.log(`[SAM] Done. ${summary}`)
-
-  // Write success run log (include any per-NAICS errors as warnings)
-  await setRunLog(env, {
-    success:      true,
-    timestamp:    runStart,
-    fetched:      totalFetched,
-    written:      totalWritten,
+  const log = {
+    success:   true,
+    timestamp: runStart,
+    fetched:   totalFetched,
+    written:   totalWritten,
     deleted,
-    warnings:     naicsErrors.length > 0 ? naicsErrors : undefined,
-  }).catch(() => {})
+    warnings:  naicsErrors.length > 0 ? naicsErrors : undefined,
+  }
+  await setRunLog(env, log)
+  console.log(`[SAM] Done. Fetched: ${totalFetched} | Written: ${totalWritten} | Deleted: ${deleted}`)
+  return log
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────────
 
 export async function handleSAM(req, env, ctx) {
   const url = new URL(req.url)
+
+  // GET /sam/key-status
+  if (url.pathname === '/sam/key-status' && req.method === 'GET') {
+    const expired = await getKeyExpired(env)
+    return json({ expired })
+  }
+
+  // GET /sam/run-status
+  if (url.pathname === '/sam/run-status' && req.method === 'GET') {
+    const log = await getRunLog(env)
+    return json(log || { success: null, timestamp: null })
+  }
 
   // GET /sam/debug — step-by-step diagnostic (requires X-Trigger-Secret)
   if (url.pathname === '/sam/debug' && req.method === 'GET') {
@@ -455,96 +388,92 @@ export async function handleSAM(req, env, ctx) {
 
     const result = { steps: {} }
 
-    // Step 1: token
-    let token
-    try {
-      token = await getGraphToken(env)
-      result.steps.token = { ok: true }
-    } catch (err) {
-      result.steps.token = { ok: false, error: err.message }
+    // Test token + workbook using a token from the request if provided
+    const authHeader = req.headers.get('Authorization') || ''
+    const testToken  = authHeader.replace('Bearer ', '').trim()
+
+    if (!testToken) {
+      result.steps.token = { ok: false, error: 'No Authorization header provided for debug' }
       return json(result)
     }
 
-    // Step 2: workbook reachable
+    result.steps.token = { ok: true, note: 'Using provided delegated token' }
+
     try {
-      const wb = await graphFetch(env, token, '')
+      const wb = await graphFetch(env, testToken, '')
       result.steps.workbook = { ok: true, name: wb?.name || '(no name)' }
     } catch (err) {
       result.steps.workbook = { ok: false, error: err.message }
       return json(result)
     }
 
-    // Step 3: list all tables in workbook
     try {
-      const tables = await graphFetch(env, token, '/tables')
-      result.steps.tables = {
-        ok: true,
-        names: (tables?.value || []).map((t) => t.name),
-      }
+      const tables = await graphFetch(env, testToken, '/tables')
+      result.steps.tables = { ok: true, names: (tables?.value || []).map((t) => t.name) }
     } catch (err) {
       result.steps.tables = { ok: false, error: err.message }
       return json(result)
     }
 
-    // Step 4: read SAMNAICSTable
-    try {
-      const rows = await getTableRows(env, token, 'SAMNAICSTable')
-      result.steps.SAMNAICSTable = { ok: true, rowCount: rows.length, sample: rows[0] || null }
-    } catch (err) {
-      result.steps.SAMNAICSTable = { ok: false, error: err.message }
-    }
-
-    // Step 5: read SAMSettingsTable
-    try {
-      const rows = await getTableRows(env, token, 'SAMSettingsTable')
-      result.steps.SAMSettingsTable = { ok: true, rowCount: rows.length, rows }
-    } catch (err) {
-      result.steps.SAMSettingsTable = { ok: false, error: err.message }
-    }
-
-    // Step 6: read NewOpportunitiesTable
-    try {
-      const rows = await getTableRows(env, token, 'NewOpportunitiesTable')
-      result.steps.NewOpportunitiesTable = { ok: true, rowCount: rows.length }
-    } catch (err) {
-      result.steps.NewOpportunitiesTable = { ok: false, error: err.message }
+    for (const tbl of ['SAMNAICSTable', 'SAMSettingsTable', 'NewOpportunitiesTable']) {
+      try {
+        const rows = await getTableRows(env, testToken, tbl)
+        result.steps[tbl] = { ok: true, rowCount: rows.length, sample: rows[0] || null }
+      } catch (err) {
+        result.steps[tbl] = { ok: false, error: err.message }
+      }
     }
 
     return json(result)
   }
 
-  // GET /sam/key-status — frontend polls for rotation reminder
-  if (url.pathname === '/sam/key-status' && req.method === 'GET') {
-    const expired = await getKeyExpired(env)
-    return json({ expired })
-  }
-
-  // GET /sam/run-status — last cron run result (timestamp, counts, error)
-  if (url.pathname === '/sam/run-status' && req.method === 'GET') {
-    const log = await getRunLog(env)
-    return json(log || { success: null, timestamp: null })
-  }
-
-  // POST /sam/trigger — manual cron trigger (requires X-Trigger-Secret header)
-  // Runs handleSAMCron in the background so response returns immediately.
-  // Set SAM_TRIGGER_SECRET via: wrangler secret put SAM_TRIGGER_SECRET
+  // POST /sam/trigger — on-demand pull using frontend-supplied token
   if (url.pathname === '/sam/trigger' && req.method === 'POST') {
-    if (!env.SAM_TRIGGER_SECRET) {
-      return json({ error: 'SAM_TRIGGER_SECRET not configured' }, 503)
-    }
+    if (!env.SAM_TRIGGER_SECRET) return json({ error: 'SAM_TRIGGER_SECRET not configured' }, 503)
     const provided = req.headers.get('X-Trigger-Secret') || ''
-    if (provided !== env.SAM_TRIGGER_SECRET) {
-      return json({ error: 'Unauthorized' }, 401)
+    if (provided !== env.SAM_TRIGGER_SECRET) return json({ error: 'Unauthorized' }, 401)
+
+    if (!env.SAM_API_KEY)  return json({ error: 'SAM_API_KEY not configured' }, 503)
+    if (!env.WORKBOOK_ID)  return json({ error: 'WORKBOOK_ID not configured' }, 503)
+
+    let body
+    try {
+      body = await req.json()
+    } catch {
+      return json({ error: 'Invalid JSON body' }, 400)
     }
-    if (ctx?.waitUntil) {
-      ctx.waitUntil(handleSAMCron(env))
-    } else {
-      // Fallback: fire without waitUntil (wrangler dev without ctx)
-      handleSAMCron(env).catch((err) => console.error('[SAM] Manual trigger error:', err))
+
+    const { token, config, force = false } = body
+
+    if (!token) return json({ error: 'Missing token in request body' }, 400)
+    if (!config?.naicsCodes?.length) return json({ error: 'Missing or empty config.naicsCodes' }, 400)
+
+    // 12h throttle check (skipped when force=true, e.g. Settings page force pull)
+    if (!force) {
+      const lastLog = await getRunLog(env)
+      if (lastLog?.success && lastLog?.timestamp) {
+        const lastRun  = new Date(lastLog.timestamp)
+        const hoursSince = (Date.now() - lastRun.getTime()) / (1000 * 60 * 60)
+        if (hoursSince < 12) {
+          return json({
+            throttled: true,
+            message:   `Opportunities were last pulled ${Math.floor(hoursSince)}h ${Math.floor((hoursSince % 1) * 60)}m ago. No pull needed — data is fresh.`,
+            lastRun:   lastLog.timestamp,
+            written:   lastLog.written,
+          })
+        }
+      }
     }
+
+    // Run in background so response returns immediately
+    const pullPromise = runSAMPull(env, token, config)
+    if (ctx?.waitUntil) ctx.waitUntil(pullPromise)
+    else pullPromise.catch((err) => console.error('[SAM] Pull error:', err))
+
     return json({
-      ok: true,
-      message: 'SAM pull triggered — check /sam/run-status in a few minutes for results',
+      ok:      true,
+      message: 'SAM pull started — check /sam/run-status in a few minutes for results',
+      force,
     })
   }
 
