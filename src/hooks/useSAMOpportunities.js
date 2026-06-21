@@ -9,6 +9,14 @@ import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
+async function retryThrice(fn) {
+  let lastErr
+  for (let i = 0; i < 3; i++) {
+    try { return await fn() } catch (err) { lastErr = err }
+  }
+  throw lastErr
+}
+
 // ── POC parser ────────────────────────────────────────────────────────────
 function parsePOC(pocStr) {
   if (!pocStr) return { name: '', email: '', phone: '' }
@@ -106,19 +114,17 @@ export function useSAMOpportunities() {
   }, [])
 
   // ── Optimistic status update ─────────────────────────────────────────
+  // No rollback on failure — visual state stays changed for smooth UX.
+  // Retries 3 times silently; throws after that so caller can toast.
   const updateStatus = useCallback(async (rowIndex, status) => {
-    // Update local state immediately — no wait, no flicker
     setOpportunities((prev) =>
       prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
     )
     try {
-      await updateSAMOpportunity(rowIndex, { Status: status })
-      debouncedInvalidate()   // refresh cache once, after burst settles
+      await retryThrice(() => updateSAMOpportunity(rowIndex, { Status: status }))
+      debouncedInvalidate()
     } catch (err) {
-      // Roll back this row only
-      setOpportunities((prev) =>
-        prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: o.Status } : o)
-      )
+      // No visual rollback — stale state resolves on next cache refresh
       throw err
     }
   }, [debouncedInvalidate])
