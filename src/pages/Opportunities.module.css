@@ -174,3 +174,35 @@
 .deptOption:last-child { border-bottom: none; }
 .deptOption:hover { background: var(--blue-50); }
 .deptOption input[type="checkbox"] { flex-shrink: 0; cursor: pointer; }
+
+/* ── Dismiss animation ── */
+@keyframes dismissFade {
+  from { opacity: 1; max-height: 60px; transform: translateX(0); }
+  to   { opacity: 0; max-height: 0;    transform: translateX(8px); overflow: hidden; }
+}
+
+.rowDismissing {
+  animation: dismissFade 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
+/* ── Hover-revealed checkbox ── */
+.checkCell {
+  width: 28px;
+  padding: 0 4px !important;
+}
+
+.rowCheckbox {
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.rowCheckboxVisible {
+  opacity: 1 !important;
+}
+
+/* Show checkbox on row hover */
+tr:hover .rowCheckbox {
+  opacity: 1;
+}
