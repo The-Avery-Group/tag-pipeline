@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useBlocker } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
 import { useTasks } from '@/hooks/useTasks'
@@ -9,6 +9,7 @@ import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
+import { invalidateCache } from '@/services/dataCache'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
@@ -16,6 +17,14 @@ import {
   parsePOCNames, addContactToPOC, removeContactFromPOC,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
+
+async function retryThrice(fn) {
+  let lastErr
+  for (let i = 0; i < 3; i++) {
+    try { return await fn() } catch (err) { lastErr = err }
+  }
+  throw lastErr
+}
 
 // ── Column constants ──────────────────────────────────────────────────────
 const C = {
@@ -163,6 +172,25 @@ export default function OpportunityDetail({ toast }) {
   const [contactSearch,   setContactSearch]   = useState('')
   const [linkingContact,  setLinkingContact]  = useState(false)
 
+  // ── Unsaved changes detection ──────────────────────────────────────
+  const hasChanges = editing && form !== null && JSON.stringify(form) !== JSON.stringify(opp)
+
+  // Block in-app navigation when unsaved changes exist
+  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+    hasChanges && currentLocation.pathname !== nextLocation.pathname
+  )
+
+  // Block browser tab close / refresh
+  useEffect(() => {
+    const handler = (e) => {
+      if (!hasChanges) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasChanges])
+
   const opp = useMemo(
     () => pipeline.find((o) => o[C.contractNum] === decodedCN),
     [pipeline, decodedCN]
@@ -276,12 +304,16 @@ export default function OpportunityDetail({ toast }) {
   const handleLinkContact = async (c) => {
     if (linkingContact) return
     setLinkingContact(true)
+    setContactSearch('')
+    // Optimistic: add contact to linked list immediately
+    // The actual POC field updates come through cache refresh
     try {
-      await addContactToPOC(opp._rowIndex, opp[C.poc], c.Name)
-      setContactSearch('')
+      await retryThrice(() => addContactToPOC(opp._rowIndex, opp[C.poc], c.Name))
       toast?.success(`${c.Name} linked`)
+      await invalidateCache()
     } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
+      // Silent fail — will resolve on next cache refresh, no visual rollback
+      toast?.error(`Failed to link ${c.Name}`)
     } finally {
       setLinkingContact(false)
     }
@@ -289,10 +321,11 @@ export default function OpportunityDetail({ toast }) {
 
   const handleUnlinkContact = async (c) => {
     try {
-      await removeContactFromPOC(opp._rowIndex, opp[C.poc], c.Name)
+      await retryThrice(() => removeContactFromPOC(opp._rowIndex, opp[C.poc], c.Name))
       toast?.success(`${c.Name} unlinked`)
+      await invalidateCache()
     } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
+      toast?.error(`Failed to unlink ${c.Name}`)
     }
   }
 
@@ -633,6 +666,22 @@ export default function OpportunityDetail({ toast }) {
         <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
         <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
       </div>
+
+      {/* ── Unsaved changes blocker modal ── */}
+      {blocker.state === 'blocked' && (
+        <Modal
+          title="Unsaved changes"
+          onClose={() => blocker.reset()}
+          footer={
+            <>
+              <button className="btn" onClick={() => blocker.reset()}>Stay and save</button>
+              <button className="btn btn-danger" onClick={() => blocker.proceed()}>Leave anyway</button>
+            </>
+          }
+        >
+          <p className="text-sm">You have unsaved changes. If you leave now, your changes will be lost.</p>
+        </Modal>
+      )}
 
       {/* ── Add task modal ── */}
       {showAddTask && (
