@@ -9,6 +9,7 @@ import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
 import { warmCache, startPolling, isCacheWarmed } from '@/services/dataCache'
 import '@/styles/global.css'
+const SearchModal = lazy(() => import('@/pages/SearchModal'))
 
 const Dashboard         = lazy(() => import('@/pages/Dashboard'))
 const Opportunities     = lazy(() => import('@/pages/Opportunities'))
@@ -63,8 +64,21 @@ function AuthInitScreen() {
 function AppShell() {
   const { isAuthenticated, loading } = useAuth()
   const { toasts, toast } = useToast()
-  const [cacheReady, setCacheReady] = useState(isCacheWarmed)
+  const [cacheReady,    setCacheReady]    = useState(isCacheWarmed)
+  const [searchOpen,    setSearchOpen]    = useState(false)
   useAgingNotifications()
+
+  // Global Cmd/Ctrl+K to open search
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
 
   // After authentication, warm the cache before showing the app shell.
   // This fills the gap between "user picked account" and "data is ready"
@@ -89,7 +103,7 @@ function AppShell() {
 
   return (
     <div className="app-layout">
-      <Sidebar />
+      <Sidebar onSearchOpen={() => setSearchOpen(true)} />
       <div className="main-content">
         <Suspense fallback={<PageFallback />}>
           <Routes>
@@ -105,6 +119,11 @@ function AppShell() {
           </Routes>
         </Suspense>
       </div>
+      {searchOpen && (
+          <Suspense fallback={null}>
+            <SearchModal onClose={() => setSearchOpen(false)} />
+          </Suspense>
+        )}
       <ToastContainer toasts={toasts} />
     </div>
   )
