@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
@@ -72,7 +72,7 @@ const TAB_DEFAULT_SORT = {
   RFIs:     { key: C.lastMod,  dir: 'desc' },
   Expiring: { key: C.endDate,  dir: 'asc'  },
   Tracked:  { key: C.lastMod,  dir: 'desc' },
-  New:      { key: C.lastMod,  dir: 'desc' },
+  New:      { key: 'Response Date', dir: 'asc'  },
 }
 
 // ── Value formatter ───────────────────────────────────────────────────────
@@ -239,6 +239,10 @@ export default function Opportunities({ toast }) {
   const [showDismissed, setShowDismissed] = useState(false)
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
+  const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
+  const [deptFilter,    setDeptFilter]    = useState(new Set())   // multi-select department filter
+  const showDeptFilter = localStorage.getItem('sam_dept_filter') === 'true'
+  const tableScrollRef  = useRef(null)                            // scroll position retention
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
   const [pullMessage,   setPullMessage]   = useState(null)
@@ -251,11 +255,27 @@ export default function Opportunities({ toast }) {
       })
   }, [])
 
+  // Distinct departments from all SAM opportunities (for department filter)
+  const samDepartments = useMemo(() => {
+    const depts = new Set()
+    samOpps.forEach((o) => { const d = (o['Department'] || '').trim(); if (d) depts.add(d) })
+    return [...depts].sort()
+  }, [samOpps])
+
   const visibleSAMOpps = useMemo(() => samOpps.filter((o) => {
     const s = o.Status || 'new'
     if (s === 'dismissed') return showDismissed
+    if (deptFilter.size > 0 && !deptFilter.has((o['Department'] || '').trim())) return false
     return true
-  }), [samOpps, showDismissed])
+  }).sort((a, b) => {
+    // Default: earliest response date first
+    const da = (a['Response Date'] || '').slice(0, 10)
+    const db = (b['Response Date'] || '').slice(0, 10)
+    if (!da && !db) return 0
+    if (!da) return 1
+    if (!db) return -1
+    return da < db ? -1 : da > db ? 1 : 0
+  }), [samOpps, showDismissed, deptFilter])
 
   const handleAddToPipeline = async (row, outlook) => {
     if (actioningRow === row._rowIndex) return
@@ -272,15 +292,42 @@ export default function Opportunities({ toast }) {
 
   const handleDismiss = async (row) => {
     if (actioningRow === row._rowIndex) return
+    // Save scroll position before state update
+    const scrollTop = tableScrollRef.current?.scrollTop ?? 0
     setActioningRow(row._rowIndex)
     try {
       await dismiss(row._rowIndex)
       toast?.success('Dismissed')
+      // Restore scroll position after React re-render
+      requestAnimationFrame(() => {
+        if (tableScrollRef.current) tableScrollRef.current.scrollTop = scrollTop
+      })
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
       setActioningRow(null)
     }
+  }
+
+  const handleBulkDismiss = async () => {
+    if (selectedRows.size === 0) return
+    const scrollTop = tableScrollRef.current?.scrollTop ?? 0
+    const rowIndices = [...selectedRows]
+    setSelectedRows(new Set())
+    let failed = 0
+    for (const rowIndex of rowIndices) {
+      try {
+        await dismiss(rowIndex)
+      } catch {
+        failed++
+      }
+    }
+    const dismissed = rowIndices.length - failed
+    if (dismissed > 0) toast?.success(`${dismissed} opportunit${dismissed === 1 ? 'y' : 'ies'} dismissed`)
+    if (failed > 0) toast?.error(`${failed} failed to dismiss`)
+    requestAnimationFrame(() => {
+      if (tableScrollRef.current) tableScrollRef.current.scrollTop = scrollTop
+    })
   }
 
   const handleUndismiss = async (row) => {
@@ -338,7 +385,7 @@ export default function Opportunities({ toast }) {
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span className="text-sm text-muted">
             {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
             {!showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
@@ -354,6 +401,40 @@ export default function Opportunities({ toast }) {
             onClick={() => handlePull()} disabled={pulling}>
             {pulling ? '⏳ Pulling…' : '↻ Refresh'}
           </button>
+          {/* Department filter — shown only when enabled in Settings */}
+          {showDeptFilter && samDepartments.length > 0 && (
+            <div style={{ position: 'relative' }}>
+              <details className={styles.deptFilter}>
+                <summary className="btn text-xs" style={{ padding: '3px 10px', listStyle: 'none', cursor: 'pointer' }}>
+                  🏛 Dept {deptFilter.size > 0 ? `(${deptFilter.size})` : ''}
+                </summary>
+                <div className={styles.deptDropdown}>
+                  <div style={{ padding: '4px 8px', borderBottom: '0.5px solid var(--gray-100)', display: 'flex', justifyContent: 'space-between' }}>
+                    <span className="text-xs text-muted">Filter by department</span>
+                    {deptFilter.size > 0 && (
+                      <button className="text-xs" style={{ background: 'none', border: 'none', color: 'var(--blue-600)', cursor: 'pointer', padding: 0 }}
+                        onClick={() => setDeptFilter(new Set())}>Clear</button>
+                    )}
+                  </div>
+                  {samDepartments.map((dept) => (
+                    <label key={dept} className={styles.deptOption}>
+                      <input type="checkbox"
+                        checked={deptFilter.has(dept)}
+                        onChange={() => {
+                          setDeptFilter((prev) => {
+                            const next = new Set(prev)
+                            next.has(dept) ? next.delete(dept) : next.add(dept)
+                            return next
+                          })
+                        }}
+                      />
+                      <span className="text-xs">{dept}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
           <span className="text-xs text-muted">
@@ -390,16 +471,35 @@ export default function Opportunities({ toast }) {
               </div>
             )
             : (
-              <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - var(--topbar-height) - 100px)' }}>
+              <div ref={tableScrollRef} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - var(--topbar-height) - 100px)' }}>
                 <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                     <tr>
+                      <th style={{ width: 28, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)', padding: '8px 4px' }}>
+                        <input type="checkbox"
+                          style={{ cursor: 'pointer' }}
+                          checked={selectedRows.size > 0 && visibleSAMOpps.filter(o => o.Status !== 'dismissed').every(o => selectedRows.has(o._rowIndex))}
+                          onChange={(e) => {
+                            const actionable = visibleSAMOpps.filter(o => o.Status !== 'dismissed').map(o => o._rowIndex)
+                            setSelectedRows(e.target.checked ? new Set(actionable) : new Set())
+                          }}
+                          title="Select all"
+                        />
+                      </th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Title</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Agency</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>NAICS</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Response Date</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
-                      <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Actions</th>
+                      <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
+                        {selectedRows.size > 0
+                          ? <button style={{ fontSize: '10.5px', padding: '2px 8px', background: 'var(--red-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500 }}
+                              onClick={handleBulkDismiss}>
+                              Dismiss {selectedRows.size} selected
+                            </button>
+                          : 'Actions'
+                        }
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -413,6 +513,21 @@ export default function Opportunities({ toast }) {
                       return (
                         <tr key={opp['Notice ID'] || opp._rowIndex}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
+                          <td style={{ padding: '8px 4px', width: 28 }} onClick={(e) => e.stopPropagation()}>
+                            {!isDismissed && (
+                              <input type="checkbox"
+                                style={{ cursor: 'pointer' }}
+                                checked={selectedRows.has(opp._rowIndex)}
+                                onChange={() => {
+                                  setSelectedRows((prev) => {
+                                    const next = new Set(prev)
+                                    next.has(opp._rowIndex) ? next.delete(opp._rowIndex) : next.add(opp._rowIndex)
+                                    return next
+                                  })
+                                }}
+                              />
+                            )}
+                          </td>
                           <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
@@ -503,7 +618,7 @@ export default function Opportunities({ toast }) {
           <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Title <SortIcon col={C.title} /></th>
           <th>Contract #</th>
           <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
-          <th onClick={() => handleSort(C.lastMod)} style={{ cursor: 'pointer' }}>Last modified <SortIcon col={C.lastMod} /></th>
+          <th onClick={() => handleSort(C.submDate)} style={{ cursor: 'pointer' }}>Submission date <SortIcon col={C.submDate} /></th>
         </tr>
       </thead>
       <tbody>
@@ -515,7 +630,9 @@ export default function Opportunities({ toast }) {
               <td style={{ fontWeight: 500, maxWidth: 300 }}>{opp[C.title]}</td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
-              <td className="text-sm text-muted">{formatDate(opp[C.lastMod])}</td>
+              <td className={`text-sm ${opp[C.submDate] ? '' : 'text-muted'}`}>
+                {opp[C.submDate] ? formatDate(opp[C.submDate]) : '—'}
+              </td>
             </tr>
           )
         })}
