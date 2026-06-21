@@ -49,6 +49,13 @@ export default function Settings({ toast }) {
   const [savedSAM,      setSavedSAM]      = useState(false)
   const [triggering,    setTriggering]    = useState(false)
   const [triggerResult, setTriggerResult] = useState(null)
+  const [showDeptFilter, setShowDeptFilter] = useState(() => localStorage.getItem('sam_dept_filter') === 'true')
+  // Collapsible sections — all collapsed on first load
+  const [openSections,  setOpenSections]  = useState({
+    dropdowns: false,
+    sam:       false,
+  })
+  const toggleSection = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }))
 
   useEffect(() => {
     Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
@@ -159,62 +166,76 @@ export default function Settings({ toast }) {
         showNew={false}
       />
       <div className="page-body">
-        {loading
-          ? <div className="skeleton" style={{ height: 200 }} />
-          : (
-            <div className={styles.grid}>
-              {SECTIONS.map(({ key, label }) => (
-                <div key={key} className="card">
-                  <div className={styles.sectionLabel}>{label}</div>
-                  <div className={styles.itemList}>
-                    {(drafts[key] || []).map((val, i) => (
-                      <div key={i} className={styles.itemRow}>
-                        <input
-                          className="form-input"
-                          value={val}
-                          onChange={(e) => updateItem(key, i, e.target.value)}
-                        />
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          onClick={() => removeItem(key, i)}
-                          aria-label="Remove"
-                          title="Remove"
-                        >✕</button>
+
+        {/* ── Collapsible: Dropdown Options ── */}
+        <div className={styles.collapsible}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('dropdowns')}>
+            <span className={styles.collapsibleTitle}>Dropdown Options</span>
+            <span className={`${styles.chevron} ${openSections.dropdowns ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.dropdowns && (
+            <div className={styles.collapsibleBody}>
+              {loading
+                ? <div className="skeleton" style={{ height: 200 }} />
+                : (
+                  <div className={styles.grid}>
+                    {SECTIONS.map(({ key, label }) => (
+                      <div key={key} className="card">
+                        <div className={styles.sectionLabel}>{label}</div>
+                        <div className={styles.itemList}>
+                          {(drafts[key] || []).map((val, i) => (
+                            <div key={i} className={styles.itemRow}>
+                              <input
+                                className="form-input"
+                                value={val}
+                                onChange={(e) => updateItem(key, i, e.target.value)}
+                              />
+                              <button
+                                className="btn btn-ghost btn-icon"
+                                onClick={() => removeItem(key, i)}
+                                aria-label="Remove"
+                                title="Remove"
+                              >✕</button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className={styles.saveRow} style={{ paddingBottom: 0 }}>
+                          <button className={styles.addBtn} onClick={() => addItem(key)}>
+                            + Add option
+                          </button>
+                          <button
+                            className="btn btn-primary"
+                            style={{ marginLeft: 'auto' }}
+                            onClick={() => handleSave(key)}
+                            disabled={savingKey === key}
+                          >
+                            {savingKey === key ? 'Saving…' : savedKey === key ? '✓ Saved' : 'Save'}
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
-                  <div className={styles.saveRow} style={{ paddingBottom: 0 }}>
-                    <button className={styles.addBtn} onClick={() => addItem(key)}>
-                      + Add option
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      style={{ marginLeft: 'auto' }}
-                      onClick={() => handleSave(key)}
-                      disabled={savingKey === key}
-                    >
-                      {savingKey === key ? 'Saving…' : savedKey === key ? '✓ Saved' : 'Save'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              }
+              <p className="text-xs text-muted" style={{ marginTop: 12 }}>
+                These options are shared across all users and stored on the Data Validation sheet of the workbook.
+                Task statuses and task priorities are fixed and not configurable here.
+              </p>
             </div>
-          )
-        }
-        <p className="text-xs text-muted">
-          These options are shared across all users and stored on the Data Validation sheet of the workbook.
-          Task statuses and task priorities are fixed and not configurable here.
-        </p>
+          )}
+        </div>
 
-        {/* ── SAM.gov API settings ── */}
-        <div style={{ marginTop: 28 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', marginBottom: 4 }}>
-            SAM.gov API
-          </div>
-          <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
-            Controls the nightly pull of Sources Sought opportunities from SAM.gov.
-            Changes take effect on the next scheduled run (3 AM EST).
-          </p>
+        {/* ── Collapsible: SAM.gov API ── */}
+        <div className={styles.collapsible} style={{ marginTop: 10 }}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('sam')}>
+            <span className={styles.collapsibleTitle}>SAM.gov API</span>
+            <span className={`${styles.chevron} ${openSections.sam ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.sam && (
+            <div className={styles.collapsibleBody}>
+              <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
+                Controls the pull of Sources Sought opportunities from SAM.gov.
+              </p>
 
           {!samLoaded
             ? <div className="skeleton" style={{ height: 120 }} />
@@ -297,18 +318,41 @@ export default function Settings({ toast }) {
             </button>
           </div>
 
-          {/* API key note */}
-          <div style={{
-            marginTop: 16, padding: '12px 14px',
-            background: 'var(--gray-50)', border: '0.5px solid var(--gray-200)',
-            borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--gray-600)', lineHeight: 1.6,
-          }}>
-            <strong style={{ color: 'var(--gray-900)' }}>API key rotation</strong><br />
-            SAM.gov public API keys expire every 90 days. When yours expires, the nightly pull will stop
-            and a warning banner will appear on the New Opportunities tab.<br />
-            To rotate: run <code style={{ background: 'var(--gray-200)', padding: '1px 5px', borderRadius: 3 }}>wrangler secret put SAM_API_KEY</code> in your terminal, paste your new key, and deploy.
-            No code changes required.
-          </div>
+              {/* Department filter toggle */}
+              <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--gray-50)', border: '0.5px solid var(--gray-200)', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-900)', marginBottom: 2 }}>Department filter on New Opportunities</div>
+                    <div className="text-xs text-muted">Show the department filter button on the New Opportunities tab</div>
+                  </div>
+                  <button
+                    className={`btn text-xs ${showDeptFilter ? 'btn-primary' : ''}`}
+                    style={{ padding: '4px 12px', flexShrink: 0 }}
+                    onClick={() => setShowDeptFilter((v) => {
+                      const next = !v
+                      localStorage.setItem('sam_dept_filter', String(next))
+                      return next
+                    })}
+                  >
+                    {showDeptFilter ? 'Enabled' : 'Disabled'}
+                  </button>
+                </div>
+              </div>
+
+              {/* API key note */}
+              <div style={{
+                marginTop: 12, padding: '12px 14px',
+                background: 'var(--gray-50)', border: '0.5px solid var(--gray-200)',
+                borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--gray-600)', lineHeight: 1.6,
+              }}>
+                <strong style={{ color: 'var(--gray-900)' }}>API key rotation</strong><br />
+                SAM.gov public API keys expire every 90 days. When yours expires, the pull will stop
+                and a warning banner will appear on the New Opportunities tab.<br />
+                To rotate: run <code style={{ background: 'var(--gray-200)', padding: '1px 5px', borderRadius: 3 }}>wrangler secret put SAM_API_KEY</code> in your terminal, paste your new key, and deploy.
+                No code changes required.
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>
