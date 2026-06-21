@@ -125,24 +125,18 @@ async function getTableRows(env, token, tableName) {
   })
 }
 
-// ── Read existing noticeIds to avoid duplicates ───────────────────────────
+// ── Delete expired rows (sequential, capped to preserve subrequest budget) ──
 
-async function getExistingNoticeIds(env, token) {
-  const rows = await getTableRows(env, token, 'NewOpportunitiesTable')
-  return new Set(rows.map((r) => String(r['Notice ID'] || '').trim()).filter(Boolean))
-}
-
-// ── Delete expired rows ───────────────────────────────────────────────────
-
-async function deleteExpiredRows(env, token) {
-  const rows = await getTableRows(env, token, 'NewOpportunitiesTable')
+async function deleteExpiredRows(env, token, existingRows) {
+  // Reuse already-fetched rows rather than making another read (saves 2 subrequests)
   const today = todayISO()
-  const toDelete = rows
+  const toDelete = existingRows
     .filter((r) => {
       const rd = String(r['Response Date'] || '').trim().slice(0, 10)
       return rd && rd < today
     })
     .sort((a, b) => b._rowIndex - a._rowIndex)   // descending so indices stay valid
+    .slice(0, 10)   // cap at 10 deletions per run to stay within subrequest budget
 
   for (const row of toDelete) {
     await graphFetch(env, token,
@@ -288,65 +282,69 @@ async function runSAMPull(env, token, config) {
 
   console.log(`[SAM] ${naicsCodes.length} NAICS | Posted: ${postedFrom}→${postedTo} | Deadline: ${rdlFrom}→${rdlTo}`)
 
-  // Get existing notice IDs
-  let existingIds
+  // Get existing rows ONCE — reuse for dedup check AND cleanup
+  // This saves 2 subrequests (no second read for cleanup)
+  let existingRows
   try {
-    existingIds = await getExistingNoticeIds(env, token)
+    existingRows = await getTableRows(env, token, 'NewOpportunitiesTable')
   } catch (err) {
     const msg = `Failed to read NewOpportunitiesTable: ${err.message}`
     await setRunLog(env, { success: false, timestamp: runStart, error: msg })
     throw new Error(msg)
   }
+  const existingIds = new Set(
+    existingRows.map((r) => String(r['Notice ID'] || '').trim()).filter(Boolean)
+  )
 
   // Fetch and write
   let totalFetched  = 0
   let totalWritten  = 0
   const seen        = new Set(existingIds)
   const naicsErrors = []
+  // Sequential NAICS processing to stay within the 50 subrequest limit
+  // (free Cloudflare Workers plan). Each SAM fetch = 1 subrequest.
+  // Each Graph write = 1 subrequest. Budget: ~2 reads + 27 fetches + writes + deletes.
+  // Cap writes per run to 15 to leave headroom for reads and cleanup.
+  const MAX_WRITES_PER_RUN = 15
 
-  // Fetch all NAICS codes in parallel — no sleep between codes,
-  // only between paginated pages within the same NAICS stream.
-  // This keeps total runtime well within the 30s waitUntil limit.
-  const naicsResults = await Promise.allSettled(
-    naicsCodes.map((naics) =>
-      fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo)
-        .then((records) => ({ naics, records }))
-    )
-  )
+  for (const naics of naicsCodes) {
+    // Hard stop if we're close to the subrequest budget
+    if (totalWritten >= MAX_WRITES_PER_RUN) {
+      console.log(`[SAM] Write cap (${MAX_WRITES_PER_RUN}) reached — stopping early`)
+      naicsErrors.push(`Write cap reached — ${naicsCodes.slice(naicsCodes.indexOf(naics)).length} NAICS codes skipped`)
+      break
+    }
 
-  for (const result of naicsResults) {
-    if (result.status === 'rejected') {
-      const err = result.reason
+    let records
+    try {
+      records = await fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo)
+      console.log(`[SAM] NAICS ${naics}: ${records.length} record(s)`)
+      totalFetched += records.length
+    } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
         const msg = 'SAM API key expired or invalid'
         await setRunLog(env, { success: false, timestamp: runStart, error: msg })
         throw new Error(msg)
       }
-      naicsErrors.push(err.message)
+      naicsErrors.push(`NAICS ${naics}: ${err.message}`)
       console.error('[SAM] Fetch error:', err.message)
       continue
     }
-    const { naics, records } = result.value
-    console.log(`[SAM] NAICS ${naics}: ${records.length} record(s)`)
-    totalFetched += records.length
 
-    // Collect new records (deduplicate against existing + already-seen)
-    const newRecords = records.filter((raw) => {
+    // Write new records one at a time (sequential = 1 subrequest each)
+    for (const raw of records) {
+      if (totalWritten >= MAX_WRITES_PER_RUN) break
       const noticeId = String(raw.noticeId || '').trim()
-      if (!noticeId || seen.has(noticeId)) return false
-      if (String(raw.active || '').toLowerCase() !== 'yes') return false
+      if (!noticeId || seen.has(noticeId)) continue
+      if (String(raw.active || '').toLowerCase() !== 'yes') continue
       seen.add(noticeId)
-      return true
-    })
-
-    // Write new rows in parallel — Graph API handles concurrent appends fine
-    const writeResults = await Promise.allSettled(
-      newRecords.map((raw) => appendOpportunity(env, token, mapRecord(raw, naics)))
-    )
-    const written = writeResults.filter((r) => r.status === 'fulfilled').length
-    const failed  = writeResults.filter((r) => r.status === 'rejected')
-    totalWritten += written
-    failed.forEach((r) => console.error('[SAM] Write failed:', r.reason?.message))
+      try {
+        await appendOpportunity(env, token, mapRecord(raw, naics))
+        totalWritten++
+      } catch (err) {
+        console.error(`[SAM] Write failed for ${noticeId}:`, err.message)
+      }
+    }
   }
 
   // Clear key-expired flag
@@ -355,7 +353,7 @@ async function runSAMPull(env, token, config) {
   // Delete expired rows
   let deleted = 0
   try {
-    deleted = await deleteExpiredRows(env, token)
+    deleted = await deleteExpiredRows(env, token, existingRows)
   } catch (err) {
     console.error('[SAM] Cleanup error:', err.message)
   }
