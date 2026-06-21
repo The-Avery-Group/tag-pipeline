@@ -3,6 +3,14 @@ import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '
 import { notifyTaskCreated } from '@/services/notifyService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
+async function retryThrice(fn) {
+  let lastErr
+  for (let i = 0; i < 3; i++) {
+    try { return await fn() } catch (err) { lastErr = err }
+  }
+  throw lastErr
+}
+
 export function useTasks(contractNumber = null) {
   const [tasks, setTasks]   = useState([])
   const [loading, setLoading] = useState(true)
@@ -49,8 +57,17 @@ export function useTasks(contractNumber = null) {
     if (safePatch.DueDate instanceof Date) {
       safePatch.DueDate = safePatch.DueDate.toISOString().split('T')[0]
     }
-    await updateTask(rowIndex, safePatch)
-    await invalidateCache()
+    // Optimistic update — apply patch immediately
+    setTasks((prev) =>
+      prev.map((t) => t._rowIndex === rowIndex ? { ...t, ...safePatch } : t)
+    )
+    try {
+      await retryThrice(() => updateTask(rowIndex, safePatch))
+      await invalidateCache()
+    } catch (err) {
+      // Silent fail — stale state until next cache refresh, no rollback
+      throw err
+    }
   }, [])
 
   const remove = useCallback(async (rowIndex) => {
