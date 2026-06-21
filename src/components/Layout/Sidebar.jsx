@@ -11,7 +11,7 @@ const NAV = [
   { to: '/ai-chat',        icon: '✦', label: 'AI Advisor' },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ onSearchOpen }) {
   const { user, logout } = useAuth()
   const initials = user?.displayName
     ?.split(' ')
@@ -25,6 +25,16 @@ export default function Sidebar() {
         <div className={styles.logoName}>TAG Capture</div>
         <div className={styles.logoSub}>Pipeline Manager</div>
       </div>
+
+      {/* Notion-style search trigger */}
+      <button className={styles.searchTrigger} onClick={onSearchOpen} aria-label="Search">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <span>Search</span>
+        <kbd className={styles.kbd}>⌘K</kbd>
+      </button>
 
       <nav className={styles.nav}>
         {NAV.map((item) => (
