@@ -240,7 +240,10 @@ export default function Opportunities({ toast }) {
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
   const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
+  const [dismissingRows,setDismissingRows]= useState(new Set())   // rows mid-dismiss-animation
+  const [deptOpen,      setDeptOpen]      = useState(false)       // controlled dept filter
   const [deptFilter,    setDeptFilter]    = useState(new Set())   // multi-select department filter
+  const deptFilterRef   = useRef(null)   // for click-outside detection
   const showDeptFilter = localStorage.getItem('sam_dept_filter') === 'true'
   const tableScrollRef  = useRef(null)                            // scroll position retention
   const [samRunStatus,  setSamRunStatus]  = useState(null)
@@ -254,6 +257,18 @@ export default function Opportunities({ toast }) {
         setSamRunStatus(runStatus)
       })
   }, [])
+
+  // Close dept filter when clicking outside
+  useEffect(() => {
+    if (!deptOpen) return
+    const handler = (e) => {
+      if (deptFilterRef.current && !deptFilterRef.current.contains(e.target)) {
+        setDeptOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [deptOpen])
 
   // Distinct departments from all SAM opportunities (for department filter)
   const samDepartments = useMemo(() => {
@@ -292,18 +307,19 @@ export default function Opportunities({ toast }) {
 
   const handleDismiss = async (row) => {
     if (actioningRow === row._rowIndex) return
-    // Save scroll position before state update
-    const scrollTop = tableScrollRef.current?.scrollTop ?? 0
     setActioningRow(row._rowIndex)
+    // Start fade-out animation
+    setDismissingRows((prev) => new Set([...prev, row._rowIndex]))
     try {
       await dismiss(row._rowIndex)
-      toast?.success('Dismissed')
-      // Restore scroll position after React re-render
-      requestAnimationFrame(() => {
-        if (tableScrollRef.current) tableScrollRef.current.scrollTop = scrollTop
-      })
+      // Animation plays for 280ms, then row leaves naturally via visibleSAMOpps filter
+      setTimeout(() => {
+        setDismissingRows((prev) => { const n = new Set(prev); n.delete(row._rowIndex); return n })
+      }, 300)
     } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
+      // No rollback — just remove animation class, quiet toast
+      setDismissingRows((prev) => { const n = new Set(prev); n.delete(row._rowIndex); return n })
+      toast?.error('Could not dismiss — will retry on next sync')
     } finally {
       setActioningRow(null)
     }
@@ -311,9 +327,10 @@ export default function Opportunities({ toast }) {
 
   const handleBulkDismiss = async () => {
     if (selectedRows.size === 0) return
-    const scrollTop = tableScrollRef.current?.scrollTop ?? 0
     const rowIndices = [...selectedRows]
     setSelectedRows(new Set())
+    // Animate all selected rows out simultaneously
+    setDismissingRows(new Set(rowIndices))
     let failed = 0
     for (const rowIndex of rowIndices) {
       try {
@@ -322,12 +339,12 @@ export default function Opportunities({ toast }) {
         failed++
       }
     }
+    setTimeout(() => {
+      setDismissingRows(new Set())
+    }, 300)
     const dismissed = rowIndices.length - failed
     if (dismissed > 0) toast?.success(`${dismissed} opportunit${dismissed === 1 ? 'y' : 'ies'} dismissed`)
-    if (failed > 0) toast?.error(`${failed} failed to dismiss`)
-    requestAnimationFrame(() => {
-      if (tableScrollRef.current) tableScrollRef.current.scrollTop = scrollTop
-    })
+    if (failed > 0) toast?.error(`${failed} could not be dismissed — will retry on next sync`)
   }
 
   const handleUndismiss = async (row) => {
@@ -401,23 +418,26 @@ export default function Opportunities({ toast }) {
             onClick={() => handlePull()} disabled={pulling}>
             {pulling ? '⏳ Pulling…' : '↻ Refresh'}
           </button>
-          {/* Department filter — shown only when enabled in Settings */}
+          {/* Department filter — controlled multi-select, stays open on selection */}
           {showDeptFilter && samDepartments.length > 0 && (
-            <div style={{ position: 'relative' }}>
-              <details className={styles.deptFilter}>
-                <summary className="btn text-xs" style={{ padding: '3px 10px', listStyle: 'none', cursor: 'pointer' }}>
-                  🏛 Dept {deptFilter.size > 0 ? `(${deptFilter.size})` : ''}
-                </summary>
+            <div ref={deptFilterRef} style={{ position: 'relative' }}>
+              <button className="btn text-xs" style={{ padding: '3px 10px' }}
+                onClick={() => setDeptOpen((v) => !v)}>
+                🏛 Dept{deptFilter.size > 0 ? ` (${deptFilter.size})` : ''}
+              </button>
+              {deptOpen && (
                 <div className={styles.deptDropdown}>
-                  <div style={{ padding: '4px 8px', borderBottom: '0.5px solid var(--gray-100)', display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ padding: '6px 10px', borderBottom: '0.5px solid var(--gray-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span className="text-xs text-muted">Filter by department</span>
                     {deptFilter.size > 0 && (
-                      <button className="text-xs" style={{ background: 'none', border: 'none', color: 'var(--blue-600)', cursor: 'pointer', padding: 0 }}
+                      <button className="text-xs" style={{ background: 'none', border: 'none', color: 'var(--blue-600)', cursor: 'pointer', padding: 0, fontFamily: 'var(--font)' }}
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => setDeptFilter(new Set())}>Clear</button>
                     )}
                   </div>
                   {samDepartments.map((dept) => (
-                    <label key={dept} className={styles.deptOption}>
+                    <label key={dept} className={styles.deptOption}
+                      onMouseDown={(e) => e.preventDefault()}>
                       <input type="checkbox"
                         checked={deptFilter.has(dept)}
                         onChange={() => {
@@ -432,7 +452,7 @@ export default function Opportunities({ toast }) {
                     </label>
                   ))}
                 </div>
-              </details>
+              )}
             </div>
           )}
         </div>
@@ -512,22 +532,22 @@ export default function Opportunities({ toast }) {
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
                         <tr key={opp['Notice ID'] || opp._rowIndex}
+                          className={dismissingRows.has(opp._rowIndex) ? styles.rowDismissing : ''}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
-                          <td style={{ padding: '8px 4px', width: 28 }} onClick={(e) => e.stopPropagation()}>
-                            {!isDismissed && (
-                              <input type="checkbox"
-                                style={{ cursor: 'pointer' }}
-                                checked={selectedRows.has(opp._rowIndex)}
-                                onChange={() => {
-                                  setSelectedRows((prev) => {
-                                    const next = new Set(prev)
-                                    next.has(opp._rowIndex) ? next.delete(opp._rowIndex) : next.add(opp._rowIndex)
-                                    return next
-                                  })
-                                }}
-                              />
-                            )}
-                          </td>
+                          <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox"
+                              className={`${styles.rowCheckbox} ${selectedRows.has(opp._rowIndex) ? styles.rowCheckboxVisible : ''}`}
+                              style={{ cursor: 'pointer' }}
+                              checked={selectedRows.has(opp._rowIndex)}
+                              onChange={() => {
+                                if (isDismissed) return
+                                setSelectedRows((prev) => {
+                                  const next = new Set(prev)
+                                  next.has(opp._rowIndex) ? next.delete(opp._rowIndex) : next.add(opp._rowIndex)
+                                  return next
+                                })
+                              }}
+                            />
                           <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
@@ -603,9 +623,9 @@ export default function Opportunities({ toast }) {
     : activeFilterCount > 0
       ? 'No opportunities match the current filters.'
       : {
-          RFIs:     'No RFIs found. RFIs are opportunities with Phase = Identified and Outlook = New.',
-          Expiring: 'No expiring opportunities. Set an opportunity\'s Outlook to "Expiring" to see it here.',
-          Tracked:  'No tracked opportunities. Set an opportunity\'s Outlook to "Tracking" to see it here.',
+          RFIs:     'No RFIs yet. Opportunities appear here when Phase is Identified and Outlook is New.',
+          Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
+          Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
           New:      '',
         }[activeTab]
 
