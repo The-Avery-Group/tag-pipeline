@@ -246,7 +246,6 @@ export default function Opportunities({ toast }) {
   const deptFilterRef   = useRef(null)   // for click-outside detection
   const showDeptFilter = localStorage.getItem('sam_dept_filter') === 'true'
   const tableScrollRef  = useRef(null)                            // scroll position retention
-  const scrollPosRef    = useRef(0)
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
   const [pullMessage,   setPullMessage]   = useState(null)
@@ -270,22 +269,6 @@ export default function Opportunities({ toast }) {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [deptOpen])
-  
-  useEffect(() => {
-	if (!tableScrollRef.current) return
-
-	requestAnimationFrame(() => {
-	  if (tableScrollRef.current) {
-		tableScrollRef.current.scrollTop = scrollPosRef.current
-	  }
-	})
-  }, [
-	selectedRows,
-	visibleSAMOpps,
-	actioningRow,
-	dismissingRows,
-  ])
-  
 
   // Distinct departments from all SAM opportunities (for department filter)
   const samDepartments = useMemo(() => {
@@ -308,15 +291,8 @@ export default function Opportunities({ toast }) {
     if (!db) return -1
     return da < db ? -1 : da > db ? 1 : 0
   }), [samOpps, showDismissed, deptFilter])
-  
-  const saveScrollPosition = () => {
-  if (tableScrollRef.current) {
-    scrollPosRef.current = tableScrollRef.current.scrollTop
-    }
-  }
-  
+
   const handleAddToPipeline = async (row, outlook) => {
-	saveScrollPosition()
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
     try {
@@ -330,7 +306,6 @@ export default function Opportunities({ toast }) {
   }
 
   const handleDismiss = async (row) => {
-	saveScrollPosition()  
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
     // Start fade-out animation
@@ -351,7 +326,6 @@ export default function Opportunities({ toast }) {
   }
 
   const handleBulkDismiss = async () => {
-	saveScrollPosition()  
     if (selectedRows.size === 0) return
     const rowIndices = [...selectedRows]
     setSelectedRows(new Set())
@@ -374,7 +348,6 @@ export default function Opportunities({ toast }) {
   }
 
   const handleUndismiss = async (row) => {
-	saveScrollPosition()
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
     try {
@@ -568,9 +541,6 @@ export default function Opportunities({ toast }) {
                               checked={selectedRows.has(opp._rowIndex)}
                               onChange={() => {
                                 if (isDismissed) return
-								
-								saveScrollPosition()
-								
                                 setSelectedRows((prev) => {
                                   const next = new Set(prev)
                                   next.has(opp._rowIndex) ? next.delete(opp._rowIndex) : next.add(opp._rowIndex)
@@ -578,7 +548,7 @@ export default function Opportunities({ toast }) {
                                 })
                               }}
                             />
-							</td>
+						  </td>
                           <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
