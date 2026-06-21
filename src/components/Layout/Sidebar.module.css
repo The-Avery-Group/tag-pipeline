@@ -151,3 +151,74 @@
 }
 .settingsBtn:hover { background: var(--gray-50); color: var(--gray-900); text-decoration: none; }
 .settingsBtnActive { background: var(--blue-50) !important; color: var(--blue-800) !important; border-color: var(--blue-200) !important; }
+/* ── Search trigger (Notion-style) ── */
+.searchTrigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 16px);
+  margin: 8px 8px 4px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 0.5px solid var(--gray-200);
+  background: var(--gray-50);
+  color: var(--gray-400);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.searchTrigger:hover {
+  background: var(--gray-100);
+  border-color: var(--gray-200);
+  color: var(--gray-600);
+}
+.searchTrigger span:first-of-type {
+  flex: 1;
+}
+
+.searchShortcut {
+  font-size: 10px;
+  color: var(--gray-400);
+  background: var(--gray-200);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Search trigger (Notion style) ── */
+.searchTrigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: calc(100% - 16px);
+  margin: 6px 8px 2px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 0.5px solid var(--gray-200);
+  background: var(--gray-50);
+  color: var(--gray-400);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.searchTrigger:hover {
+  background: var(--gray-100);
+  border-color: var(--gray-200);
+  color: var(--gray-600);
+}
+.searchTrigger span { flex: 1; }
+
+.kbd {
+  font-size: 10px;
+  font-family: var(--font);
+  background: #fff;
+  border: 0.5px solid var(--gray-200);
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: var(--gray-400);
+  flex-shrink: 0;
+}
