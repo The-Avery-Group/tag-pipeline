@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useParams, useNavigate, useBlocker } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
 import { useTasks } from '@/hooks/useTasks'
@@ -182,10 +182,6 @@ export default function OpportunityDetail({ toast }) {
   // ── Unsaved changes detection ──────────────────────────────────────
   const hasChanges = editing && form !== null && JSON.stringify(form) !== JSON.stringify(opp)
 
-  // Block in-app navigation when unsaved changes exist
-  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    hasChanges && currentLocation.pathname !== nextLocation.pathname
-  )
 
   // Block browser tab close / refresh
   useEffect(() => {
@@ -668,22 +664,6 @@ export default function OpportunityDetail({ toast }) {
         <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
         <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
       </div>
-
-      {/* ── Unsaved changes blocker modal ── */}
-      {blocker.state === 'blocked' && (
-        <Modal
-          title="Unsaved changes"
-          onClose={() => blocker.reset()}
-          footer={
-            <>
-              <button className="btn" onClick={() => blocker.reset()}>Stay and save</button>
-              <button className="btn btn-danger" onClick={() => blocker.proceed()}>Leave anyway</button>
-            </>
-          }
-        >
-          <p className="text-sm">You have unsaved changes. If you leave now, your changes will be lost.</p>
-        </Modal>
-      )}
 
       {/* ── Add task modal ── */}
       {showAddTask && (
