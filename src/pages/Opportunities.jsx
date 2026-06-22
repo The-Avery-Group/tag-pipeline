@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
@@ -270,6 +270,24 @@ export default function Opportunities({ toast }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [deptOpen])
 
+  // ── Scroll save/restore safety net ──────────────────────────────────
+  // Saves scrollTop before any render that could reset it, restores after.
+  // useLayoutEffect runs after DOM mutations but before paint — invisible to user.
+  const savedScrollTop = useRef(0)
+  useLayoutEffect(() => {
+    const el = tableScrollRef.current
+    if (!el) return
+    // Restore from the value saved before the last state update
+    if (savedScrollTop.current > 0) {
+      el.scrollTop = savedScrollTop.current
+    }
+  })
+
+  // Call this before any state update that might re-render the table
+  const saveScroll = useCallback(() => {
+    savedScrollTop.current = tableScrollRef.current?.scrollTop ?? 0
+  }, [])
+
   // Distinct departments from all SAM opportunities (for department filter)
   const samDepartments = useMemo(() => {
     const depts = new Set()
@@ -308,6 +326,7 @@ export default function Opportunities({ toast }) {
   const handleDismiss = async (row) => {
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
+    saveScroll()
     // Start fade-out animation
     setDismissingRows((prev) => new Set([...prev, row._rowIndex]))
     try {
@@ -327,6 +346,7 @@ export default function Opportunities({ toast }) {
 
   const handleBulkDismiss = async () => {
     if (selectedRows.size === 0) return
+    saveScroll()
     const rowIndices = [...selectedRows]
     setSelectedRows(new Set())
     // Animate all selected rows out simultaneously
@@ -407,11 +427,11 @@ export default function Opportunities({ toast }) {
             {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
             {!showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
               <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
-                onClick={() => setShowDismissed(true)}>Show dismissed</button></>
+                onClick={() => { saveScroll(); setShowDismissed(true) }}>Show dismissed</button></>
             )}
             {showDismissed && (
               <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
-                onClick={() => setShowDismissed(false)}>Hide dismissed</button></>
+                onClick={() => { saveScroll(); setShowDismissed(false) }}>Hide dismissed</button></>
             )}
           </span>
           <button className="btn text-xs" style={{ padding: '3px 10px' }}
@@ -531,7 +551,7 @@ export default function Opportunities({ toast }) {
                       // All buttons same size, text centered
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
-                        <tr key={opp['Notice ID'] || opp._rowIndex}
+                        <tr key={opp['Notice ID']}
                           className={dismissingRows.has(opp._rowIndex) ? styles.rowDismissing : ''}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
                           <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
@@ -541,6 +561,7 @@ export default function Opportunities({ toast }) {
                               checked={selectedRows.has(opp._rowIndex)}
                               onChange={() => {
                                 if (isDismissed) return
+                                saveScroll()
                                 setSelectedRows((prev) => {
                                   const next = new Set(prev)
                                   next.has(opp._rowIndex) ? next.delete(opp._rowIndex) : next.add(opp._rowIndex)
@@ -548,7 +569,6 @@ export default function Opportunities({ toast }) {
                                 })
                               }}
                             />
-						  </td>
                           <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
