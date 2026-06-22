@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useParams, useNavigate, useBlocker } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
@@ -171,6 +171,13 @@ export default function OpportunityDetail({ toast }) {
   })
   const [contactSearch,   setContactSearch]   = useState('')
   const [linkingContact,  setLinkingContact]  = useState(false)
+  
+
+  const opp = useMemo(
+    () => pipeline.find((o) => o[C.contractNum] === decodedCN),
+    [pipeline, decodedCN]
+  )
+
 
   // ── Unsaved changes detection ──────────────────────────────────────
   const hasChanges = editing && form !== null && JSON.stringify(form) !== JSON.stringify(opp)
@@ -190,11 +197,6 @@ export default function OpportunityDetail({ toast }) {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [hasChanges])
-
-  const opp = useMemo(
-    () => pipeline.find((o) => o[C.contractNum] === decodedCN),
-    [pipeline, decodedCN]
-  )
 
   const linkedContacts = useMemo(() => {
     if (!opp) return []
