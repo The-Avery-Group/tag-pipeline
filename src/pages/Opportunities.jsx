@@ -569,6 +569,7 @@ export default function Opportunities({ toast }) {
                                 })
                               }}
                             />
+                          </td>  
                           <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
