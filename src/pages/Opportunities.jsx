@@ -240,9 +240,13 @@ export default function Opportunities({ toast }) {
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
   const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
-  const [dismissingRows,setDismissingRows]= useState(new Set())   // rows mid-dismiss-animation
   const [deptOpen,      setDeptOpen]      = useState(false)       // controlled dept filter
-  const [deptFilter,    setDeptFilter]    = useState(new Set())   // multi-select department filter
+  const [deptFilter,    setDeptFilter]    = useState(() => {
+    try {
+      const saved = localStorage.getItem('sam_dept_filter_selection')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch { return new Set() }
+  })   // persisted multi-select department filter
   const deptFilterRef   = useRef(null)   // for click-outside detection
   const showDeptFilter = localStorage.getItem('sam_dept_filter') === 'true'
   const tableScrollRef  = useRef(null)                            // scroll position retention
@@ -257,6 +261,13 @@ export default function Opportunities({ toast }) {
         setSamRunStatus(runStatus)
       })
   }, [])
+
+  // Persist dept filter selection to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('sam_dept_filter_selection', JSON.stringify([...deptFilter]))
+    } catch {}
+  }, [deptFilter])
 
   // Close dept filter when clicking outside
   useEffect(() => {
@@ -327,17 +338,9 @@ export default function Opportunities({ toast }) {
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
     saveScroll()
-    // Start fade-out animation
-    setDismissingRows((prev) => new Set([...prev, row._rowIndex]))
     try {
       await dismiss(row._rowIndex)
-      // Animation plays for 280ms, then row leaves naturally via visibleSAMOpps filter
-      setTimeout(() => {
-        setDismissingRows((prev) => { const n = new Set(prev); n.delete(row._rowIndex); return n })
-      }, 300)
     } catch (err) {
-      // No rollback — just remove animation class, quiet toast
-      setDismissingRows((prev) => { const n = new Set(prev); n.delete(row._rowIndex); return n })
       toast?.error('Could not dismiss — will retry on next sync')
     } finally {
       setActioningRow(null)
@@ -349,8 +352,6 @@ export default function Opportunities({ toast }) {
     saveScroll()
     const rowIndices = [...selectedRows]
     setSelectedRows(new Set())
-    // Animate all selected rows out simultaneously
-    setDismissingRows(new Set(rowIndices))
     let failed = 0
     for (const rowIndex of rowIndices) {
       try {
@@ -359,9 +360,6 @@ export default function Opportunities({ toast }) {
         failed++
       }
     }
-    setTimeout(() => {
-      setDismissingRows(new Set())
-    }, 300)
     const dismissed = rowIndices.length - failed
     if (dismissed > 0) toast?.success(`${dismissed} opportunit${dismissed === 1 ? 'y' : 'ies'} dismissed`)
     if (failed > 0) toast?.error(`${failed} could not be dismissed — will retry on next sync`)
@@ -552,7 +550,6 @@ export default function Opportunities({ toast }) {
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
                         <tr key={opp['Notice ID']}
-                          className={dismissingRows.has(opp._rowIndex) ? styles.rowDismissing : ''}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
                           <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
                             <input type="checkbox"
@@ -569,8 +566,8 @@ export default function Opportunities({ toast }) {
                                 })
                               }}
                             />
-                          </td>  
-                          <td style={{ fontWeight: 500 }}>
+                          </td>
+						  <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
                               {samStatusBadge(opp.Status)}
