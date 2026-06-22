@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   getSAMOpportunities, updateSAMOpportunity,
   getContacts, addContact, addOpportunity,
@@ -202,8 +202,13 @@ export function useSAMOpportunities() {
   const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
   const undismiss = useCallback((rowIndex) => updateStatus(rowIndex, 'new'),       [updateStatus])
 
+  // Stable reference — only changes when data actually changes.
+  // Prevents parent components from re-rendering (and scroll containers
+  // from resetting) when unrelated state like selectedRows changes.
+  const stableOpportunities = useMemo(() => opportunities, [opportunities])
+
   return {
-    opportunities,
+    opportunities: stableOpportunities,
     loading,
     error,
     refresh: load,
