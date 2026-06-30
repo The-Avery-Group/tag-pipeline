@@ -5,7 +5,7 @@ import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hooks/useSAMOpportunities'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
-import { formatDate } from '@/utils/kpiHelpers'
+import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 
@@ -117,9 +117,24 @@ export default function Opportunities({ toast }) {
   const [search, setSearch] = useState('')
   const [showFilter, setShowFilter] = useState(false)
   const [filters, setFilters] = useState({
-    outlook: '', priority: '', assignedTo: '', agency: '', setAside: '', bidNoBid: '',
+    outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
   })
-  const activeFilterCount = Object.values(filters).filter(Boolean).length
+  const activeFilterCount = Object.entries(filters)
+    .filter(([k, v]) => k === 'agency' ? v.size > 0 : Boolean(v)).length
+  const [agencyFilterOpen, setAgencyFilterOpen] = useState(false)
+  const agencyFilterRef = useRef(null)
+
+  // Close agency filter dropdown on outside click
+  useEffect(() => {
+    if (!agencyFilterOpen) return
+    const handler = (e) => {
+      if (agencyFilterRef.current && !agencyFilterRef.current.contains(e.target)) {
+        setAgencyFilterOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [agencyFilterOpen])
 
   // ── Modals ────────────────────────────────────────────────────────────
   const [showAdd, setShowAdd] = useState(searchParams.get('new') === '1')
@@ -150,6 +165,16 @@ export default function Opportunities({ toast }) {
     New:      0,
   }), [pipeline])
 
+  // ── Distinct agencies present in the active tab (for the agency filter) ──
+  const tabAgencies = useMemo(() => {
+    const ags = new Set()
+    getTabRows(pipeline, activeTab).forEach((o) => {
+      const a = String(o[C.agency] || '').trim()
+      if (a) ags.add(a)
+    })
+    return [...ags].sort()
+  }, [pipeline, activeTab])
+
   // ── Filtered + sorted rows for the active tab ─────────────────────────
   const filtered = useMemo(() => {
     if (activeTab === 'New') return []
@@ -172,8 +197,8 @@ export default function Opportunities({ toast }) {
     if (filters.assignedTo) rows = rows.filter((o) =>
       String(o[C.assignedTo] || '').toLowerCase().includes(filters.assignedTo.toLowerCase())
     )
-    if (filters.agency) rows = rows.filter((o) =>
-      String(o[C.agency] || '').toLowerCase().includes(filters.agency.toLowerCase())
+    if (filters.agency.size > 0) rows = rows.filter((o) =>
+      filters.agency.has(String(o[C.agency] || '').trim())
     )
 
     return [...rows].sort((a, b) => {
@@ -188,7 +213,7 @@ export default function Opportunities({ toast }) {
   const handleTabChange = (tab) => {
     setActiveTab(tab)
     setSearch('')
-    setFilters({ outlook: '', priority: '', assignedTo: '', agency: '', setAside: '', bidNoBid: '' })
+    setFilters({ outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '' })
     setShowFilter(false)
   }
 
@@ -248,7 +273,6 @@ export default function Opportunities({ toast }) {
     } catch { return new Set() }
   })   // persisted multi-select department filter
   const deptFilterRef   = useRef(null)   // for click-outside detection
-  const showDeptFilter = localStorage.getItem('sam_dept_filter') === 'true'
   const tableScrollRef  = useRef(null)                            // scroll position retention
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
@@ -436,8 +460,8 @@ export default function Opportunities({ toast }) {
             onClick={() => handlePull()} disabled={pulling}>
             {pulling ? '⏳ Pulling…' : '↻ Refresh'}
           </button>
-          {/* Department filter — controlled multi-select, stays open on selection */}
-          {showDeptFilter && samDepartments.length > 0 && (
+          {/* Department filter — controlled multi-select, stays open on selection, always visible */}
+          {samDepartments.length > 0 && (
             <div ref={deptFilterRef} style={{ position: 'relative' }}>
               <button className="btn text-xs" style={{ padding: '3px 10px' }}
                 onClick={() => setDeptOpen((v) => !v)}>
@@ -575,7 +599,7 @@ export default function Opportunities({ toast }) {
                           </td>
                           <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
                           <td className="text-xs text-muted">{opp['NAICS Code'] || '—'}</td>
-                          <td className="text-sm">{formatDate(opp['Response Date'])}</td>
+                          <td className="text-sm">{formatDateTime(opp['Response Date'])}</td>
                           <td className="text-xs text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {pocDisplay || '—'}
                           </td>
@@ -852,11 +876,43 @@ export default function Opportunities({ toast }) {
                   {bidNoBidOptions.map((b) => <option key={b}>{b}</option>)}
                 </select>
               </div>
-              <div className="form-field">
+              <div className="form-field" ref={agencyFilterRef} style={{ position: 'relative' }}>
                 <label className="form-label">Agency</label>
-                <input className="form-input" placeholder="Filter by agency…"
-                  value={filters.agency}
-                  onChange={(e) => setFilters((f) => ({ ...f, agency: e.target.value }))} />
+                <button
+                  type="button"
+                  className="form-input"
+                  style={{ textAlign: 'left', cursor: 'pointer', background: '#fff' }}
+                  onClick={() => setAgencyFilterOpen((v) => !v)}
+                >
+                  {filters.agency.size === 0
+                    ? 'All'
+                    : filters.agency.size === 1
+                      ? [...filters.agency][0]
+                      : `${filters.agency.size} selected`}
+                </button>
+                {agencyFilterOpen && (
+                  <div className={styles.deptDropdown}>
+                    {tabAgencies.length === 0
+                      ? <div style={{ padding: '8px 12px' }} className="text-xs text-muted">No agencies in this view.</div>
+                      : tabAgencies.map((ag) => (
+                        <label key={ag} className={styles.deptOption}
+                          onMouseDown={(e) => e.preventDefault()}>
+                          <input type="checkbox"
+                            checked={filters.agency.has(ag)}
+                            onChange={() => {
+                              setFilters((f) => {
+                                const next = new Set(f.agency)
+                                next.has(ag) ? next.delete(ag) : next.add(ag)
+                                return { ...f, agency: next }
+                              })
+                            }}
+                          />
+                          <span className="text-xs">{ag}</span>
+                        </label>
+                      ))
+                    }
+                  </div>
+                )}
               </div>
               <div className="form-field">
                 <label className="form-label">Assigned To</label>
@@ -868,7 +924,7 @@ export default function Opportunities({ toast }) {
             {activeFilterCount > 0 && (
               <button className="btn btn-ghost text-sm"
                 style={{ marginTop: 8, color: 'var(--red-600)' }}
-                onClick={() => setFilters({ outlook: '', priority: '', assignedTo: '', agency: '', setAside: '', bidNoBid: '' })}>
+                onClick={() => setFilters({ outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '' })}>
                 Clear all filters ({activeFilterCount})
               </button>
             )}
@@ -878,11 +934,22 @@ export default function Opportunities({ toast }) {
         {/* Active filter chips */}
         {activeFilterCount > 0 && activeTab !== 'New' && (
           <div className="filter-chips" style={{ marginBottom: 8 }}>
-            {Object.entries(filters).filter(([, v]) => v).map(([key, val]) => (
+            {Object.entries(filters).filter(([k, v]) => k === 'agency' ? false : v).map(([key, val]) => (
               <button key={key}
                 className="filter-chip active"
                 onClick={() => setFilters((f) => ({ ...f, [key]: '' }))}>
                 {val} ✕
+              </button>
+            ))}
+            {[...filters.agency].map((ag) => (
+              <button key={`agency-${ag}`}
+                className="filter-chip active"
+                onClick={() => setFilters((f) => {
+                  const next = new Set(f.agency)
+                  next.delete(ag)
+                  return { ...f, agency: next }
+                })}>
+                {ag} ✕
               </button>
             ))}
           </div>
@@ -1006,12 +1073,14 @@ export default function Opportunities({ toast }) {
                   {setAsideOptions.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
-              <div className="form-field">
-                <label className="form-label">RFI Submission Date</label>
-                <input className="form-input" type="date"
-                  value={form[C.submDate]}
-                  onChange={(e) => setForm({ ...form, [C.submDate]: e.target.value })} />
-              </div>
+              {form[C.phase] === 'Identified' && form[C.outlook] === 'New' && (
+                <div className="form-field">
+                  <label className="form-label">RFI Submission Date</label>
+                  <input className="form-input" type="date"
+                    value={form[C.submDate]}
+                    onChange={(e) => setForm({ ...form, [C.submDate]: e.target.value })} />
+                </div>
+              )}
             </div>
           </form>
         </Modal>
