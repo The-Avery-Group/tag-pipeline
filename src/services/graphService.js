@@ -320,6 +320,7 @@ export const OPPORTUNITY_PHASES = [
   'Cancelled',
 ]
 export const OPPORTUNITY_OUTLOOK = ['Expiring', 'Forecasted', 'New', 'Tracking']
+export const ACTIVITY_PHASES = ['Pre-RFP', 'Submitted RFI', 'RFP Released', 'Proposal Submitted', 'BAFO', 'Award Pending']
 export const PRIORITY_VALUES = ['Cold', 'Warm', 'Hot']
 export const SET_ASIDE_VALUES = ['-', '8A', '8AN', 'NONE', 'SBA', 'SDVOSBC', 'SDVOSBS']
 
