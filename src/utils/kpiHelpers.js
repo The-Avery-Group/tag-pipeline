@@ -37,6 +37,24 @@ export function formatDate(val) {
 }
 
 /**
+ * Format a date value for display with time and local timezone abbreviation:
+ * 'Aug 15, 2025, 5:00 PM EDT'. Falls back to date-only formatting if the
+ * value has no time component (plain 'YYYY-MM-DD').
+ */
+export function formatDateTime(val) {
+  if (!val && val !== 0) return '—'
+  const s = String(val).trim()
+  // No time component in the source value — nothing meaningful to show beyond the date
+  if (s.length <= 10) return formatDate(val)
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return formatDate(val)
+  return d.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  })
+}
+
+/**
  * Returns true if the date is strictly before today (ignoring time).
  */
 export function isOverdue(val) {
