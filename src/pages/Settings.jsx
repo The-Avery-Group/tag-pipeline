@@ -49,13 +49,17 @@ export default function Settings({ toast }) {
   const [savedSAM,      setSavedSAM]      = useState(false)
   const [triggering,    setTriggering]    = useState(false)
   const [triggerResult, setTriggerResult] = useState(null)
-  const [showDeptFilter, setShowDeptFilter] = useState(() => localStorage.getItem('sam_dept_filter') === 'true')
   // Collapsible sections — all collapsed on first load
   const [openSections,  setOpenSections]  = useState({
     dropdowns: false,
     sam:       false,
   })
   const toggleSection = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }))
+  // Per-card collapsible state, for long option lists nested inside a section
+  // (collapsed by default for lists over LONG_LIST_THRESHOLD items)
+  const [openLists, setOpenLists] = useState({})
+  const toggleList = (key) => setOpenLists((prev) => ({ ...prev, [key]: !prev[key] }))
+  const LONG_LIST_THRESHOLD = 6
 
   useEffect(() => {
     Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
@@ -179,41 +183,65 @@ export default function Settings({ toast }) {
                 ? <div className="skeleton" style={{ height: 200 }} />
                 : (
                   <div className={styles.grid}>
-                    {SECTIONS.map(({ key, label }) => (
-                      <div key={key} className="card">
-                        <div className={styles.sectionLabel}>{label}</div>
-                        <div className={styles.itemList}>
-                          {(drafts[key] || []).map((val, i) => (
-                            <div key={i} className={styles.itemRow}>
-                              <input
-                                className="form-input"
-                                value={val}
-                                onChange={(e) => updateItem(key, i, e.target.value)}
-                              />
-                              <button
-                                className="btn btn-ghost btn-icon"
-                                onClick={() => removeItem(key, i)}
-                                aria-label="Remove"
-                                title="Remove"
-                              >✕</button>
-                            </div>
-                          ))}
-                        </div>
-                        <div className={styles.saveRow} style={{ paddingBottom: 0 }}>
-                          <button className={styles.addBtn} onClick={() => addItem(key)}>
-                            + Add option
-                          </button>
+                    {SECTIONS.map(({ key, label }) => {
+                      const items = drafts[key] || []
+                      const isLong = items.length > LONG_LIST_THRESHOLD
+                      const isOpen = openLists[key] ?? !isLong   // long lists default closed, short ones default open
+                      return (
+                        <div key={key} className="card">
                           <button
-                            className="btn btn-primary"
-                            style={{ marginLeft: 'auto' }}
-                            onClick={() => handleSave(key)}
-                            disabled={savingKey === key}
+                            type="button"
+                            onClick={() => isLong && toggleList(key)}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              width: '100%', background: 'none', border: 'none', padding: 0,
+                              cursor: isLong ? 'pointer' : 'default', font: 'inherit', textAlign: 'left',
+                            }}
                           >
-                            {savingKey === key ? 'Saving…' : savedKey === key ? '✓ Saved' : 'Save'}
+                            <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
+                              {label} {isLong && <span className="text-xs text-muted">({items.length})</span>}
+                            </div>
+                            {isLong && (
+                              <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`}>›</span>
+                            )}
                           </button>
+                          {isOpen && (
+                            <>
+                              <div className={styles.itemList} style={{ marginTop: 8 }}>
+                                {items.map((val, i) => (
+                                  <div key={i} className={styles.itemRow}>
+                                    <input
+                                      className="form-input"
+                                      value={val}
+                                      onChange={(e) => updateItem(key, i, e.target.value)}
+                                    />
+                                    <button
+                                      className="btn btn-ghost btn-icon"
+                                      onClick={() => removeItem(key, i)}
+                                      aria-label="Remove"
+                                      title="Remove"
+                                    >✕</button>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className={styles.saveRow} style={{ paddingBottom: 0 }}>
+                                <button className={styles.addBtn} onClick={() => addItem(key)}>
+                                  + Add option
+                                </button>
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ marginLeft: 'auto' }}
+                                  onClick={() => handleSave(key)}
+                                  disabled={savingKey === key}
+                                >
+                                  {savingKey === key ? 'Saving…' : savedKey === key ? '✓ Saved' : 'Save'}
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )
               }
@@ -243,34 +271,53 @@ export default function Settings({ toast }) {
               <div className={styles.grid}>
                 {/* NAICS codes */}
                 <div className="card">
-                  <div className={styles.sectionLabel}>NAICS Codes</div>
-                  <div className={styles.itemList}>
-                    {naicsCodes.map((code, i) => (
-                      <div key={i} className={styles.itemRow}>
-                        <input
-                          className="form-input"
-                          value={code}
-                          onChange={(e) => {
-                            const next = [...naicsCodes]
-                            next[i] = e.target.value
-                            setNaicsCodes(next)
-                            setSavedSAM(false)
-                          }}
-                        />
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          onClick={() => { setNaicsCodes(naicsCodes.filter((_, j) => j !== i)); setSavedSAM(false) }}
-                          aria-label="Remove"
-                        >✕</button>
+                  <button
+                    type="button"
+                    onClick={() => naicsCodes.length > LONG_LIST_THRESHOLD && toggleList('naics')}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      width: '100%', background: 'none', border: 'none', padding: 0,
+                      cursor: naicsCodes.length > LONG_LIST_THRESHOLD ? 'pointer' : 'default', font: 'inherit', textAlign: 'left',
+                    }}
+                  >
+                    <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
+                      NAICS Codes {naicsCodes.length > LONG_LIST_THRESHOLD && <span className="text-xs text-muted">({naicsCodes.length})</span>}
+                    </div>
+                    {naicsCodes.length > LONG_LIST_THRESHOLD && (
+                      <span className={`${styles.chevron} ${(openLists.naics ?? false) ? styles.chevronOpen : ''}`}>›</span>
+                    )}
+                  </button>
+                  {(naicsCodes.length <= LONG_LIST_THRESHOLD || (openLists.naics ?? false)) && (
+                    <>
+                      <div className={styles.itemList} style={{ marginTop: 8 }}>
+                        {naicsCodes.map((code, i) => (
+                          <div key={i} className={styles.itemRow}>
+                            <input
+                              className="form-input"
+                              value={code}
+                              onChange={(e) => {
+                                const next = [...naicsCodes]
+                                next[i] = e.target.value
+                                setNaicsCodes(next)
+                                setSavedSAM(false)
+                              }}
+                            />
+                            <button
+                              className="btn btn-ghost btn-icon"
+                              onClick={() => { setNaicsCodes(naicsCodes.filter((_, j) => j !== i)); setSavedSAM(false) }}
+                              aria-label="Remove"
+                            >✕</button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className={styles.saveRow}>
-                    <button className={styles.addBtn}
-                      onClick={() => { setNaicsCodes([...naicsCodes, '']); setSavedSAM(false) }}>
-                      + Add NAICS code
-                    </button>
-                  </div>
+                      <div className={styles.saveRow}>
+                        <button className={styles.addBtn}
+                          onClick={() => { setNaicsCodes([...naicsCodes, '']); setSavedSAM(false) }}>
+                          + Add NAICS code
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Window settings */}
@@ -317,27 +364,6 @@ export default function Settings({ toast }) {
               {savingSAM ? 'Saving…' : savedSAM ? '✓ Saved' : 'Save SAM settings'}
             </button>
           </div>
-
-              {/* Department filter toggle */}
-              <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--gray-50)', border: '0.5px solid var(--gray-200)', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-900)', marginBottom: 2 }}>Department filter on New Opportunities</div>
-                    <div className="text-xs text-muted">Show the department filter button on the New Opportunities tab</div>
-                  </div>
-                  <button
-                    className={`btn text-xs ${showDeptFilter ? 'btn-primary' : ''}`}
-                    style={{ padding: '4px 12px', flexShrink: 0 }}
-                    onClick={() => setShowDeptFilter((v) => {
-                      const next = !v
-                      localStorage.setItem('sam_dept_filter', String(next))
-                      return next
-                    })}
-                  >
-                    {showDeptFilter ? 'Enabled' : 'Disabled'}
-                  </button>
-                </div>
-              </div>
 
               {/* API key note */}
               <div style={{
