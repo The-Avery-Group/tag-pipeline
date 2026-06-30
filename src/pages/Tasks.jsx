@@ -10,6 +10,8 @@ import styles from './Tasks.module.css'
 
 const STATUSES  = ['All', 'To Do', 'In Progress', 'Done']
 const GROUPS    = ['None', 'Contract', 'Assignee', 'Priority']
+const SORTS     = ['Due Date', 'Priority', 'Assignee', 'Status']
+const PRIORITY_RANK = { High: 3, Medium: 2, Low: 1 }
 const STATUS_NEXT = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
 
 const BLANK_FORM = {
@@ -296,20 +298,38 @@ export default function Tasks({ toast }) {
 
   const [statusFilter, setStatusFilter] = useState('All')
   const [groupBy, setGroupBy]           = useState('None')
+  const [sortBy, setSortBy]             = useState(() => localStorage.getItem('tasks_sort_by') || 'Due Date')
+  const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
   const [showAdd, setShowAdd]           = useState(false)
   const [selected, setSelected]         = useState(null)   // task open in detail panel
   const [taskForm, setTaskForm]         = useState(BLANK_FORM)
   const setFormField = useCallback((f, v) => setTaskForm((p) => ({ ...p, [f]: v })), [])
 
+  // Persist sort preference across sessions
+  useEffect(() => { localStorage.setItem('tasks_sort_by', sortBy) }, [sortBy])
+  useEffect(() => { localStorage.setItem('tasks_sort_dir', sortDir) }, [sortDir])
+
   const filtered = useMemo(() => {
     const rows = statusFilter === 'All' ? tasks : tasks.filter((t) => t.Status === statusFilter)
     return [...rows].sort((a, b) => {
-      const aOver = isOverdue(a.DueDate) && a.Status !== 'Done'
-      const bOver = isOverdue(b.DueDate) && b.Status !== 'Done'
-      if (aOver !== bOver) return aOver ? -1 : 1
-      return new Date((a.DueDate || '9999') + 'T00:00:00') - new Date((b.DueDate || '9999') + 'T00:00:00')
+      let cmp = 0
+      if (sortBy === 'Due Date') {
+        // Default sort keeps overdue tasks pinned first regardless of direction —
+        // direction only controls ordering within the overdue/not-overdue groups
+        const aOver = isOverdue(a.DueDate) && a.Status !== 'Done'
+        const bOver = isOverdue(b.DueDate) && b.Status !== 'Done'
+        if (aOver !== bOver) return aOver ? -1 : 1
+        cmp = new Date((a.DueDate || '9999') + 'T00:00:00') - new Date((b.DueDate || '9999') + 'T00:00:00')
+      } else if (sortBy === 'Priority') {
+        cmp = (PRIORITY_RANK[a.Priority] || 0) - (PRIORITY_RANK[b.Priority] || 0)
+      } else if (sortBy === 'Assignee') {
+        cmp = String(a.AssignedTo || '').localeCompare(String(b.AssignedTo || ''))
+      } else if (sortBy === 'Status') {
+        cmp = String(a.Status || '').localeCompare(String(b.Status || ''))
+      }
+      return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [tasks, statusFilter])
+  }, [tasks, statusFilter, sortBy, sortDir])
 
   const grouped = useMemo(() => {
     if (groupBy === 'None') return { '': filtered }
@@ -381,6 +401,24 @@ export default function Tasks({ toast }) {
                   {g}
                 </button>
               ))}
+            </div>
+            <div className={styles.groupRow}>
+              <span className="text-xs text-muted">Sort by</span>
+              {SORTS.map((s) => (
+                <button key={s} className={`filter-chip ${sortBy === s ? 'active' : ''}`}
+                  onClick={() => setSortBy(s)}>
+                  {s}
+                </button>
+              ))}
+              <button
+                className="btn btn-ghost btn-icon text-xs"
+                style={{ marginLeft: 2 }}
+                onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
+                title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                aria-label="Toggle sort direction"
+              >
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </button>
             </div>
           </div>
 
