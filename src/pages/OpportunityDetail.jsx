@@ -13,7 +13,7 @@ import { invalidateCache } from '@/services/dataCache'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
-  OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES,
+  OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES,
   parsePOCNames, addContactToPOC, removeContactFromPOC,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
@@ -68,6 +68,15 @@ function safeUrl(url) {
   const s = String(url).trim()
   if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('//')) return s
   return `https://${s}`
+}
+
+/** "Other Links*" stores one or more URLs, newline-delimited, in a single cell. */
+function parseLinks(val) {
+  if (!val) return []
+  return String(val).split('\n').map((s) => s.trim()).filter(Boolean)
+}
+function joinLinks(arr) {
+  return arr.map((s) => s.trim()).filter(Boolean).join('\n')
 }
 
 function formatFieldValue(val) {
@@ -144,13 +153,14 @@ export default function OpportunityDetail({ toast }) {
   const navigate  = useNavigate()
   const { user }  = useAuth()
 
-  const { pipeline, loading: pipelineLoading, update: updateOpp } = usePipeline()
+  const { pipeline, loading: pipelineLoading, update: updateOpp, remove: removeOpp } = usePipeline()
   const { notes, loading: notesLoading, add: addNote }            = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
-  const { contacts }  = useContacts()
+  const { contacts, add: addContactRecord }  = useContacts()
   const { lists }     = useValidationLists()
 
   const phaseOptions      = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const activityPhaseOptions = pickList(lists, 'TAG Pipeline Activity Phase', ACTIVITY_PHASES)
   const outlookOptions    = pickList(lists, 'Opportunity Outlook',   OPPORTUNITY_OUTLOOK)
   const priorityOptions   = pickList(lists, 'Priority',              PRIORITY_VALUES)
   const setAsideOptions   = pickList(lists, 'Set-Aside',             SET_ASIDE_VALUES)
@@ -161,6 +171,8 @@ export default function OpportunityDetail({ toast }) {
   const [form,            setForm]            = useState(null)
   const [editing,         setEditing]         = useState(false)
   const [saving,          setSaving]          = useState(false)
+  const [confirmDelete,   setConfirmDelete]   = useState(false)
+  const [deleting,        setDeleting]        = useState(false)
   const [newNote,         setNewNote]         = useState('')
   const [addingNote,      setAddingNote]      = useState(false)
   const [showAddTask,     setShowAddTask]     = useState(false)
@@ -171,6 +183,11 @@ export default function OpportunityDetail({ toast }) {
   })
   const [contactSearch,   setContactSearch]   = useState('')
   const [linkingContact,  setLinkingContact]  = useState(false)
+  const [showNewContact,  setShowNewContact]  = useState(false)
+  const [savingContact,   setSavingContact]   = useState(false)
+  const [newContactForm,  setNewContactForm]  = useState({
+    Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government',
+  })
   
 
   const opp = useMemo(
@@ -274,6 +291,19 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
+  const handleDeleteOpportunity = async () => {
+    setDeleting(true)
+    try {
+      await removeOpp(opp._rowIndex)
+      toast?.success('Opportunity deleted')
+      navigate('/opportunities')
+    } catch (err) {
+      toast?.error(`Failed to delete: ${err.message}`)
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
+
   const handleAddNote = async () => {
     if (!newNote.trim()) return
     setAddingNote(true)
@@ -324,6 +354,24 @@ export default function OpportunityDetail({ toast }) {
       await invalidateCache()
     } catch (err) {
       toast?.error(`Failed to unlink ${c.Name}`)
+    }
+  }
+
+  const handleCreateAndLinkContact = async () => {
+    const name = newContactForm.Name.trim()
+    if (!name) { toast?.error('Name is required'); return }
+    setSavingContact(true)
+    try {
+      await addContactRecord({ ...newContactForm, Name: name })
+      await retryThrice(() => addContactToPOC(opp._rowIndex, opp[C.poc], name))
+      toast?.success(`${name} added and linked`)
+      await invalidateCache()
+      setShowNewContact(false)
+      setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government' })
+    } catch (err) {
+      toast?.error(`Failed to add contact: ${err.message}`)
+    } finally {
+      setSavingContact(false)
     }
   }
 
@@ -435,6 +483,12 @@ export default function OpportunityDetail({ toast }) {
                     title="Discuss this opportunity with AI"
                   >✦ Discuss with AI</button>
                   <button className="btn" onClick={handleEdit}>Edit</button>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 12, color: 'var(--red-600)' }}
+                    onClick={() => setConfirmDelete(true)}
+                    title="Delete this opportunity"
+                  >🗑 Delete</button>
                 </>
               )
               : (
@@ -492,7 +546,7 @@ export default function OpportunityDetail({ toast }) {
         <Section title="Pursuit">
           <div className={styles.fieldGrid}>
             <Field label="Solicitation Number"   value={f(C.solNum)}    editing={editing} onChange={set(C.solNum)} />
-            <Field label="Activity Phase"        value={f(C.actPhase)}  editing={editing} onChange={set(C.actPhase)} />
+            <Field label="Activity Phase"        value={f(C.actPhase)}  editing={editing} onChange={set(C.actPhase)} options={activityPhaseOptions} />
             <Field label="Bid / No Bid?"         value={f(C.bidNoBid)}  editing={editing} onChange={set(C.bidNoBid)}  options={bidNoBidOptions} />
             <Field label="Prime or Sub?"         value={f(C.primeOrSub)} editing={editing} onChange={set(C.primeOrSub)} options={primeOrSubOptions} />
             <Field label="Partner"               value={f(C.partner)}   editing={editing} onChange={set(C.partner)} />
@@ -528,12 +582,23 @@ export default function OpportunityDetail({ toast }) {
 
           {/* Contact search — always visible */}
           <div style={{ position: 'relative', marginTop: linkedContacts.length > 0 ? 10 : 0 }}>
-            <input
-              className="form-input"
-              placeholder="Search contacts to link…"
-              value={contactSearch}
-              onChange={(e) => setContactSearch(e.target.value)}
-            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                className="form-input"
+                placeholder="Search contacts to link…"
+                value={contactSearch}
+                onChange={(e) => setContactSearch(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className="btn text-sm"
+                style={{ flexShrink: 0 }}
+                onClick={() => setShowNewContact((v) => !v)}
+              >
+                {showNewContact ? 'Cancel' : '+ New contact'}
+              </button>
+            </div>
             {contactSearch && (
               <div className={styles.contactDropdown}>
                 {unlinkedContacts.length === 0
@@ -552,6 +617,61 @@ export default function OpportunityDetail({ toast }) {
               </div>
             )}
           </div>
+
+          {/* Inline "new contact" form */}
+          {showNewContact && (
+            <div className="card" style={{ marginTop: 10, padding: 12 }}>
+              <div className={styles.fieldGrid}>
+                <div className="form-field">
+                  <label className="form-label">Name *</label>
+                  <input className="form-input" required value={newContactForm.Name}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Name: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Title</label>
+                  <input className="form-input" value={newContactForm.Title}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Title: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Agency</label>
+                  <input className="form-input" value={newContactForm.Agency}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Agency: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Organization</label>
+                  <input className="form-input" value={newContactForm.Organization}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Organization: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Email</label>
+                  <input className="form-input" type="email" value={newContactForm.Email}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Email: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Phone</label>
+                  <input className="form-input" value={newContactForm.Phone}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Phone: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Type</label>
+                  <select className="form-input" value={newContactForm.Type}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Type: e.target.value }))}>
+                    <option>Government</option>
+                    <option>Private</option>
+                  </select>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary text-sm"
+                style={{ marginTop: 10 }}
+                onClick={handleCreateAndLinkContact}
+                disabled={savingContact || !newContactForm.Name.trim()}
+              >
+                {savingContact ? 'Adding…' : 'Add & link contact'}
+              </button>
+            </div>
+          )}
         </Section>
 
         {/* ── Section 6: Links ── */}
@@ -562,28 +682,71 @@ export default function OpportunityDetail({ toast }) {
                 <Field label="GovWin Link"       value={f(C.govwin)}     editing onChange={set(C.govwin)} />
                 <Field label="Link to Folder"    value={f(C.folder)}     editing onChange={set(C.folder)} />
                 <Field label="Link to Slide Deck" value={f(C.slideDeck)} editing onChange={set(C.slideDeck)} />
-                <Field label="Other Links"       value={f(C.otherLinks)} editing onChange={set(C.otherLinks)} />
+                <div className={`form-field ${styles.spanFull}`}>
+                  <label className="form-label">Other Links</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {(parseLinks(f(C.otherLinks)).length > 0 ? parseLinks(f(C.otherLinks)) : ['']).map((link, i) => {
+                      const links = parseLinks(f(C.otherLinks)).length > 0 ? parseLinks(f(C.otherLinks)) : ['']
+                      return (
+                        <div key={i} style={{ display: 'flex', gap: 6 }}>
+                          <input
+                            className="form-input"
+                            placeholder="https://…"
+                            value={link}
+                            onChange={(e) => {
+                              const next = [...links]
+                              next[i] = e.target.value
+                              set(C.otherLinks)(joinLinks(next))
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon"
+                            aria-label="Remove link"
+                            title="Remove link"
+                            onClick={() => {
+                              const next = links.filter((_, j) => j !== i)
+                              set(C.otherLinks)(joinLinks(next))
+                            }}
+                          >✕</button>
+                        </div>
+                      )
+                    })}
+                    <button
+                      type="button"
+                      className="btn text-sm"
+                      style={{ alignSelf: 'flex-start' }}
+                      onClick={() => set(C.otherLinks)(joinLinks([...parseLinks(f(C.otherLinks)), '']))}
+                    >
+                      + Add link
+                    </button>
+                  </div>
+                </div>
               </div>
             )
-            : [
-                [C.govwin,     'GovWin ↗'],
-                [C.folder,     '📁 Folder ↗'],
-                [C.slideDeck,  '📊 Slide Deck ↗'],
-                [C.otherLinks, '🔗 Other Link ↗'],
-              ].some(([key]) => cur[key])
-              ? (
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  {[
-                    [C.govwin,     'GovWin ↗'],
-                    [C.folder,     '📁 Folder ↗'],
-                    [C.slideDeck,  '📊 Slide Deck ↗'],
-                    [C.otherLinks, '🔗 Other Link ↗'],
-                  ].map(([key, label]) => cur[key] && (
-                    <a key={key} href={safeUrl(cur[key])} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
-                  ))}
-                </div>
-              )
-              : <p className="text-sm text-muted">No links added.</p>
+            : (() => {
+                const otherLinkList = parseLinks(cur[C.otherLinks])
+                const fixedLinks = [
+                  [C.govwin,    'GovWin ↗'],
+                  [C.folder,    '📁 Folder ↗'],
+                  [C.slideDeck, '📊 Slide Deck ↗'],
+                ].filter(([key]) => cur[key])
+                if (fixedLinks.length === 0 && otherLinkList.length === 0) {
+                  return <p className="text-sm text-muted">No links added.</p>
+                }
+                return (
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    {fixedLinks.map(([key, label]) => (
+                      <a key={key} href={safeUrl(cur[key])} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
+                    ))}
+                    {otherLinkList.map((link, i) => (
+                      <a key={i} href={safeUrl(link)} target="_blank" rel="noreferrer" className="btn text-sm">
+                        🔗 Other Link{otherLinkList.length > 1 ? ` ${i + 1}` : ''} ↗
+                      </a>
+                    ))}
+                  </div>
+                )
+              })()
           }
         </Section>
 
@@ -710,6 +873,27 @@ export default function OpportunityDetail({ toast }) {
               </div>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* ── Delete confirmation modal ── */}
+      {confirmDelete && (
+        <Modal
+          title="Delete opportunity"
+          onClose={() => !deleting && setConfirmDelete(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleDeleteOpportunity} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm">
+            Delete <strong>{opp[C.title]}</strong> ({decodedCN})?
+            This removes it from the pipeline permanently and cannot be undone.
+          </p>
         </Modal>
       )}
     </>
