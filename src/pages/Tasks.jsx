@@ -49,6 +49,7 @@ function CircleCheck({ status, onClick }) {
 
 // ── Detail panel (slides in from right) ──────────────────────────────────
 function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast }) {
+  const navigate = useNavigate()
   const [form, setForm] = useState({ ...task })
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
