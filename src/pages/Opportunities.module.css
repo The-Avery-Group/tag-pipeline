@@ -1,4 +1,17 @@
-.sortIcon { font-size: 10px; color: var(--gray-400); margin-left: 3px; }
+/* ── Live progress indicator (pull in progress) ── */
+.spinnerDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue-600);
+  animation: spinnerPulse 1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes spinnerPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1); }
+}
 .empty {
   padding: 48px 24px;
   min-height: 220px;
