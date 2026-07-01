@@ -19,8 +19,12 @@ import {
   invalidateAll,
 } from '@/services/graphService'
 
-// How often to poll for external changes (default: 2 minutes)
-const POLL_INTERVAL_MS = 2 * 60 * 1000
+// How often to poll for external changes (e.g. another user's edits).
+// Was 2 minutes — shortened so changes from other sessions show up without
+// a manual refresh. Trade-off: more Graph API calls per active tab (6
+// parallel GETs per tick). 20s is a reasonable balance; raise it if this
+// starts hitting Graph API throttling limits with more concurrent users.
+const POLL_INTERVAL_MS = 20 * 1000
 
 let _warmed    = false
 let _warming   = false
