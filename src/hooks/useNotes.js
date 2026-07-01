@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { getNotes, addNote } from '@/services/graphService'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { getNotes, addNote, deleteNote } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 async function retryThrice(fn) {
@@ -15,14 +15,19 @@ export function useNotes(contractNumber) {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
 
+  // Rows optimistically removed but not yet confirmed deleted server-side —
+  // filtered out of every load() so a racing background poll can't make a
+  // just-deleted note flicker back into view before the delete propagates
+  // (same class of bug fixed in the other hooks' pendingPatches tracking).
+  const pendingDeletes = useRef(new Set())
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const all = await getNotes()
-      const filtered = contractNumber
-        ? all.filter((n) => n.ContractNumber === contractNumber)
-        : all
+      const filtered = (contractNumber ? all.filter((n) => n.ContractNumber === contractNumber) : all)
+        .filter((n) => !pendingDeletes.current.has(n._rowIndex))
       setNotes([...filtered].sort((a, b) => new Date(b.Date) - new Date(a.Date)))
     } catch (err) {
       setError(err.message)
@@ -61,5 +66,20 @@ export function useNotes(contractNumber) {
     }
   }, [contractNumber])
 
-  return { notes, loading, error, refresh: load, add }
+  const remove = useCallback(async (rowIndex) => {
+    pendingDeletes.current.add(rowIndex)
+    setNotes((prev) => prev.filter((n) => n._rowIndex !== rowIndex))
+    try {
+      await retryThrice(() => deleteNote(rowIndex))
+      await invalidateCache()
+    } catch (err) {
+      // Delete didn't actually happen — stop hiding it so the note
+      // reappears (via reload) rather than staying hidden forever
+      pendingDeletes.current.delete(rowIndex)
+      await load()
+      throw err
+    }
+  }, [load])
+
+  return { notes, loading, error, refresh: load, add, remove }
 }
