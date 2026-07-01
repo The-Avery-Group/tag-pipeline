@@ -9,6 +9,21 @@ import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
+// How often to poll /sam/run-status while a pull is actively running.
+const POLL_MS = 3000
+// A run still reporting status: 'running' after this long is presumed
+// stalled — most likely the Worker's background task hit a Cloudflare
+// execution-time limit mid-run and was killed before it could write a
+// final success/error log. Chosen generously so a legitimately slow but
+// still-progressing run isn't mistaken for a stuck one.
+const STALL_THRESHOLD_MS = 3 * 60 * 1000
+
+// Module-level (not per-hook-instance) so a stalled-run auto-resume is only
+// attempted once per browser session, even if the Opportunities page is
+// visited/remounted multiple times — avoids repeatedly re-triggering a pull
+// that's stuck for a persistent reason (bad secret, expired key, etc).
+let _resumeAttemptedThisSession = false
+
 async function retryThrice(fn) {
   let lastErr
   for (let i = 0; i < 3; i++) {
@@ -56,6 +71,37 @@ export function useSAMOpportunities() {
   // a dismissed row to flicker: vanish, reappear, then vanish again once
   // the real write is finally reflected. Keyed by _rowIndex -> Status.
   const pendingStatus = useRef(new Map())
+
+  // ── Pull progress — polling infrastructure ──────────────────────────
+  // Live status of an in-progress SAM.gov pull, sourced from the Worker's
+  // /sam/run-status endpoint. null when no pull is currently being tracked
+  // by this hook instance. Shape: { status: 'running'|'success'|'error',
+  // phase: 'fetching'|'writing', naicsProcessed, naicsTotal, toWrite, written, ... }
+  const [pullProgress, setPullProgress] = useState(null)
+  const pollTimerRef = useRef(null)
+
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }, [])
+
+  const startPolling = useCallback(() => {
+    stopPolling()
+    pollTimerRef.current = setInterval(async () => {
+      const status = await getSAMRunStatus()
+      setPullProgress(status)
+      if (status?.status === 'success' || status?.status === 'error') {
+        stopPolling()
+        await invalidateCache()
+      }
+    }, POLL_MS)
+  }, [stopPolling])
+
+  // Stop polling if this hook instance unmounts mid-run (e.g. user
+  // navigates away from the Opportunities page while a pull is active)
+  useEffect(() => stopPolling, [stopPolling])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -214,14 +260,44 @@ export function useSAMOpportunities() {
     // If throttled, return the throttle info so the UI can show the message
     if (data.throttled) return { throttled: true, message: data.message, lastRun: data.lastRun }
 
-    // Pull started in background — reload opportunities after a short delay
-    // so the user sees updated data without having to refresh manually
-    setTimeout(async () => {
-      await invalidateCache()
-    }, 5000)
+    // Pull started in the background on the Worker. Poll /sam/run-status so
+    // the UI can show live progress and know exactly when it's actually
+    // done — replaces a previous blind 5s timeout, which had no way to
+    // tell whether the pull had finished, was still running, or had
+    // silently gotten stuck.
+    setPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: 0, naicsTotal: null })
+    startPolling()
 
     return { throttled: false, message: data.message }
-  }, [])
+  }, [startPolling])
+
+  // ── Auto-resume a stalled run ─────────────────────────────────────────
+  // If a previous pull got killed mid-run (most likely a Cloudflare
+  // execution-time limit) without writing a final success/error status,
+  // /sam/run-status is left showing status: 'running' forever with no
+  // natural way for the user to know or recover — this is the "continue
+  // pulling even if timeout occurs" ask. Checked once per browser session
+  // when the Opportunities page first mounts.
+  useEffect(() => {
+    if (_resumeAttemptedThisSession) return
+    _resumeAttemptedThisSession = true
+    ;(async () => {
+      const status = await getSAMRunStatus()
+      if (status?.status === 'running' && status?.startedAt) {
+        const age = Date.now() - new Date(status.startedAt).getTime()
+        if (age > STALL_THRESHOLD_MS) {
+          console.log('[SAM] Detected a stalled pull — auto-resuming')
+          setPullProgress(status)   // show "resuming" state immediately, before the retrigger call completes
+          try {
+            await triggerPull({ force: true })
+          } catch (err) {
+            console.warn('[SAM] Auto-resume of a stalled pull failed:', err.message)
+            setPullProgress(null)
+          }
+        }
+      }
+    })()
+  }, [triggerPull])
 
   const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
   const undismiss = useCallback((rowIndex) => updateStatus(rowIndex, 'new'),       [updateStatus])
@@ -241,5 +317,6 @@ export function useSAMOpportunities() {
     undismiss,
     updateStatus,
     triggerPull,
+    pullProgress,
   }
 }
