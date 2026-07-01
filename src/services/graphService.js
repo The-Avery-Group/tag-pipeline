@@ -534,6 +534,10 @@ export async function addNote(contractNumber, author, text) {
   }, NOTES_HEADERS)
 }
 
+export async function deleteNote(rowIndex) {
+  return deleteRow('NotesTable', rowIndex)
+}
+
 export async function addTask(data, createdBy) {
   const id = `T-${Date.now()}`
   return appendRow('TasksTable', {
