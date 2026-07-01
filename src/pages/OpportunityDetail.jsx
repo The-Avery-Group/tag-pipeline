@@ -70,13 +70,48 @@ function safeUrl(url) {
   return `https://${s}`
 }
 
-/** "Other Links*" stores one or more URLs, newline-delimited, in a single cell. */
+// ── Linkify note text ────────────────────────────────────────────────────
+// Detects URLs inside a note's plain text and renders them as real,
+// clickable links instead of inert text. Built as React elements (not
+// dangerouslySetInnerHTML) so note text can never be interpreted as markup.
+const URL_PATTERN = /(https?:\/\/[^\s<>"')]+|www\.[^\s<>"')]+)/gi
+
+function linkifyText(text) {
+  if (!text) return null
+  // .split() with a single capturing group interleaves [text, match, text, match, ...]
+  // — odd indices are always the captured URL matches, so no regex-statefulness
+  // concerns from re-using .test()/.exec() with the global flag.
+  return String(text).split(URL_PATTERN).map((part, i) => {
+    if (i % 2 === 1) {
+      const href = part.toLowerCase().startsWith('www.') ? `https://${part}` : part
+      return (
+        <a key={i} href={href} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>
+          {part}
+        </a>
+      )
+    }
+    return part
+  })
+}
+
+/**
+ * "Other Links*" stores one or more URLs, newline-delimited, in a single cell.
+ *
+ * parseLinks/joinLinks preserve blank lines — this is the "draft" form used
+ * while editing, so a freshly-added empty row (from the "+ Add link" button)
+ * stays visible as its own input instead of being silently stripped back out
+ * before the user has had a chance to type into it. cleanLinks drops blanks
+ * and is used for read-only display and for what actually gets persisted.
+ */
 function parseLinks(val) {
   if (!val) return []
-  return String(val).split('\n').map((s) => s.trim()).filter(Boolean)
+  return String(val).split('\n').map((s) => s.trim())
 }
 function joinLinks(arr) {
-  return arr.map((s) => s.trim()).filter(Boolean).join('\n')
+  return arr.join('\n')
+}
+function cleanLinks(val) {
+  return parseLinks(val).filter(Boolean)
 }
 
 function formatFieldValue(val) {
@@ -154,7 +189,7 @@ export default function OpportunityDetail({ toast }) {
   const { user }  = useAuth()
 
   const { pipeline, loading: pipelineLoading, update: updateOpp, remove: removeOpp } = usePipeline()
-  const { notes, loading: notesLoading, add: addNote }            = useNotes(decodedCN)
+  const { notes, loading: notesLoading, add: addNote, remove: removeNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
   const { lists }     = useValidationLists()
@@ -175,6 +210,7 @@ export default function OpportunityDetail({ toast }) {
   const [deleting,        setDeleting]        = useState(false)
   const [newNote,         setNewNote]         = useState('')
   const [addingNote,      setAddingNote]      = useState(false)
+  const [deletingNoteId,  setDeletingNoteId]  = useState(null)
   const [showAddTask,     setShowAddTask]     = useState(false)
   const [savingTask,      setSavingTask]      = useState(false)
   const [updatingTaskId,  setUpdatingTaskId]  = useState(null)
@@ -280,7 +316,10 @@ export default function OpportunityDetail({ toast }) {
   const handleSave = async () => {
     setSaving(true)
     try {
-      await updateOpp(opp._rowIndex, form, opp)
+      // Strip any blank draft rows left over from editing Other Links
+      // (e.g. an "+ Add link" row the user never filled in) before saving.
+      const cleanedForm = { ...form, [C.otherLinks]: joinLinks(cleanLinks(form[C.otherLinks])) }
+      await updateOpp(opp._rowIndex, cleanedForm, opp)
       toast?.success('Saved')
       setEditing(false)
       setForm(null)
@@ -315,6 +354,18 @@ export default function OpportunityDetail({ toast }) {
       toast?.error(`Failed to add note: ${err.message}`)
     } finally {
       setAddingNote(false)
+    }
+  }
+
+  const handleDeleteNote = async (note) => {
+    setDeletingNoteId(note._rowIndex)
+    try {
+      await removeNote(note._rowIndex)
+      toast?.success('Note deleted')
+    } catch (err) {
+      toast?.error(`Failed to delete note: ${err.message}`)
+    } finally {
+      setDeletingNoteId(null)
     }
   }
 
@@ -725,7 +776,7 @@ export default function OpportunityDetail({ toast }) {
               </div>
             )
             : (() => {
-                const otherLinkList = parseLinks(cur[C.otherLinks])
+                const otherLinkList = cleanLinks(cur[C.otherLinks])
                 const fixedLinks = [
                   [C.govwin,    'GovWin ↗'],
                   [C.folder,    '📁 Folder ↗'],
@@ -758,8 +809,23 @@ export default function OpportunityDetail({ toast }) {
               ? <p className="text-muted text-sm" style={{ marginBottom: 10 }}>No notes yet.</p>
               : notes.map((n) => (
                   <div key={n.NoteID} className={styles.noteItem}>
-                    <div className={styles.noteMeta}>{n.Date} · {n.Author}</div>
-                    <div className={styles.noteText}>{n.NoteText}</div>
+                    <div className={styles.noteMeta} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>{n.Date} · {n.Author}</span>
+                      {editing && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon"
+                          style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--red-600)', marginLeft: 'auto' }}
+                          onClick={() => handleDeleteNote(n)}
+                          disabled={deletingNoteId === n._rowIndex}
+                          aria-label="Delete note"
+                          title="Delete note"
+                        >
+                          {deletingNoteId === n._rowIndex ? '…' : '✕'}
+                        </button>
+                      )}
+                    </div>
+                    <div className={styles.noteText}>{linkifyText(n.NoteText)}</div>
                   </div>
                 ))
           }
