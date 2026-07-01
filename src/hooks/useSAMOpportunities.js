@@ -49,12 +49,31 @@ export function useSAMOpportunities() {
   const [loading, setLoading]             = useState(true)
   const [error, setError]                 = useState(null)
 
+  // Tracks status changes that have been written locally but not yet
+  // confirmed by a server read. Without this, the background poll (or any
+  // other hook's invalidateCache() call anywhere in the app) can land
+  // mid-flight with stale data and clobber the optimistic state — causing
+  // a dismissed row to flicker: vanish, reappear, then vanish again once
+  // the real write is finally reflected. Keyed by _rowIndex -> Status.
+  const pendingStatus = useRef(new Map())
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const rows = await getSAMOpportunities()
-      setOpportunities(rows)
+      const reconciled = rows.map((row) => {
+        const pending = pendingStatus.current.get(row._rowIndex)
+        if (pending === undefined) return row
+        if (row.Status === pending) {
+          // Server has caught up with the optimistic change — stop tracking it
+          pendingStatus.current.delete(row._rowIndex)
+          return row
+        }
+        // Server hasn't caught up yet — keep showing the optimistic status
+        return { ...row, Status: pending }
+      })
+      setOpportunities(reconciled)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -117,6 +136,7 @@ export function useSAMOpportunities() {
   // No rollback on failure — visual state stays changed for smooth UX.
   // Retries 3 times silently; throws after that so caller can toast.
   const updateStatus = useCallback(async (rowIndex, status) => {
+    pendingStatus.current.set(rowIndex, status)
     setOpportunities((prev) =>
       prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
     )
@@ -124,7 +144,11 @@ export function useSAMOpportunities() {
       await retryThrice(() => updateSAMOpportunity(rowIndex, { Status: status }))
       debouncedInvalidate()
     } catch (err) {
-      // No visual rollback — stale state resolves on next cache refresh
+      // No visual rollback — visual state stays changed for smooth UX.
+      // The pending override is intentionally NOT cleared here: it keeps
+      // reconciling to the optimistic value until a future refresh shows
+      // the server genuinely agrees (e.g. after a manual retry), consistent
+      // with the "no rollback on failure" behavior this hook already had.
       throw err
     }
   }, [debouncedInvalidate])
