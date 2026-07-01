@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getContacts, addContact, updateContact, deleteContact } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
@@ -7,12 +7,27 @@ export function useContacts() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
 
+  // Tracks in-flight field patches not yet confirmed by a server read, so a
+  // racing refresh (background poll, or any other hook's invalidateCache())
+  // can't clobber an edit before the write has actually landed.
+  const pendingPatches = useRef(new Map())
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const data = await getContacts()
-      setContacts(data)
+      const reconciled = data.map((c) => {
+        const patch = pendingPatches.current.get(c._rowIndex)
+        if (!patch) return c
+        const confirmed = Object.keys(patch).every((k) => c[k] === patch[k])
+        if (confirmed) {
+          pendingPatches.current.delete(c._rowIndex)
+          return c
+        }
+        return { ...c, ...patch }
+      })
+      setContacts(reconciled)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -44,6 +59,7 @@ export function useContacts() {
   }, [])
 
   const update = useCallback(async (rowIndex, patch) => {
+    pendingPatches.current.set(rowIndex, patch)
     // Optimistic: apply patch immediately
     setContacts((prev) =>
       prev.map((c) => c._rowIndex === rowIndex ? { ...c, ...patch } : c)
@@ -53,6 +69,7 @@ export function useContacts() {
       await invalidateCache()
     } catch (err) {
       // Roll back by reloading from server
+      pendingPatches.current.delete(rowIndex)
       await load()
       throw err
     }
