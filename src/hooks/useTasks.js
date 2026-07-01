@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '@/services/graphService'
 import { notifyTaskCreated } from '@/services/notifyService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
@@ -16,6 +16,12 @@ export function useTasks(contractNumber = null) {
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState(null)
 
+  // Tracks in-flight field patches (e.g. Status toggles) not yet confirmed
+  // by a server read, so a racing refresh — the background poll, or any
+  // other hook's invalidateCache() call anywhere in the app — can't clobber
+  // an edit before the write has actually landed. Keyed by _rowIndex -> patch.
+  const pendingPatches = useRef(new Map())
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -24,7 +30,17 @@ export function useTasks(contractNumber = null) {
       const filtered = contractNumber
         ? all.filter((t) => t.ContractNumber === contractNumber)
         : all
-      setTasks(filtered)
+      const reconciled = filtered.map((t) => {
+        const patch = pendingPatches.current.get(t._rowIndex)
+        if (!patch) return t
+        const confirmed = Object.keys(patch).every((k) => t[k] === patch[k])
+        if (confirmed) {
+          pendingPatches.current.delete(t._rowIndex)
+          return t
+        }
+        return { ...t, ...patch }
+      })
+      setTasks(reconciled)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -57,6 +73,7 @@ export function useTasks(contractNumber = null) {
     if (safePatch.DueDate instanceof Date) {
       safePatch.DueDate = safePatch.DueDate.toISOString().split('T')[0]
     }
+    pendingPatches.current.set(rowIndex, safePatch)
     // Optimistic update — apply patch immediately
     setTasks((prev) =>
       prev.map((t) => t._rowIndex === rowIndex ? { ...t, ...safePatch } : t)
@@ -65,7 +82,10 @@ export function useTasks(contractNumber = null) {
       await retryThrice(() => updateTask(rowIndex, safePatch))
       await invalidateCache()
     } catch (err) {
-      // Silent fail — stale state until next cache refresh, no rollback
+      // Silent fail — no rollback (existing design). The pending patch is
+      // intentionally left in place so it keeps reconciling to the
+      // optimistic value on future refreshes, rather than the UI silently
+      // reverting once a background poll happens to land.
       throw err
     }
   }, [])
