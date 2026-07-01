@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { useTasks } from '@/hooks/useTasks'
 import { usePipeline } from '@/hooks/usePipeline'
+import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
@@ -167,12 +168,18 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast }) {
           {task.ContractNumber && (
             <div className={styles.panelSection}>
               <label className={styles.panelLabel}>Opportunity</label>
-              <div className={styles.panelContractChip}>
+              <button
+                type="button"
+                className={styles.panelContractChip}
+                style={{ cursor: 'pointer', textAlign: 'left', width: '100%', font: 'inherit' }}
+                onClick={() => navigate(`/opportunities/${encodeURIComponent(task.ContractNumber)}`)}
+                title="Open this opportunity"
+              >
                 <span className={styles.panelContractNum}>{task.ContractNumber}</span>
                 {task.ContractTitle && (
                   <span className={styles.panelContractTitle}>{task.ContractTitle}</span>
                 )}
-              </div>
+              </button>
             </div>
           )}
 
@@ -295,6 +302,8 @@ export default function Tasks({ toast }) {
   const { user } = useAuth()
   const { tasks, loading, add, update, remove } = useTasks()
   const { pipeline } = usePipeline()
+  const listPaneRef = useRef(null)
+  useScrollRestoration(listPaneRef)   // Tasks uses its own scroll container (.listPane), not the page-level one
 
   const [statusFilter, setStatusFilter] = useState('All')
   const [groupBy, setGroupBy]           = useState('None')
@@ -382,7 +391,7 @@ export default function Tasks({ toast }) {
 
       <div className={styles.layout}>
         {/* Left: list */}
-        <div className={styles.listPane}>
+        <div ref={listPaneRef} className={styles.listPane}>
           {/* Filter + group bar */}
           <div className={styles.controls}>
             <div className="filter-chips">
