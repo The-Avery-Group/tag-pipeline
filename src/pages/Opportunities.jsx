@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hooks/useSAMOpportunities'
+import { useAsyncAction } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
@@ -38,7 +39,7 @@ const C = {
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
-const TABS = ['RFIs', 'Expiring', 'Tracked', 'New']
+const TABS = ['All', 'RFIs', 'Expiring', 'Tracked', 'New']
 
 // ── Phase badge map ───────────────────────────────────────────────────────
 const PHASE_BADGE = {
@@ -51,9 +52,18 @@ const PHASE_BADGE = {
   'Cancelled':        'badge-closed-lost',
 }
 
+// ── Priority badge map ────────────────────────────────────────────────────
+const PRIORITY_BADGE = {
+  'Hot':  'badge-closed-lost',   // red — reuse existing badge tokens rather than adding new CSS
+  'Warm': 'badge-proposal',      // amber/orange
+  'Cold': 'badge-tracking',      // neutral
+}
+
 // ── Per-tab row filter (base filter before search/advanced filters) ────────
 function getTabRows(pipeline, tab) {
   switch (tab) {
+    case 'All':
+      return pipeline
     case 'RFIs':
       return pipeline.filter(
         (o) => o[C.phase] === 'Identified' && o[C.outlook] === 'New'
@@ -69,6 +79,7 @@ function getTabRows(pipeline, tab) {
 
 // ── Per-tab default sort ──────────────────────────────────────────────────
 const TAB_DEFAULT_SORT = {
+  All:      { key: C.lastMod,  dir: 'desc' },
   RFIs:     { key: C.lastMod,  dir: 'desc' },
   Expiring: { key: C.endDate,  dir: 'asc'  },
   Tracked:  { key: C.lastMod,  dir: 'desc' },
@@ -138,6 +149,9 @@ export default function Opportunities({ toast }) {
 
   // ── Modals ────────────────────────────────────────────────────────────
   const [showAdd, setShowAdd] = useState(searchParams.get('new') === '1')
+  // ── Shared in-progress feedback (consistent loading state across actions) ──
+  const deleteAction      = useAsyncAction()   // pipeline opportunity delete (confirm modal)
+  const bulkDismissAction = useAsyncAction()   // New-tab bulk dismiss
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
@@ -159,6 +173,7 @@ export default function Opportunities({ toast }) {
 
   // ── Tab counts (raw, before search/filters) ───────────────────────────
   const tabCounts = useMemo(() => ({
+    All:      pipeline.length,
     RFIs:     getTabRows(pipeline, 'RFIs').length,
     Expiring: getTabRows(pipeline, 'Expiring').length,
     Tracked:  getTabRows(pipeline, 'Tracked').length,
@@ -242,12 +257,13 @@ export default function Opportunities({ toast }) {
   const handleDelete = async () => {
     if (!confirmDelete) return
     try {
-      await remove(confirmDelete._rowIndex)
+      await deleteAction.run(() => remove(confirmDelete._rowIndex), {
+        onError: (err) => toast?.error(`Failed to delete: ${err.message}`),
+      })
       toast?.success('Opportunity deleted')
-    } catch (err) {
-      toast?.error(`Failed to delete: ${err.message}`)
-    } finally {
       setConfirmDelete(null)
+    } catch {
+      // Error already toasted via onError — leave the modal open so the user can retry
     }
   }
 
@@ -377,13 +393,15 @@ export default function Opportunities({ toast }) {
     const rowIndices = [...selectedRows]
     setSelectedRows(new Set())
     let failed = 0
-    for (const rowIndex of rowIndices) {
-      try {
-        await dismiss(rowIndex)
-      } catch {
-        failed++
+    await bulkDismissAction.run(async () => {
+      for (const rowIndex of rowIndices) {
+        try {
+          await dismiss(rowIndex)
+        } catch {
+          failed++
+        }
       }
-    }
+    })
     const dismissed = rowIndices.length - failed
     if (dismissed > 0) toast?.success(`${dismissed} opportunit${dismissed === 1 ? 'y' : 'ies'} dismissed`)
     if (failed > 0) toast?.error(`${failed} could not be dismissed — will retry on next sync`)
@@ -554,10 +572,11 @@ export default function Opportunities({ toast }) {
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Response Date</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
                       <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
-                        {selectedRows.size > 0
-                          ? <button style={{ fontSize: '10.5px', padding: '2px 8px', background: 'var(--red-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500 }}
+                        {(selectedRows.size > 0 || bulkDismissAction.isLoading)
+                          ? <button style={{ fontSize: '10.5px', padding: '2px 8px', background: 'var(--red-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: bulkDismissAction.isLoading ? 'default' : 'pointer', fontFamily: 'var(--font)', fontWeight: 500, opacity: bulkDismissAction.isLoading ? 0.7 : 1 }}
+                              disabled={bulkDismissAction.isLoading}
                               onClick={handleBulkDismiss}>
-                              Dismiss {selectedRows.size} selected
+                              {bulkDismissAction.isLoading ? 'Dismissing…' : `Dismiss ${selectedRows.size} selected`}
                             </button>
                           : 'Actions'
                         }
@@ -666,6 +685,7 @@ export default function Opportunities({ toast }) {
     : activeFilterCount > 0
       ? 'No opportunities match the current filters.'
       : {
+          All:      'No opportunities in the pipeline yet.',
           RFIs:     'No RFIs yet. Opportunities appear here when Phase is Identified and Outlook is New.',
           Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
           Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
@@ -673,6 +693,58 @@ export default function Opportunities({ toast }) {
         }[activeTab]
 
   // ── Table renderers (one per tab) ─────────────────────────────────────
+
+  const AllTable = () => (
+    <table className="data-table">
+      <thead>
+        <tr>
+          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Title <SortIcon col={C.title} /></th>
+          <th>Contract #</th>
+          <th onClick={() => handleSort(C.phase)} style={{ cursor: 'pointer' }}>Phase <SortIcon col={C.phase} /></th>
+          <th onClick={() => handleSort(C.outlook)} style={{ cursor: 'pointer' }}>Outlook <SortIcon col={C.outlook} /></th>
+          <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
+          <th onClick={() => handleSort(C.priority)} style={{ cursor: 'pointer' }}>Priority <SortIcon col={C.priority} /></th>
+          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Value <SortIcon col={C.value} /></th>
+          <th onClick={() => handleSort(C.lastMod)} style={{ cursor: 'pointer' }}>Last modified <SortIcon col={C.lastMod} /></th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {filtered.map((opp) => {
+          const cn = opp[C.contractNum]
+          return (
+            <tr key={`${cn}-${opp._rowIndex}`}
+              onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
+              <td style={{ fontWeight: 500, maxWidth: 240 }}>{opp[C.title]}</td>
+              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
+              <td>
+                <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>
+                  {opp[C.phase] || '—'}
+                </span>
+              </td>
+              <td className="text-sm text-muted">{opp[C.outlook] || '—'}</td>
+              <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+              <td className="text-sm">
+                {opp[C.priority]
+                  ? <span className={`badge ${PRIORITY_BADGE[opp[C.priority]] || 'badge-tracking'}`}>{opp[C.priority]}</span>
+                  : <span className="text-muted">—</span>}
+              </td>
+              <td className="text-sm">{fmtValue(opp[C.value])}</td>
+              <td className="text-sm text-muted">{formatDate(opp[C.lastMod])}</td>
+              <td>
+                <button
+                  className="btn btn-ghost btn-icon"
+                  aria-label="Delete"
+                  title="Delete"
+                  onClick={(e) => { e.stopPropagation(); setConfirmDelete(opp) }}
+                >✕</button>
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
 
   const RFIsTable = () => (
     <table className="data-table">
@@ -967,6 +1039,7 @@ export default function Opportunities({ toast }) {
                 ? <div className={styles.empty}>{emptyMsg}</div>
                 : (
                   <div style={{ overflowX: 'auto' }}>
+                    {activeTab === 'All'      && <AllTable />}
                     {activeTab === 'RFIs'     && <RFIsTable />}
                     {activeTab === 'Expiring' && <ExpiringTable />}
                     {activeTab === 'Tracked'  && <TrackedTable />}
@@ -1090,11 +1163,13 @@ export default function Opportunities({ toast }) {
       {confirmDelete && (
         <Modal
           title="Delete opportunity"
-          onClose={() => setConfirmDelete(null)}
+          onClose={() => !deleteAction.isLoading && setConfirmDelete(null)}
           footer={
             <>
-              <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
-              <button className="btn btn-danger" onClick={handleDelete}>Delete</button>
+              <button className="btn" onClick={() => setConfirmDelete(null)} disabled={deleteAction.isLoading}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleDelete} disabled={deleteAction.isLoading}>
+                {deleteAction.isLoading ? 'Deleting…' : 'Delete'}
+              </button>
             </>
           }
         >
