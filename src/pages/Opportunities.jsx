@@ -275,6 +275,7 @@ export default function Opportunities({ toast }) {
     dismiss,
     undismiss,
     triggerPull,
+    pullProgress,
   } = useSAMOpportunities()
 
   const [showDismissed, setShowDismissed] = useState(false)
@@ -421,7 +422,7 @@ export default function Opportunities({ toast }) {
   }
 
   const handlePull = async ({ force = false } = {}) => {
-    if (pulling) return
+    if (isPulling) return
     setPulling(true)
     setPullMessage(null)
     try {
@@ -429,9 +430,7 @@ export default function Opportunities({ toast }) {
       if (result.throttled) {
         setPullMessage({ type: 'info', text: result.message })
       } else {
-        setPullMessage({ type: 'success', text: 'Pull started — new opportunities will appear shortly.' })
-        // Refresh run status
-        getSAMRunStatus().then(setSamRunStatus)
+        setPullMessage(null)   // live progress display (below) takes over from here
       }
     } catch (err) {
       setPullMessage({ type: 'error', text: `Pull failed: ${err.message}` })
@@ -439,6 +438,46 @@ export default function Opportunities({ toast }) {
       setPulling(false)
     }
   }
+
+  // isPulling covers both "this tab just clicked Refresh" (pulling, true only
+  // for the brief initial POST) and "a pull is actively running right now"
+  // (pullProgress, true for the whole run — including one auto-resumed from
+  // a stalled previous session, which this component never explicitly triggered)
+  const isPulling = pulling || pullProgress?.status === 'running'
+
+  const pullProgressText = (() => {
+    if (!pullProgress || pullProgress.status !== 'running') return null
+    if (pullProgress.phase === 'writing') {
+      const n = pullProgress.toWrite || 0
+      return `Writing ${n} new opportunit${n === 1 ? 'y' : 'ies'} to the pipeline…`
+    }
+    const { naicsProcessed = 0, naicsTotal } = pullProgress
+    return naicsTotal
+      ? `Fetching from SAM.gov… (${naicsProcessed}/${naicsTotal} NAICS codes)`
+      : 'Fetching from SAM.gov…'
+  })()
+
+  // Once a polled run reaches a terminal state, treat it as the new
+  // "last pulled" summary immediately rather than waiting for the next
+  // page load — pullProgress already carries the same shape samRunStatus expects.
+  useEffect(() => {
+    if (pullProgress?.status === 'success' || pullProgress?.status === 'error') {
+      setSamRunStatus(pullProgress)
+    }
+  }, [pullProgress])
+
+  // Let the user know if a pull just started that THIS tab didn't initiate
+  // (i.e. the auto-resume-a-stalled-run logic in the hook kicked in)
+  const autoResumeNoticedRef = useRef(false)
+  useEffect(() => {
+    if (pullProgress?.status === 'running' && !pulling && !autoResumeNoticedRef.current) {
+      autoResumeNoticedRef.current = true
+      setPullMessage({ type: 'info', text: 'Resuming an opportunity pull that didn\u2019t finish in an earlier session…' })
+    }
+    if (pullProgress?.status === 'success' || pullProgress?.status === 'error') {
+      autoResumeNoticedRef.current = false   // reset so a future stall can be noticed again
+    }
+  }, [pullProgress, pulling])
 
   const samStatusBadge = (status) => {
     if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>Added</span>
@@ -475,8 +514,8 @@ export default function Opportunities({ toast }) {
             )}
           </span>
           <button className="btn text-xs" style={{ padding: '3px 10px' }}
-            onClick={() => handlePull()} disabled={pulling}>
-            {pulling ? '⏳ Pulling…' : '↻ Refresh'}
+            onClick={() => handlePull()} disabled={isPulling}>
+            {isPulling ? '⏳ Pulling…' : '↻ Refresh'}
           </button>
           {/* Department filter — controlled multi-select, stays open on selection, always visible */}
           {samDepartments.length > 0 && (
@@ -517,15 +556,26 @@ export default function Opportunities({ toast }) {
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <span className="text-xs text-muted">
-            {samRunStatus?.success
-              ? `Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
-              : samRunStatus?.success === false
-                ? <span style={{ color: 'var(--red-600)' }}>Last run failed</span>
-                : 'Not yet pulled'
-            }
-            {samRunStatus?.written > 0 && <> · {samRunStatus.written} new</>}
-          </span>
+          {isPulling && pullProgressText
+            ? (
+              <span className="text-xs" style={{ color: 'var(--blue-600)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className={styles.spinnerDot} aria-hidden="true" />
+                {pullProgressText}
+              </span>
+            )
+            : (
+              <span className="text-xs text-muted">
+                {samRunStatus?.success
+                  ? `Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                  : samRunStatus?.success === false
+                    ? <span style={{ color: 'var(--red-600)' }}>Last run failed</span>
+                    : 'Not yet pulled'
+                }
+                {samRunStatus?.written > 0 && <> · {samRunStatus.written} new</>}
+                {samRunStatus?.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
+              </span>
+            )
+          }
           {pullMessage && (
             <span style={{ fontSize: 11, color: pullMessage.type === 'error' ? 'var(--red-600)' : pullMessage.type === 'success' ? 'var(--green-600)' : 'var(--gray-600)' }}>
               {pullMessage.text}
