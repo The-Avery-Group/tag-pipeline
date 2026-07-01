@@ -4,6 +4,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hooks/useSAMOpportunities'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
+import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
@@ -101,6 +102,7 @@ export default function Opportunities({ toast }) {
   const [searchParams] = useSearchParams()
   const { pipeline, loading, add, remove } = usePipeline()
   const { lists } = useValidationLists()
+  useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
 
   const outlookOptions  = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
   const priorityOptions = pickList(lists, 'Priority', PRIORITY_VALUES)
@@ -565,14 +567,24 @@ export default function Opportunities({ toast }) {
             )
             : (
               <span className="text-xs text-muted">
-                {samRunStatus?.success
-                  ? `Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
-                  : samRunStatus?.success === false
-                    ? <span style={{ color: 'var(--red-600)' }}>Last run failed</span>
-                    : 'Not yet pulled'
-                }
-                {samRunStatus?.written > 0 && <> · {samRunStatus.written} new</>}
-                {samRunStatus?.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
+                {samRunStatus?.success === true && (
+                  <>
+                    {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
+                    {samRunStatus.written > 0 && <> · {samRunStatus.written} new</>}
+                    {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
+                    {samRunStatus.warnings?.length > 0 && (
+                      <span style={{ color: 'var(--amber-600)' }} title={samRunStatus.warnings.join('\n')}>
+                        {' '}· ⚠ {samRunStatus.warnings.length} warning{samRunStatus.warnings.length === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </>
+                )}
+                {samRunStatus?.success === false && (
+                  <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
+                    Last run failed: {samRunStatus.error || 'Unknown error'}
+                  </span>
+                )}
+                {samRunStatus?.success == null && 'Not yet pulled'}
               </span>
             )
           }
