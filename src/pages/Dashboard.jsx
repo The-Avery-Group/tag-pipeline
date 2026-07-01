@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
+import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import { computeKPIs, computeRFIByMonth, getGreeting, formatDate, isOverdue, formatCurrency } from '@/utils/kpiHelpers'
@@ -367,6 +368,7 @@ function TrackedOppRowHeader() {
 export default function Dashboard({ toast }) {
   const { user } = useAuth()
   const navigate = useNavigate()
+  useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
   const { pipeline, loading: pLoading } = usePipeline()
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
   const [closingTask, setClosingTask] = useState(null)
