@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
+import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import { formatCurrency } from '@/utils/kpiHelpers'
 import { OPPORTUNITY_PHASES } from '@/services/graphService'
@@ -35,6 +36,7 @@ function parseValue(v) {
 
 export default function PipelineBoard({ toast }) {
   const navigate = useNavigate()
+  useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
   const { pipeline, loading, update } = usePipeline()
   const { lists } = useValidationLists()
   const phases = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
