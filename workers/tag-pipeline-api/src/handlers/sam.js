@@ -31,6 +31,20 @@
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 const PAGE_SIZE = 500
+// Was referenced (`sleep(PAGE_DELAY)`) but never defined anywhere in this file —
+// pre-existing bug, unrelated to this changeset. Fixed opportunistically since
+// it's directly adjacent to code being touched here; a missing constant means
+// `sleep(undefined)` → NaN delay → effectively no pause between paginated
+// SAM.gov requests, which risks tripping their rate limiter on large result sets.
+const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
+
+// Shared subrequest budget — Cloudflare Workers cap outbound fetch() calls
+// per request (50 on the free plan, higher on paid). Every SAM.gov fetch,
+// every Graph API read/write/delete, and every KV put/get all count against
+// this. Kept as module-level constants so the write cap and the delete cap
+// can be reasoned about together.
+const MAX_WRITES_PER_RUN  = 15
+const MAX_DELETES_PER_RUN = 10
 
 // Hardcoded — matches frontend graphService.js constant exactly
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
@@ -90,6 +104,26 @@ function parseOrg(fullParentPathName) {
   }
 }
 
+// ── Solicitation-number dedup helpers ───────────────────────────────────────
+// Two different Notice IDs can represent the same underlying opportunity —
+// SAM.gov commonly reissues/amends a notice under a new Notice ID while
+// keeping the same Solicitation Number. Notice-ID-only dedup (the existing
+// behavior) doesn't catch this, so the same opportunity can show up twice
+// under different Notice IDs. These helpers let us also dedup by
+// Solicitation Number and keep only the most recently posted variant.
+
+function normalizeSolNum(s) {
+  return String(s || '').trim().toUpperCase()
+}
+
+// True if `a` is strictly more recent than `b`. Both are already normalized
+// to 'YYYY-MM-DD' by parseResponseDate, so a plain string compare works.
+// An empty/missing date sorts as "oldest", so a record with a real posted
+// date always wins over one without.
+function newerRecord(aPostedDate, bPostedDate) {
+  return String(aPostedDate || '') > String(bPostedDate || '')
+}
+
 // ── Graph API helpers (using frontend-supplied delegated token) ────────────
 
 function workbookBase(env) {
@@ -125,26 +159,34 @@ async function getTableRows(env, token, tableName) {
   })
 }
 
-// ── Delete expired rows (sequential, capped to preserve subrequest budget) ──
+// ── Delete expired + solicitation-superseded rows, one shared cap ──────────
+// (sequential, capped to preserve subrequest budget; descending index order
+// so earlier deletes don't shift the row indices of later ones)
 
-async function deleteExpiredRows(env, token, existingRows) {
-  // Reuse already-fetched rows rather than making another read (saves 2 subrequests)
+async function cleanupRows(env, token, existingRows, dedupDeleteRowIndices = new Set()) {
   const today = todayISO()
-  const toDelete = existingRows
+  const expiredIndices = existingRows
     .filter((r) => {
       const rd = String(r['Response Date'] || '').trim().slice(0, 10)
       return rd && rd < today
     })
-    .sort((a, b) => b._rowIndex - a._rowIndex)   // descending so indices stay valid
-    .slice(0, 10)   // cap at 10 deletions per run to stay within subrequest budget
+    .map((r) => r._rowIndex)
 
-  for (const row of toDelete) {
+  // Combine both cleanup reasons under one cap so we never risk exceeding
+  // the subrequest budget even when a run has both expired rows AND
+  // solicitation-superseded duplicates to remove. De-duped via Set in case
+  // a row happens to be both (rare, but possible).
+  const allIndices = [...new Set([...expiredIndices, ...dedupDeleteRowIndices])]
+    .sort((a, b) => b - a)   // descending so indices stay valid as we delete
+    .slice(0, MAX_DELETES_PER_RUN)
+
+  for (const rowIndex of allIndices) {
     await graphFetch(env, token,
-      `/tables/NewOpportunitiesTable/rows/itemAt(index=${row._rowIndex})`,
+      `/tables/NewOpportunitiesTable/rows/itemAt(index=${rowIndex})`,
       { method: 'DELETE' }
     )
   }
-  return toDelete.length
+  return allIndices.length
 }
 
 // ── Append a new opportunity row ──────────────────────────────────────────
@@ -265,9 +307,19 @@ async function runSAMPull(env, token, config) {
 
   if (!naicsCodes.length) {
     const err = 'No NAICS codes provided'
-    await setRunLog(env, { success: false, timestamp: runStart, error: err })
+    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: err })
     throw new Error(err)
   }
+
+  // Mark the run as in-progress immediately so /sam/run-status reflects a
+  // live pull rather than stale data from the previous run (or nothing) —
+  // this is the "monitor progress" ask. Intentionally limited to a handful
+  // of KV writes total for the whole run (not one per NAICS code), since
+  // each KV put() also counts against the subrequest budget.
+  await setRunLog(env, {
+    status: 'running', phase: 'fetching', timestamp: runStart, startedAt: runStart,
+    naicsTotal: naicsCodes.length, naicsProcessed: 0,
+  })
 
   // Build date ranges
   const now        = new Date()
@@ -282,36 +334,53 @@ async function runSAMPull(env, token, config) {
 
   console.log(`[SAM] ${naicsCodes.length} NAICS | Posted: ${postedFrom}→${postedTo} | Deadline: ${rdlFrom}→${rdlTo}`)
 
-  // Get existing rows ONCE — reuse for dedup check AND cleanup
-  // This saves 2 subrequests (no second read for cleanup)
+  // Get existing rows ONCE — reused for Notice-ID dedup, Solicitation-Number
+  // dedup, AND expired-row cleanup, saving subrequests.
   let existingRows
   try {
     existingRows = await getTableRows(env, token, 'NewOpportunitiesTable')
   } catch (err) {
     const msg = `Failed to read NewOpportunitiesTable: ${err.message}`
-    await setRunLog(env, { success: false, timestamp: runStart, error: msg })
+    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: msg })
     throw new Error(msg)
   }
+
   const existingIds = new Set(
     existingRows.map((r) => String(r['Notice ID'] || '').trim()).filter(Boolean)
   )
 
-  // Fetch and write
+  // Solicitation Number -> the most-recent variant we currently know about
+  // (either already in the sheet, or a candidate fetched earlier this run).
+  // `fromExisting: true` means rowIndex points at a real sheet row that
+  // should be deleted if a newer candidate supersedes it; `false` means it
+  // points at an in-memory candidate not yet written, which can simply be
+  // dropped from the write list instead of needing a delete.
+  const solNumIndex = new Map()
+  existingRows.forEach((r) => {
+    const solNum = normalizeSolNum(r['Solicitation Number'])
+    if (!solNum) return
+    const postedDate = String(r['Posted Date'] || '')
+    const current = solNumIndex.get(solNum)
+    if (!current || newerRecord(postedDate, current.postedDate)) {
+      solNumIndex.set(solNum, { noticeId: r['Notice ID'], rowIndex: r._rowIndex, postedDate, fromExisting: true })
+    }
+  })
+
+  // ── Phase 1: fetch + buffer candidates (not written yet) ───────────────
+  // Buffering before writing lets us resolve Solicitation-Number dedup
+  // correctly across the whole batch instead of writing blindly as we go.
+  // Stops once we've buffered roughly enough candidates to fill this run's
+  // write cap (mirrors the previous early-exit-on-cap behavior) so we don't
+  // spend the full NAICS-list fetch budget on runs that would hit the write
+  // cap anyway — any NAICS codes left unprocessed are picked up next run.
   let totalFetched  = 0
-  let totalWritten  = 0
-  const seen        = new Set(existingIds)
+  let naicsProcessed = 0
   const naicsErrors = []
-  // Sequential NAICS processing to stay within the 50 subrequest limit
-  // (free Cloudflare Workers plan). Each SAM fetch = 1 subrequest.
-  // Each Graph write = 1 subrequest. Budget: ~2 reads + 27 fetches + writes + deletes.
-  // Cap writes per run to 15 to leave headroom for reads and cleanup.
-  const MAX_WRITES_PER_RUN = 15
+  const candidates  = []   // { mapped, noticeId, solNum }
 
   for (const naics of naicsCodes) {
-    // Hard stop if we're close to the subrequest budget
-    if (totalWritten >= MAX_WRITES_PER_RUN) {
-      console.log(`[SAM] Write cap (${MAX_WRITES_PER_RUN}) reached — stopping early`)
-      naicsErrors.push(`Write cap reached — ${naicsCodes.slice(naicsCodes.indexOf(naics)).length} NAICS codes skipped`)
+    if (candidates.length >= MAX_WRITES_PER_RUN) {
+      naicsErrors.push(`Fetch cap reached — ${naicsCodes.length - naicsProcessed} NAICS code(s) left for next run`)
       break
     }
 
@@ -323,51 +392,109 @@ async function runSAMPull(env, token, config) {
     } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
         const msg = 'SAM API key expired or invalid'
-        await setRunLog(env, { success: false, timestamp: runStart, error: msg })
+        await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: msg })
         throw new Error(msg)
       }
       naicsErrors.push(`NAICS ${naics}: ${err.message}`)
       console.error('[SAM] Fetch error:', err.message)
+      naicsProcessed++
       continue
     }
 
-    // Write new records one at a time (sequential = 1 subrequest each)
     for (const raw of records) {
-      if (totalWritten >= MAX_WRITES_PER_RUN) break
       const noticeId = String(raw.noticeId || '').trim()
-      if (!noticeId || seen.has(noticeId)) continue
+      if (!noticeId || existingIds.has(noticeId)) continue
       if (String(raw.active || '').toLowerCase() !== 'yes') continue
-      seen.add(noticeId)
-      try {
-        await appendOpportunity(env, token, mapRecord(raw, naics))
-        totalWritten++
-      } catch (err) {
-        console.error(`[SAM] Write failed for ${noticeId}:`, err.message)
+      const mapped = mapRecord(raw, naics)
+      candidates.push({ mapped, noticeId, solNum: normalizeSolNum(mapped['Solicitation Number']) })
+    }
+
+    naicsProcessed++
+  }
+
+  // ── Resolve dedup ────────────────────────────────────────────────────────
+  // Pass 1: collapse same Notice ID appearing more than once in this batch
+  // (happens when a solicitation matches more than one tracked NAICS code).
+  const byNoticeId = new Map()
+  for (const c of candidates) {
+    if (!byNoticeId.has(c.noticeId)) byNoticeId.set(c.noticeId, c)
+  }
+
+  // Pass 2: Solicitation-Number dedup against both existing sheet rows and
+  // other candidates from this same batch — keep only the most recently
+  // posted variant per solicitation.
+  const dedupDeleteRowIndices = new Set()   // existing rows superseded by a newer candidate this run
+  const toWrite = []
+
+  for (const c of byNoticeId.values()) {
+    if (!c.solNum) { toWrite.push(c); continue }
+
+    const current = solNumIndex.get(c.solNum)
+    if (!current) {
+      solNumIndex.set(c.solNum, { noticeId: c.noticeId, rowIndex: null, postedDate: c.mapped['Posted Date'], fromExisting: false })
+      toWrite.push(c)
+      continue
+    }
+
+    if (newerRecord(c.mapped['Posted Date'], current.postedDate)) {
+      if (current.fromExisting) {
+        dedupDeleteRowIndices.add(current.rowIndex)
+      } else {
+        const staleIdx = toWrite.findIndex((w) => w.noticeId === current.noticeId)
+        if (staleIdx !== -1) toWrite.splice(staleIdx, 1)
       }
+      solNumIndex.set(c.solNum, { noticeId: c.noticeId, rowIndex: null, postedDate: c.mapped['Posted Date'], fromExisting: false })
+      toWrite.push(c)
+    }
+    // else: an existing row or an already-queued candidate is the same age
+    // or newer — this candidate is a stale duplicate, drop it entirely.
+  }
+
+  // ── Phase 2: write survivors, capped to stay within subrequest budget ──
+  await setRunLog(env, {
+    status: 'running', phase: 'writing', timestamp: runStart, startedAt: runStart,
+    naicsTotal: naicsCodes.length, naicsProcessed,
+    toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: 0,
+  })
+
+  let totalWritten = 0
+  for (const c of toWrite) {
+    if (totalWritten >= MAX_WRITES_PER_RUN) {
+      const remaining = toWrite.length - totalWritten
+      naicsErrors.push(`Write cap reached — ${remaining} opportunit${remaining === 1 ? 'y' : 'ies'} left for next run`)
+      break
+    }
+    try {
+      await appendOpportunity(env, token, c.mapped)
+      totalWritten++
+    } catch (err) {
+      console.error(`[SAM] Write failed for ${c.noticeId}:`, err.message)
     }
   }
 
   // Clear key-expired flag
   await setKeyExpired(env, false)
 
-  // Delete expired rows
+  // ── Cleanup: expired rows + solicitation-superseded rows, one shared cap ──
   let deleted = 0
   try {
-    deleted = await deleteExpiredRows(env, token, existingRows)
+    deleted = await cleanupRows(env, token, existingRows, dedupDeleteRowIndices)
   } catch (err) {
     console.error('[SAM] Cleanup error:', err.message)
   }
 
   const log = {
     success:   true,
+    status:    'success',
     timestamp: runStart,
     fetched:   totalFetched,
     written:   totalWritten,
+    deduped:   dedupDeleteRowIndices.size,
     deleted,
     warnings:  naicsErrors.length > 0 ? naicsErrors : undefined,
   }
   await setRunLog(env, log)
-  console.log(`[SAM] Done. Fetched: ${totalFetched} | Written: ${totalWritten} | Deleted: ${deleted}`)
+  console.log(`[SAM] Done. Fetched: ${totalFetched} | Written: ${totalWritten} | Deduped: ${dedupDeleteRowIndices.size} | Deleted: ${deleted}`)
   return log
 }
 
@@ -385,7 +512,7 @@ export async function handleSAM(req, env, ctx) {
   // GET /sam/run-status
   if (url.pathname === '/sam/run-status' && req.method === 'GET') {
     const log = await getRunLog(env)
-    return json(log || { success: null, timestamp: null })
+    return json(log || { success: null, status: null, timestamp: null })
   }
 
   // GET /sam/debug — step-by-step diagnostic (requires X-Trigger-Secret)
