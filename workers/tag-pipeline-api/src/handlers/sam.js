@@ -62,6 +62,22 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// ── Fetch with retry for transient upstream failures ────────────────────
+// SAM.gov's API periodically returns 5xx errors (e.g. "no healthy upstream")
+// during brief infrastructure blips. Those are worth a couple of quick
+// retries. 4xx errors (bad request, bad/expired key, etc) are NOT retried —
+// retrying an unchanged request against those just wastes subrequest budget.
+async function fetchWithRetry(url, { maxRetries = 2, baseDelayMs = 400 } = {}) {
+  let lastRes
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url)
+    if (res.status < 500) return res   // success, or a non-retryable client error
+    lastRes = res
+    if (attempt < maxRetries) await sleep(baseDelayMs * Math.pow(2, attempt))
+  }
+  return lastRes   // exhausted retries — caller handles the still-failing response
+}
+
 function todayISO() {
   return new Date().toISOString().split('T')[0]
 }
@@ -225,7 +241,7 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
       offset:     String(offset),
     })
 
-    const res = await fetch(`${SAM_BASE}?${params}`)
+    const res = await fetchWithRetry(`${SAM_BASE}?${params}`)
 
     if (res.status === 401) {
       await setKeyExpired(env, true)
@@ -395,8 +411,27 @@ async function runSAMPull(env, token, config) {
         await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: msg })
         throw new Error(msg)
       }
+
       naicsErrors.push(`NAICS ${naics}: ${err.message}`)
       console.error('[SAM] Fetch error:', err.message)
+
+      // If the very FIRST NAICS code we attempt fails with a server-side
+      // (5xx) error — even after the retries already attempted inside
+      // fetchSAMForNAICS — this is very likely a systemic SAM.gov outage
+      // rather than a one-off blip on that specific request. Stop
+      // immediately instead of burning the rest of the run's subrequest
+      // budget hammering a dead upstream with every remaining NAICS code.
+      // A failure on a LATER code, after others already succeeded, is
+      // treated as an isolated per-request issue and doesn't abort the run.
+      if (naicsProcessed === 0 && /SAM API error 5\d\d/.test(err.message)) {
+        const msg = `SAM.gov API appears to be unavailable (${err.message}). Will retry automatically on the next pull.`
+        console.error('[SAM]', msg)
+        await setRunLog(env, {
+          success: false, status: 'error', timestamp: runStart, error: msg, warnings: naicsErrors,
+        })
+        throw new Error(msg)
+      }
+
       naicsProcessed++
       continue
     }
