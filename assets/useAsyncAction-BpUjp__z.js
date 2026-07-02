@@ -1,1 +1,0 @@
-import{r as t}from"./router-CRSHqgNg.js";function i(){const[s,e]=t.useState(!1),r=t.useRef(!1);return{run:t.useCallback(async(a,{onError:u}={})=>{if(!r.current){r.current=!0,e(!0);try{return await a()}catch(n){throw u?.(n),n}finally{r.current=!1,e(!1)}}},[]),isLoading:s}}export{i as u};
