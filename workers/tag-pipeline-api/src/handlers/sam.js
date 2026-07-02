@@ -92,10 +92,14 @@ function formatDateParam(d) {
 function parseResponseDate(val) {
   if (!val) return ''
   const s = String(val).trim()
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  // ISO datetime with a time component — preserve it in full (including
+  // timezone offset if present) so the frontend can show the actual
+  // response deadline time, not just the date. Previously this was always
+  // truncated to date-only even when SAM.gov sent a real deadline time.
+  const isoDateTime = s.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+  if (isoDateTime) return s
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
-  const dt = s.match(/^(\d{4}-\d{2}-\d{2})T/)
-  if (dt) return dt[1]
   const us = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
   if (us) return `${us[3]}-${us[1]}-${us[2]}`
   return s.slice(0, 10)
@@ -389,12 +393,22 @@ async function runSAMPull(env, token, config) {
   // write cap (mirrors the previous early-exit-on-cap behavior) so we don't
   // spend the full NAICS-list fetch budget on runs that would hit the write
   // cap anyway — any NAICS codes left unprocessed are picked up next run.
+  //
+  // Wrapped so a hard failure here (expired key, systemic SAM.gov outage)
+  // is *recorded* rather than thrown immediately — cleanup below only
+  // depends on existingRows (already read via the Graph API, independent of
+  // SAM.gov), so it must still run even when the SAM.gov side fails.
+  // Previously a fetch failure threw straight out of this function and
+  // skipped cleanup entirely, which meant expired New Opportunities rows
+  // stopped getting deleted for as long as SAM.gov was having problems.
   let totalFetched  = 0
   let naicsProcessed = 0
   const naicsErrors = []
   const candidates  = []   // { mapped, noticeId, solNum }
+  let fatalError = null
 
   for (const naics of naicsCodes) {
+    if (fatalError) break
     if (candidates.length >= MAX_WRITES_PER_RUN) {
       naicsErrors.push(`Fetch cap reached — ${naicsCodes.length - naicsProcessed} NAICS code(s) left for next run`)
       break
@@ -407,9 +421,9 @@ async function runSAMPull(env, token, config) {
       totalFetched += records.length
     } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
-        const msg = 'SAM API key expired or invalid'
-        await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: msg })
-        throw new Error(msg)
+        fatalError = 'SAM API key expired or invalid'
+        naicsProcessed++
+        break
       }
 
       naicsErrors.push(`NAICS ${naics}: ${err.message}`)
@@ -424,12 +438,10 @@ async function runSAMPull(env, token, config) {
       // A failure on a LATER code, after others already succeeded, is
       // treated as an isolated per-request issue and doesn't abort the run.
       if (naicsProcessed === 0 && /SAM API error 5\d\d/.test(err.message)) {
-        const msg = `SAM.gov API appears to be unavailable (${err.message}). Will retry automatically on the next pull.`
-        console.error('[SAM]', msg)
-        await setRunLog(env, {
-          success: false, status: 'error', timestamp: runStart, error: msg, warnings: naicsErrors,
-        })
-        throw new Error(msg)
+        fatalError = `SAM.gov API appears to be unavailable (${err.message}). Will retry automatically on the next pull.`
+        console.error('[SAM]', fatalError)
+        naicsProcessed++
+        break
       }
 
       naicsProcessed++
@@ -486,36 +498,52 @@ async function runSAMPull(env, token, config) {
   }
 
   // ── Phase 2: write survivors, capped to stay within subrequest budget ──
-  await setRunLog(env, {
-    status: 'running', phase: 'writing', timestamp: runStart, startedAt: runStart,
-    naicsTotal: naicsCodes.length, naicsProcessed,
-    toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: 0,
-  })
-
+  // Skipped entirely if phase 1 hit a fatal error (nothing valid to write).
   let totalWritten = 0
-  for (const c of toWrite) {
-    if (totalWritten >= MAX_WRITES_PER_RUN) {
-      const remaining = toWrite.length - totalWritten
-      naicsErrors.push(`Write cap reached — ${remaining} opportunit${remaining === 1 ? 'y' : 'ies'} left for next run`)
-      break
+  if (!fatalError) {
+    await setRunLog(env, {
+      status: 'running', phase: 'writing', timestamp: runStart, startedAt: runStart,
+      naicsTotal: naicsCodes.length, naicsProcessed,
+      toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: 0,
+    })
+
+    for (const c of toWrite) {
+      if (totalWritten >= MAX_WRITES_PER_RUN) {
+        const remaining = toWrite.length - totalWritten
+        naicsErrors.push(`Write cap reached — ${remaining} opportunit${remaining === 1 ? 'y' : 'ies'} left for next run`)
+        break
+      }
+      try {
+        await appendOpportunity(env, token, c.mapped)
+        totalWritten++
+      } catch (err) {
+        console.error(`[SAM] Write failed for ${c.noticeId}:`, err.message)
+      }
     }
-    try {
-      await appendOpportunity(env, token, c.mapped)
-      totalWritten++
-    } catch (err) {
-      console.error(`[SAM] Write failed for ${c.noticeId}:`, err.message)
-    }
+
+    // Clear key-expired flag — only reachable when the key demonstrably worked
+    await setKeyExpired(env, false)
   }
 
-  // Clear key-expired flag
-  await setKeyExpired(env, false)
-
   // ── Cleanup: expired rows + solicitation-superseded rows, one shared cap ──
+  // Runs unconditionally (as long as existingRows was read successfully,
+  // guaranteed by this point) — independent of whether the SAM.gov fetch/
+  // write phases above succeeded, so expired rows keep getting swept even
+  // during a SAM.gov outage.
   let deleted = 0
   try {
     deleted = await cleanupRows(env, token, existingRows, dedupDeleteRowIndices)
   } catch (err) {
     console.error('[SAM] Cleanup error:', err.message)
+  }
+
+  if (fatalError) {
+    const log = {
+      success: false, status: 'error', timestamp: runStart, error: fatalError,
+      warnings: naicsErrors.length > 0 ? naicsErrors : undefined, deleted,
+    }
+    await setRunLog(env, log)
+    throw new Error(fatalError)
   }
 
   const log = {
