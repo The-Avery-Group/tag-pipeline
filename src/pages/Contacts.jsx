@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useContacts } from '@/hooks/useContacts'
 import { usePipeline } from '@/hooks/usePipeline'
+import { useAsyncAction, useAsyncActionKeyed } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
@@ -30,7 +31,11 @@ export default function Contacts({ toast }) {
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [oppSearch, setOppSearch] = useState('')
-  const [linkingOpp, setLinkingOpp] = useState(false)
+  // Consistent in-progress feedback + re-entrancy guarding for actions that
+  // previously had none (delete, unlink) or used an ad hoc boolean (link).
+  const deleteAction = useAsyncAction()
+  const linkAction   = useAsyncAction()
+  const unlinkAction = useAsyncActionKeyed()   // keyed by contract number — several linked-opp rows can each have their own unlink button
 
   const setField = useCallback((field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -115,37 +120,39 @@ export default function Contacts({ toast }) {
 
   const handleDelete = async () => {
     try {
-      await remove(selected._rowIndex)
+      await deleteAction.run(() => remove(selected._rowIndex), {
+        onError: (err) => toast?.error(`Failed: ${err.message}`),
+      })
       toast?.success('Contact deleted')
       setSelected(null)
       setEditing(false)
-    } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
-    } finally {
       setConfirmDelete(null)
+    } catch {
+      // Error already toasted via onError — leave the modal open so the user can retry
     }
   }
 
   const handleLinkOpp = async (opp) => {
-    if (linkingOpp) return
-    setLinkingOpp(true)
+    if (linkAction.isLoading) return
     try {
-      await addContactToPOC(opp._rowIndex, opp[C_POC], selected.Name)
+      await linkAction.run(() => addContactToPOC(opp._rowIndex, opp[C_POC], selected.Name), {
+        onError: (err) => toast?.error(`Failed: ${err.message}`),
+      })
       toast?.success('Opportunity linked')
       setOppSearch('')
-    } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
-    } finally {
-      setLinkingOpp(false)
+    } catch {
+      // already toasted via onError
     }
   }
 
   const handleUnlinkOpp = async (opp) => {
     try {
-      await removeContactFromPOC(opp._rowIndex, opp[C_POC], selected.Name)
+      await unlinkAction.run(opp[C_CN], () => removeContactFromPOC(opp._rowIndex, opp[C_POC], selected.Name), {
+        onError: (err) => toast?.error(`Failed: ${err.message}`),
+      })
       toast?.success('Opportunity unlinked')
-    } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
+    } catch {
+      // already toasted via onError
     }
   }
 
@@ -336,7 +343,8 @@ export default function Contacts({ toast }) {
                             className="btn btn-ghost btn-icon"
                             title="Unlink"
                             onClick={() => handleUnlinkOpp(o)}
-                          >✕</button>
+                            disabled={unlinkAction.isPending(o[C_CN])}
+                          >{unlinkAction.isPending(o[C_CN]) ? '…' : '✕'}</button>
                         </div>
                       ))}
                       <div style={{ marginTop: 8 }}>
@@ -349,15 +357,17 @@ export default function Contacts({ toast }) {
                         />
                         {oppSearch && (
                           <div className={styles.oppDropdown}>
-                            {unlinkableOpps.length === 0
-                              ? <div className={styles.oppDropdownEmpty}>No results</div>
-                              : unlinkableOpps.map((o) => (
-                                <div key={o[C_CN]} className={styles.oppDropdownRow}
-                                  onClick={() => !linkingOpp && handleLinkOpp(o)}>
-                                  <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
-                                  <div className={styles.linkedOppMeta}>{o[C_CN]}</div>
-                                </div>
-                              ))
+                            {linkAction.isLoading
+                              ? <div className={styles.oppDropdownEmpty}>Linking…</div>
+                              : unlinkableOpps.length === 0
+                                ? <div className={styles.oppDropdownEmpty}>No results</div>
+                                : unlinkableOpps.map((o) => (
+                                  <div key={o[C_CN]} className={styles.oppDropdownRow}
+                                    onClick={() => handleLinkOpp(o)}>
+                                    <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
+                                    <div className={styles.linkedOppMeta}>{o[C_CN]}</div>
+                                  </div>
+                                ))
                             }
                           </div>
                         )}
@@ -396,11 +406,13 @@ export default function Contacts({ toast }) {
 
       {/* Delete confirm modal */}
       {confirmDelete && (
-        <Modal title="Delete contact" onClose={() => setConfirmDelete(null)}
+        <Modal title="Delete contact" onClose={() => !deleteAction.isLoading && setConfirmDelete(null)}
           footer={
             <>
-              <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
-              <button className="btn btn-danger" onClick={handleDelete}>Delete</button>
+              <button className="btn" onClick={() => setConfirmDelete(null)} disabled={deleteAction.isLoading}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleDelete} disabled={deleteAction.isLoading}>
+                {deleteAction.isLoading ? 'Deleting…' : 'Delete'}
+              </button>
             </>
           }
         >
