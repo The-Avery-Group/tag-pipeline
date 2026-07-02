@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
 import { useAIChat } from '@/hooks/useAIChat'
+import { useAsyncAction } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import MarkdownText from '@/components/AI/MarkdownText'
 import { buildPipelineSummaryContext, buildOpportunityContext } from '@/services/groqService'
@@ -91,9 +92,15 @@ export default function AIChat({ toast }) {
     }
   }
 
+  const clearAction = useAsyncAction()
+
   const handleStartFresh = async () => {
-    await startFresh()
-    toast?.success('Conversation cleared')
+    try {
+      await clearAction.run(() => startFresh())
+      toast?.success('Conversation cleared')
+    } catch (err) {
+      toast?.error(`Failed to clear conversation: ${err.message}`)
+    }
   }
 
   const subtitle = opp
@@ -136,7 +143,7 @@ export default function AIChat({ toast }) {
                     'Are there any red flags?',
                     'Draft a follow-up email',
                   ].map((s) => (
-                    <button key={s} className={styles.suggestion}
+                    <button key={s} className={styles.suggestion} disabled={loading}
                       onClick={() => { send(s) }}>
                       {s}
                     </button>
@@ -151,7 +158,7 @@ export default function AIChat({ toast }) {
                     'What needs attention this week?',
                     'Show me contracts expiring soon',
                   ].map((s) => (
-                    <button key={s} className={styles.suggestion}
+                    <button key={s} className={styles.suggestion} disabled={loading}
                       onClick={() => { send(s) }}>
                       {s}
                     </button>
@@ -220,8 +227,8 @@ export default function AIChat({ toast }) {
           <div className={styles.inputMeta}>
             <span className={styles.hint}>Enter to send · Shift+Enter for new line</span>
             {messages.length > 0 && (
-              <button className={styles.clearBtn} onClick={handleStartFresh}>
-                Clear conversation
+              <button className={styles.clearBtn} onClick={handleStartFresh} disabled={clearAction.isLoading}>
+                {clearAction.isLoading ? 'Clearing…' : 'Clear conversation'}
               </button>
             )}
           </div>
