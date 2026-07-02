@@ -7,7 +7,7 @@ import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
-import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
+import { formatDate, formatDateTime, getEndDateBand, getFiscalYear, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 
@@ -37,6 +37,8 @@ const C = {
   awardDate:    'Anticipated year for Award (MM/DD/YYYY)*',
   folder:       'Link to Folder',
   govwin:       'GovWin Link*',
+  classification: 'Contract Classification*',
+  vehicle:      'Contract Vehicle',
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
@@ -88,6 +90,22 @@ const TAB_DEFAULT_SORT = {
 }
 
 // ── Value formatter ───────────────────────────────────────────────────────
+// Human-readable labels for filter chips where the raw stored value isn't
+// self-explanatory (band keys, YYYY-MM month keys).
+function filterChipLabel(key, val) {
+  if (key === 'endBand') {
+    const band = EXPIRING_BANDS.find((b) => b.key === val)
+    return band ? band.label : val
+  }
+  if (key === 'rfiMonth') {
+    const [y, m] = val.split('-').map(Number)
+    const d = new Date(y, m - 1, 1)
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  }
+  if (key === 'endFY') return `FY${val}`
+  return val
+}
+
 function fmtValue(v) {
   const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''))
   if (!n) return '—'
@@ -99,20 +117,76 @@ function fmtValue(v) {
 // ── Main component ────────────────────────────────────────────────────────
 export default function Opportunities({ toast }) {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { pipeline, loading, add, remove } = usePipeline()
   const { lists } = useValidationLists()
   useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
 
-  const outlookOptions  = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
-  const priorityOptions = pickList(lists, 'Priority', PRIORITY_VALUES)
-  const setAsideOptions = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
-  const bidNoBidOptions = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
-  const phaseOptions    = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const outlookOptions        = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
+  const priorityOptions       = pickList(lists, 'Priority', PRIORITY_VALUES)
+  const setAsideOptions       = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
+  const bidNoBidOptions       = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
+  const phaseOptions          = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const primeOrSubOptions     = pickList(lists, 'Prime or Sub?', ['Prime', 'Sub'])
+
+  // ── URL-param-driven list state ─────────────────────────────────────────
+  // Active tab, search text, and every filter live in the URL rather than
+  // component state. This does double duty: filters persist across
+  // navigation (leave the page, come back, still filtered), AND any other
+  // page can link directly into a pre-filtered, visibly-active view (e.g. a
+  // Dashboard chart segment linking to /opportunities?tab=All&phase=Proposal
+  // shows real, dismissible filter chips exactly as if applied manually).
+  const activeTab = searchParams.get('tab') || 'RFIs'
+  const search    = searchParams.get('search') || ''
+
+  const filters = useMemo(() => ({
+    outlook:        searchParams.get('outlook') || '',
+    priority:       searchParams.get('priority') || '',
+    assignedTo:     searchParams.get('assignedTo') || '',
+    setAside:       searchParams.get('setAside') || '',
+    bidNoBid:       searchParams.get('bidNoBid') || '',
+    phase:          searchParams.get('phase') || '',
+    primeOrSub:     searchParams.get('primeOrSub') || '',
+    endBand:        searchParams.get('endBand') || '',
+    endFY:          searchParams.get('endFY') || '',
+    rfiMonth:       searchParams.get('rfiMonth') || '',
+    classification: searchParams.get('classification') || '',
+    vehicle:        searchParams.get('vehicle') || '',
+    agency:         new Set((searchParams.get('agency') || '').split(',').filter(Boolean)),
+  }), [searchParams])
+
+  // Merges a patch into the URL params (deleting keys whose value is empty,
+  // so the URL stays clean and activeFilterCount stays accurate). Uses
+  // `replace` navigation so tweaking filters doesn't spam browser history —
+  // the back button should leave the page, not undo filter clicks one at a time.
+  const updateParams = (patch) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      Object.entries(patch).forEach(([key, val]) => {
+        if (val == null || val === '' || (val instanceof Set && val.size === 0)) {
+          next.delete(key)
+        } else if (val instanceof Set) {
+          next.set(key, [...val].join(','))
+        } else {
+          next.set(key, val)
+        }
+      })
+      return next
+    }, { replace: true })
+  }
+
+  const setSearch    = (val) => updateParams({ search: val })
+  // Supports both setFilters({ outlook: 'X' }) and the functional form
+  // setFilters(prev => ({ ...prev, outlook: 'X' })) used by several existing
+  // call sites (notably the agency multi-select toggle) — resolved against
+  // the current `filters` before being merged into the URL.
+  const setFilters = (patchOrFn) => {
+    const patch = typeof patchOrFn === 'function' ? patchOrFn(filters) : patchOrFn
+    updateParams(patch)
+  }
 
   // ── Tab state — each tab carries its own sort so switching tabs restores
   //    the right default rather than sharing a single sort state
-  const [activeTab, setActiveTab] = useState('RFIs')
   const [tabSort, setTabSort] = useState(TAB_DEFAULT_SORT)
 
   const sortKey = tabSort[activeTab]?.key  ?? C.lastMod
@@ -126,12 +200,8 @@ export default function Opportunities({ toast }) {
     })
   }
 
-  // ── Search + advanced filters ─────────────────────────────────────────
-  const [search, setSearch] = useState('')
+  // ── Advanced filter panel UI state (not persisted — just whether it's open) ──
   const [showFilter, setShowFilter] = useState(false)
-  const [filters, setFilters] = useState({
-    outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-  })
   const activeFilterCount = Object.entries(filters)
     .filter(([k, v]) => k === 'agency' ? v.size > 0 : Boolean(v)).length
   const [agencyFilterOpen, setAgencyFilterOpen] = useState(false)
@@ -192,6 +262,27 @@ export default function Opportunities({ toast }) {
     return [...ags].sort()
   }, [pipeline, activeTab])
 
+  // ── Distinct Classification / Contract Vehicle values present in the
+  //    active tab (no fixed validation list for these — derived from data,
+  //    same approach as tabAgencies) ────────────────────────────────────
+  const classificationOptions = useMemo(() => {
+    const vals = new Set()
+    getTabRows(pipeline, activeTab).forEach((o) => {
+      const v = String(o[C.classification] || '').trim()
+      if (v) vals.add(v)
+    })
+    return [...vals].sort()
+  }, [pipeline, activeTab])
+
+  const vehicleOptions = useMemo(() => {
+    const vals = new Set()
+    getTabRows(pipeline, activeTab).forEach((o) => {
+      const v = String(o[C.vehicle] || '').trim()
+      if (v) vals.add(v)
+    })
+    return [...vals].sort()
+  }, [pipeline, activeTab])
+
   // ── Filtered + sorted rows for the active tab ─────────────────────────
   const filtered = useMemo(() => {
     if (activeTab === 'New') return []
@@ -211,6 +302,15 @@ export default function Opportunities({ toast }) {
     if (filters.priority)   rows = rows.filter((o) => o[C.priority]  === filters.priority)
     if (filters.setAside)   rows = rows.filter((o) => o[C.setAside]  === filters.setAside)
     if (filters.bidNoBid)   rows = rows.filter((o) => o[C.bidNoBid]  === filters.bidNoBid)
+    if (filters.phase)          rows = rows.filter((o) => o[C.phase]          === filters.phase)
+    if (filters.primeOrSub)     rows = rows.filter((o) => o[C.primeOrSub]     === filters.primeOrSub)
+    if (filters.classification) rows = rows.filter((o) => o[C.classification] === filters.classification)
+    if (filters.vehicle)        rows = rows.filter((o) => o[C.vehicle]        === filters.vehicle)
+    if (filters.endBand)        rows = rows.filter((o) => getEndDateBand(o[C.endDate]) === filters.endBand)
+    if (filters.endFY)          rows = rows.filter((o) => String(getFiscalYear(o[C.endDate])) === filters.endFY)
+    // Dates are stored as 'YYYY-MM-DD' ISO strings, so a prefix match against
+    // a 'YYYY-MM' filter value is exact and doesn't need Date parsing.
+    if (filters.rfiMonth)       rows = rows.filter((o) => String(o[C.submDate] || '').startsWith(filters.rfiMonth))
     if (filters.assignedTo) rows = rows.filter((o) =>
       String(o[C.assignedTo] || '').toLowerCase().includes(filters.assignedTo.toLowerCase())
     )
@@ -226,11 +326,10 @@ export default function Opportunities({ toast }) {
     })
   }, [pipeline, activeTab, search, filters, sortKey, sortDir])
 
-  // ── Tab switch — reset search + filters ──────────────────────────────
+  // ── Tab switch — keep search + filters (they persist across tabs now,
+  //    same as they persist across navigation away and back) ────────────
   const handleTabChange = (tab) => {
-    setActiveTab(tab)
-    setSearch('')
-    setFilters({ outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '' })
+    updateParams({ tab })
     setShowFilter(false)
   }
 
@@ -1054,11 +1153,54 @@ export default function Opportunities({ toast }) {
                   value={filters.assignedTo}
                   onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))} />
               </div>
+              <div className="form-field">
+                <label className="form-label">Phase</label>
+                <select className="form-input" value={filters.phase}
+                  onChange={(e) => setFilters((f) => ({ ...f, phase: e.target.value }))}>
+                  <option value="">All</option>
+                  {phaseOptions.map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Prime / Sub</label>
+                <select className="form-input" value={filters.primeOrSub}
+                  onChange={(e) => setFilters((f) => ({ ...f, primeOrSub: e.target.value }))}>
+                  <option value="">All</option>
+                  {primeOrSubOptions.map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Classification</label>
+                <select className="form-input" value={filters.classification}
+                  onChange={(e) => setFilters((f) => ({ ...f, classification: e.target.value }))}>
+                  <option value="">All</option>
+                  {classificationOptions.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Contract Vehicle</label>
+                <select className="form-input" value={filters.vehicle}
+                  onChange={(e) => setFilters((f) => ({ ...f, vehicle: e.target.value }))}>
+                  <option value="">All</option>
+                  {vehicleOptions.map((v) => <option key={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Expiring</label>
+                <select className="form-input" value={filters.endBand}
+                  onChange={(e) => setFilters((f) => ({ ...f, endBand: e.target.value }))}>
+                  <option value="">All</option>
+                  {EXPIRING_BANDS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
+                </select>
+              </div>
             </div>
             {activeFilterCount > 0 && (
               <button className="btn btn-ghost text-sm"
                 style={{ marginTop: 8, color: 'var(--red-600)' }}
-                onClick={() => setFilters({ outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '' })}>
+                onClick={() => updateParams({
+                  outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
+                  phase: '', primeOrSub: '', endBand: '', endFY: '', rfiMonth: '', classification: '', vehicle: '',
+                })}>
                 Clear all filters ({activeFilterCount})
               </button>
             )}
@@ -1072,7 +1214,7 @@ export default function Opportunities({ toast }) {
               <button key={key}
                 className="filter-chip active"
                 onClick={() => setFilters((f) => ({ ...f, [key]: '' }))}>
-                {val} ✕
+                {filterChipLabel(key, val)} ✕
               </button>
             ))}
             {[...filters.agency].map((ag) => (
