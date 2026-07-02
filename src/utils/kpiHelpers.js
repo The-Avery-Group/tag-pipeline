@@ -94,21 +94,80 @@ const C_AGENCY   = 'Agency*'
 const C_OUTLOOK  = 'Opportunity Outlook'
 const C_ACTPHASE = 'TAG Pipeline Activity Phase'
 const C_SUBMDATE = 'Submission Date (Response Date)*'
+const C_PRIMESUB = 'Prime or Sub?'
+// Confirmed exact column header for the "Award Type" concept from the build plan.
+const C_AWARDTYPE = 'Contract Classification*'
+// "Contract Vehicle" already holds the actual vehicle NAME (e.g. "GSA OASIS+"),
+// not an ID — "Contract Vehicle Number" is the separate ID field. Confirmed
+// by the user; no lookup/resolution needed, this chart can be built now
+// rather than waiting on the Phase 3 USASpending.gov lookup.
+const C_VEHICLE = 'Contract Vehicle'
+
+// ── Fiscal year helper ──────────────────────────────────────────────────
+
+/**
+ * US federal fiscal year for a given date: FY runs Oct 1 – Sep 30, and is
+ * named for the calendar year it ENDS in (e.g. Oct 2025–Sep 2026 = FY2026).
+ */
+export function getFiscalYear(date) {
+  const d = date instanceof Date ? date : parseLocalDate(date)
+  if (isNaN(d.getTime())) return null
+  const month = d.getMonth()   // 0-indexed, Oct = 9
+  return month >= 9 ? d.getFullYear() + 1 : d.getFullYear()
+}
+
+// ── Expiring band helper ─────────────────────────────────────────────────
+
+export const EXPIRING_BANDS = [
+  { key: '0-6',   label: '0–6 months' },
+  { key: '6-12',  label: '6–12 months' },
+  { key: '12-18', label: '12–18 months' },
+  { key: '18+',   label: '18+ months' },
+]
+
+/**
+ * Which expiring-urgency band a Contract End Date falls into, relative to
+ * today. Returns null for dates already in the past (already expired —
+ * not a forward-looking "expiring soon" band) or missing/invalid dates.
+ */
+export function getEndDateBand(endDate) {
+  const d = parseLocalDate(endDate)
+  if (isNaN(d.getTime())) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  if (d < today) return null
+  const days = Math.round((d - today) / (1000 * 60 * 60 * 24))
+  if (days <= 182)  return '0-6'     // ~6 months
+  if (days <= 365)  return '6-12'
+  if (days <= 548)  return '12-18'   // ~18 months
+  return '18+'
+}
+
+/** Counts of upcoming opportunities per expiring band (see EXPIRING_BANDS). */
+export function computeExpiringBands(pipeline = []) {
+  const counts = { '0-6': 0, '6-12': 0, '12-18': 0, '18+': 0 }
+  pipeline.forEach((o) => {
+    const band = getEndDateBand(o[C_ENDDATE])
+    if (band) counts[band]++
+  })
+  return counts
+}
 
 // ── RFI by month ──────────────────────────────────────────────────────────
 
 /**
- * Returns last 6 calendar months (including current) as an array of
- * { label: 'Jan 25', count: N } objects, zero-filled for empty months.
- * Counts opportunities where TAG Pipeline Activity Phase === 'Submitted RFI'
- * using Submission Date (Response Date)* as the month reference.
+ * Returns the last `monthsBack` calendar months (including current) as an
+ * array of { year, month, label, monthKey, count } objects, zero-filled for
+ * empty months. Counts opportunities where TAG Pipeline Activity Phase ===
+ * 'Submitted RFI' using Submission Date (Response Date)* as the month
+ * reference. monthKey is a stable 'YYYY-MM' identifier for filtering/URL use.
  */
-export function computeRFIByMonth(pipeline = []) {
+export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
   const months = []
   const now = new Date()
   const currentYear = now.getFullYear()
 
-  for (let i = 5; i >= 0; i--) {
+  for (let i = monthsBack - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
     const year = d.getFullYear()
     const monthName = d.toLocaleDateString('en-US', { month: 'long' })
@@ -118,6 +177,7 @@ export function computeRFIByMonth(pipeline = []) {
       year,
       month: d.getMonth(),
       label,
+      monthKey: `${year}-${String(d.getMonth() + 1).padStart(2, '0')}`,
       count: 0,
     })
   }
@@ -133,6 +193,76 @@ export function computeRFIByMonth(pipeline = []) {
   })
 
   return months
+}
+
+// ── Contract-by-year (recompete timeline) ──────────────────────────────────
+
+/**
+ * Contract value/count grouped by federal fiscal year, using Contract End
+ * Date — this is a recompete-timeline view, not a forecast-of-new-awards
+ * view. Excludes Cancelled opportunities (never became a real contract);
+ * includes everything else, including Contract Awarded (an active,
+ * executing contract still needs recompete planning around its end date).
+ *
+ * Windowed to (current FY − 1) through (current FY + 6) — a typical
+ * multi-year IDIQ/BPA horizon — and zero-filled, so one stray bad end-date
+ * far in the past/future can't silently skew the chart's shape.
+ */
+export function computeContractByYear(pipeline = []) {
+  const currentFY = getFiscalYear(new Date())
+  const years = []
+  for (let fy = currentFY - 1; fy <= currentFY + 6; fy++) {
+    years.push({ fiscalYear: fy, label: `FY${String(fy).slice(-2)}`, count: 0, value: 0 })
+  }
+
+  pipeline.forEach((o) => {
+    if (o[C_PHASE] === 'Cancelled') return
+    const fy = getFiscalYear(o[C_ENDDATE])
+    if (fy == null) return
+    const bucket = years.find((y) => y.fiscalYear === fy)
+    if (!bucket) return   // outside the display window — intentionally dropped, see doc comment
+    bucket.count++
+    const n = parseFloat(String(o[C_VALUE] || '0').replace(/[^0-9.]/g, ''))
+    bucket.value += isNaN(n) ? 0 : n
+  })
+
+  return years
+}
+
+// ── Sub/Prime breakdown ──────────────────────────────────────────────────
+
+/** Counts of Prime vs Sub opportunities. Blank/unset values are excluded. */
+export function computeSubPrimeBreakdown(pipeline = []) {
+  const counts = {}
+  pipeline.forEach((o) => {
+    const v = String(o[C_PRIMESUB] || '').trim()
+    if (v) counts[v] = (counts[v] || 0) + 1
+  })
+  return counts
+}
+
+// ── Award Type / Classification breakdown ────────────────────────────────
+
+/** Counts of opportunities grouped by Contract Classification (Award Type). Blank values excluded. */
+export function computeAwardTypeBreakdown(pipeline = []) {
+  const counts = {}
+  pipeline.forEach((o) => {
+    const v = String(o[C_AWARDTYPE] || '').trim()
+    if (v) counts[v] = (counts[v] || 0) + 1
+  })
+  return counts
+}
+
+// ── Contract Vehicle breakdown ───────────────────────────────────────────
+
+/** Counts of opportunities grouped by Contract Vehicle name. Blank values excluded. */
+export function computeVehicleBreakdown(pipeline = []) {
+  const counts = {}
+  pipeline.forEach((o) => {
+    const v = String(o[C_VEHICLE] || '').trim()
+    if (v) counts[v] = (counts[v] || 0) + 1
+  })
+  return counts
 }
 
 export function computeKPIs(pipeline = [], tasks = []) {
