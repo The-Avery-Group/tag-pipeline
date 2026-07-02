@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { useTasks } from '@/hooks/useTasks'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -9,7 +9,7 @@ import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import styles from './Tasks.module.css'
 
-const STATUSES  = ['All', 'To Do', 'In Progress', 'Done']
+const STATUSES  = ['All', 'Overdue', 'To Do', 'In Progress', 'Done']
 const GROUPS    = ['None', 'Contract', 'Assignee', 'Priority']
 const SORTS     = ['Due Date', 'Priority', 'Assignee', 'Status']
 const PRIORITY_RANK = { High: 3, Medium: 2, Low: 1 }
@@ -306,7 +306,14 @@ export default function Tasks({ toast }) {
   const listPaneRef = useRef(null)
   useScrollRestoration(listPaneRef)   // Tasks uses its own scroll container (.listPane), not the page-level one
 
-  const [statusFilter, setStatusFilter] = useState('All')
+  // Read ?status=overdue once on initial load only (e.g. arriving from the
+  // Dashboard's Overdue Tasks KPI) — not kept in sync with the URL on an
+  // ongoing basis, unlike Opportunities.jsx's full filter persistence.
+  const [searchParams] = useSearchParams()
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const s = searchParams.get('status')
+    return s === 'overdue' ? 'Overdue' : 'All'
+  })
   const [groupBy, setGroupBy]           = useState('None')
   const [sortBy, setSortBy]             = useState(() => localStorage.getItem('tasks_sort_by') || 'Due Date')
   const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
@@ -320,7 +327,11 @@ export default function Tasks({ toast }) {
   useEffect(() => { localStorage.setItem('tasks_sort_dir', sortDir) }, [sortDir])
 
   const filtered = useMemo(() => {
-    const rows = statusFilter === 'All' ? tasks : tasks.filter((t) => t.Status === statusFilter)
+    const rows = statusFilter === 'All'
+      ? tasks
+      : statusFilter === 'Overdue'
+        ? tasks.filter((t) => t.Status !== 'Done' && isOverdue(t.DueDate))
+        : tasks.filter((t) => t.Status === statusFilter)
     return [...rows].sort((a, b) => {
       let cmp = 0
       if (sortBy === 'Due Date') {
