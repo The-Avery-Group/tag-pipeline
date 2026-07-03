@@ -170,9 +170,10 @@ export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
   for (let i = monthsBack - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
     const year = d.getFullYear()
-    const monthName = d.toLocaleDateString('en-US', { month: 'long' })
-    // Show year only when it differs from the current year (boundary crossing)
-    const label = year !== currentYear ? `${monthName} ${year}` : monthName
+    const monthName = d.toLocaleDateString('en-US', { month: 'short' })
+    // Compact label — only show the year (as 'YY) when it differs from the
+    // current calendar year, e.g. "Oct '25" vs plain "Jan" for this year.
+    const label = year !== currentYear ? `${monthName} '${String(year).slice(-2)}` : monthName
     months.push({
       year,
       month: d.getMonth(),
@@ -198,28 +199,29 @@ export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
 // ── Contract-by-year (recompete timeline) ──────────────────────────────────
 
 /**
- * Contract value/count grouped by federal fiscal year, using Contract End
- * Date — this is a recompete-timeline view, not a forecast-of-new-awards
- * view. Excludes Cancelled opportunities (never became a real contract);
- * includes everything else, including Contract Awarded (an active,
- * executing contract still needs recompete planning around its end date).
+ * Contract value/count grouped by CALENDAR year, using Contract End Date —
+ * this is a recompete-timeline view, not a forecast-of-new-awards view.
+ * Excludes Cancelled opportunities (never became a real contract); includes
+ * everything else, including Contract Awarded (an active, executing
+ * contract still needs recompete planning around its end date).
  *
- * Windowed to (current FY − 1) through (current FY + 6) — a typical
- * multi-year IDIQ/BPA horizon — and zero-filled, so one stray bad end-date
- * far in the past/future can't silently skew the chart's shape.
+ * Windowed to (current year − 1) through (current year + 6) and zero-filled,
+ * so one stray bad end-date far in the past/future can't silently skew the
+ * chart's shape.
  */
 export function computeContractByYear(pipeline = []) {
-  const currentFY = getFiscalYear(new Date())
+  const currentYear = new Date().getFullYear()
   const years = []
-  for (let fy = currentFY - 1; fy <= currentFY + 6; fy++) {
-    years.push({ fiscalYear: fy, label: `FY${String(fy).slice(-2)}`, count: 0, value: 0 })
+  for (let y = currentYear - 1; y <= currentYear + 6; y++) {
+    years.push({ calYear: y, label: String(y), count: 0, value: 0 })
   }
 
   pipeline.forEach((o) => {
     if (o[C_PHASE] === 'Cancelled') return
-    const fy = getFiscalYear(o[C_ENDDATE])
-    if (fy == null) return
-    const bucket = years.find((y) => y.fiscalYear === fy)
+    const d = parseLocalDate(o[C_ENDDATE])
+    if (isNaN(d.getTime())) return
+    const y = d.getFullYear()
+    const bucket = years.find((b) => b.calYear === y)
     if (!bucket) return   // outside the display window — intentionally dropped, see doc comment
     bucket.count++
     const n = parseFloat(String(o[C_VALUE] || '0').replace(/[^0-9.]/g, ''))
