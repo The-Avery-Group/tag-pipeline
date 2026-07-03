@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { useTasks } from '@/hooks/useTasks'
 import { usePipeline } from '@/hooks/usePipeline'
+import { useValidationLists, pickList } from '@/hooks/useValidationLists'
+import { ASSIGNEE_VALUES } from '@/services/graphService'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
@@ -48,7 +50,7 @@ function CircleCheck({ status, onClick }) {
 }
 
 // ── Detail panel (slides in from right) ──────────────────────────────────
-function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast }) {
+function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assigneeOptions }) {
   const navigate = useNavigate()
   const [form, setForm] = useState({ ...task })
   const [saving, setSaving] = useState(false)
@@ -156,12 +158,14 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast }) {
             </div>
             <div className={styles.panelField}>
               <label className={styles.panelLabel}>Assigned to</label>
-              <input
+              <select
                 className={styles.panelSelect}
                 value={form.AssignedTo || ''}
                 onChange={(e) => setField('AssignedTo', e.target.value)}
-                placeholder="—"
-              />
+              >
+                <option value="">— Select —</option>
+                {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
+              </select>
             </div>
           </div>
 
@@ -303,6 +307,8 @@ export default function Tasks({ toast }) {
   const { user } = useAuth()
   const { tasks, loading, add, update, remove } = useTasks()
   const { pipeline } = usePipeline()
+  const { lists } = useValidationLists()
+  const assigneeOptions = pickList(lists, 'Assignee', ASSIGNEE_VALUES)
   const listPaneRef = useRef(null)
   useScrollRestoration(listPaneRef)   // Tasks uses its own scroll container (.listPane), not the page-level one
 
@@ -319,6 +325,15 @@ export default function Tasks({ toast }) {
   const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
   const [showAdd, setShowAdd]           = useState(false)
   const [selected, setSelected]         = useState(null)   // task open in detail panel
+
+  // Arriving from the Dashboard's task list with ?taskId=... — open that
+  // task's detail panel automatically once it's available.
+  useEffect(() => {
+    const taskId = searchParams.get('taskId')
+    if (!taskId || selected) return
+    const match = tasks.find((t) => t.TaskID === taskId)
+    if (match) setSelected(match)
+  }, [searchParams, tasks, selected])
   const [taskForm, setTaskForm]         = useState(BLANK_FORM)
   const setFormField = useCallback((f, v) => setTaskForm((p) => ({ ...p, [f]: v })), [])
 
@@ -530,6 +545,7 @@ export default function Tasks({ toast }) {
             onUpdate={update}
             onDelete={remove}
             toast={toast}
+            assigneeOptions={assigneeOptions}
           />
         )}
       </div>
@@ -568,8 +584,11 @@ export default function Tasks({ toast }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div className="form-field">
                 <label className="form-label">Assigned to</label>
-                <input className="form-input" value={taskForm.AssignedTo}
-                  onChange={(e) => setFormField('AssignedTo', e.target.value)} />
+                <select className="form-input" value={taskForm.AssignedTo}
+                  onChange={(e) => setFormField('AssignedTo', e.target.value)}>
+                  <option value="">— Select —</option>
+                  {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
+                </select>
               </div>
               <div className="form-field">
                 <label className="form-label">Due date</label>
