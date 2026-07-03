@@ -13,7 +13,7 @@ import { invalidateCache } from '@/services/dataCache'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
-  OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES,
+  OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
   parsePOCNames, addContactToPOC, removeContactFromPOC,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
@@ -201,6 +201,7 @@ export default function OpportunityDetail({ toast }) {
   const setAsideOptions   = pickList(lists, 'Set-Aside',             SET_ASIDE_VALUES)
   const primeOrSubOptions = pickList(lists, 'Prime or Sub',          ['Prime', 'Sub'])
   const bidNoBidOptions   = pickList(lists, 'Bid / No Bid?',         ['Bid', 'No Bid', 'TBD'])
+  const assigneeOptions   = pickList(lists, 'Assignee',              ASSIGNEE_VALUES)
 
   // ── All hooks before any early return ────────────────────────────────
   const [form,            setForm]            = useState(null)
@@ -513,12 +514,15 @@ export default function OpportunityDetail({ toast }) {
             {editing && (
               <div className={styles.assignedEditRow}>
                 <label className="form-label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Assigned To</label>
-                <input
+                <select
                   className="form-input"
                   style={{ maxWidth: 220 }}
                   value={f(C.assignedTo) || ''}
                   onChange={(e) => set(C.assignedTo)(e.target.value)}
-                />
+                >
+                  <option value="">— Select —</option>
+                  {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
+                </select>
               </div>
             )}
           </div>
@@ -921,8 +925,11 @@ export default function OpportunityDetail({ toast }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-field">
                   <label className="form-label">Assigned to</label>
-                  <input className="form-input" value={taskForm.AssignedTo}
-                    onChange={(e) => setTaskForm({ ...taskForm, AssignedTo: e.target.value })} />
+                  <select className="form-input" value={taskForm.AssignedTo}
+                    onChange={(e) => setTaskForm({ ...taskForm, AssignedTo: e.target.value })}>
+                    <option value="">— Select —</option>
+                    {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
+                  </select>
                 </div>
                 <div className="form-field">
                   <label className="form-label">Due date</label>
