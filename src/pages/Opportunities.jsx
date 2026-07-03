@@ -7,8 +7,8 @@ import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
-import { formatDate, formatDateTime, getEndDateBand, getFiscalYear, EXPIRING_BANDS } from '@/utils/kpiHelpers'
-import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES } from '@/services/graphService'
+import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
+import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 
 // ── Column name constants ─────────────────────────────────────────────────
@@ -102,7 +102,7 @@ function filterChipLabel(key, val) {
     const d = new Date(y, m - 1, 1)
     return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   }
-  if (key === 'endFY') return `FY${val}`
+  if (key === 'endYear') return val
   return val
 }
 
@@ -128,6 +128,7 @@ export default function Opportunities({ toast }) {
   const bidNoBidOptions       = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
   const phaseOptions          = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
   const primeOrSubOptions     = pickList(lists, 'Prime or Sub?', ['Prime', 'Sub'])
+  const assigneeOptions       = pickList(lists, 'Assignee', ASSIGNEE_VALUES)
 
   // ── URL-param-driven list state ─────────────────────────────────────────
   // Active tab, search text, and every filter live in the URL rather than
@@ -148,7 +149,7 @@ export default function Opportunities({ toast }) {
     phase:          searchParams.get('phase') || '',
     primeOrSub:     searchParams.get('primeOrSub') || '',
     endBand:        searchParams.get('endBand') || '',
-    endFY:          searchParams.get('endFY') || '',
+    endYear:        searchParams.get('endYear') || '',
     rfiMonth:       searchParams.get('rfiMonth') || '',
     classification: searchParams.get('classification') || '',
     vehicle:        searchParams.get('vehicle') || '',
@@ -307,13 +308,14 @@ export default function Opportunities({ toast }) {
     if (filters.classification) rows = rows.filter((o) => o[C.classification] === filters.classification)
     if (filters.vehicle)        rows = rows.filter((o) => o[C.vehicle]        === filters.vehicle)
     if (filters.endBand)        rows = rows.filter((o) => getEndDateBand(o[C.endDate]) === filters.endBand)
-    if (filters.endFY)          rows = rows.filter((o) => String(getFiscalYear(o[C.endDate])) === filters.endFY)
+    if (filters.endYear)         rows = rows.filter((o) => {
+      const d = new Date((o[C.endDate] || '') + 'T00:00:00')
+      return !isNaN(d) && String(d.getFullYear()) === filters.endYear
+    })
     // Dates are stored as 'YYYY-MM-DD' ISO strings, so a prefix match against
     // a 'YYYY-MM' filter value is exact and doesn't need Date parsing.
     if (filters.rfiMonth)       rows = rows.filter((o) => String(o[C.submDate] || '').startsWith(filters.rfiMonth))
-    if (filters.assignedTo) rows = rows.filter((o) =>
-      String(o[C.assignedTo] || '').toLowerCase().includes(filters.assignedTo.toLowerCase())
-    )
+    if (filters.assignedTo) rows = rows.filter((o) => o[C.assignedTo] === filters.assignedTo)
     if (filters.agency.size > 0) rows = rows.filter((o) =>
       filters.agency.has(String(o[C.agency] || '').trim())
     )
@@ -1149,9 +1151,11 @@ export default function Opportunities({ toast }) {
               </div>
               <div className="form-field">
                 <label className="form-label">Assigned To</label>
-                <input className="form-input" placeholder="Filter by assignee…"
-                  value={filters.assignedTo}
-                  onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))} />
+                <select className="form-input" value={filters.assignedTo}
+                  onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))}>
+                  <option value="">All</option>
+                  {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
+                </select>
               </div>
               <div className="form-field">
                 <label className="form-label">Phase</label>
@@ -1199,7 +1203,7 @@ export default function Opportunities({ toast }) {
                 style={{ marginTop: 8, color: 'var(--red-600)' }}
                 onClick={() => updateParams({
                   outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-                  phase: '', primeOrSub: '', endBand: '', endFY: '', rfiMonth: '', classification: '', vehicle: '',
+                  phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '',
                 })}>
                 Clear all filters ({activeFilterCount})
               </button>
@@ -1330,9 +1334,12 @@ export default function Opportunities({ toast }) {
               </div>
               <div className="form-field">
                 <label className="form-label">Assigned To</label>
-                <input className="form-input"
+                <select className="form-input"
                   value={form[C.assignedTo]}
-                  onChange={(e) => setForm({ ...form, [C.assignedTo]: e.target.value })} />
+                  onChange={(e) => setForm({ ...form, [C.assignedTo]: e.target.value })}>
+                  <option value="">— Select —</option>
+                  {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
+                </select>
               </div>
               <div className="form-field">
                 <label className="form-label">Priority</label>
