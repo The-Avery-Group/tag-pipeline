@@ -1,8 +1,8 @@
 import { useMemo, useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer,
-  PieChart, Pie, AreaChart, Area,
+  BarChart, Bar, XAxis, YAxis, Tooltip, Cell, ResponsiveContainer,
+  PieChart, Pie, AreaChart, Area, LabelList,
 } from 'recharts'
 import { useAuth } from '@/auth/AuthContext'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -107,9 +107,8 @@ function PhaseBarChart({ byPhase, byPhaseValue, onSegmentClick }) {
 
   return (
     <ResponsiveContainer width="100%" height={Math.max(140, data.length * 40)}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" horizontal={false} />
-        <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} allowDecimals={false} />
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 36, bottom: 4, left: 4 }}>
+        <XAxis type="number" hide allowDecimals={false} />
         <YAxis type="category" dataKey="phase" width={110} tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <Tooltip
           cursor={{ fill: 'var(--gray-50)' }}
@@ -120,6 +119,7 @@ function PhaseBarChart({ byPhase, byPhaseValue, onSegmentClick }) {
           onClick={(d) => onSegmentClick?.(d?.payload?.phase ?? d?.phase)}
         >
           {data.map((d) => <Cell key={d.phase} fill={PHASE_COLORS[d.phase] || '#85B7EB'} />)}
+          <LabelList dataKey="count" position="right" style={{ fontSize: 11, fontWeight: 600, fill: 'var(--gray-900)' }} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -127,14 +127,15 @@ function PhaseBarChart({ byPhase, byPhaseValue, onSegmentClick }) {
 }
 
 // RFI Submissions — filled area chart, full card width/height, click a
-// point to navigate to the RFIs tab filtered to that month.
+// point to navigate to the RFIs tab filtered to that month. XAxis padding
+// keeps the first/last points and labels from clipping against the card edge.
 function RFIChart({ data, onMonthClick }) {
   if (!data || data.length === 0) return <p className="text-sm text-muted">No data</p>
 
   return (
     <ResponsiveContainer width="100%" height={260}>
       <AreaChart
-        data={data} margin={{ top: 24, right: 16, bottom: 4, left: 0 }}
+        data={data} margin={{ top: 24, right: 20, bottom: 4, left: 20 }}
         onClick={(e) => { if (e?.activePayload?.[0]) onMonthClick?.(e.activePayload[0].payload) }}
       >
         <defs>
@@ -143,8 +144,8 @@ function RFIChart({ data, onMonthClick }) {
             <stop offset="100%" stopColor="var(--blue-600)" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
+        <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false}
+          padding={{ left: 16, right: 16 }} />
         <YAxis hide allowDecimals={false} />
         <Tooltip content={<ChartTooltip formatValue={(d) => `${d.count} RFI${d.count === 1 ? '' : 's'} submitted`} />} />
         <Area
@@ -173,14 +174,14 @@ function CategoryBarChart({ counts, onSegmentClick }) {
 
   return (
     <ResponsiveContainer width="100%" height={Math.max(120, data.length * 36)}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" horizontal={false} />
-        <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} allowDecimals={false} />
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 36, bottom: 4, left: 4 }}>
+        <XAxis type="number" hide allowDecimals={false} />
         <YAxis type="category" dataKey="label" width={130} tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <Tooltip cursor={{ fill: 'var(--gray-50)' }} content={<ChartTooltip />} />
         <Bar dataKey="count" radius={[0, 4, 4, 0]} cursor="pointer" maxBarSize={24}
           onClick={(d) => onSegmentClick?.(d?.payload?.label ?? d?.label)}>
           {data.map((d, i) => <Cell key={d.label} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />)}
+          <LabelList dataKey="count" position="right" style={{ fontSize: 11, fontWeight: 600, fill: 'var(--gray-900)' }} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -188,6 +189,7 @@ function CategoryBarChart({ counts, onSegmentClick }) {
 }
 
 // Sub/Prime — a genuine two-value split, donut fits this better than bars.
+// No gridlines/axes on a pie chart to begin with; already has labels + tooltip.
 function SubPrimeChart({ counts, onSegmentClick }) {
   const data = Object.entries(counts).map(([label, count]) => ({ label, count }))
   if (!data.length) return <p className="text-sm text-muted">No data</p>
@@ -212,43 +214,47 @@ function SubPrimeChart({ counts, onSegmentClick }) {
   )
 }
 
-// Contract by year — recompete timeline, grouped by fiscal year using
-// Contract End Date. Click a bar to navigate filtered to that fiscal year.
+// Contract by year — recompete timeline, grouped by CALENDAR year using
+// Contract End Date. Click a bar to navigate filtered to that year.
 function ContractByYearChart({ data, onYearClick }) {
   if (!data || data.every((d) => d.count === 0)) return <p className="text-sm text-muted">No data</p>
 
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 20, right: 12, bottom: 4, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
         <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <YAxis hide allowDecimals={false} />
         <Tooltip cursor={{ fill: 'var(--gray-50)' }}
           content={<ChartTooltip formatValue={(d) => `${d.count} contract${d.count === 1 ? '' : 's'}${d.value ? ` · ${formatCurrency(d.value)}` : ''}`} />} />
         <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer" fill="var(--blue-600)" maxBarSize={44}
-          onClick={(d) => onYearClick?.(d?.payload?.fiscalYear ?? d?.fiscalYear)}
-        />
+          onClick={(d) => onYearClick?.(d?.payload?.calYear ?? d?.calYear)}
+        >
+          <LabelList dataKey="count" position="top" style={{ fontSize: 11, fontWeight: 600, fill: 'var(--gray-900)' }}
+            formatter={(v) => v > 0 ? v : ''} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   )
 }
 
 // Opportunities by agency — same shape as the Phase chart, click navigates
-// filtered to that agency. (Replaces the previous plain agency list.)
+// filtered to that agency. Wider label column + no numeric axis (data
+// labels on the bars instead) so long agency names have room to breathe.
 function AgencyChart({ sortedAgencies, onSegmentClick }) {
   const data = sortedAgencies.slice(0, 12).map(([label, count]) => ({ label, count }))
   if (!data.length) return <p className="text-sm text-muted">No agency data.</p>
 
   return (
     <ResponsiveContainer width="100%" height={Math.max(160, data.length * 32)}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" horizontal={false} />
-        <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-        <YAxis type="category" dataKey="label" width={160} tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 36, bottom: 4, left: 4 }}>
+        <XAxis type="number" hide allowDecimals={false} />
+        <YAxis type="category" dataKey="label" width={210} tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <Tooltip cursor={{ fill: 'var(--gray-50)' }} content={<ChartTooltip />} />
-        <Bar dataKey="count" radius={[0, 4, 4, 0]} cursor="pointer" fill="var(--blue-600)" maxBarSize={20}
+        <Bar dataKey="count" radius={[0, 4, 4, 0]} cursor="pointer" fill="var(--blue-600)" maxBarSize={16}
           onClick={(d) => onSegmentClick?.(d?.payload?.label ?? d?.label)}
-        />
+        >
+          <LabelList dataKey="count" position="right" style={{ fontSize: 11, fontWeight: 600, fill: 'var(--gray-900)' }} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   )
@@ -256,7 +262,7 @@ function AgencyChart({ sortedAgencies, onSegmentClick }) {
 
 
 // Collapsible card wrapper — same visual language as PipelineBoard sections
-function CollapsibleCard({ title, count, defaultOpen = false, children, onViewAll }) {
+function CollapsibleCard({ title, count, defaultOpen = true, children, onViewAll }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className={styles.collapsibleCard}>
@@ -307,10 +313,10 @@ function OppRowHeader() {
 }
 
 // Task row with same guardrail approach
-function TaskRow({ task, onClose, closing }) {
+function TaskRow({ task, onClose, closing, onRowClick }) {
   const overdue = isOverdue(task.DueDate)
   return (
-    <div className={styles.consistentRow}>
+    <div className={styles.consistentRow} onClick={() => onRowClick?.(task)}>
       <span className={styles.colTaskTitle}>{task.Title}</span>
       <span className={styles.colTaskContract + ' text-muted'}>{task.ContractNumber}</span>
       <span className={styles.colTaskPriority}>
@@ -327,7 +333,7 @@ function TaskRow({ task, onClose, closing }) {
       <span className={styles.colTaskAction}>
         <button
           className={`${styles.taskCheck} ${task.Status === 'Done' ? styles.taskCheckDone : ''}`}
-          onClick={() => onClose(task)}
+          onClick={(e) => { e.stopPropagation(); onClose(task) }}
           disabled={closing}
           title="Mark as done"
           aria-label="Mark task done"
@@ -568,12 +574,24 @@ export default function Dashboard({ toast }) {
             {initialPLoad
               ? <div className={`skeleton ${styles.chartSkeleton}`} />
               : <ContractByYearChart data={contractByYearData}
-                  onYearClick={(fy) => goToOpportunities({ tab: 'All', endFY: fy })} />
+                  onYearClick={(y) => goToOpportunities({ tab: 'All', endYear: y })} />
             }
           </div>
         </div>
 
-        {/* ── Row 5: Expiring contracts (collapsible, band selector) ── */}
+        {/* ── Row 5: Opportunities by agency (plain card, not collapsible) ── */}
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className={styles.cardTitleRow}>
+            <div className={styles.cardTitle}>Opportunities by agency</div>
+          </div>
+          {initialPLoad
+            ? <div className={`skeleton ${styles.chartSkeleton}`} style={{ height: 80 }} />
+            : <AgencyChart sortedAgencies={sortedAgencies}
+                onSegmentClick={(agency) => goToOpportunities({ tab: 'All', agency })} />
+          }
+        </div>
+
+        {/* ── Row 6: Expiring contracts (collapsible, band selector) ── */}
         <CollapsibleCard
           title="Expiring contracts"
           count={filteredExpiringOpps.length}
@@ -647,18 +665,6 @@ export default function Dashboard({ toast }) {
           }
         </CollapsibleCard>
 
-        {/* ── Row 6: Opportunities by agency (collapsible, now a chart) ── */}
-        <CollapsibleCard
-          title="Opportunities by agency"
-          count={sortedAgencies.length}
-        >
-          {initialPLoad
-            ? <div className={`skeleton ${styles.chartSkeleton}`} style={{ height: 80 }} />
-            : <AgencyChart sortedAgencies={sortedAgencies}
-                onSegmentClick={(agency) => goToOpportunities({ tab: 'All', agency })} />
-          }
-        </CollapsibleCard>
-
         {/* ── Row 7: Tasks (collapsible, tabbed overdue / active) ── */}
         <CollapsibleCard
           title="Tasks"
@@ -702,6 +708,7 @@ export default function Dashboard({ toast }) {
                       task={task}
                       onClose={handleCloseTask}
                       closing={closingTask === task.TaskID}
+                      onRowClick={(t) => navigate(`/tasks?taskId=${encodeURIComponent(t.TaskID)}`)}
                     />
                   ))}
                 </div>
