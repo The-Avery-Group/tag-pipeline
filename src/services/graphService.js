@@ -410,7 +410,13 @@ export const VALIDATION_KEY_MAP = {
   primeOrSub:        'Prime or Sub',
   bidNoBid:          'Bid / No Bid?',
   contactTypes:      'Types',
+  assignees:         'Assignee',
 }
+
+// Fallback used only if the Data Validation sheet's "Assignee" column is
+// empty or doesn't exist yet — the live list is always read from
+// DataValidationTable first, same pattern as every other dropdown list.
+export const ASSIGNEE_VALUES = ['Breanna', 'Ayomide', 'AO']
 
 
 // ── Notification log (Key / LastSent columns on DataValidationTable) ───────
