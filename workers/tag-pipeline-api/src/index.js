@@ -11,6 +11,7 @@
 import { handleNotify }             from './handlers/notify.js'
 import { handleAIChat }             from './handlers/ai.js'
 import { handleSAM } from './handlers/sam.js'
+import { handleAwards } from './handlers/awards.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -88,6 +89,9 @@ export default {
 
       } else if (path === '/sam/search' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
+
+      } else if (path === '/awards/lookup' && req.method === 'GET') {
+        response = await handleAwards(req, env)
 
       } else {
         response = json({ error: 'Not found' }, 404)
