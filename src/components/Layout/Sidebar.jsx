@@ -6,6 +6,7 @@ const NAV = [
   { to: '/',               icon: '⊞', label: 'Dashboard',      end: true },
   { to: '/opportunities',  icon: '◈', label: 'Opportunities' },
   { to: '/pipeline-board', icon: '⬦', label: 'Pipeline Board' },
+  { to: '/lookup',         icon: '⌕', label: 'Lookup' },
   { to: '/tasks',          icon: '☑', label: 'Tasks' },
   { to: '/contacts',       icon: '◎', label: 'Contacts' },
   { to: '/ai-chat',        icon: '✦', label: 'AI Advisor' },
