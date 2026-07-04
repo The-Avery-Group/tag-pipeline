@@ -19,6 +19,7 @@ const AIChat            = lazy(() => import('@/pages/AIChat'))
 const Tasks             = lazy(() => import('@/pages/Tasks'))
 const Contacts          = lazy(() => import('@/pages/Contacts'))
 const Settings          = lazy(() => import('@/pages/Settings'))
+const Lookup            = lazy(() => import('@/pages/Lookup'))
 const Login             = lazy(() => import('@/pages/Login'))
 
 // Shown only while lazy chunks load (very brief)
@@ -115,6 +116,7 @@ function AppShell() {
             <Route path="/tasks"                         element={<Tasks toast={toast} />} />
             <Route path="/contacts"                      element={<Contacts toast={toast} />} />
             <Route path="/settings"                      element={<Settings toast={toast} />} />
+            <Route path="/lookup"                         element={<Lookup toast={toast} />} />
             <Route path="*"                              element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
