@@ -7,6 +7,9 @@ import { useContacts } from '@/hooks/useContacts'
 import { useAuth } from '@/auth/AuthContext'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
+import { useAwardsLookup } from '@/hooks/useAwardsLookup'
+import AwardRecordCard from '@/components/Awards/AwardRecordCard'
+import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { invalidateCache } from '@/services/dataCache'
@@ -154,6 +157,90 @@ function Section({ title, children }) {
 }
 
 // ── Individual read/edit field ────────────────────────────────────────────
+// Collapsible SAM.gov Award Lookup panel — lazily fires the lookup the
+// first time it's expanded (not on page load, to avoid spending the shared
+// 1,000/day SAM API quota on panels nobody opens). Each returned field gets
+// a hover-revealed "Update pipeline" button so the user can selectively
+// pull in just the fields that changed, rather than an all-or-nothing sync.
+function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
+  const [open, setOpen] = useState(false)
+  const { results, loading, error, searched, lookup } = useAwardsLookup()
+  // Tracks which specific fields have been applied this session, keyed by
+  // PIID then field key, so the button can flip to a "✓ Updated" confirmed
+  // state without needing a full re-lookup.
+  const [updatedFields, setUpdatedFields] = useState({})
+
+  const handleToggle = () => {
+    const next = !open
+    setOpen(next)
+    if (next && !searched && !loading) {
+      lookup({ piid: contractNumber })
+    }
+  }
+
+  const handleUpdateField = async (piid, fieldKey, field) => {
+    try {
+      await updateOpp(opp._rowIndex, { [field.column]: field.value }, opp)
+      setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
+      toast?.success(`${field.column.replace(/\*$/, '')} updated`)
+    } catch (err) {
+      toast?.error(`Failed to update: ${err.message}`)
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
+      <button
+        onClick={handleToggle}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+          padding: '12px 16px', background: '#fff', border: 'none', cursor: 'pointer',
+          textAlign: 'left', fontFamily: 'var(--font)',
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', flex: 1 }}>
+          Award Lookup
+        </span>
+        {loading && <span className="text-xs text-muted">Looking up…</span>}
+        <span style={{
+          fontSize: 18, color: 'var(--gray-400)', lineHeight: 1,
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s',
+        }}>›</span>
+      </button>
+      {open && (
+        <div style={{ borderTop: '0.5px solid var(--gray-200)', padding: '12px 16px' }}>
+          {loading && <p className="text-sm text-muted">Looking up award data for {contractNumber}…</p>}
+          {error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Lookup failed: {error}</p>}
+          {searched && !loading && !error && results.length === 0 && (
+            <p className="text-sm text-muted">No award data found for {contractNumber}.</p>
+          )}
+          {results.map((r) => {
+            const piid = r.raw?.contractId?.piid
+            return (
+              <AwardRecordCard
+                key={piid || Math.random()}
+                result={r}
+                renderFieldAction={(fieldKey, field) => {
+                  const done = !!updatedFields[piid]?.[fieldKey]
+                  return (
+                    <button
+                      className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
+                      onClick={() => handleUpdateField(piid, fieldKey, field)}
+                      disabled={done}
+                    >
+                      {done ? '✓ Updated' : 'Update pipeline'}
+                    </button>
+                  )
+                }}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Field({ label, value, editing, onChange, type = 'text', options = null, raw = false, span = false }) {
   return (
     <div className={`form-field ${span ? styles.spanFull : ''}`}>
@@ -892,6 +979,14 @@ export default function OpportunityDetail({ toast }) {
             + Add task
           </button>
         </Section>
+
+        {/* ── Award Lookup ── */}
+        <AwardLookupPanel
+          opp={opp}
+          contractNumber={decodedCN}
+          updateOpp={updateOpp}
+          toast={toast}
+        />
 
         {/* ── AI panels ── */}
         <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
