@@ -1,0 +1,186 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { usePipeline } from '@/hooks/usePipeline'
+import { useAwardsLookup } from '@/hooks/useAwardsLookup'
+import { useValidationLists, pickList } from '@/hooks/useValidationLists'
+import { OPPORTUNITY_OUTLOOK } from '@/services/graphService'
+import Topbar from '@/components/Layout/Topbar'
+import Modal from '@/components/Common/Modal'
+import AwardRecordCard from '@/components/Awards/AwardRecordCard'
+
+const C_CONTRACT_NUM = 'Contract Number / Notice ID'
+
+// A single text input covers PIID, Solicitation Number, AND Contract
+// Vehicle Number — a vehicle number is just the PIID of an IDV-type award,
+// so there's no genuinely separate "vehicle" identifier to account for.
+// The ambiguity between plain PIID and Solicitation Number is resolved by
+// querying both in parallel (see useAwardsLookup / the Worker's awards.js)
+// rather than asking the user to specify which type they typed.
+
+export default function Lookup({ toast }) {
+  const navigate = useNavigate()
+  const { pipeline, add } = usePipeline()
+  const { lists } = useValidationLists()
+  const outlookOptions = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
+  const { results, loading, error, searched, lookup } = useAwardsLookup()
+  const [input, setInput] = useState('')
+
+  // Adding to the pipeline is a two-step confirm, not an immediate write —
+  // specifically because Outlook defaults to "Expiring" (this data source
+  // is inherently post-award, so that's usually right) but is a real
+  // classification decision the user should see and can override, not
+  // something silently set on their behalf.
+  const [pendingResult, setPendingResult] = useState(null)
+  const [pendingOutlook, setPendingOutlook] = useState('Expiring')
+  const [adding, setAdding] = useState(false)
+
+  const handleSearch = () => {
+    const val = input.trim()
+    if (!val) return
+    lookup({ piid: val, solicitationID: val })
+  }
+
+  const handleKeyDown = (e) => { if (e.key === 'Enter') handleSearch() }
+
+  const isInPipeline = (piid) => pipeline.some((o) => o[C_CONTRACT_NUM] === piid)
+
+  const openAddConfirm = (result) => {
+    setPendingResult(result)
+    setPendingOutlook('Expiring')
+  }
+
+  const handleConfirmAdd = async () => {
+    if (!pendingResult) return
+    const piid = pendingResult.raw?.contractId?.piid
+    if (!piid) return
+    setAdding(true)
+    try {
+      const f = pendingResult.fields
+      await add({
+        [C_CONTRACT_NUM]:                  piid,
+        'Project Title / Description*':    pendingResult.raw?.coreData?.awardDescription || piid,
+        // Phase reflects TAG's own BD workflow stage, not the contract's
+        // real-world award status — "Identified" is the correct starting
+        // point for anything newly added, earned through the pipeline from
+        // here rather than auto-granted just because award data exists.
+        'TAG Opportunity Phase':           'Identified',
+        'Opportunity Outlook':             pendingOutlook,
+        'Solicitation Number':             f.solicitationNumber?.value || '',
+        'Total Contract Value ($)*':       f.totalContractValue?.value || '',
+        'Contract End Date*':              f.contractEndDate?.value || '',
+        'NAICS Code*':                     f.naicsCode?.value || '',
+        'Department*':                     f.department?.value || '',
+        'Agency*':                         f.agency?.value || '',
+        'Office*':                         f.office?.value || '',
+        'Set- Aside*':                     f.setAside?.value || '',
+        'Incumbent (Company Name)':        f.incumbentName?.value || '',
+        'Incumbent (Company UEI)':         f.incumbentUEI?.value || '',
+        'Contract Vehicle Number':         f.contractVehicleNumber?.value || '',
+        'Fiscal Year':                     f.fiscalYear?.value || '',
+      })
+      toast?.success('Added to pipeline')
+      setPendingResult(null)
+    } catch (err) {
+      toast?.error(`Failed to add: ${err.message}`)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <>
+      <Topbar
+        title="Lookup"
+        subtitle1="Search SAM.gov award data by PIID, Solicitation Number, or Contract Vehicle Number"
+        showFilter={false}
+        showNew={false}
+      />
+      <div className="page-body">
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="form-input" style={{ flex: 1 }}
+              placeholder="Enter a PIID, Solicitation Number, or Contract Vehicle Number…"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <button className="btn btn-primary" onClick={handleSearch} disabled={loading || !input.trim()}>
+              {loading ? 'Searching…' : 'Search'}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-sm" style={{ color: 'var(--red-600)', marginBottom: 12 }}>
+            Search failed: {error}
+          </p>
+        )}
+        {searched && !loading && !error && results.length === 0 && (
+          <p className="text-sm text-muted">No results found for "{input}".</p>
+        )}
+
+        {results.map((r) => {
+          const piid = r.raw?.contractId?.piid
+          const already = isInPipeline(piid)
+          return (
+            <div key={piid || Math.random()}>
+              <AwardRecordCard result={r} />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6, marginBottom: 14 }}>
+                {already
+                  ? (
+                    <button className="btn text-sm"
+                      onClick={() => navigate(`/opportunities/${encodeURIComponent(piid)}`)}>
+                      Already in pipeline — view →
+                    </button>
+                  )
+                  : (
+                    <button className="btn btn-primary text-sm"
+                      onClick={() => openAddConfirm(r)}>
+                      + Add to pipeline
+                    </button>
+                  )
+                }
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {pendingResult && (
+        <Modal
+          title="Add to pipeline"
+          onClose={() => !adding && setPendingResult(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setPendingResult(null)} disabled={adding}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleConfirmAdd} disabled={adding}>
+                {adding ? 'Adding…' : 'Confirm & add'}
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm" style={{ marginBottom: 14 }}>
+            Adding <strong>{pendingResult.raw?.contractId?.piid}</strong> to the pipeline.
+          </p>
+          <div className="form-field" style={{ marginBottom: 12 }}>
+            <label className="form-label">Phase</label>
+            <input className="form-input" value="Identified" disabled />
+            <span className="text-xs text-muted" style={{ marginTop: 4 }}>
+              Always starts here — advances through the pipeline from this point, same as any other opportunity.
+            </span>
+          </div>
+          <div className="form-field">
+            <label className="form-label">Outlook</label>
+            <select className="form-input" value={pendingOutlook} onChange={(e) => setPendingOutlook(e.target.value)}>
+              {outlookOptions.map((o) => <option key={o}>{o}</option>)}
+            </select>
+            <span className="text-xs text-muted" style={{ marginTop: 4 }}>
+              Defaults to "Expiring" since this data is already-awarded — change it if that's not right here.
+            </span>
+          </div>
+        </Modal>
+      )}
+    </>
+  )
+}
