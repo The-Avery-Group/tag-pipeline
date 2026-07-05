@@ -216,11 +216,18 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
           )}
           {results.map((r) => {
             const piid = r.raw?.contractId?.piid
+            const isIDV = r.raw?.coreData?.awardOrIDV === 'IDV'
             return (
               <AwardRecordCard
                 key={piid || Math.random()}
-                result={r}
+                piid={piid}
+                isIDV={isIDV}
+                modificationCount={r.modificationCount}
+                originalSignedDate={r.originalSignedDate}
+                samLink={r.samLink}
+                fields={r.fields}
                 renderFieldAction={(fieldKey, field) => {
+                  if (!field.column) return null   // display-only field, nowhere in the pipeline to write it
                   const done = !!updatedFields[piid]?.[fieldKey]
                   return (
                     <button
