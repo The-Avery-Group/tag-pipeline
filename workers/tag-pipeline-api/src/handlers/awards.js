@@ -82,9 +82,31 @@ function recordDate(r) {
   )
 }
 
+// Constructs a deep link to view this record on sam.gov itself. Confirmed
+// against a real sam.gov URL for piid/modNumber/transactionNumber/
+// refIdvPiid/contractType — `agencyID`/`idvAgencyID` are a best-effort
+// mapping to contractId.subtier.code (unconfirmed; worth checking the first
+// time this is used against a link you know is correct).
+function buildSamGovLink(record) {
+  const piid = record?.contractId?.piid
+  if (!piid) return null
+  const params = new URLSearchParams({
+    agencyID:          record?.contractId?.subtier?.code || 'null',
+    modNumber:         record?.contractId?.modificationNumber || '',
+    transactionNumber: record?.contractId?.transactionNumber ?? '0',
+    refIdvPiid:        record?.contractId?.referencedIDVPiid || 'null',
+    idvAgencyID:       record?.contractId?.referencedIDVSubtier?.code || 'null',
+    contractType:      record?.coreData?.awardOrIDV || 'AWARD',
+  })
+  return `https://sam.gov/workspace/contract/award/view/${encodeURIComponent(piid)}?${params}`
+}
+
 // Groups raw records by PIID (scoped by contracting subtier, in case the
 // same PIID string were ever reused across subtiers), sorts each group
-// chronologically, and folds it into one composite "current state" record.
+// chronologically, and folds it into one composite "current state" record —
+// plus, separately, progressive snapshots for the last up to 3 modifications
+// (most recent first) so the Lookup page can offer a history toggle without
+// losing the "complete picture at any point" property the full merge gives.
 function groupAndMergeByPiid(records) {
   const groups = new Map()
   for (const r of records) {
@@ -95,49 +117,137 @@ function groupAndMergeByPiid(records) {
 
   const merged = []
   for (const group of groups.values()) {
-    const sorted = [...group].sort((a, b) => recordDate(a) - recordDate(b))
+    const sorted = [...group].sort((a, b) => recordDate(a) - recordDate(b))   // oldest → newest
+
+    // Full composite across the WHOLE history — used for OpportunityDetail
+    // (which only ever wants "the current picture", no history toggle) and
+    // as the Lookup page's default view.
     let composite = sorted[0]
     for (let i = 1; i < sorted.length; i++) composite = mergeAwardRecord(composite, sorted[i])
+
+    // Progressive snapshots for the last up-to-3 modifications, most recent
+    // first. Each one's current-state fields reflect everything merged up
+    // through that point (so toggling to an older mod still shows a
+    // complete contract picture, not just whatever that one transaction
+    // touched) — but its modification/history fields are that transaction's
+    // own, unmerged, since those are meaningful only per-transaction.
+    const last3 = sorted.slice(-3).reverse()
+    const modifications = last3.map((modRecord) => {
+      const idx = sorted.indexOf(modRecord)
+      let progressive = sorted[0]
+      for (let i = 1; i <= idx; i++) progressive = mergeAwardRecord(progressive, sorted[i])
+      return {
+        ...extractTransactionFields(modRecord),
+        currentState: extractCurrentStateFields(progressive),
+      }
+    })
+
+    const latest = sorted[sorted.length - 1]
     merged.push({
       composite,
-      matchedBy: sorted[sorted.length - 1]._matchedBy,
+      matchedBy: latest._matchedBy,
       modificationCount: sorted.length,
-      latestModificationNumber: sorted[sorted.length - 1]?.contractId?.modificationNumber || null,
+      latestModificationNumber: latest?.contractId?.modificationNumber || null,
+      // The base award's signed date — a fixed historical fact, distinct
+      // from "date signed" under Modification Details (which is per-mod).
+      originalSignedDate: sorted[0]?.awardDetails?.dates?.dateSigned || null,
+      samLink: buildSamGovLink(composite),
+      // Latest transaction's own metadata, for the OpportunityDetail view
+      // (which shows "current state" but still benefits from knowing what
+      // the most recent change actually was, even without a toggle).
+      latestTransactionFields: extractTransactionFields(latest),
+      modifications,
     })
   }
   return merged
 }
 
 // ── Field extraction ────────────────────────────────────────────────────
-// Pulls out exactly the fields TAG's pipeline can actually use (per the
-// confirmed column mapping), so the frontend doesn't need to know the raw
-// API's deeply nested shape. Each entry also carries the PipelineTable
-// column it maps to, so the per-field "update this in the pipeline" button
-// can be built generically from this list rather than hardcoded per field.
-function extractMappedFields(record) {
-  const naics = record?.coreData?.productOrServiceInformation?.principalNaics?.[0]
-  const dept  = record?.coreData?.federalOrganization?.contractingInformation?.contractingDepartment
-  const subtier = record?.coreData?.federalOrganization?.contractingInformation?.contractingSubtier
-  const office   = record?.coreData?.federalOrganization?.contractingInformation?.contractingOffice
-  const setAside = record?.coreData?.competitionInformation?.typeOfSetAside
+// Each field carries its display section/label (so the frontend doesn't
+// need its own duplicate label map) and the PipelineTable column it maps
+// to, if any — many of these fields (award type, solicitation procedures,
+// number of offers received, etc.) have no corresponding pipeline column
+// and are display-only; `column: null` signals that to the frontend so it
+// doesn't render an "update pipeline" button for something with nowhere to
+// write to.
+//
+// Split into two functions because they behave differently across a
+// contract's modification history:
+//   - "current state" fields (extractCurrentStateFields) get progressively
+//     merged — later mods' non-null values win, but nothing already set is
+//     lost just because a later mod (e.g. a funding-only action) didn't
+//     touch that field.
+//   - "per-transaction" fields (extractTransactionFields) describe THAT
+//     specific modification event (who signed it, why, when) and must
+//     reflect exactly what that one record says — merging these across
+//     mods would be meaningless (there's no single "current" reason for
+//     modification, for example).
+
+function extractCurrentStateFields(record) {
+  const naics        = record?.coreData?.productOrServiceInformation?.principalNaics?.[0]
+  const pos          = record?.coreData?.productOrServiceInformation?.productOrService
+  const dept         = record?.coreData?.federalOrganization?.contractingInformation?.contractingDepartment
+  const subtier      = record?.coreData?.federalOrganization?.contractingInformation?.contractingSubtier
+  const office       = record?.coreData?.federalOrganization?.contractingInformation?.contractingOffice
+  const setAside     = record?.coreData?.competitionInformation?.typeOfSetAside
+  const solProc      = record?.coreData?.competitionInformation?.solicitationProcedures
   const awardeeHeader = record?.awardDetails?.awardeeData?.awardeeHeader
   const awardeeUEI    = record?.awardDetails?.awardeeData?.awardeeUEIInformation
+  const awardOrIDVType = record?.coreData?.awardOrIDVType
+  const typeOfContractPricing = record?.coreData?.acquisitionData?.typeOfContractPricing
 
   return {
-    totalContractValue: { value: record?.awardDetails?.dollars?.baseAndAllOptionsValue ?? null, column: 'Total Contract Value ($)*' },
-    contractEndDate:    { value: record?.awardDetails?.dates?.ultimateCompletionDate ?? null,    column: 'Contract End Date*' },
-    fiscalYear:         { value: record?.awardDetails?.dates?.fiscalYear ?? null,                 column: 'Fiscal Year' },
-    naicsCode:          { value: naics?.code ?? null,                                             column: 'NAICS Code*' },
-    department:         { value: dept?.name ?? null,                                              column: 'Department*' },
-    agency:             { value: subtier?.name ?? null,                                           column: 'Agency*' },
-    office:             { value: office?.name ?? null,                                            column: 'Office*' },
-    solicitationNumber: { value: record?.coreData?.solicitationId ?? null,                        column: 'Solicitation Number' },
-    setAside:           { value: setAside?.name ?? null,                                          column: 'Set- Aside*' },
-    incumbentName:      { value: awardeeHeader?.awardeeName ?? null,                               column: 'Incumbent (Company Name)' },
-    incumbentUEI:       { value: awardeeUEI?.uniqueEntityId ?? null,                                column: 'Incumbent (Company UEI)' },
-    // Only meaningful on order/call records that actually reference a parent
-    // vehicle — null on a record that IS itself a vehicle (IDV).
-    contractVehicleNumber: { value: record?.contractId?.referencedIDVPiid ?? null,                 column: 'Contract Vehicle Number' },
+    // SUMMARY
+    piid:                   { section: 'Summary', label: 'PIID (Contract Number)', value: record?.contractId?.piid ?? null, column: 'Contract Number / Notice ID' },
+    incumbentName:           { section: 'Summary', label: 'Awardee (Incumbent)', value: awardeeHeader?.awardeeName ?? null, column: 'Incumbent (Company Name)' },
+    incumbentUEI:            { section: 'Summary', label: 'UEI', value: awardeeUEI?.uniqueEntityId ?? null, column: 'Incumbent (Company UEI)' },
+    contractVehicleNumber:   { section: 'Summary', label: 'Referenced IDV PIID', value: record?.contractId?.referencedIDVPiid ?? null, column: 'Contract Vehicle Number' },
+    totalEstimatedOrderValue:{ section: 'Summary', label: 'Total Estimated Order Value', value: record?.awardDetails?.dollars?.totalEstimatedOrderValue ?? null, column: 'Total Contract Value ($)*' },
+    awardType:               { section: 'Summary', label: 'Award Type', value: awardOrIDVType?.name ?? null, column: null },
+    department:              { section: 'Summary', label: 'Department', value: dept?.name ?? null, column: 'Department*' },
+    agency:                  { section: 'Summary', label: 'Agency', value: subtier?.name ?? null, column: 'Agency*' },
+    office:                  { section: 'Summary', label: 'Office', value: office?.name ?? null, column: 'Office*' },
+    fiscalYear:              { section: 'Summary', label: 'Fiscal Year', value: record?.awardDetails?.dates?.fiscalYear ?? null, column: 'Fiscal Year' },
+
+    // PERFORMANCE
+    periodOfPerformanceStart:{ section: 'Performance', label: 'Period of Performance Start', value: record?.awardDetails?.dates?.periodOfPerformanceStartDate ?? null, column: null },
+    contractEndDate:         { section: 'Performance', label: 'Estimated Completion Date', value: record?.awardDetails?.dates?.currentCompletionDate ?? null, column: 'Contract End Date*' },
+
+    // SOLICITATION
+    solicitationNumber:     { section: 'Solicitation', label: 'Solicitation Number', value: record?.coreData?.solicitationId ?? null, column: 'Solicitation Number' },
+    solicitationDate:       { section: 'Solicitation', label: 'Solicitation Date', value: record?.coreData?.solicitationDate ?? null, column: null },
+
+    // DESCRIPTION
+    description:             { section: 'Description', label: 'Description', value: record?.awardDetails?.productOrServiceInformation?.descriptionOfContractRequirement ?? null, column: null },
+
+    // CURRENT CONTRACT DETAILS
+    typeOfContract:          { section: 'Contract Details', label: 'Type of Contract', value: typeOfContractPricing?.name ?? null, column: null },
+    numberOfActions:         { section: 'Contract Details', label: 'Number of Actions', value: record?.awardDetails?.contractData?.numberOfActions ?? null, column: null },
+    productServiceCode:      { section: 'Contract Details', label: 'Product/Service Code', value: pos?.code ?? null, column: null },
+    naicsCode:               { section: 'Contract Details', label: 'Principal NAICS Code', value: naics?.code ?? null, column: 'NAICS Code*' },
+    setAside:                { section: 'Contract Details', label: 'Type of Set-Aside', value: setAside?.name ?? null, column: 'Set- Aside*' },
+    solicitationProcedures:  { section: 'Contract Details', label: 'Solicitation Procedures', value: solProc?.name ?? null, column: null },
+    numberOfOffersReceived:  { section: 'Contract Details', label: 'Number of Offers Received', value: record?.awardDetails?.competitionInformation?.numberOfOffersReceived ?? null, column: null },
+  }
+}
+
+function extractTransactionFields(record) {
+  const td = record?.awardDetails?.transactionData
+  return {
+    // MODIFICATION DETAILS
+    modificationNumber:     { section: 'Modification Details', label: 'Modification Number', value: record?.contractId?.modificationNumber ?? null, column: null },
+    dateSigned:              { section: 'Modification Details', label: 'Date Signed', value: record?.awardDetails?.dates?.dateSigned ?? null, column: null },
+    reasonForModification:  { section: 'Modification Details', label: 'Reason for Modification', value: record?.contractId?.reasonForModification?.name ?? null, column: null },
+
+    // HISTORY — "prepared" isn't a literal field name in this API; mapped
+    // to createdDate/createdBy as the closest semantic equivalent (the
+    // person/date the record was first entered into the system).
+    preparedDate:            { section: 'History', label: 'Prepared Date', value: td?.createdDate ?? null, column: null },
+    approvedDate:            { section: 'History', label: 'Approved Date', value: td?.approvedDate ?? null, column: null },
+    lastModifiedUser:        { section: 'History', label: 'Last Modified User', value: td?.lastModifiedBy ?? null, column: null },
+    lastModifiedDate:        { section: 'History', label: 'Last Modified Date', value: td?.lastModifiedDate ?? null, column: null },
+    approvedBy:              { section: 'History', label: 'Approved By', value: td?.approvedBy ?? null, column: null },
+    preparedUser:            { section: 'History', label: 'Prepared User', value: td?.createdBy ?? null, column: null },
   }
 }
 
@@ -215,12 +325,21 @@ async function handleLookup(req, env) {
     // state" record — see groupAndMergeByPiid / mergeAwardRecord above.
     const groups = groupAndMergeByPiid(allRecords)
 
-    const results = groups.map(({ composite, matchedBy, modificationCount, latestModificationNumber }) => ({
-      raw: composite,
-      matchedBy,
-      modificationCount,
-      latestModificationNumber,
-      fields: extractMappedFields(composite),
+    const results = groups.map((g) => ({
+      raw: g.composite,
+      matchedBy: g.matchedBy,
+      modificationCount: g.modificationCount,
+      latestModificationNumber: g.latestModificationNumber,
+      originalSignedDate: g.originalSignedDate,
+      samLink: g.samLink,
+      // OpportunityDetail's view: current-state fields (merged across the
+      // whole history) plus the latest transaction's own metadata — no
+      // history toggle, just "everything about where this stands now".
+      fields: { ...extractCurrentStateFields(g.composite), ...g.latestTransactionFields },
+      // Lookup page's view: up to the last 3 modifications, most recent
+      // first, each a fully self-contained snapshot (current-state fields
+      // as of that point + that transaction's own metadata).
+      modifications: g.modifications,
     }))
 
     const response = { results, count: results.length }
