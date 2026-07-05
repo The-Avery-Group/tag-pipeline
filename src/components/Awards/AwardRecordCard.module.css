@@ -84,3 +84,24 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* ── Section headers grouping the field grid ── */
+.sectionHeader {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-400);
+  margin: 14px 0 6px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--gray-100);
+}
+.sectionHeader:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
+
+.samLink {
+  font-size: 11px;
+  color: var(--blue-600);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.samLink:hover { text-decoration: underline; }
