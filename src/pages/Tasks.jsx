@@ -315,7 +315,7 @@ export default function Tasks({ toast }) {
   // Read ?status=overdue once on initial load only (e.g. arriving from the
   // Dashboard's Overdue Tasks KPI) — not kept in sync with the URL on an
   // ongoing basis, unlike Opportunities.jsx's full filter persistence.
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [statusFilter, setStatusFilter] = useState(() => {
     const s = searchParams.get('status')
     return s === 'overdue' ? 'Overdue' : 'All'
@@ -327,12 +327,24 @@ export default function Tasks({ toast }) {
   const [selected, setSelected]         = useState(null)   // task open in detail panel
 
   // Arriving from the Dashboard's task list with ?taskId=... — open that
-  // task's detail panel automatically once it's available.
+  // task's detail panel automatically once it's available, THEN clear the
+  // param immediately. Without this, closing the panel sets `selected` back
+  // to null, which re-runs this effect — and since `taskId` was still
+  // sitting in the URL, it would immediately reopen the same task, making
+  // the panel impossible to close (and its full-viewport backdrop then
+  // silently blocks every other click on the page, including sidebar nav).
   useEffect(() => {
     const taskId = searchParams.get('taskId')
     if (!taskId || selected) return
     const match = tasks.find((t) => t.TaskID === taskId)
-    if (match) setSelected(match)
+    if (match) {
+      setSelected(match)
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('taskId')
+        return next
+      }, { replace: true })
+    }
   }, [searchParams, tasks, selected])
   const [taskForm, setTaskForm]         = useState(BLANK_FORM)
   const setFormField = useCallback((f, v) => setTaskForm((p) => ({ ...p, [f]: v })), [])
