@@ -1,33 +1,93 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { sendAIMessage, getConversationHistory, clearConversation } from '@/services/groqService'
+import { sendAIMessage, getConversationHistory, clearConversation, executeClientTool } from '@/services/groqService'
+
+// Mirrors the Worker's own MAX_TOOL_ROUNDS safety net — belt and suspenders
+// against a pathological loop where the model keeps asking for more tools.
+const MAX_TOOL_ROUNDS = 5
+
+// Friendly status labels shown while a tool call is being executed, so the
+// user sees "Searching your pipeline…" instead of a longer silent spinner
+// during the extra round trip(s) tool calling adds.
+const TOOL_ACTIVITY_LABELS = {
+  search_pipeline:        'Searching your pipeline…',
+  get_opportunity:        'Looking up that opportunity…',
+  search_tasks:           'Checking tasks…',
+  search_contacts:        'Searching contacts…',
+  get_expiring_contracts: 'Checking expiring contracts…',
+  get_pipeline_metrics:   'Pulling pipeline metrics…',
+}
 
 /**
- * useAIChat — manages conversational AI state
+ * useAIChat — manages conversational AI state, including the client-side
+ * half of tool calling: when the Worker/Groq wants to call a custom tool
+ * (search_pipeline, get_opportunity, etc.), this hook executes it locally
+ * against already-loaded data and sends the result back, looping until a
+ * final answer comes back. (Groq's built-in browser_search tool resolves
+ * entirely server-side and never surfaces here as a round trip.)
+ *
  * @param {string} conversationId — unique ID for this conversation thread
  * @param {string} promptType     — 'general' | 'opportunity_detail' etc
  * @param {object} initialContext — context to seed the conversation (opportunity data etc)
+ * @param {object} data           — { pipeline, tasks, contacts } for tool execution
  */
-export function useAIChat({ conversationId, promptType = 'general', initialContext = {} }) {
+export function useAIChat({ conversationId, promptType = 'general', initialContext = {}, data = {} }) {
   const [messages,  setMessages]  = useState([])   // { role, content }[]
   const [loading,   setLoading]   = useState(false)
   const [error,     setError]     = useState(null)
   const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [toolActivity, setToolActivity] = useState(null)   // friendly label while a tool call is in flight
   const abortRef = useRef(null)
+
+  // Keep the latest data available to the tool loop without needing to
+  // recreate send()/runToolLoop() every time pipeline/tasks/contacts update
+  // from the background poll mid-conversation.
+  const dataRef = useRef(data)
+  useEffect(() => { dataRef.current = data }, [data])
 
   // Load existing history on mount
   useEffect(() => {
     if (!conversationId) { setHistoryLoaded(true); return }
     getConversationHistory(conversationId).then((history) => {
-      // Filter out the seeding exchange (context injection) from display
+      // Filter out internal plumbing (context seeding, tool_calls messages,
+      // tool results) — only real conversational turns get displayed.
       const displayable = history.filter((m) => {
-        if (m.role === 'user' && m.content.startsWith('Context for this conversation:')) return false
-        if (m.role === 'assistant' && m.content.startsWith('Understood. I have reviewed')) return false
+        if (m.role === 'user' && m.content?.startsWith('Context for this conversation:')) return false
+        if (m.role === 'assistant' && m.content?.startsWith('Understood. I have reviewed')) return false
+        if (m.role === 'tool') return false
+        if (m.role === 'assistant' && !m.content) return false   // tool_calls-only, no displayable text
         return true
       })
       setMessages(displayable)
       setHistoryLoaded(true)
     })
   }, [conversationId])
+
+  // Drives the tool-calling loop: given a response from the Worker, keep
+  // executing tool calls and sending results back until a final answer
+  // comes back (or the round cap is hit, mirroring the Worker's own cap).
+  const runToolLoop = useCallback(async (initialResult) => {
+    let result = initialResult
+    let round = 0
+    while (result.type === 'tool_calls' && round < MAX_TOOL_ROUNDS) {
+      round++
+      const label = TOOL_ACTIVITY_LABELS[result.toolCalls[0]?.name] || 'Checking your data…'
+      setToolActivity(label)
+
+      const toolResults = result.toolCalls.map((call) => ({
+        tool_call_id: call.id,
+        name: call.name,
+        content: executeClientTool(call.name, call.arguments, dataRef.current),
+      }))
+
+      result = await sendAIMessage({
+        promptType, context: initialContext,
+        conversationId: result.conversationId,
+        toolResults, toolRound: round,
+      })
+    }
+    setToolActivity(null)
+    return result
+  }, [promptType, initialContext])
 
   const send = useCallback(async (userMessage) => {
     if (!userMessage.trim() || loading) return
@@ -38,13 +98,14 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
     setError(null)
 
     try {
-      const result = await sendAIMessage({
+      let result = await sendAIMessage({
         message: userMessage,
         promptType,
         context: initialContext,
         conversationId,
         startFresh: false,
       })
+      result = await runToolLoop(result)
       setMessages((prev) => [...prev, { role: 'assistant', content: result.content }])
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -54,8 +115,9 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
       }
     } finally {
       setLoading(false)
+      setToolActivity(null)
     }
-  }, [loading, promptType, initialContext, conversationId])
+  }, [loading, promptType, initialContext, conversationId, runToolLoop])
 
   const startFresh = useCallback(async () => {
     if (conversationId) await clearConversation(conversationId)
@@ -63,5 +125,5 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
     setError(null)
   }, [conversationId])
 
-  return { messages, loading, error, historyLoaded, send, startFresh }
+  return { messages, loading, error, historyLoaded, send, startFresh, toolActivity }
 }
