@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
+import { useContacts } from '@/hooks/useContacts'
 import { useAIChat } from '@/hooks/useAIChat'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
@@ -23,6 +24,7 @@ export default function AIChat({ toast }) {
   const navigate = useNavigate()
   const { pipeline } = usePipeline()
   const { tasks } = useTasks()
+  const { contacts } = useContacts()
 
   const oppCN      = searchParams.get('opportunity')
   const freshParam = searchParams.get('fresh') === '1'
@@ -52,10 +54,11 @@ export default function AIChat({ toast }) {
     ? makeConvId(oppCN.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40))
     : makeConvId('general')
 
-  const { messages, loading, error, historyLoaded, send, startFresh } = useAIChat({
+  const { messages, loading, error, historyLoaded, send, startFresh, toolActivity } = useAIChat({
     conversationId: convId,
     promptType,
     initialContext: context,
+    data: { pipeline, tasks, contacts },
   })
 
   const [input, setInput] = useState('')
@@ -186,6 +189,9 @@ export default function AIChat({ toast }) {
             <div className={`${styles.message} ${styles.assistant}`}>
               <div className={styles.assistantIcon}>✦</div>
               <div className={styles.bubble}>
+                {toolActivity && (
+                  <div className="text-xs text-muted" style={{ marginBottom: 6 }}>{toolActivity}</div>
+                )}
                 <div className={styles.typingDots}>
                   <span className={styles.dot} />
                   <span className={styles.dot} />
