@@ -26,6 +26,118 @@ const MODEL_PRIORITY = [
   'llama-3.1-8b-instant',
 ]
 
+// Maximum tool-calling round trips per user turn, so a pathological loop
+// (model keeps asking for more tools indefinitely) can't run forever.
+const MAX_TOOL_ROUNDS = 5
+
+// ── Tool definitions ─────────────────────────────────────────────────────
+// Custom tools are EXECUTED ON THE FRONTEND, not here — the pipeline/tasks/
+// contacts data already lives in memory on the client (usePipeline/useTasks/
+// useContacts, warmed by dataCache.js) via the user's own delegated Graph
+// auth. The Worker only orchestrates: send the tool schemas to Groq, and if
+// Groq wants to call one, hand that request back to the frontend instead of
+// executing it itself. This avoids needing any new Azure AD app permissions
+// for the Worker to read the workbook directly.
+//
+// browser_search is different — it's a Groq BUILT-IN tool that runs
+// entirely server-side inside Groq itself. The Worker never sees an
+// intermediate tool_calls step for it; Groq handles the whole search+read
+// loop internally and just returns a normal completion.
+const CLIENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'search_pipeline',
+      description: 'Search/filter the opportunity pipeline. Use this to find opportunities matching criteria like phase, agency, outlook, or a free-text search across title/agency/contract number. Returns a list of matching opportunities with key fields.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query:   { type: 'string', description: 'Free-text search across title, agency, contract number' },
+          phase:   { type: 'string', description: 'Filter by TAG Opportunity Phase (e.g. Identified, Proposal, Contract Awarded)' },
+          outlook: { type: 'string', description: 'Filter by Opportunity Outlook (e.g. Expiring, Tracking, New)' },
+          agency:  { type: 'string', description: 'Filter by agency name (partial match)' },
+          limit:   { type: 'number', description: 'Max results to return, default 20' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_opportunity',
+      description: 'Get full details for one specific opportunity by its Contract Number / Notice ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contractNumber: { type: 'string', description: 'The Contract Number / Notice ID to look up' },
+        },
+        required: ['contractNumber'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_tasks',
+      description: 'Search/filter tasks by status, assignee, overdue state, or associated contract.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status:         { type: 'string', description: 'Filter by status: "To Do", "In Progress", or "Done"' },
+          assignedTo:     { type: 'string', description: 'Filter by assignee name' },
+          overdueOnly:    { type: 'boolean', description: 'If true, only return overdue, non-Done tasks' },
+          contractNumber: { type: 'string', description: 'Filter to tasks for a specific contract number' },
+          limit:          { type: 'number', description: 'Max results to return, default 20' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_contacts',
+      description: 'Search contacts by name, agency, or organization.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Free-text search across name, agency, organization' },
+          limit: { type: 'number', description: 'Max results to return, default 20' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_expiring_contracts',
+      description: 'Get contracts expiring/ending within a given number of days — useful for recompete and capture planning questions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          withinDays: { type: 'number', description: 'Look-ahead window in days, default 180' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_pipeline_metrics',
+      description: 'Get overall pipeline KPIs: total opportunities, total value, phase breakdown, overdue task count, top assignee.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  { type: 'browser_search' },
+]
+
+// Only the conversational promptTypes get tools — the one-shot AIPanel
+// flows (email_draft, capability_statement, pipeline_summary) already get
+// precisely-scoped context injected directly for their single specific
+// task; giving them a tool-calling round trip would add latency for no
+// benefit, since they don't need to explore data, just use what's handed
+// to them.
+const TOOL_CAPABLE_PROMPT_TYPES = ['general', 'opportunity_detail']
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -177,28 +289,37 @@ If you don't have enough data to answer confidently, say so and explain what inf
 
 // ── Groq call ──────────────────────────────────────────────────────────────
 
-async function callGroq(messages, apiKey) {
+async function callGroq(messages, apiKey, tools = null) {
   let lastError = null
   for (const model of MODEL_PRIORITY) {
     try {
+      const body = { model, max_tokens: 1000, messages }
+      if (tools) { body.tools = tools; body.tool_choice = 'auto' }
+
       const res = await fetch(`${GROQ_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, max_tokens: 1000, messages }),
+        body: JSON.stringify(body),
       })
       if (res.status === 429 || res.status === 503) {
         lastError = new Error(`Rate limited on ${model}`)
         continue
       }
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body?.error?.message || `Groq error: ${res.status}`)
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody?.error?.message || `Groq error: ${res.status}`)
       }
       const data = await res.json()
-      return { content: data.choices?.[0]?.message?.content ?? '', model }
+      const choice = data.choices?.[0]
+      return {
+        content:      choice?.message?.content ?? '',
+        toolCalls:    choice?.message?.tool_calls ?? null,
+        finishReason: choice?.finish_reason,
+        model,
+      }
     } catch (err) {
       if (!err.message.includes('Rate limited')) throw err
       lastError = err
@@ -300,6 +421,8 @@ export async function handleAIChat(req, env) {
   const {
     message,
     question,              // legacy compat from one-shot panels
+    toolResults,            // present when the frontend is responding to a prior tool_calls request
+    toolRound = 0,          // safety-net counter, see MAX_TOOL_ROUNDS below
     promptType = 'general',
     context = {},
     conversationId,
@@ -307,55 +430,86 @@ export async function handleAIChat(req, env) {
   } = body
 
   const userMessage = message || question || ''
-  if (!userMessage && promptType !== 'pipeline_summary') {
+  const toolCapable = TOOL_CAPABLE_PROMPT_TYPES.includes(promptType)
+
+  if (!userMessage && !toolResults && promptType !== 'pipeline_summary') {
     return json({ error: 'Missing message' }, 400)
   }
 
-  // Fetch capabilities and existing history in parallel
+  // Fetch capabilities and existing history in parallel. On a toolResults
+  // follow-up we always need history (it holds the pending assistant
+  // tool_calls message we're completing), regardless of startFresh.
+  const needHistory = conversationId && (!startFresh || toolResults)
   const [capabilities, existingHistory] = await Promise.all([
     getCapabilities(env),
-    conversationId && !startFresh ? getHistory(env, conversationId) : Promise.resolve([]),
+    needHistory ? getHistory(env, conversationId) : Promise.resolve([]),
   ])
 
-  // Build system prompt
   const systemPrompt = buildSystemPrompt(promptType, capabilities)
-
-  // Build context block (injected as first user message if history is empty)
   const contextBlock = buildContextBlock(context)
 
-  // Assemble messages array
-  let messages = [{ role: 'system', content: systemPrompt }]
+  // turnMessages = exactly what's new this turn, on top of existingHistory —
+  // tracked explicitly (rather than derived via slicing later) so it's
+  // trivially correct to append to history however this call resolves,
+  // regardless of which branch below built it.
+  let turnMessages = []
 
-  if (existingHistory.length > 0) {
-    // Resume conversation — inject history
-    messages = [...messages, ...existingHistory]
-  } else if (contextBlock) {
-    // New conversation with context — seed with context as first exchange
-    messages.push({ role: 'user', content: `Context for this conversation:\n\n${contextBlock}` })
-    messages.push({ role: 'assistant', content: 'Understood. I have reviewed the pipeline and opportunity data. What would you like to discuss?' })
+  if (toolResults) {
+    // Follow-up turn: history already ends with the assistant's tool_calls
+    // message (saved the first time we returned type: 'tool_calls') — the
+    // only new messages this turn are the results the frontend executed.
+    turnMessages = toolResults.map((r) => ({
+      role: 'tool', tool_call_id: r.tool_call_id, name: r.name, content: JSON.stringify(r.content),
+    }))
+  } else {
+    if (existingHistory.length === 0 && contextBlock) {
+      turnMessages.push({ role: 'user', content: `Context for this conversation:\n\n${contextBlock}` })
+      turnMessages.push({ role: 'assistant', content: 'Understood. I have reviewed the pipeline and opportunity data. What would you like to discuss?' })
+    }
+    const finalUserMessage = promptType === 'pipeline_summary' && !userMessage
+      ? `Analyze the pipeline data above and give me an executive summary highlighting health, risks, stale opportunities, upcoming deadlines, and any items that need immediate attention.`
+      : userMessage
+    turnMessages.push({ role: 'user', content: finalUserMessage })
   }
 
-  // Add the current user message (for pipeline_summary, synthesize a prompt)
-  const finalUserMessage = promptType === 'pipeline_summary' && !userMessage
-    ? `Analyze the pipeline data above and give me an executive summary highlighting health, risks, stale opportunities, upcoming deadlines, and any items that need immediate attention.`
-    : userMessage
+  const messages = [{ role: 'system', content: systemPrompt }, ...existingHistory, ...turnMessages]
 
-  messages.push({ role: 'user', content: finalUserMessage })
+  // Past the safety-net round cap — force a text answer instead of yet
+  // another tool call, so a pathological loop can't run forever.
+  const forceNoTools = toolCapable && toolRound >= MAX_TOOL_ROUNDS
+  const toolsForThisCall = toolCapable && !forceNoTools ? CLIENT_TOOLS : null
 
   try {
-    const result = await callGroq(messages, env.GROQ_API_KEY)
+    const result = await callGroq(messages, env.GROQ_API_KEY, toolsForThisCall)
+    const historyBase = [...existingHistory, ...turnMessages]
 
-    // Save updated history if conversationId provided
-    if (conversationId) {
-      const historyToSave = [
-        ...existingHistory,
-        { role: 'user',      content: finalUserMessage },
-        { role: 'assistant', content: result.content },
-      ]
-      await saveHistory(env, conversationId, historyToSave)
+    if (result.toolCalls?.length > 0) {
+      // Groq wants to call one or more CUSTOM (client-executed) tools —
+      // browser_search wouldn't show up here, Groq resolves that internally
+      // and just returns a normal completion. Persist the assistant's own
+      // tool_calls message so the follow-up request can reconstruct the
+      // conversation correctly, and hand the requests to the frontend.
+      if (conversationId) {
+        const assistantMsg = { role: 'assistant', content: result.content || null, tool_calls: result.toolCalls }
+        await saveHistory(env, conversationId, [...historyBase, assistantMsg])
+      }
+      return json({
+        type: 'tool_calls',
+        toolCalls: result.toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments || '{}'),
+        })),
+        conversationId,
+      })
     }
 
-    return json({ ...result, conversationId })
+    // Normal completion — save full history and return the final answer.
+    if (conversationId) {
+      await saveHistory(env, conversationId, [...historyBase, { role: 'assistant', content: result.content }])
+    }
+
+    return json({ type: 'final', content: result.content, model: result.model, conversationId })
   } catch (err) {
     console.error('[AI] Groq call failed:', err)
     return json({ error: err.message }, 502)
