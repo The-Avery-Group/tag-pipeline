@@ -17,13 +17,15 @@ export async function sendAIMessage({
   context = {},
   conversationId = null,
   startFresh = false,
+  toolResults = null,   // present when responding to a prior 'tool_calls' response
+  toolRound = 0,         // safety-net counter, mirrors MAX_TOOL_ROUNDS on the Worker
 } = {}) {
   if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
 
   const res = await fetch(`${WORKER_URL}/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, promptType, context, conversationId, startFresh }),
+    body: JSON.stringify({ message, promptType, context, conversationId, startFresh, toolResults, toolRound }),
   })
 
   if (!res.ok) {
@@ -31,7 +33,9 @@ export async function sendAIMessage({
     throw new Error(err.error || `Worker AI error: ${res.status}`)
   }
 
-  return res.json()  // { content, model, conversationId }
+  // Either { type: 'final', content, model, conversationId }
+  //      or { type: 'tool_calls', toolCalls: [{ id, name, arguments }], conversationId }
+  return res.json()
 }
 
 /**
@@ -53,6 +57,135 @@ export async function clearConversation(conversationId) {
   await fetch(`${WORKER_URL}/ai/history?conversationId=${encodeURIComponent(conversationId)}`, {
     method: 'DELETE',
   })
+}
+
+// ── Client-side tool executors ─────────────────────────────────────────────
+// Implements the CUSTOM tools Groq can call (see CLIENT_TOOLS in the
+// Worker's ai.js) against data already loaded in memory — pipeline/tasks/
+// contacts are already warmed by dataCache.js via usePipeline/useTasks/
+// useContacts, so these run instantly with no extra Graph API call and no
+// new Azure AD permissions. (Groq's built-in browser_search tool is
+// different — it never reaches here, Groq resolves it entirely server-side.)
+
+const C_TITLE    = 'Project Title / Description*'
+const C_CN       = 'Contract Number / Notice ID'
+const C_AGENCY   = 'Agency*'
+const C_PHASE    = 'TAG Opportunity Phase'
+const C_OUTLOOK  = 'Opportunity Outlook'
+const C_VALUE    = 'Total Contract Value ($)*'
+const C_END      = 'Contract End Date*'
+const C_ASSIGNEE = 'Assigned To*'
+
+function summarizeOpportunity(o) {
+  return {
+    contractNumber: o[C_CN],
+    title:          o[C_TITLE],
+    agency:         o[C_AGENCY],
+    phase:          o[C_PHASE],
+    outlook:        o[C_OUTLOOK],
+    value:          o[C_VALUE],
+    endDate:        o[C_END],
+    assignedTo:     o[C_ASSIGNEE],
+  }
+}
+
+function isOverdueTask(t) {
+  if (t.Status === 'Done' || !t.DueDate) return false
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const d = new Date(t.DueDate + 'T00:00:00')
+  return !isNaN(d.getTime()) && d < today
+}
+
+/**
+ * Executes one client-side tool call against already-loaded data.
+ * @param name - tool function name, matching CLIENT_TOOLS in ai.js
+ * @param args - parsed arguments object from the model's tool call
+ * @param data - { pipeline, tasks, contacts } — the in-memory arrays
+ */
+export function executeClientTool(name, args = {}, data = {}) {
+  const { pipeline = [], tasks = [], contacts = [] } = data
+
+  switch (name) {
+    case 'search_pipeline': {
+      let rows = pipeline
+      if (args.query) {
+        const q = args.query.toLowerCase()
+        rows = rows.filter((o) =>
+          [o[C_TITLE], o[C_CN], o[C_AGENCY]].some((v) => v && String(v).toLowerCase().includes(q))
+        )
+      }
+      if (args.phase)   rows = rows.filter((o) => o[C_PHASE] === args.phase)
+      if (args.outlook) rows = rows.filter((o) => o[C_OUTLOOK] === args.outlook)
+      if (args.agency) {
+        const a = args.agency.toLowerCase()
+        rows = rows.filter((o) => String(o[C_AGENCY] || '').toLowerCase().includes(a))
+      }
+      const limit = args.limit || 20
+      return { count: rows.length, opportunities: rows.slice(0, limit).map(summarizeOpportunity) }
+    }
+
+    case 'get_opportunity': {
+      const match = pipeline.find((o) => o[C_CN] === args.contractNumber)
+      if (!match) return { found: false, message: `No opportunity found with contract number ${args.contractNumber}` }
+      return { found: true, opportunity: match }
+    }
+
+    case 'search_tasks': {
+      let rows = tasks
+      if (args.status) rows = rows.filter((t) => t.Status === args.status)
+      if (args.assignedTo) {
+        const a = args.assignedTo.toLowerCase()
+        rows = rows.filter((t) => String(t.AssignedTo || '').toLowerCase().includes(a))
+      }
+      if (args.contractNumber) rows = rows.filter((t) => t.ContractNumber === args.contractNumber)
+      if (args.overdueOnly) rows = rows.filter(isOverdueTask)
+      const limit = args.limit || 20
+      return { count: rows.length, tasks: rows.slice(0, limit) }
+    }
+
+    case 'search_contacts': {
+      let rows = contacts
+      if (args.query) {
+        const q = args.query.toLowerCase()
+        rows = rows.filter((c) =>
+          [c.Name, c.Agency, c.Organization].some((v) => v && String(v).toLowerCase().includes(q))
+        )
+      }
+      const limit = args.limit || 20
+      return { count: rows.length, contacts: rows.slice(0, limit) }
+    }
+
+    case 'get_expiring_contracts': {
+      const withinDays = args.withinDays || 180
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      const end = new Date(today); end.setDate(end.getDate() + withinDays)
+      const rows = pipeline
+        .filter((o) => {
+          const d = new Date((o[C_END] || '') + 'T00:00:00')
+          return !isNaN(d.getTime()) && d >= today && d <= end
+        })
+        .sort((a, b) => new Date(a[C_END]) - new Date(b[C_END]))
+      return { count: rows.length, contracts: rows.map(summarizeOpportunity) }
+    }
+
+    case 'get_pipeline_metrics': {
+      const total = pipeline.length
+      const closed = pipeline.filter((o) => o[C_PHASE] === 'Contract Awarded').length
+      const byPhase = {}
+      pipeline.forEach((o) => { const p = o[C_PHASE]; if (p) byPhase[p] = (byPhase[p] || 0) + 1 })
+      const totalValue = pipeline.reduce((sum, o) => {
+        const n = parseFloat(String(o[C_VALUE] || '0').replace(/[^0-9.]/g, ''))
+        return sum + (isNaN(n) ? 0 : n)
+      }, 0)
+      return {
+        total, open: total - closed, closed, totalValue,
+        byPhase, overdueTaskCount: tasks.filter(isOverdueTask).length,
+      }
+    }
+
+    default:
+      return { error: `Unknown tool: ${name}` }
+  }
 }
 
 // ── Context builders ───────────────────────────────────────────────────────
