@@ -127,7 +127,13 @@ const CLIENT_TOOLS = [
       parameters: { type: 'object', properties: {} },
     },
   },
-  { type: 'browser_search' },
+  // NOTE: a Groq built-in web-search tool was here as { type: 'browser_search' }
+  // and it was wrong — Groq's Chat Completions endpoint (what callGroq uses)
+  // only accepts tools[].type of "function" or "mcp"; built-in tools like
+  // browser_search appear to require the separate (beta) Responses API,
+  // which is a bigger surface change than fixing this warrants right now.
+  // Removed until that's actually verified working — this was silently
+  // breaking every tool-capable request with a 400.
 ]
 
 // Only the conversational promptTypes get tools — the one-shot AIPanel
