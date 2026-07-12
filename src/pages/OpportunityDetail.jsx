@@ -8,6 +8,7 @@ import { useAuth } from '@/auth/AuthContext'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
+import { useRfiFollowUps } from '@/hooks/useRfiFollowUps'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 import Modal from '@/components/Common/Modal'
@@ -17,7 +18,7 @@ import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/servi
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
-  parsePOCNames, addContactToPOC, removeContactFromPOC,
+  parsePOCNames, parseRelatedOpportunityNote, linkRelatedOpportunities,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
@@ -115,6 +116,11 @@ function joinLinks(arr) {
 }
 function cleanLinks(val) {
   return parseLinks(val).filter(Boolean)
+}
+
+function addPOCName(currentPOC, contactName) {
+  const names = parsePOCNames(currentPOC)
+  return names.includes(contactName) ? names.join(', ') : [...names, contactName].join(', ')
 }
 
 function formatFieldValue(val) {
@@ -248,6 +254,75 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
   )
 }
 
+// RFI/Sources-Sought follow-up lookup. The request starts automatically for
+// eligible RFIs; matching remains strict and is enforced by the Worker.
+function RfiFollowUpPanel({ opp, pocEmail, linkedContractNumbers, onAddToPipeline }) {
+  const ready = Boolean(opp?.[C.department] && opp?.[C.agency] && opp?.[C.title] && pocEmail)
+  const { matches, loading, error, searched, refresh } = useRfiFollowUps({
+    department: opp?.[C.department] || '',
+    agency: opp?.[C.agency] || '',
+    pocEmail: pocEmail || '',
+    title: opp?.[C.title] || '',
+    noticeId: opp?.[C.contractNum] || '',
+  }, { enabled: ready })
+  const [adding, setAdding] = useState(null)
+
+  const add = async (candidate) => {
+    const key = candidate.solicitationNumber || candidate.noticeId
+    setAdding(key)
+    try {
+      await onAddToPipeline(candidate)
+    } finally {
+      setAdding(null)
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 16px', borderBottom: '0.5px solid var(--gray-200)' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>RFI Follow-up Checker</div>
+          <div className="text-xs text-muted" style={{ marginTop: 2 }}>Checks SAM.gov RFPs and RFQs for the same department, agency, POC email, and title keywords.</div>
+        </div>
+        <button className="btn text-sm" onClick={refresh} disabled={!ready || loading}>
+          {loading ? 'Checking…' : 'Refresh'}
+        </button>
+      </div>
+      <div style={{ padding: '12px 16px' }}>
+        {!ready && <p className="text-sm text-muted">A department, agency, title, and linked POC email are required before follow-ups can be checked.</p>}
+        {ready && loading && <p className="text-sm text-muted">Checking SAM.gov for RFP and RFQ follow-ons…</p>}
+        {ready && error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-up check failed: {error}</p>}
+        {ready && searched && !loading && !error && matches.length === 0 && (
+          <p className="text-sm text-muted">No matching follow-on RFPs or RFQs found.</p>
+        )}
+        {ready && matches.map((candidate) => {
+          const key = candidate.solicitationNumber || candidate.noticeId
+          const alreadyLinked = linkedContractNumbers.has(key)
+          return (
+            <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '12px 0' }}>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{candidate.title || 'Untitled opportunity'}</div>
+                  <div className="text-xs text-muted" style={{ marginTop: 3 }}>
+                    {candidate.solicitationNumber || candidate.noticeId} · {candidate.type || 'Follow-on'} · {candidate.keywordOverlapPercent}% title overlap
+                  </div>
+                  {candidate.responseDate && <div className="text-xs text-muted" style={{ marginTop: 2 }}>Response: {formatDate(candidate.responseDate)}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  {candidate.samLink && <a className="btn text-sm" href={safeUrl(candidate.samLink)} target="_blank" rel="noreferrer">SAM.gov ↗</a>}
+                  <button className="btn btn-primary text-sm" onClick={() => add(candidate)} disabled={Boolean(adding) || alreadyLinked}>
+                    {alreadyLinked ? 'Linked' : adding === key ? 'Adding…' : 'Add & link'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function Field({ label, value, editing, onChange, type = 'text', options = null, raw = false, span = false }) {
   return (
     <div className={`form-field ${span ? styles.spanFull : ''}`}>
@@ -282,7 +357,7 @@ export default function OpportunityDetail({ toast }) {
   const navigate  = useNavigate()
   const { user }  = useAuth()
 
-  const { pipeline, loading: pipelineLoading, update: updateOpp, remove: removeOpp } = usePipeline()
+  const { pipeline, loading: pipelineLoading, add: addPipelineOpp, update: updateOpp, remove: removeOpp } = usePipeline()
   const { notes, loading: notesLoading, add: addNote, remove: removeNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
@@ -319,6 +394,8 @@ export default function OpportunityDetail({ toast }) {
   const [newContactForm,  setNewContactForm]  = useState({
     Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government',
   })
+  const [hideDoneTasks, setHideDoneTasks] = useState(false)
+  const [pendingRfiSave, setPendingRfiSave] = useState(null)
   
 
   const opp = useMemo(
@@ -358,12 +435,27 @@ export default function OpportunityDetail({ toast }) {
     }).slice(0, 20)
   }, [contacts, linkedContacts, contactSearch])
 
+  const rfiPocEmail = useMemo(() => {
+    const direct = String(opp?.[C.poc] || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+    if (direct) return direct
+    const names = new Set(parsePOCNames(opp?.[C.poc]))
+    return contacts.find((contact) => names.has(contact.Name) && contact.Email)?.Email || ''
+  }, [opp, contacts])
+
   const contact = useMemo(
     () => contacts.find((c) => c.Notes?.includes(decodedCN)),
     [contacts, decodedCN]
   )
 
-  const recentNotesStr = notes.slice(0, 3).map((n) => n.NoteText).join(' | ')
+  const relatedOpportunities = useMemo(
+    () => notes.map((n) => parseRelatedOpportunityNote(n.NoteText)).filter(Boolean),
+    [notes]
+  )
+  const visibleNotes = useMemo(
+    () => notes.filter((n) => !parseRelatedOpportunityNote(n.NoteText)),
+    [notes]
+  )
+  const recentNotesStr = visibleNotes.slice(0, 3).map((n) => n.NoteText).join(' | ')
 
   const emailPrompt = useCallback(
     () => buildEmailDraftContext(opp ?? {}, contact, recentNotesStr),
@@ -404,17 +496,18 @@ export default function OpportunityDetail({ toast }) {
 
   const f = (key) => cur[key]
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
+  const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
+  const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.contractNumber))
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
   const handleCancel = () => { setForm(null); setEditing(false) }
 
-  const handleSave = async () => {
+  const persistOpportunity = async (nextForm) => {
     setSaving(true)
     try {
       // Strip any blank draft rows left over from editing Other Links
       // (e.g. an "+ Add link" row the user never filled in) before saving.
-      const cleanedForm = { ...form, [C.otherLinks]: joinLinks(cleanLinks(form[C.otherLinks])) }
-      await updateOpp(opp._rowIndex, cleanedForm, opp)
+      await updateOpp(opp._rowIndex, nextForm, opp)
       toast?.success('Saved')
       setEditing(false)
       setForm(null)
@@ -423,6 +516,22 @@ export default function OpportunityDetail({ toast }) {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSave = () => {
+    const cleanedForm = { ...form, [C.otherLinks]: joinLinks(cleanLinks(form[C.otherLinks])) }
+    const needsActivityPrompt =
+      cleanedForm[C.phase] === 'Identified' &&
+      cleanedForm[C.outlook] === 'New' &&
+      !opp[C.submDate] &&
+      cleanedForm[C.submDate] &&
+      !cleanedForm[C.actPhase]
+
+    if (needsActivityPrompt) {
+      setPendingRfiSave(cleanedForm)
+      return
+    }
+    return persistOpportunity(cleanedForm)
   }
 
   const handleDeleteOpportunity = async () => {
@@ -482,9 +591,10 @@ export default function OpportunityDetail({ toast }) {
     // Optimistic: add contact to linked list immediately
     // The actual POC field updates come through cache refresh
     try {
-      await retryThrice(() => addContactToPOC(opp._rowIndex, opp[C.poc], c.Name))
+      const nextPOC = addPOCName(opp[C.poc], c.Name)
+      await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} linked`)
-      await invalidateCache()
     } catch (err) {
       // Silent fail — will resolve on next cache refresh, no visual rollback
       toast?.error(`Failed to link ${c.Name}`)
@@ -495,9 +605,10 @@ export default function OpportunityDetail({ toast }) {
 
   const handleUnlinkContact = async (c) => {
     try {
-      await retryThrice(() => removeContactFromPOC(opp._rowIndex, opp[C.poc], c.Name))
+      const nextPOC = parsePOCNames(opp[C.poc]).filter((name) => name !== c.Name).join(', ')
+      await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} unlinked`)
-      await invalidateCache()
     } catch (err) {
       toast?.error(`Failed to unlink ${c.Name}`)
     }
@@ -509,9 +620,10 @@ export default function OpportunityDetail({ toast }) {
     setSavingContact(true)
     try {
       await addContactRecord({ ...newContactForm, Name: name })
-      await retryThrice(() => addContactToPOC(opp._rowIndex, opp[C.poc], name))
+      const nextPOC = addPOCName(opp[C.poc], name)
+      await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${name} added and linked`)
-      await invalidateCache()
       setShowNewContact(false)
       setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government' })
     } catch (err) {
@@ -519,6 +631,57 @@ export default function OpportunityDetail({ toast }) {
     } finally {
       setSavingContact(false)
     }
+  }
+
+  const handleAddFollowOn = async (candidate) => {
+    const contractNumber = candidate.solicitationNumber || candidate.noticeId
+    if (!contractNumber) throw new Error('The follow-on notice has no solicitation or notice ID')
+
+    const source = { contractNumber: opp[C.contractNum], title: opp[C.title] }
+    const existing = pipeline.find((item) => item[C.contractNum] === contractNumber)
+    if (existing) {
+      await linkRelatedOpportunities(source, { contractNumber, title: existing[C.title] })
+      await invalidateCache()
+      toast?.success('Existing follow-on linked to this RFI')
+      return
+    }
+
+    let contactName = contacts.find((contact) =>
+      candidate.pocEmail && contact.Email?.trim().toLowerCase() === candidate.pocEmail.trim().toLowerCase()
+    )?.Name || contacts.find((contact) => contact.Name === candidate.pocName)?.Name || ''
+
+    if (!contactName && (candidate.pocName || candidate.pocEmail)) {
+      contactName = candidate.pocName || candidate.pocEmail
+      await addContactRecord({
+        Name: contactName,
+        Title: '',
+        Agency: candidate.agency || '',
+        Organization: candidate.department || '',
+        Email: candidate.pocEmail || '',
+        Phone: candidate.pocPhone || '',
+        Type: 'Government',
+        Notes: '',
+      })
+    }
+
+    await addPipelineOpp({
+      [C.phase]: 'Identified',
+      [C.outlook]: 'New',
+      [C.contractNum]: contractNumber,
+      [C.title]: candidate.title || '',
+      [C.solNum]: candidate.solicitationNumber || '',
+      [C.setAside]: candidate.setAsideType || '',
+      [C.department]: candidate.department || '',
+      [C.agency]: candidate.agency || '',
+      [C.office]: candidate.office || '',
+      [C.naics]: candidate.naicsCode || '',
+      [C.poc]: contactName,
+      [C.submDate]: candidate.responseDate || '',
+      [C.otherLinks]: candidate.samLink || '',
+    })
+    await linkRelatedOpportunities(source, { contractNumber, title: candidate.title || '' })
+    await invalidateCache()
+    toast?.success('Follow-on added and linked to this RFI')
   }
 
   const submitTask = async () => {
@@ -594,9 +757,9 @@ export default function OpportunityDetail({ toast }) {
                   </>
                 )
               }
-              {opp[C.priority] && (
-                <span className={`badge ${opp[C.priority] === 'Hot' ? 'badge-high' : opp[C.priority] === 'Warm' ? 'badge-medium' : 'badge-low'}`}>
-                  {opp[C.priority]}
+              {f(C.priority) && (
+                <span className={`badge ${f(C.priority) === 'Hot' ? 'badge-high' : f(C.priority) === 'Warm' ? 'badge-medium' : 'badge-low'}`}>
+                  {f(C.priority)}
                 </span>
               )}
               {valueFormatted && (
@@ -676,7 +839,6 @@ export default function OpportunityDetail({ toast }) {
 
         {/* ── Section 3: Timeline ── */}
         {(() => {
-          const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
           return (
             <Section title="Timeline">
               <div className={styles.fieldGrid}>
@@ -900,12 +1062,31 @@ export default function OpportunityDetail({ toast }) {
         </Section>
 
         {/* ── Section 7: Notes ── */}
+        {relatedOpportunities.length > 0 && (
+          <Section title="Related Opportunities">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {relatedOpportunities.map((related) => (
+                <button
+                  key={related.contractNumber}
+                  type="button"
+                  className="btn"
+                  style={{ justifyContent: 'space-between', textAlign: 'left' }}
+                  onClick={() => navigate(`/opportunities/${encodeURIComponent(related.contractNumber)}`)}
+                >
+                  <span>{related.title || related.contractNumber}</span>
+                  <span className="text-xs text-muted">{related.contractNumber} ↗</span>
+                </button>
+              ))}
+            </div>
+          </Section>
+        )}
+
         <Section title="Notes">
           {notesLoading
             ? <div className="skeleton" style={{ height: 60 }} />
-            : notes.length === 0
+            : visibleNotes.length === 0
               ? <p className="text-muted text-sm" style={{ marginBottom: 10 }}>No notes yet.</p>
-              : notes.map((n) => (
+              : visibleNotes.map((n) => (
                   <div key={n.NoteID} className={styles.noteItem}>
                     <div className={styles.noteMeta} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span>{n.Date} · {n.Author}</span>
@@ -944,9 +1125,18 @@ export default function OpportunityDetail({ toast }) {
 
         {/* ── Section 8: Tasks ── */}
         <Section title="Tasks">
-          {tasks.length === 0
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <button
+              type="button"
+              className={`filter-chip ${hideDoneTasks ? 'active' : ''}`}
+              onClick={() => setHideDoneTasks((value) => !value)}
+            >
+              Hide completed
+            </button>
+          </div>
+          {tasks.filter((t) => !hideDoneTasks || t.Status !== 'Done').length === 0
             ? <p className="text-muted text-sm" style={{ marginBottom: 8 }}>No tasks for this opportunity.</p>
-            : tasks.map((t) => {
+            : tasks.filter((t) => !hideDoneTasks || t.Status !== 'Done').map((t) => {
                 const over = isOverdue(t.DueDate) && t.Status !== 'Done'
                 return (
                   <div key={t.TaskID} className={styles.taskRow}>
@@ -987,7 +1177,15 @@ export default function OpportunityDetail({ toast }) {
           </button>
         </Section>
 
-        {/* ── Award Lookup ── */}
+        {/* ── RFI follow-up / Award lookup ── */}
+        {isRFI && (
+          <RfiFollowUpPanel
+            opp={opp}
+            pocEmail={rfiPocEmail}
+            linkedContractNumbers={linkedContractNumbers}
+            onAddToPipeline={handleAddFollowOn}
+          />
+        )}
         <AwardLookupPanel
           opp={opp}
           contractNumber={decodedCN}
@@ -1048,6 +1246,33 @@ export default function OpportunityDetail({ toast }) {
               </div>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {pendingRfiSave && (
+        <Modal
+          title="Update activity phase?"
+          onClose={() => setPendingRfiSave(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => {
+                const pending = pendingRfiSave
+                setPendingRfiSave(null)
+                persistOpportunity(pending)
+              }}>
+                Not now
+              </button>
+              <button className="btn btn-primary" onClick={() => {
+                const pending = { ...pendingRfiSave, [C.actPhase]: 'Submitted RFI' }
+                setPendingRfiSave(null)
+                persistOpportunity(pending)
+              }}>
+                Set to Submitted RFI
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm">An RFI submission date was added. Update this opportunity's Activity Phase to Submitted RFI?</p>
         </Modal>
       )}
 
