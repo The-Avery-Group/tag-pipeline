@@ -474,6 +474,7 @@ export async function setNotifLog(key, dateStr) {
 
 const POC_COL = 'Contracting Officer / Specialist (POC)*'
 const POC_SEP = ', '
+const RELATED_OPPORTUNITY_PREFIX = '[TAG_RELATED_OPPORTUNITY]'
 
 /** Parse POC column into array of trimmed names */
 export function parsePOCNames(pocValue) {
@@ -493,6 +494,36 @@ export async function addContactToPOC(rowIndex, currentPOC, contactName) {
 export async function removeContactFromPOC(rowIndex, currentPOC, contactName) {
   const names = parsePOCNames(currentPOC).filter((n) => n !== contactName)
   return updateOpportunity(rowIndex, { [POC_COL]: names.join(POC_SEP) })
+}
+
+/**
+ * Stores a reciprocal relationship in NotesTable. This keeps the relationship
+ * durable without changing the shared PipelineTable schema, and lets either
+ * opportunity render a direct link to the other one.
+ */
+export function parseRelatedOpportunityNote(text) {
+  const value = String(text || '')
+  if (!value.startsWith(RELATED_OPPORTUNITY_PREFIX)) return null
+  try {
+    const params = new URLSearchParams(value.slice(RELATED_OPPORTUNITY_PREFIX.length).trim())
+    const contractNumber = params.get('contractNumber') || ''
+    const title = params.get('title') || ''
+    return contractNumber ? { contractNumber, title } : null
+  } catch {
+    return null
+  }
+}
+
+function relatedOpportunityNote({ contractNumber, title }) {
+  const params = new URLSearchParams({ contractNumber: contractNumber || '', title: title || '' })
+  return `${RELATED_OPPORTUNITY_PREFIX} ${params}`
+}
+
+export async function linkRelatedOpportunities(first, second) {
+  await Promise.all([
+    addNote(first.contractNumber, 'System', relatedOpportunityNote(second)),
+    addNote(second.contractNumber, 'System', relatedOpportunityNote(first)),
+  ])
 }
 
 export async function getPipeline() {
