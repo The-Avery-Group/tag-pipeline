@@ -216,6 +216,8 @@ export function useSAMOpportunities() {
       'Office*':                                 row['Office']              || '',
       'NAICS Code*':                             row['NAICS Code']          || '',
       'Contracting Officer / Specialist (POC)*': contactName                || '',
+      'Submission Date (Response Date)*':        row['Response Date']        || '',
+      'Other Links*':                            row['SAM.gov URL']          || '',
     })
 
     await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
