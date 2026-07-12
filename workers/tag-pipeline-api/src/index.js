@@ -81,6 +81,9 @@ export default {
       } else if (path === '/sam/run-status' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
 
+      } else if (path === '/sam/follow-ups' && req.method === 'GET') {
+        response = await handleSAM(req, env, ctx)
+
       } else if (path === '/sam/debug' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
 
