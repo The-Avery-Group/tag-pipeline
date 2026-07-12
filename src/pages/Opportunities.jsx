@@ -227,6 +227,7 @@ export default function Opportunities({ toast }) {
   const bulkDismissAction = useAsyncAction()   // New-tab bulk dismiss
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [confirmRfiActivity, setConfirmRfiActivity] = useState(false)
   const [form, setForm] = useState({
     [C.contractNum]: '',
     [C.title]:       '',
@@ -239,6 +240,7 @@ export default function Opportunities({ toast }) {
     [C.solNum]:      '',
     [C.naics]:       '',
     [C.submDate]:    '',
+    [C.activityPhase]: '',
     [C.priority]:    'Warm',
     [C.setAside]:    '-',
     [C.primeOrSub]:  'Prime',
@@ -336,16 +338,17 @@ export default function Opportunities({ toast }) {
   }
 
   // ── CRUD handlers ─────────────────────────────────────────────────────
-  const submitOpp = async () => {
+  const submitOpp = async ({ setSubmittedRfi = false } = {}) => {
+    const payload = setSubmittedRfi ? { ...form, [C.activityPhase]: 'Submitted RFI' } : form
     setSaving(true)
     try {
-      await add(form)
+      await add(payload)
       toast?.success('Opportunity added')
       setShowAdd(false)
       setForm({
         [C.contractNum]: '', [C.title]: '', [C.agency]: '', [C.department]: '',
         [C.phase]: 'Identified', [C.outlook]: 'New', [C.value]: '',
-        [C.assignedTo]: '', [C.solNum]: '', [C.naics]: '', [C.submDate]: '',
+        [C.assignedTo]: '', [C.solNum]: '', [C.naics]: '', [C.submDate]: '', [C.activityPhase]: '',
         [C.priority]: 'Warm', [C.setAside]: '-', [C.primeOrSub]: 'Prime',
       })
     } catch (err) {
@@ -355,7 +358,20 @@ export default function Opportunities({ toast }) {
     }
   }
 
-  const handleAdd = (e) => { e.preventDefault(); submitOpp() }
+  const requestAdd = () => {
+    const needsActivityPrompt =
+      form[C.phase] === 'Identified' &&
+      form[C.outlook] === 'New' &&
+      form[C.submDate] &&
+      !form[C.activityPhase]
+    if (needsActivityPrompt) {
+      setConfirmRfiActivity(true)
+      return
+    }
+    submitOpp()
+  }
+
+  const handleAdd = (e) => { e.preventDefault(); requestAdd() }
 
   const handleDelete = async () => {
     if (!confirmDelete) return
@@ -1266,7 +1282,7 @@ export default function Opportunities({ toast }) {
           footer={
             <>
               <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitOpp} disabled={saving}>
+              <button className="btn btn-primary" onClick={requestAdd} disabled={saving}>
                 {saving ? 'Saving…' : 'Add opportunity'}
               </button>
             </>
@@ -1367,6 +1383,27 @@ export default function Opportunities({ toast }) {
               )}
             </div>
           </form>
+        </Modal>
+      )}
+
+      {confirmRfiActivity && (
+        <Modal
+          title="Update activity phase?"
+          onClose={() => setConfirmRfiActivity(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => {
+                setConfirmRfiActivity(false)
+                submitOpp()
+              }}>Not now</button>
+              <button className="btn btn-primary" onClick={() => {
+                setConfirmRfiActivity(false)
+                submitOpp({ setSubmittedRfi: true })
+              }}>Set to Submitted RFI</button>
+            </>
+          }
+        >
+          <p className="text-sm">An RFI submission date was entered. Update the Activity Phase to Submitted RFI?</p>
         </Modal>
       )}
 
