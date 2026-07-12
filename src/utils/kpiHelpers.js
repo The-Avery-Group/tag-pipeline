@@ -92,7 +92,6 @@ const C_LASTMOD  = 'Last Modified*'
 const C_ENDDATE  = 'Contract End Date*'
 const C_AGENCY   = 'Agency*'
 const C_OUTLOOK  = 'Opportunity Outlook'
-const C_ACTPHASE = 'TAG Pipeline Activity Phase'
 const C_SUBMDATE = 'Submission Date (Response Date)*'
 const C_PRIMESUB = 'Prime or Sub?'
 // Confirmed exact column header for the "Award Type" concept from the build plan.
@@ -158,9 +157,9 @@ export function computeExpiringBands(pipeline = []) {
 /**
  * Returns the last `monthsBack` calendar months (including current) as an
  * array of { year, month, label, monthKey, count } objects, zero-filled for
- * empty months. Counts opportunities where TAG Pipeline Activity Phase ===
- * 'Submitted RFI' using Submission Date (Response Date)* as the month
- * reference. monthKey is a stable 'YYYY-MM' identifier for filtering/URL use.
+ * empty months. Counts every opportunity with a submission date, using
+ * Submission Date (Response Date)* as the month reference. monthKey is a
+ * stable 'YYYY-MM' identifier for filtering/URL use.
  */
 export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
   const months = []
@@ -184,7 +183,6 @@ export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
   }
 
   pipeline.forEach((o) => {
-    if (o[C_ACTPHASE] !== 'Submitted RFI') return
     const d = parseLocalDate(o[C_SUBMDATE])
     if (isNaN(d.getTime())) return
     const bucket = months.find(
