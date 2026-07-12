@@ -149,7 +149,7 @@ function cardForType(type, payload, env) {
     case 'stale_opportunities':
       return buildCard({
         title: `⚠️ ${payload.count} Stale Opportunit${payload.count > 1 ? 'ies' : 'y'}`,
-        subtitle: 'No activity in the past 7 days',
+        subtitle: 'No activity in the past 3 weeks',
         facts: [
           ...payload.items.map((o) => [o.phase || '—', o.title]),
           ...(payload.count > payload.items.length ? [['', `…and ${payload.count - payload.items.length} more`]] : []),
