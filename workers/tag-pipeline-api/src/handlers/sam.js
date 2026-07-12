@@ -37,6 +37,9 @@ const PAGE_SIZE = 500
 // `sleep(undefined)` → NaN delay → effectively no pause between paginated
 // SAM.gov requests, which risks tripping their rate limiter on large result sets.
 const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
+const FOLLOW_UP_LOOKBACK_DAYS = 548 // 18 months — enough to cover long RFI-to-RFP cycles
+const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
+const FOLLOW_UP_MAX_PAGES = 4
 
 // Shared subrequest budget — Cloudflare Workers cap outbound fetch() calls
 // per request (50 on the free plan, higher on paid). Every SAM.gov fetch,
@@ -290,6 +293,130 @@ function mapRecord(raw, naicsCode) {
   }
 }
 
+// ── RFI follow-up matcher ────────────────────────────────────────────────
+// Finds follow-on RFP/RFQ notices for an RFI/Sources-Sought opportunity.
+// The SAM API cannot express every one of our matching rules as a query
+// parameter, so we retrieve recent RFP/RFQ notices and apply the four hard
+// requirements below before returning any candidate to the browser.
+
+const TITLE_STOP_WORDS = new Set([
+  'and', 'for', 'the', 'with', 'from', 'this', 'that', 'will', 'services',
+  'service', 'support', 'contract', 'program', 'project', 'requirement',
+])
+
+function normalized(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function cacheFingerprint(value) {
+  let hash = 2166136261
+  for (const char of String(value)) {
+    hash ^= char.charCodeAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function titleKeywords(title) {
+  return new Set(
+    normalized(title)
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((word) => word.length >= 3 && !TITLE_STOP_WORDS.has(word))
+  )
+}
+
+function titleOverlapPercent(sourceTitle, candidateTitle) {
+  const source = titleKeywords(sourceTitle)
+  const candidate = titleKeywords(candidateTitle)
+  if (source.size === 0 || candidate.size === 0) return 0
+  let common = 0
+  source.forEach((word) => { if (candidate.has(word)) common++ })
+  return Math.round((common / source.size) * 100)
+}
+
+function matchingPOC(raw, email) {
+  const target = normalized(email)
+  if (!target || !Array.isArray(raw?.pointOfContact)) return null
+  return raw.pointOfContact.find((poc) => normalized(poc?.email) === target) || null
+}
+
+function followUpCandidate(raw, source) {
+  const org = parseOrg(raw.fullParentPathName)
+  if (normalized(org.department) !== normalized(source.department)) return null
+  if (normalized(org.agency) !== normalized(source.agency)) return null
+  const poc = matchingPOC(raw, source.pocEmail)
+  if (!poc) return null
+  const overlap = titleOverlapPercent(source.title, raw.title)
+  if (overlap < 40) return null
+  if (normalized(raw.noticeId) === normalized(source.noticeId)) return null
+
+  return {
+    noticeId:           String(raw.noticeId || '').trim(),
+    solicitationNumber: String(raw.solicitationNumber || '').trim(),
+    title:              String(raw.title || '').trim(),
+    setAsideType:       String(raw.typeOfSetAsideDescription || '').trim(),
+    department:         org.department,
+    agency:             org.agency,
+    office:             org.office,
+    responseDate:       parseResponseDate(raw.responseDeadLine),
+    naicsCode:          String(raw.naicsCode || raw.naics || '').trim(),
+    samLink:            String(raw.uiLink || '').trim(),
+    pocName:            String(poc.fullName || poc.fullname || '').trim(),
+    pocEmail:           String(poc.email || '').trim(),
+    pocPhone:           String(poc.phone || '').trim(),
+    type:               String(raw.type || '').trim(),
+    keywordOverlapPercent: overlap,
+  }
+}
+
+async function fetchFollowUpNotices(env, ptype, postedFrom, postedTo) {
+  const records = []
+  let offset = 0
+  for (let page = 0; page < FOLLOW_UP_MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      api_key: env.SAM_API_KEY,
+      ptype,
+      postedFrom,
+      postedTo,
+      limit: String(PAGE_SIZE),
+      offset: String(offset),
+    })
+    const res = await fetchWithRetry(`${SAM_BASE}?${params}`)
+    if (res.status === 204) break
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(`SAM API error ${res.status}: ${body.slice(0, 200)}`)
+    }
+    const data = await res.json()
+    const pageRecords = data.opportunitiesData || []
+    records.push(...pageRecords)
+    const total = data.totalRecords ?? pageRecords.length
+    offset += PAGE_SIZE
+    if (offset >= total || pageRecords.length < PAGE_SIZE) break
+    await sleep(PAGE_DELAY)
+  }
+  return records
+}
+
+async function findRFIFollowUps(env, source) {
+  const now = new Date()
+  const from = new Date(now)
+  from.setUTCDate(from.getUTCDate() - FOLLOW_UP_LOOKBACK_DAYS)
+  const [rfps, rfqs] = await Promise.all([
+    fetchFollowUpNotices(env, 'o', formatDateParam(from), formatDateParam(now)),
+    fetchFollowUpNotices(env, 'k', formatDateParam(from), formatDateParam(now)),
+  ])
+  const unique = new Map()
+  for (const raw of [...rfps, ...rfqs]) {
+    const candidate = followUpCandidate(raw, source)
+    if (!candidate) continue
+    const key = candidate.noticeId || candidate.solicitationNumber
+    if (key && !unique.has(key)) unique.set(key, candidate)
+  }
+  return [...unique.values()].sort((a, b) => String(a.responseDate || '').localeCompare(String(b.responseDate || '')))
+}
+
 // ── KV helpers ────────────────────────────────────────────────────────────
 
 async function setKeyExpired(env, expired) {
@@ -315,6 +442,43 @@ async function setRunLog(env, log) {
 async function getRunLog(env) {
   if (!env.CACHE) return null
   return env.CACHE.get('sam_run_log', 'json')
+}
+
+async function handleFollowUps(req, env) {
+  if (!env.SAM_API_KEY) return json({ error: 'SAM_API_KEY not configured' }, 503)
+
+  const url = new URL(req.url)
+  const source = {
+    department: url.searchParams.get('department')?.trim() || '',
+    agency:     url.searchParams.get('agency')?.trim() || '',
+    pocEmail:   url.searchParams.get('pocEmail')?.trim() || '',
+    title:      url.searchParams.get('title')?.trim() || '',
+    noticeId:   url.searchParams.get('noticeId')?.trim() || '',
+  }
+  const missing = Object.entries(source)
+    .filter(([key, value]) => key !== 'noticeId' && !value)
+    .map(([key]) => key)
+  if (missing.length > 0) {
+    return json({ error: `Missing follow-up criteria: ${missing.join(', ')}` }, 400)
+  }
+
+  // The criteria are also the cache identity: if an RFI's title, POC, or
+  // organization changes, it naturally gets a fresh matching result.
+  const cacheKey = `rfi_followups:${cacheFingerprint(JSON.stringify(source))}`
+  const cached = env.CACHE ? await env.CACHE.get(cacheKey, 'json') : null
+  if (cached) return json({ ...cached, cached: true })
+
+  try {
+    const matches = await findRFIFollowUps(env, source)
+    const response = { matches, count: matches.length }
+    if (env.CACHE) {
+      await env.CACHE.put(cacheKey, JSON.stringify(response), { expirationTtl: FOLLOW_UP_CACHE_TTL_SECONDS })
+    }
+    return json(response)
+  } catch (err) {
+    console.error('[SAM] Follow-up lookup error:', err.message)
+    return json({ error: err.message }, 502)
+  }
 }
 
 // ── Core pull logic (shared by trigger) ──────────────────────────────────
@@ -576,6 +740,11 @@ export async function handleSAM(req, env, ctx) {
   if (url.pathname === '/sam/run-status' && req.method === 'GET') {
     const log = await getRunLog(env)
     return json(log || { success: null, status: null, timestamp: null })
+  }
+
+  // GET /sam/follow-ups — find RFP/RFQ notices that follow an RFI
+  if (url.pathname === '/sam/follow-ups' && req.method === 'GET') {
+    return handleFollowUps(req, env)
   }
 
   // GET /sam/debug — step-by-step diagnostic (requires X-Trigger-Secret)
