@@ -50,6 +50,7 @@ function daysAgo(dateStr) {
 }
 
 const EARLY_PHASES = new Set(['Identified', 'Research'])
+const STALE_OPPORTUNITY_DAYS = 21
 
 /**
  * Called once in AppShell after authentication.
@@ -108,14 +109,14 @@ export function useAgingNotifications() {
           }
         }
 
-        // ── Stale opportunities (early phases, no activity ≥7 days) ──
+        // ── Stale opportunities (early phases, no activity ≥3 weeks) ──
         if (!staleLocal) {
           if (log['opp_stale'] === today) {
             markLocalSentToday('opp_stale')
           } else {
             const stale = allOpps.filter((o) => {
               if (!EARLY_PHASES.has(o['TAG Opportunity Phase'])) return false
-              return daysAgo(o['Last Modified*']) >= 7
+              return daysAgo(o['Last Modified*']) >= STALE_OPPORTUNITY_DAYS
             })
 
             if (stale.length > 0) {
