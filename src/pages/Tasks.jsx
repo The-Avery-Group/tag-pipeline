@@ -12,6 +12,7 @@ import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import styles from './Tasks.module.css'
 
 const STATUSES  = ['All', 'Overdue', 'To Do', 'In Progress', 'Done']
+const PRIORITIES = ['All', 'High', 'Medium', 'Low']
 const GROUPS    = ['None', 'Contract', 'Assignee', 'Priority']
 const SORTS     = ['Due Date', 'Priority', 'Assignee', 'Status']
 const PRIORITY_RANK = { High: 3, Medium: 2, Low: 1 }
@@ -320,6 +321,8 @@ export default function Tasks({ toast }) {
     const s = searchParams.get('status')
     return s === 'overdue' ? 'Overdue' : 'All'
   })
+  const [priorityFilter, setPriorityFilter] = useState('All')
+  const [hideDone, setHideDone]             = useState(false)
   const [groupBy, setGroupBy]           = useState('None')
   const [sortBy, setSortBy]             = useState(() => localStorage.getItem('tasks_sort_by') || 'Due Date')
   const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
@@ -354,11 +357,13 @@ export default function Tasks({ toast }) {
   useEffect(() => { localStorage.setItem('tasks_sort_dir', sortDir) }, [sortDir])
 
   const filtered = useMemo(() => {
-    const rows = statusFilter === 'All'
+    let rows = statusFilter === 'All'
       ? tasks
       : statusFilter === 'Overdue'
         ? tasks.filter((t) => t.Status !== 'Done' && isOverdue(t.DueDate))
         : tasks.filter((t) => t.Status === statusFilter)
+    if (priorityFilter !== 'All') rows = rows.filter((t) => t.Priority === priorityFilter)
+    if (hideDone) rows = rows.filter((t) => t.Status !== 'Done')
     return [...rows].sort((a, b) => {
       let cmp = 0
       if (sortBy === 'Due Date') {
@@ -377,7 +382,7 @@ export default function Tasks({ toast }) {
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [tasks, statusFilter, sortBy, sortDir])
+  }, [tasks, statusFilter, priorityFilter, hideDone, sortBy, sortDir])
 
   const grouped = useMemo(() => {
     if (groupBy === 'None') return { '': filtered }
@@ -440,6 +445,23 @@ export default function Tasks({ toast }) {
                   {s}
                 </button>
               ))}
+            </div>
+            <div className={styles.groupRow}>
+              <span className="text-xs text-muted">Priority</span>
+              {PRIORITIES.map((p) => (
+                <button key={p} className={`filter-chip ${priorityFilter === p ? 'active' : ''}`}
+                  onClick={() => setPriorityFilter(p)}>
+                  {p}
+                </button>
+              ))}
+            </div>
+            <div className={styles.groupRow}>
+              <button
+                className={`filter-chip ${hideDone ? 'active' : ''}`}
+                onClick={() => setHideDone((value) => !value)}
+              >
+                Hide completed
+              </button>
             </div>
             <div className={styles.groupRow}>
               <span className="text-xs text-muted">Group by</span>
