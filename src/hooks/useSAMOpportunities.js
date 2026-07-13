@@ -63,6 +63,7 @@ export function useSAMOpportunities() {
   const [opportunities, setOpportunities] = useState([])
   const [loading, setLoading]             = useState(true)
   const [error, setError]                 = useState(null)
+  const [failedStatuses, setFailedStatuses] = useState({})
 
   // Tracks status changes that have been written locally but not yet
   // confirmed by a server read. Without this, the background poll (or any
@@ -193,6 +194,12 @@ export function useSAMOpportunities() {
     )
     try {
       await retryThrice(() => updateSAMOpportunity(rowIndex, { Status: status }))
+      setFailedStatuses((previous) => {
+        if (!previous[rowIndex]) return previous
+        const next = { ...previous }
+        delete next[rowIndex]
+        return next
+      })
       debouncedInvalidate()
     } catch (err) {
       // No visual rollback — visual state stays changed for smooth UX.
@@ -200,6 +207,10 @@ export function useSAMOpportunities() {
       // reconciling to the optimistic value until a future refresh shows
       // the server genuinely agrees (e.g. after a manual retry), consistent
       // with the "no rollback on failure" behavior this hook already had.
+      setFailedStatuses((previous) => ({
+        ...previous,
+        [rowIndex]: { status, message: err.message || 'Could not save this status' },
+      }))
       throw err
     }
   }, [debouncedInvalidate])
@@ -347,6 +358,11 @@ export function useSAMOpportunities() {
 
   const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
   const undismiss = useCallback((rowIndex) => updateStatus(rowIndex, 'new'),       [updateStatus])
+  const retryStatus = useCallback((rowIndex) => {
+    const failed = failedStatuses[rowIndex]
+    if (!failed) return Promise.resolve()
+    return updateStatus(rowIndex, failed.status)
+  }, [failedStatuses, updateStatus])
 
   // Stable reference — only changes when data actually changes.
   // Prevents parent components from re-rendering (and scroll containers
@@ -362,6 +378,8 @@ export function useSAMOpportunities() {
     dismiss,
     undismiss,
     updateStatus,
+    failedStatuses,
+    retryStatus,
     triggerPull,
     pullProgress,
   }
