@@ -82,7 +82,7 @@ export function AIChat({ toast }) {
     opp ? oppCN : 'general'
   ), [user?.id, user?.email, opp, oppCN])
 
-  const { messages, loading, error, historyLoaded, send, startFresh, toolActivity } = useAIChat({
+  const { messages, loading, error, historyLoaded, send, startFresh, toolActivity, cancel } = useAIChat({
     conversationId: convId,
     promptType,
     initialContext: context,
@@ -121,13 +121,14 @@ export function AIChat({ toast }) {
   }, [messages, loading])
 
   const handleSend = () => {
-    if (!input.trim()) return
+    if (!input.trim() || loading) return
     send(input.trim())
     setInput('')
     inputRef.current?.focus()
   }
 
   const handleKeyDown = (e) => {
+    if (loading) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -262,8 +263,12 @@ export function AIChat({ toast }) {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
-              disabled={loading}
             />
+            {loading && (
+              <button className={styles.stopBtn} onClick={cancel} aria-label="Stop AI response">
+                Stop
+              </button>
+            )}
             <button
               className={styles.sendBtn}
               onClick={handleSend}
@@ -275,7 +280,7 @@ export function AIChat({ toast }) {
           </div>
           <div className={styles.inputMeta}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className={styles.hint}>Enter to send · Shift+Enter for new line</span>
+              <span className={styles.hint}>{loading ? 'You can draft your next message while this response finishes' : 'Enter to send · Shift+Enter for new line'}</span>
               <label className={styles.hint} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 Model
                 <select
