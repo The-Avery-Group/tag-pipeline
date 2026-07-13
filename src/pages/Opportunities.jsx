@@ -114,6 +114,10 @@ function fmtValue(v) {
   return `$${n.toFixed(0)}`
 }
 
+function normalizeOpportunityKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 export default function Opportunities({ toast }) {
   const navigate = useNavigate()
@@ -129,6 +133,20 @@ export default function Opportunities({ toast }) {
   const phaseOptions          = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
   const primeOrSubOptions     = pickList(lists, 'Prime or Sub?', ['Prime', 'Sub'])
   const assigneeOptions       = pickList(lists, 'Assignee', ASSIGNEE_VALUES)
+
+  // SAM rows and pipeline rows share the solicitation/notice number. Indexing
+  // both pipeline fields keeps a New-tab result linked even when one source
+  // provides the number as a notice ID and the other as a solicitation number.
+  const pipelineByOpportunityKey = useMemo(() => {
+    const index = new Map()
+    pipeline.forEach((opportunity) => {
+      [opportunity[C.contractNum], opportunity[C.solNum]].forEach((value) => {
+        const key = normalizeOpportunityKey(value)
+        if (key) index.set(key, opportunity)
+      })
+    })
+    return index
+  }, [pipeline])
 
   // ── URL-param-driven list state ─────────────────────────────────────────
   // Active tab, search text, and every filter live in the URL rather than
@@ -774,6 +792,9 @@ export default function Opportunities({ toast }) {
                     {visibleSAMOpps.map((opp) => {
                       const isDismissed = opp.Status === 'dismissed'
                       const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
+                      const linkedOpportunity = pipelineByOpportunityKey.get(
+                        normalizeOpportunityKey(opp['Solicitation Number'] || opp['Notice ID'])
+                      )
                       const isActioning = actioningRow === opp._rowIndex
                       const pocDisplay  = (opp['Point of Contact'] || '').split('|')[0].trim()
                       // All buttons same size, text centered
@@ -836,6 +857,12 @@ export default function Opportunities({ toast }) {
                                         Dismiss
                                       </button>
                                     </>
+                                  )}
+                                  {isActioned && linkedOpportunity && (
+                                    <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                      onClick={() => openOpportunity(linkedOpportunity)}>
+                                      View pipeline
+                                    </button>
                                   )}
                                   {opp['SAM.gov URL'] && (
                                     <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
