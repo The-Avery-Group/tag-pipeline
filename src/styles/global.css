@@ -97,7 +97,8 @@ html[data-theme='dark'] {
   --surface: #242521;
   --surface-raised: #2b2c28;
   --surface-hover: #30312d;
-  --text-on-brand: #fff;
+  /* Dark-theme accent colors are intentionally light, so they need dark text. */
+  --text-on-brand: #15221a;
   --overlay: rgba(0, 0, 0, 0.62);
   --shadow-color: rgba(0, 0, 0, 0.32);
   --danger-hover: #6d2d30;
