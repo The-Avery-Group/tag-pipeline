@@ -98,6 +98,12 @@ export function AIChat({ toast }) {
     try { localStorage.setItem('tag_ai_preferred_model', preferredModel) } catch {}
   }, [preferredModel])
 
+  // AI Advisor is a conversation surface: keep the composer ready as soon
+  // as the page/history is ready and after each completed response.
+  useEffect(() => {
+    if (!loading && historyLoaded) inputRef.current?.focus()
+  }, [loading, historyLoaded])
+
   // Start fresh if requested via URL param
   useEffect(() => {
     if (freshParam && historyLoaded) {
@@ -249,6 +255,7 @@ export function AIChat({ toast }) {
           <div className={styles.inputRow}>
             <textarea
               ref={inputRef}
+              autoFocus
               className={styles.input}
               placeholder={opp ? `Ask about ${opp[C_TITLE]}…` : 'Ask anything about your pipeline…'}
               value={input}
