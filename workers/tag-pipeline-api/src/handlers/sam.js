@@ -38,6 +38,8 @@ const PAGE_SIZE = 500
 // SAM.gov requests, which risks tripping their rate limiter on large result sets.
 const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
 const FOLLOW_UP_LOOKBACK_DAYS = 548 // 18 months — enough to cover long RFI-to-RFP cycles
+// SAM's Opportunities API permits a maximum one-year Posted Date range.
+const FOLLOW_UP_LOOKBACK_DAYS = 365
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
 
