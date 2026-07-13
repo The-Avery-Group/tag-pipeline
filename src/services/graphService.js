@@ -20,6 +20,9 @@ async function resolveWorkbookBase() {
 
 // ── In-memory cache ────────────────────────────────────────────────────────
 const cache = new Map()
+// Table schemas change far less often than table rows. Keep headers across
+// routine data refreshes so polling does not double every Graph request.
+const headerCache = new Map()
 
 function invalidate(sheet) {
   cache.delete(sheet)
@@ -29,6 +32,14 @@ function invalidate(sheet) {
 export function invalidateAll() {
   cache.clear()
   _resolvedBase = null  // also re-resolve drive path in case file moved
+}
+
+async function getTableHeaders(tableName) {
+  if (headerCache.has(tableName)) return headerCache.get(tableName)
+  const headerData = await graphFetch(`/tables/${tableName}/columns`)
+  const headers = headerData.value.map((column) => column.name)
+  headerCache.set(tableName, headers)
+  return headers
 }
 
 // ── Token helper ───────────────────────────────────────────────────────────
@@ -137,9 +148,10 @@ export async function getSheetRows(tableName) {
     cache.set(tableName, fixed)
     return fixed
   }
-  const data = await graphFetch(`/tables/${tableName}/rows`)
-  const headerData = await graphFetch(`/tables/${tableName}/columns`)
-  const headers = headerData.value.map((c) => c.name)
+  const [data, headers] = await Promise.all([
+    graphFetch(`/tables/${tableName}/rows`),
+    getTableHeaders(tableName),
+  ])
   const rows = (data.value || []).map((row) => {
     const obj = {}
     headers.forEach((h, i) => {
@@ -592,6 +604,192 @@ export async function updateTask(rowIndex, patch) {
     ...patch,
     UpdatedDate: new Date().toISOString().split('T')[0],
   }, TASKS_HEADERS)
+}
+
+// ── Controlled opportunity identifier/title changes ──────────────────────
+// Contract Number / Notice ID is the app's relationship key. Renaming it
+// therefore needs to update only structured references, never free-text task
+// descriptions or user-written notes. Excel/Graph has no transaction support,
+// so dependent updates are applied first and rolled back on a later failure.
+const OPPORTUNITY_ID_COL = 'Contract Number / Notice ID'
+const OPPORTUNITY_TITLE_COL = 'Project Title / Description*'
+
+function normalizedValue(value) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function updateWithRetry(fn) {
+  return (async () => {
+    let lastError
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await fn()
+      } catch (error) {
+        lastError = error
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
+      }
+    }
+    throw lastError
+  })()
+}
+
+function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes) {
+  const oldId = String(current[OPPORTUNITY_ID_COL] ?? '').trim()
+  const newId = String(nextForm[OPPORTUNITY_ID_COL] ?? '').trim()
+  const oldTitle = String(current[OPPORTUNITY_TITLE_COL] ?? '').trim()
+  const newTitle = String(nextForm[OPPORTUNITY_TITLE_COL] ?? '').trim()
+  const identifierChanged = oldId !== newId
+  const titleChanged = oldTitle !== newTitle
+
+  if (!oldId) throw new Error('This opportunity has no Contract Number / Notice ID to update')
+  if (!newId) throw new Error('Contract Number / Notice ID is required')
+  if (!newTitle) throw new Error('Opportunity title is required')
+
+  const duplicate = identifierChanged && pipeline.find((opportunity) =>
+    opportunity._rowIndex !== current._rowIndex &&
+    normalizedValue(opportunity[OPPORTUNITY_ID_COL]) === normalizedValue(newId)
+  )
+  if (duplicate) {
+    throw new Error(`Contract Number / Notice ID "${newId}" is already used by another opportunity`)
+  }
+
+  const taskPatches = identifierChanged || titleChanged
+    ? tasks
+      .filter((task) => String(task.ContractNumber ?? '').trim() === oldId)
+      .map((task) => ({
+        rowIndex: task._rowIndex,
+        patch: {
+          ...(identifierChanged ? { ContractNumber: newId } : {}),
+          ...(titleChanged ? { ContractTitle: newTitle } : {}),
+        },
+        rollback: {
+          ...(identifierChanged ? { ContractNumber: task.ContractNumber } : {}),
+          ...(titleChanged ? { ContractTitle: task.ContractTitle } : {}),
+        },
+      }))
+    : []
+
+  // Notes can be associated with the renamed record (ContractNumber) and can
+  // also contain a system-managed reciprocal relationship that *points* to it.
+  // A single row may need both updates, so merge them by row index.
+  const notePatchMap = new Map()
+  const relationshipRows = new Set()
+  notes.forEach((note) => {
+    const patch = {}
+    const rollback = {}
+    if (identifierChanged && String(note.ContractNumber ?? '').trim() === oldId) {
+      patch.ContractNumber = newId
+      rollback.ContractNumber = note.ContractNumber
+    }
+    const related = parseRelatedOpportunityNote(note.NoteText)
+    if (related && String(related.contractNumber ?? '').trim() === oldId && (identifierChanged || titleChanged)) {
+      patch.NoteText = relatedOpportunityNote({ contractNumber: newId, title: newTitle })
+      rollback.NoteText = note.NoteText
+      relationshipRows.add(note._rowIndex)
+    }
+    if (Object.keys(patch).length > 0) {
+      notePatchMap.set(note._rowIndex, { rowIndex: note._rowIndex, patch, rollback })
+    }
+  })
+
+  const notePatches = [...notePatchMap.values()]
+  return {
+    oldId,
+    newId,
+    oldTitle,
+    newTitle,
+    identifierChanged,
+    titleChanged,
+    taskPatches,
+    notePatches,
+    preview: {
+      identifierChanged,
+      titleChanged,
+      taskCount: taskPatches.length,
+      noteCount: notePatches.length,
+      relationshipCount: relationshipRows.size,
+      totalLinkedRecords: taskPatches.length + notePatches.length,
+    },
+  }
+}
+
+/**
+ * Read current workbook data and return the impact of a proposed title and/or
+ * identifier change. The UI uses this before asking for confirmation.
+ */
+export async function previewOpportunityRename(rowIndex, nextForm) {
+  // Do not base a destructive identifier check on a potentially 30-second-old
+  // cache. Header metadata remains cached, while these rows are read fresh.
+  invalidate('PipelineTable')
+  invalidate('TasksTable')
+  invalidate('NotesTable')
+  const [pipeline, tasks, notes] = await Promise.all([getPipeline(), getTasks(), getNotes()])
+  const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
+  if (!current) throw new Error('Opportunity no longer exists in the pipeline')
+  return createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes).preview
+}
+
+/**
+ * Save a renamed opportunity and cascade only structured references. If any
+ * write fails, completed dependent writes are best-effort rolled back and the
+ * caller receives an error that can be shown to the user.
+ */
+export async function renameOpportunityWithReferences(rowIndex, nextForm, onProgress = () => {}) {
+  // Re-read immediately after confirmation to catch direct workbook edits that
+  // happened while the confirmation dialog was open.
+  invalidate('PipelineTable')
+  invalidate('TasksTable')
+  invalidate('NotesTable')
+  const [pipeline, tasks, notes] = await Promise.all([getPipeline(), getTasks(), getNotes()])
+  const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
+  if (!current) throw new Error('Opportunity no longer exists in the pipeline')
+  const plan = createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes)
+
+  const operations = [
+    ...plan.taskPatches.map((item) => ({
+      label: 'linked task',
+      apply: () => updateWithRetry(() => updateTask(item.rowIndex, item.patch)),
+      rollback: () => updateWithRetry(() => updateTask(item.rowIndex, item.rollback)),
+    })),
+    ...plan.notePatches.map((item) => ({
+      label: 'linked note',
+      apply: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.patch, NOTES_HEADERS)),
+      rollback: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.rollback, NOTES_HEADERS)),
+    })),
+    {
+      label: 'opportunity',
+      apply: () => updateWithRetry(() => updateOpportunity(rowIndex, nextForm)),
+      // The opportunity is always last, so there is no later operation that
+      // would require rolling it back after a successful save.
+      rollback: null,
+    },
+  ]
+
+  const completed = []
+  try {
+    for (let index = 0; index < operations.length; index += 1) {
+      const operation = operations[index]
+      onProgress({ completed: index, total: operations.length, label: operation.label })
+      await operation.apply()
+      completed.push(operation)
+    }
+    onProgress({ completed: operations.length, total: operations.length, label: 'complete' })
+    return plan.preview
+  } catch (error) {
+    const rollbackFailures = []
+    for (const operation of completed.reverse()) {
+      if (!operation.rollback) continue
+      try {
+        await operation.rollback()
+      } catch {
+        rollbackFailures.push(operation.label)
+      }
+    }
+    const recovery = rollbackFailures.length
+      ? ` Some linked ${[...new Set(rollbackFailures)].join(' and ')} changes could not be rolled back; refresh the page and review them before trying again.`
+      : ' Linked record changes were rolled back.'
+    throw new Error(`Could not save the renamed opportunity: ${error.message}.${recovery}`)
+  }
 }
 
 export async function deleteTask(rowIndex) {
