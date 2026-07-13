@@ -368,7 +368,7 @@ export default function Settings({ toast }) {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button className={`btn ${styles.triggerPullBtn}`} onClick={handleTriggerSAM} disabled={triggering}
-                title="Manually run the SAM.gov pull now without waiting for the nightly cron">
+                title="Manually run the SAM.gov pull now">
                 {triggering ? '⏳ Running…' : '▶ Trigger pull now'}
               </button>
               {triggerResult && (
