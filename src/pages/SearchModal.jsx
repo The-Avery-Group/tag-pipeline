@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useContacts } from '@/hooks/useContacts'
 import { useTasks } from '@/hooks/useTasks'
+import { useNotes } from '@/hooks/useNotes'
 import { formatDate } from '@/utils/kpiHelpers'
 import styles from './SearchModal.module.css'
 
@@ -16,6 +17,7 @@ export default function SearchModal({ onClose }) {
   const { pipeline }  = usePipeline()
   const { contacts }  = useContacts()
   const { tasks }     = useTasks()
+  const { notes }     = useNotes()
 
   // Focus input on mount
   useEffect(() => {
@@ -32,34 +34,42 @@ export default function SearchModal({ onClose }) {
   const q = query.trim().toLowerCase()
 
   const results = useMemo(() => {
-    if (!q) return { opportunities: [], contacts: [], tasks: [] }
+    if (!q) return { opportunities: [], contacts: [], tasks: [], notes: [] }
 
     const opportunities = pipeline
       .filter((o) =>
         [o['Project Title / Description*'], o['Contract Number / Notice ID'],
-         o['Department*'], o['Agency*']]
+         o['Department*'], o['Agency*'], o['Notes*']]
           .some((v) => v && String(v).toLowerCase().includes(q))
       )
       .slice(0, MAX_PER_CATEGORY)
 
     const contactResults = contacts
       .filter((c) =>
-        [c.Name, c.Email, c.Agency]
+        [c.Name, c.Email, c.Agency, c.Notes]
           .some((v) => v && String(v).toLowerCase().includes(q))
       )
       .slice(0, MAX_PER_CATEGORY)
 
     const taskResults = tasks
       .filter((t) =>
-        [t.Title, t.ContractTitle, t.ContractNumber]
+        [t.Title, t.ContractTitle, t.ContractNumber, t.Description, t.OpportunityNotes]
           .some((v) => v && String(v).toLowerCase().includes(q))
       )
       .slice(0, MAX_PER_CATEGORY)
 
-    return { opportunities, contacts: contactResults, tasks: taskResults }
-  }, [q, pipeline, contacts, tasks])
+    const noteResults = notes
+      .filter((n) => String(n.NoteText || '').toLowerCase().includes(q))
+      .map((n) => ({
+        ...n,
+        opportunity: pipeline.find((o) => o['Contract Number / Notice ID'] === n.ContractNumber),
+      }))
+      .slice(0, MAX_PER_CATEGORY)
 
-  const total = results.opportunities.length + results.contacts.length + results.tasks.length
+    return { opportunities, contacts: contactResults, tasks: taskResults, notes: noteResults }
+  }, [q, pipeline, contacts, tasks, notes])
+
+  const total = results.opportunities.length + results.contacts.length + results.tasks.length + results.notes.length
   const hasResults = total > 0
 
   const go = (path) => {
@@ -82,7 +92,7 @@ export default function SearchModal({ onClose }) {
           <input
             ref={inputRef}
             className={styles.input}
-            placeholder="Search opportunities, contacts, tasks…"
+            placeholder="Search opportunities, contacts, tasks, notes…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoComplete="off"
@@ -96,7 +106,7 @@ export default function SearchModal({ onClose }) {
         <div className={styles.results}>
           {!q && (
             <div className={styles.hint}>
-              Start typing to search across opportunities, contacts and tasks.
+              Start typing to search across opportunities, contacts, tasks and notes.
             </div>
           )}
 
@@ -125,7 +135,7 @@ export default function SearchModal({ onClose }) {
               {results.contacts.map((c) => (
                 <button key={c.ContactID || c.Name}
                   className={styles.result}
-                  onClick={() => go('/contacts')}>
+                  onClick={() => go(`/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}`)}>
                   <div className={styles.resultTitle}>{c.Name}</div>
                   <div className={styles.resultMeta}>{c.Email || '—'}</div>
                   <div className={styles.resultMeta}>{c.Agency || '—'}</div>
@@ -140,7 +150,7 @@ export default function SearchModal({ onClose }) {
               {results.tasks.map((t) => (
                 <button key={t.TaskID || t.Title}
                   className={styles.result}
-                  onClick={() => go('/tasks')}>
+                  onClick={() => go(`/tasks?taskId=${encodeURIComponent(t.TaskID)}`)}>
                   <div className={styles.resultTitle}>{t.Title}</div>
                   <div className={styles.resultMeta}>{t.DueDate ? formatDate(t.DueDate) : 'No deadline'}</div>
                   <div className={styles.resultMeta}>
@@ -148,6 +158,27 @@ export default function SearchModal({ onClose }) {
                   </div>
                 </button>
               ))}
+            </div>
+          )}
+
+          {results.notes.length > 0 && (
+            <div className={styles.group}>
+              <div className={styles.groupLabel}>Opportunity notes</div>
+              {results.notes.map((n) => {
+                const target = n.opportunity
+                const title = target?.['Project Title / Description*'] || n.ContractNumber || 'Unlinked opportunity'
+                const preview = String(n.NoteText || '').replace(/\s+/g, ' ').slice(0, 120)
+                return (
+                  <button key={n.NoteID || n._rowIndex}
+                    className={styles.result}
+                    disabled={!target}
+                    onClick={() => target && go(`/opportunities/${encodeURIComponent(target['Contract Number / Notice ID'])}?row=${target._rowIndex}`)}>
+                    <div className={styles.resultTitle}>{title}</div>
+                    <div className={styles.resultMeta}>{preview}{preview.length >= 120 ? '…' : ''}</div>
+                    <div className={styles.resultMeta}>{n.ContractNumber || 'No linked opportunity'}</div>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
