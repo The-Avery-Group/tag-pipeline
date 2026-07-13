@@ -39,7 +39,7 @@ export default function SearchModal({ onClose }) {
     const opportunities = pipeline
       .filter((o) =>
         [o['Project Title / Description*'], o['Contract Number / Notice ID'],
-         o['Department*'], o['Agency*'], o['Notes*']]
+         o['Department*'], o['Agency*']]
           .some((v) => v && String(v).toLowerCase().includes(q))
       )
       .slice(0, MAX_PER_CATEGORY)
