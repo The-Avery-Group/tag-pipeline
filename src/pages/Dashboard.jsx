@@ -34,13 +34,13 @@ const C = {
 }
 
 const PHASE_COLORS = {
-  'Identified':       '#C7D9F5',
-  'Research':         '#FAC775',
-  'Qualified':        '#F59B42',
-  'Proposal':         '#85B7EB',
-  'Pending Award':    '#B39DDB',
-  'Contract Awarded': '#9FE1CB',
-  'Cancelled':        '#E0E0E0',
+  'Identified':       'var(--chart-phase-identified)',
+  'Research':         'var(--chart-phase-research)',
+  'Qualified':        'var(--chart-phase-qualified)',
+  'Proposal':         'var(--chart-phase-proposal)',
+  'Pending Award':    'var(--chart-phase-pending)',
+  'Contract Awarded': 'var(--chart-phase-awarded)',
+  'Cancelled':        'var(--chart-phase-cancelled)',
 }
 
 const PHASE_BADGE = {
@@ -56,7 +56,11 @@ const PHASE_BADGE = {
 // Shared minimal, muted palette for the new categorical charts (Award Type,
 // Vehicle, Sub/Prime) — kept in the same restrained family as PHASE_COLORS
 // rather than reaching for a louder default Recharts palette.
-const CATEGORY_COLORS = ['#85B7EB', '#FAC775', '#9FE1CB', '#B39DDB', '#F59B42', '#C7D9F5', '#E0E0E0']
+const CATEGORY_COLORS = [
+  'var(--chart-phase-proposal)', 'var(--chart-phase-research)', 'var(--chart-phase-awarded)',
+  'var(--chart-phase-pending)', 'var(--chart-phase-qualified)', 'var(--chart-phase-identified)',
+  'var(--chart-phase-cancelled)',
+]
 
 // Shared tooltip — small, minimal, matches the app's card styling rather
 // than Recharts' default tooltip chrome.
@@ -65,8 +69,8 @@ function ChartTooltip({ active, payload, formatLabel, formatValue }) {
   const d = payload[0].payload
   return (
     <div style={{
-      background: '#fff', border: '0.5px solid var(--gray-200)', borderRadius: 8,
-      padding: '6px 10px', fontSize: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+      background: 'var(--surface-raised)', border: '0.5px solid var(--gray-200)', borderRadius: 8,
+      padding: '6px 10px', fontSize: 12, boxShadow: '0 2px 8px var(--shadow-color)',
     }}>
       <div style={{ fontWeight: 600, color: 'var(--gray-900)' }}>{formatLabel ? formatLabel(d) : d.label}</div>
       <div style={{ color: 'var(--gray-600)' }}>{formatValue ? formatValue(d) : `${d.count} opportunities`}</div>
@@ -118,7 +122,7 @@ function PhaseBarChart({ byPhase, byPhaseValue, onSegmentClick }) {
           dataKey="count" radius={[0, 4, 4, 0]} cursor="pointer" maxBarSize={28}
           onClick={(d) => onSegmentClick?.(d?.payload?.phase ?? d?.phase)}
         >
-          {data.map((d) => <Cell key={d.phase} fill={PHASE_COLORS[d.phase] || '#85B7EB'} />)}
+          {data.map((d) => <Cell key={d.phase} fill={PHASE_COLORS[d.phase] || 'var(--chart-phase-proposal)'} />)}
           <LabelList dataKey="count" position="right" style={{ fontSize: 11, fontWeight: 600, fill: 'var(--gray-900)' }} />
         </Bar>
       </BarChart>
@@ -151,7 +155,7 @@ function RFIChart({ data, onMonthClick }) {
         <Area
           type="monotone" dataKey="count" cursor="pointer"
           stroke="var(--blue-600)" strokeWidth={2.5} fill="url(#rfiGrad)"
-          dot={{ r: 3, fill: '#fff', stroke: 'var(--blue-600)', strokeWidth: 1.5 }}
+          dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--blue-600)', strokeWidth: 1.5 }}
           activeDot={{ r: 5 }}
           label={({ x, y, value }) => value > 0
             ? <text x={x} y={y - 12} textAnchor="middle" fontSize={11} fontWeight={600} fill="var(--blue-600)">{value}</text>
@@ -193,7 +197,7 @@ function CategoryBarChart({ counts, onSegmentClick }) {
 function SubPrimeChart({ counts, onSegmentClick }) {
   const data = Object.entries(counts).map(([label, count]) => ({ label, count }))
   if (!data.length) return <p className="text-sm text-muted">No data</p>
-  const colorFor = { Prime: 'var(--blue-600)', Sub: '#FAC775' }
+  const colorFor = { Prime: 'var(--blue-600)', Sub: 'var(--chart-phase-research)' }
 
   return (
     <ResponsiveContainer width="100%" height={200}>
@@ -207,7 +211,7 @@ function SubPrimeChart({ counts, onSegmentClick }) {
           label={({ label, count }) => `${label} (${count})`}
           labelLine={false}
         >
-          {data.map((d) => <Cell key={d.label} fill={colorFor[d.label] || '#85B7EB'} />)}
+          {data.map((d) => <Cell key={d.label} fill={colorFor[d.label] || 'var(--chart-phase-proposal)'} />)}
         </Pie>
       </PieChart>
     </ResponsiveContainer>
