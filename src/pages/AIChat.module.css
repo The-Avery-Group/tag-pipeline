@@ -217,6 +217,19 @@
 .sendBtn:hover:not(:disabled) { background: var(--blue-800); }
 .sendBtn:disabled { opacity: 0.4; cursor: default; }
 
+.stopBtn {
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--red-600);
+  border-radius: var(--radius-md);
+  background: var(--red-50);
+  color: var(--red-600);
+  font: 500 12px var(--font);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.stopBtn:hover { background: var(--danger-hover); }
+
 .inputMeta {
   display: flex;
   align-items: center;
