@@ -15,14 +15,16 @@ export function useRfiFollowUps(criteria, { enabled = true } = {}) {
   const lastKey = useRef(null)
 
   const lookup = useCallback(async ({ force = false } = {}) => {
-    const { department, agency, pocEmail, title, noticeId } = criteria || {}
+    const { department, agency, pocEmail, title, noticeId, submissionDate } = criteria || {}
     if (!enabled || !department || !agency || !pocEmail || !title) return
     if (!WORKER_URL) {
       setError('VITE_API_BASE_URL not set')
       return
     }
 
-    const params = new URLSearchParams({ department, agency, pocEmail, title, noticeId: noticeId || '' })
+    const params = new URLSearchParams({
+      department, agency, pocEmail, title, noticeId: noticeId || '', submissionDate: submissionDate || '',
+    })
     const key = params.toString()
     if (!force && lastKey.current === key) return
     lastKey.current = key
