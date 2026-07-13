@@ -255,7 +255,7 @@ function OppPicker({ pipeline, value, onChange }) {
         borderRadius: 'var(--radius-md)',
         maxHeight: 200,
         overflowY: 'auto',
-        background: '#fff',
+        background: 'var(--surface)',
       }}>
         {filtered.length === 0
           ? (
