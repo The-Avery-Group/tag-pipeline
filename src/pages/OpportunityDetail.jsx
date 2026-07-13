@@ -19,6 +19,7 @@ import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
   parsePOCNames, parseRelatedOpportunityNote, linkRelatedOpportunities,
+  previewOpportunityRename, renameOpportunityWithReferences,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
@@ -405,6 +406,9 @@ export default function OpportunityDetail({ toast }) {
   })
   const [hideDoneTasks, setHideDoneTasks] = useState(false)
   const [pendingRfiSave, setPendingRfiSave] = useState(null)
+  const [pendingRenameSave, setPendingRenameSave] = useState(null)
+  const [renamePreview, setRenamePreview] = useState(null)
+  const [renameProgress, setRenameProgress] = useState('')
   
 
   const opp = useMemo(
@@ -534,6 +538,67 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
+  const prepareOpportunitySave = async (nextForm) => {
+    const nextIdentifier = String(nextForm[C.contractNum] ?? '').trim()
+    const nextTitle = String(nextForm[C.title] ?? '').trim()
+    const cleanedRenameForm = {
+      ...nextForm,
+      [C.contractNum]: nextIdentifier,
+      [C.title]: nextTitle,
+    }
+    const identifierChanged = nextIdentifier !== String(opp[C.contractNum] ?? '').trim()
+    const titleChanged = nextTitle !== String(opp[C.title] ?? '').trim()
+
+    if (!identifierChanged && !titleChanged) return persistOpportunity(cleanedRenameForm)
+
+    setSaving(true)
+    try {
+      const preview = await previewOpportunityRename(opp._rowIndex, cleanedRenameForm)
+      setRenamePreview(preview)
+      setPendingRenameSave(cleanedRenameForm)
+    } catch (err) {
+      toast?.error(`Cannot update title or identifier: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmRename = async () => {
+    if (!pendingRenameSave) return
+    setSaving(true)
+    setRenameProgress('Preparing linked record updates…')
+    try {
+      const preview = await renameOpportunityWithReferences(
+        opp._rowIndex,
+        pendingRenameSave,
+        ({ completed, total, label }) => {
+          setRenameProgress(label === 'complete'
+            ? 'Finishing…'
+            : `Updating ${label} ${Math.min(completed + 1, total)} of ${total}…`)
+        }
+      )
+      await invalidateCache()
+      const newIdentifier = pendingRenameSave[C.contractNum]
+      setPendingRenameSave(null)
+      setRenamePreview(null)
+      setEditing(false)
+      setForm(null)
+      toast?.success(
+        preview.totalLinkedRecords
+          ? `Saved and updated ${preview.totalLinkedRecords} linked record${preview.totalLinkedRecords === 1 ? '' : 's'}`
+          : 'Saved'
+      )
+      if (newIdentifier !== opp[C.contractNum]) {
+        navigate(`/opportunities/${encodeURIComponent(newIdentifier)}?row=${opp._rowIndex}`, { replace: true })
+      }
+    } catch (err) {
+      toast?.error(err.message)
+    } finally {
+      setSaving(false)
+      setRenameProgress('')
+    }
+  }
+
   const handleSave = () => {
     const cleanedForm = { ...form, [C.otherLinks]: joinLinks(cleanLinks(form[C.otherLinks])) }
     const needsActivityPrompt =
@@ -547,7 +612,7 @@ export default function OpportunityDetail({ toast }) {
       setPendingRfiSave(cleanedForm)
       return
     }
-    return persistOpportunity(cleanedForm)
+    return prepareOpportunitySave(cleanedForm)
   }
 
   const handleDeleteOpportunity = async () => {
@@ -834,6 +899,8 @@ export default function OpportunityDetail({ toast }) {
         {/* ── Section 1: Opportunity Details ── */}
         <Section title="Opportunity Details">
           <div className={styles.fieldGrid}>
+            <Field label="Opportunity Title" value={f(C.title)} editing={editing} onChange={set(C.title)} />
+            <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing={editing} onChange={set(C.contractNum)} raw />
             <Field label="Agency"      value={f(C.agency)}     editing={editing} onChange={set(C.agency)} />
             <Field label="Department"  value={f(C.department)} editing={editing} onChange={set(C.department)} />
             <Field label="Office"                  value={f(C.office)}         editing={editing} onChange={set(C.office)} />
@@ -1275,14 +1342,14 @@ export default function OpportunityDetail({ toast }) {
               <button className="btn" onClick={() => {
                 const pending = pendingRfiSave
                 setPendingRfiSave(null)
-                persistOpportunity(pending)
+                prepareOpportunitySave(pending)
               }}>
                 Not now
               </button>
               <button className="btn btn-primary" onClick={() => {
                 const pending = { ...pendingRfiSave, [C.actPhase]: 'Submitted RFI' }
                 setPendingRfiSave(null)
-                persistOpportunity(pending)
+                prepareOpportunitySave(pending)
               }}>
                 Set to Submitted RFI
               </button>
@@ -1290,6 +1357,53 @@ export default function OpportunityDetail({ toast }) {
           }
         >
           <p className="text-sm">An RFI submission date was added. Update this opportunity's Activity Phase to Submitted RFI?</p>
+        </Modal>
+      )}
+
+      {pendingRenameSave && renamePreview && (
+        <Modal
+          title="Confirm title or identifier change"
+          onClose={() => {
+            if (saving) return
+            setPendingRenameSave(null)
+            setRenamePreview(null)
+          }}
+          footer={
+            <>
+              <button
+                className="btn"
+                disabled={saving}
+                onClick={() => {
+                  setPendingRenameSave(null)
+                  setRenamePreview(null)
+                }}
+              >
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={confirmRename} disabled={saving}>
+                {saving ? (renameProgress || 'Saving…') : 'Confirm and update linked records'}
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm" style={{ marginTop: 0 }}>
+            This change updates the opportunity and its structured links across the pipeline.
+          </p>
+          <ul className="text-sm" style={{ margin: '10px 0', paddingLeft: 20, lineHeight: 1.7 }}>
+            {renamePreview.identifierChanged && (
+              <li>Identifier: <strong>{opp[C.contractNum]}</strong> to <strong>{pendingRenameSave[C.contractNum]}</strong></li>
+            )}
+            {renamePreview.titleChanged && (
+              <li>Title: <strong>{opp[C.title]}</strong> to <strong>{pendingRenameSave[C.title]}</strong></li>
+            )}
+            <li>{renamePreview.taskCount} linked task{renamePreview.taskCount === 1 ? '' : 's'} will be updated</li>
+            <li>{renamePreview.noteCount} linked note{renamePreview.noteCount === 1 ? '' : 's'} will be updated</li>
+            <li>{renamePreview.relationshipCount} related-opportunity link{renamePreview.relationshipCount === 1 ? '' : 's'} will be updated</li>
+          </ul>
+          <p className="text-sm text-muted" style={{ marginBottom: 0 }}>
+            Free-text task descriptions and notes, contacts, and Expiring Contract Number will not be changed. If a linked write fails, completed linked changes are rolled back where possible and you will be told to review the affected records.
+          </p>
+          {saving && renameProgress && <p className="text-sm" style={{ marginBottom: 0 }}>{renameProgress}</p>}
         </Modal>
       )}
 
