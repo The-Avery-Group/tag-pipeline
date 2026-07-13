@@ -570,7 +570,7 @@ export default function Opportunities({ toast }) {
   // for the brief initial POST) and "a pull is actively running right now"
   // (pullProgress, true for the whole run — including one auto-resumed from
   // a stalled previous session, which this component never explicitly triggered)
-  const isPulling = pulling || pullProgress?.status === 'running'
+  const isPulling = pulling || pullProgress?.status === 'running' || pullProgress?.status === 'partial'
 
   const pullProgressText = (() => {
     if (!pullProgress || pullProgress.status !== 'running') return null
@@ -588,7 +588,7 @@ export default function Opportunities({ toast }) {
   // "last pulled" summary immediately rather than waiting for the next
   // page load — pullProgress already carries the same shape samRunStatus expects.
   useEffect(() => {
-    if (pullProgress?.status === 'success' || pullProgress?.status === 'error') {
+    if (pullProgress?.status === 'success' || pullProgress?.status === 'error' || pullProgress?.status === 'partial') {
       setSamRunStatus(pullProgress)
     }
   }, [pullProgress])
