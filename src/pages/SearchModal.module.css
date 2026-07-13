@@ -114,6 +114,19 @@
   font-family: var(--font);
 }
 .result:hover { background: var(--blue-50); }
+.resultActive { background: var(--blue-50); }
+
+.viewAll {
+  margin: 2px 18px 4px;
+  padding: 3px 0;
+  border: none;
+  background: none;
+  color: var(--blue-600);
+  font: 500 11px var(--font);
+  text-align: left;
+  cursor: pointer;
+}
+.viewAll:hover { text-decoration: underline; }
 
 .resultTitle {
   font-size: 13px;
