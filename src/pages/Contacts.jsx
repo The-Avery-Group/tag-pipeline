@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useContacts } from '@/hooks/useContacts'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction, useAsyncActionKeyed } from '@/hooks/useAsyncAction'
@@ -22,6 +23,7 @@ export default function Contacts({ toast }) {
   const { pipeline, update: updateOpp } = usePipeline()
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
@@ -79,6 +81,26 @@ export default function Contacts({ toast }) {
     setEditing(false)
     setOppSearch('')
   }
+
+  // Search results can deep-link directly into the same detail panel opened
+  // by clicking a row. Clear the parameter after opening so closing the panel
+  // behaves normally instead of immediately reopening it.
+  useEffect(() => {
+    const contactId = searchParams.get('contactId')
+    if (!contactId) return
+    const match = contacts.find((contact) =>
+      contact.ContactID === contactId || String(contact._rowIndex) === contactId
+    )
+    if (!match) return
+    setSelected(match)
+    setEditing(false)
+    setOppSearch('')
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('contactId')
+      return next
+    }, { replace: true })
+  }, [contacts, searchParams, setSearchParams])
 
   const startEdit = () => {
     setForm({ ...BLANK, ...selected })
