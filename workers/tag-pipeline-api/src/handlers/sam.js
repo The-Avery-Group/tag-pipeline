@@ -37,7 +37,6 @@ const PAGE_SIZE = 500
 // `sleep(undefined)` → NaN delay → effectively no pause between paginated
 // SAM.gov requests, which risks tripping their rate limiter on large result sets.
 const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
-const FOLLOW_UP_LOOKBACK_DAYS = 548 // 18 months — enough to cover long RFI-to-RFP cycles
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
 
@@ -408,8 +407,6 @@ async function fetchFollowUpNotices(env, ptype, postedFrom, postedTo) {
 
 async function findRFIFollowUps(env, source) {
   const now = new Date()
-  const from = new Date(now)
-  from.setUTCDate(from.getUTCDate() - FOLLOW_UP_LOOKBACK_DAYS)
   const submissionDate = dateFromValue(source.submissionDate)
   const from = submissionDate ? new Date(submissionDate) : new Date(now)
   const to = submissionDate ? new Date(submissionDate) : new Date(now)
@@ -425,8 +422,6 @@ async function findRFIFollowUps(env, source) {
   }
 
   const [rfps, rfqs] = await Promise.all([
-    fetchFollowUpNotices(env, 'o', formatDateParam(from), formatDateParam(now)),
-    fetchFollowUpNotices(env, 'k', formatDateParam(from), formatDateParam(now)),
     fetchFollowUpNotices(env, 'o', formatDateParam(from), formatDateParam(to)),
     fetchFollowUpNotices(env, 'k', formatDateParam(from), formatDateParam(to)),
   ])
@@ -480,7 +475,6 @@ async function handleFollowUps(req, env) {
     submissionDate: url.searchParams.get('submissionDate')?.trim() || '',
   }
   const missing = Object.entries(source)
-    .filter(([key, value]) => key !== 'noticeId' && !value)
     .filter(([key, value]) => key !== 'noticeId' && key !== 'submissionDate' && !value)
     .map(([key]) => key)
   if (missing.length > 0) {
