@@ -38,8 +38,6 @@ const PAGE_SIZE = 500
 // SAM.gov requests, which risks tripping their rate limiter on large result sets.
 const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
 const FOLLOW_UP_LOOKBACK_DAYS = 548 // 18 months — enough to cover long RFI-to-RFP cycles
-// SAM's Opportunities API permits a maximum one-year Posted Date range.
-const FOLLOW_UP_LOOKBACK_DAYS = 365
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
 
@@ -92,6 +90,13 @@ function formatDateParam(d) {
   const dd   = String(d.getUTCDate()).padStart(2, '0')
   const yyyy = d.getUTCFullYear()
   return `${mm}/${dd}/${yyyy}`
+}
+
+function dateFromValue(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return null
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+  return isNaN(date.getTime()) ? null : date
 }
 
 function parseResponseDate(val) {
@@ -405,9 +410,25 @@ async function findRFIFollowUps(env, source) {
   const now = new Date()
   const from = new Date(now)
   from.setUTCDate(from.getUTCDate() - FOLLOW_UP_LOOKBACK_DAYS)
+  const submissionDate = dateFromValue(source.submissionDate)
+  const from = submissionDate ? new Date(submissionDate) : new Date(now)
+  const to = submissionDate ? new Date(submissionDate) : new Date(now)
+
+  if (submissionDate) {
+    // SAM permits at most a one-year Posted Date range. Start at the RFI's
+    // submission date so only later notices can qualify as follow-ons.
+    to.setUTCFullYear(to.getUTCFullYear() + 1)
+  } else {
+    // With no submission date, center the one-year search window on today.
+    from.setUTCMonth(from.getUTCMonth() - 6)
+    to.setUTCMonth(to.getUTCMonth() + 6)
+  }
+
   const [rfps, rfqs] = await Promise.all([
     fetchFollowUpNotices(env, 'o', formatDateParam(from), formatDateParam(now)),
     fetchFollowUpNotices(env, 'k', formatDateParam(from), formatDateParam(now)),
+    fetchFollowUpNotices(env, 'o', formatDateParam(from), formatDateParam(to)),
+    fetchFollowUpNotices(env, 'k', formatDateParam(from), formatDateParam(to)),
   ])
   const unique = new Map()
   for (const raw of [...rfps, ...rfqs]) {
@@ -456,9 +477,11 @@ async function handleFollowUps(req, env) {
     pocEmail:   url.searchParams.get('pocEmail')?.trim() || '',
     title:      url.searchParams.get('title')?.trim() || '',
     noticeId:   url.searchParams.get('noticeId')?.trim() || '',
+    submissionDate: url.searchParams.get('submissionDate')?.trim() || '',
   }
   const missing = Object.entries(source)
     .filter(([key, value]) => key !== 'noticeId' && !value)
+    .filter(([key, value]) => key !== 'noticeId' && key !== 'submissionDate' && !value)
     .map(([key]) => key)
   if (missing.length > 0) {
     return json({ error: `Missing follow-up criteria: ${missing.join(', ')}` }, 400)
