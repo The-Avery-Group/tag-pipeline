@@ -164,6 +164,10 @@ function normalizeSolNum(s) {
   return String(s || '').trim().toUpperCase()
 }
 
+function normalizeNoticeId(s) {
+  return String(s || '').trim().toUpperCase()
+}
+
 // True if `a` is strictly more recent than `b`. Both are already normalized
 // to 'YYYY-MM-DD' by parseResponseDate, so a plain string compare works.
 // An empty/missing date sorts as "oldest", so a record with a real posted
@@ -530,11 +534,12 @@ async function handleFollowUps(req, env) {
 
 // ── Core pull logic (shared by trigger) ──────────────────────────────────
 
-async function runSAMPull(env, token, config) {
+async function runSAMPull(env, token, config, resumeFrom = 0) {
   const runStart = new Date().toISOString()
   console.log('[SAM] Pull started:', runStart)
 
   const { naicsCodes = [], skipDays = 3, windowDays = 90 } = config
+  const startIndex = Math.max(0, Math.min(Number(resumeFrom) || 0, naicsCodes.length))
 
   if (!naicsCodes.length) {
     const err = 'No NAICS codes provided'
@@ -549,7 +554,7 @@ async function runSAMPull(env, token, config) {
   // each KV put() also counts against the subrequest budget.
   await setRunLog(env, {
     status: 'running', phase: 'fetching', timestamp: runStart, startedAt: runStart,
-    naicsTotal: naicsCodes.length, naicsProcessed: 0,
+    naicsTotal: naicsCodes.length, naicsProcessed: startIndex, nextNaicsIndex: startIndex,
   })
 
   // Build date ranges
@@ -577,7 +582,7 @@ async function runSAMPull(env, token, config) {
   }
 
   const existingIds = new Set(
-    existingRows.map((r) => String(r['Notice ID'] || '').trim()).filter(Boolean)
+    existingRows.map((r) => normalizeNoticeId(r['Notice ID'])).filter(Boolean)
   )
 
   // Solicitation Number -> the most-recent variant we currently know about
@@ -587,13 +592,27 @@ async function runSAMPull(env, token, config) {
   // points at an in-memory candidate not yet written, which can simply be
   // dropped from the write list instead of needing a delete.
   const solNumIndex = new Map()
+  const duplicateExistingRowIndices = new Set()
+  const existingNoticeRows = new Map()
   existingRows.forEach((r) => {
+    const noticeKey = normalizeNoticeId(r['Notice ID'])
+    if (noticeKey) {
+      const existingNotice = existingNoticeRows.get(noticeKey)
+      if (existingNotice !== undefined) {
+        duplicateExistingRowIndices.add(r._rowIndex)
+        return
+      }
+      existingNoticeRows.set(noticeKey, r._rowIndex)
+    }
     const solNum = normalizeSolNum(r['Solicitation Number'])
     if (!solNum) return
     const postedDate = String(r['Posted Date'] || '')
     const current = solNumIndex.get(solNum)
     if (!current || newerRecord(postedDate, current.postedDate)) {
+      if (current?.fromExisting) duplicateExistingRowIndices.add(current.rowIndex)
       solNumIndex.set(solNum, { noticeId: r['Notice ID'], rowIndex: r._rowIndex, postedDate, fromExisting: true })
+    } else {
+      duplicateExistingRowIndices.add(r._rowIndex)
     }
   })
 
@@ -613,15 +632,20 @@ async function runSAMPull(env, token, config) {
   // skipped cleanup entirely, which meant expired New Opportunities rows
   // stopped getting deleted for as long as SAM.gov was having problems.
   let totalFetched  = 0
-  let naicsProcessed = 0
+  let naicsProcessed = startIndex
+  let nextNaicsIndex = startIndex
+  let hasMoreWork = false
   const naicsErrors = []
-  const candidates  = []   // { mapped, noticeId, solNum }
+  const candidates  = []   // { mapped, noticeId, noticeKey, solNum }
   let fatalError = null
 
-  for (const naics of naicsCodes) {
+  for (let naicsIndex = startIndex; naicsIndex < naicsCodes.length; naicsIndex++) {
+    const naics = naicsCodes[naicsIndex]
     if (fatalError) break
     if (candidates.length >= MAX_WRITES_PER_RUN) {
-      naicsErrors.push(`Fetch cap reached — ${naicsCodes.length - naicsProcessed} NAICS code(s) left for next run`)
+      hasMoreWork = true
+      nextNaicsIndex = naicsIndex
+      naicsErrors.push(`Write capacity reached — ${naicsCodes.length - naicsIndex} NAICS code(s) will continue automatically`)
       break
     }
 
@@ -633,7 +657,7 @@ async function runSAMPull(env, token, config) {
     } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
         fatalError = 'SAM API key expired or invalid'
-        naicsProcessed++
+        naicsProcessed = naicsIndex + 1
         break
       }
 
@@ -648,26 +672,39 @@ async function runSAMPull(env, token, config) {
       // budget hammering a dead upstream with every remaining NAICS code.
       // A failure on a LATER code, after others already succeeded, is
       // treated as an isolated per-request issue and doesn't abort the run.
-      if (naicsProcessed === 0 && /SAM API error 5\d\d/.test(err.message)) {
+      if (naicsIndex === startIndex && /SAM API error 5\d\d/.test(err.message)) {
         fatalError = `SAM.gov API appears to be unavailable (${err.message}). Will retry automatically on the next pull.`
         console.error('[SAM]', fatalError)
-        naicsProcessed++
+        naicsProcessed = naicsIndex + 1
         break
       }
 
-      naicsProcessed++
+      naicsProcessed = naicsIndex + 1
+      nextNaicsIndex = naicsIndex + 1
       continue
     }
 
     for (const raw of records) {
       const noticeId = String(raw.noticeId || '').trim()
-      if (!noticeId || existingIds.has(noticeId)) continue
+      const noticeKey = normalizeNoticeId(noticeId)
+      if (!noticeId || existingIds.has(noticeKey)) continue
       if (String(raw.active || '').toLowerCase() !== 'yes') continue
       const mapped = mapRecord(raw, naics)
-      candidates.push({ mapped, noticeId, solNum: normalizeSolNum(mapped['Solicitation Number']) })
+      candidates.push({ mapped, noticeId, noticeKey, solNum: normalizeSolNum(mapped['Solicitation Number']) })
+      if (candidates.length >= MAX_WRITES_PER_RUN) {
+        // Resume this same NAICS code next time. Already-written notice IDs
+        // will be skipped, allowing the next chunk to make progress without
+        // losing the rest of a large SAM response.
+        hasMoreWork = true
+        nextNaicsIndex = naicsIndex
+        naicsErrors.push(`Write capacity reached while processing NAICS ${naics}; continuing automatically`)
+        break
+      }
     }
 
-    naicsProcessed++
+    if (hasMoreWork) break
+    naicsProcessed = naicsIndex + 1
+    nextNaicsIndex = naicsIndex + 1
   }
 
   // ── Resolve dedup ────────────────────────────────────────────────────────
@@ -675,13 +712,13 @@ async function runSAMPull(env, token, config) {
   // (happens when a solicitation matches more than one tracked NAICS code).
   const byNoticeId = new Map()
   for (const c of candidates) {
-    if (!byNoticeId.has(c.noticeId)) byNoticeId.set(c.noticeId, c)
+    if (!byNoticeId.has(c.noticeKey)) byNoticeId.set(c.noticeKey, c)
   }
 
   // Pass 2: Solicitation-Number dedup against both existing sheet rows and
   // other candidates from this same batch — keep only the most recently
   // posted variant per solicitation.
-  const dedupDeleteRowIndices = new Set()   // existing rows superseded by a newer candidate this run
+  const dedupDeleteRowIndices = new Set(duplicateExistingRowIndices)
   const toWrite = []
 
   for (const c of byNoticeId.values()) {
@@ -714,16 +751,14 @@ async function runSAMPull(env, token, config) {
   if (!fatalError) {
     await setRunLog(env, {
       status: 'running', phase: 'writing', timestamp: runStart, startedAt: runStart,
-      naicsTotal: naicsCodes.length, naicsProcessed,
+      // If this invocation is killed during Graph writes, resume from the
+      // start of this chunk. Existing Notice IDs make that retry idempotent;
+      // resuming at the next NAICS could otherwise lose rows not yet written.
+      naicsTotal: naicsCodes.length, naicsProcessed, nextNaicsIndex: startIndex,
       toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: 0,
     })
 
     for (const c of toWrite) {
-      if (totalWritten >= MAX_WRITES_PER_RUN) {
-        const remaining = toWrite.length - totalWritten
-        naicsErrors.push(`Write cap reached — ${remaining} opportunit${remaining === 1 ? 'y' : 'ies'} left for next run`)
-        break
-      }
       try {
         await appendOpportunity(env, token, c.mapped)
         totalWritten++
@@ -757,10 +792,14 @@ async function runSAMPull(env, token, config) {
     throw new Error(fatalError)
   }
 
+  const complete = !hasMoreWork && nextNaicsIndex >= naicsCodes.length
   const log = {
-    success:   true,
-    status:    'success',
+    success:   complete,
+    status:    complete ? 'success' : 'partial',
     timestamp: runStart,
+    nextNaicsIndex,
+    naicsTotal: naicsCodes.length,
+    naicsProcessed,
     fetched:   totalFetched,
     written:   totalWritten,
     deduped:   dedupDeleteRowIndices.size,
@@ -857,13 +896,13 @@ export async function handleSAM(req, env, ctx) {
       return json({ error: 'Invalid JSON body' }, 400)
     }
 
-    const { token, config, force = false } = body
+    const { token, config, force = false, resumeFrom = 0 } = body
 
     if (!token) return json({ error: 'Missing token in request body' }, 400)
     if (!config?.naicsCodes?.length) return json({ error: 'Missing or empty config.naicsCodes' }, 400)
 
     // 12h throttle check (skipped when force=true, e.g. Settings page force pull)
-    if (!force) {
+    if (!force && !resumeFrom) {
       const lastLog = await getRunLog(env)
       if (lastLog?.success && lastLog?.timestamp) {
         const lastRun  = new Date(lastLog.timestamp)
@@ -880,14 +919,17 @@ export async function handleSAM(req, env, ctx) {
     }
 
     // Run in background so response returns immediately
-    const pullPromise = runSAMPull(env, token, config)
+    const pullPromise = runSAMPull(env, token, config, resumeFrom)
     if (ctx?.waitUntil) ctx.waitUntil(pullPromise)
     else pullPromise.catch((err) => console.error('[SAM] Pull error:', err))
 
     return json({
       ok:      true,
-      message: 'SAM pull started — check /sam/run-status in a few minutes for results',
+      message: resumeFrom
+        ? 'SAM pull continuation started — remaining opportunities are being written'
+        : 'SAM pull started — check /sam/run-status in a few minutes for results',
       force,
+      resumeFrom,
     })
   }
 
