@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Topbar from '@/components/Layout/Topbar'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
+import { useTheme } from '@/theme/ThemeContext'
 import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
@@ -36,6 +37,7 @@ const SECTIONS = [
 export default function Settings({ toast }) {
   const { lists, loading, update } = useValidationLists()
   const { triggerPull } = useSAMOpportunities()
+  const { preference: themePreference, resolvedTheme, setThemePreference } = useTheme()
   const [drafts, setDrafts] = useState({})
   const [savingKey, setSavingKey] = useState(null)
   const [savedKey, setSavedKey] = useState(null)
@@ -170,6 +172,21 @@ export default function Settings({ toast }) {
         showNew={false}
       />
       <div className="page-body">
+
+        <div className={styles.themeCard}>
+          <div>
+            <div className={styles.themeTitle}>Appearance</div>
+            <p className="text-xs text-muted">Choose how the Pipeline Manager looks on this device.</p>
+          </div>
+          <label className={styles.themeControl}>
+            <span className="text-xs text-muted">Theme</span>
+            <select className="form-input" value={themePreference} onChange={(event) => setThemePreference(event.target.value)}>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="system">System ({resolvedTheme})</option>
+            </select>
+          </label>
+        </div>
 
         {/* ── Collapsible: Dropdown Options ── */}
         <div className={styles.collapsible}>
