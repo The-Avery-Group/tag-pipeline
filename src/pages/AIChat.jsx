@@ -1,274 +1,149 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
-import { usePipeline } from '@/hooks/usePipeline'
-import { useTasks } from '@/hooks/useTasks'
-import { useContacts } from '@/hooks/useContacts'
-import { useAIChat } from '@/hooks/useAIChat'
-import { useAsyncAction } from '@/hooks/useAsyncAction'
-import Topbar from '@/components/Layout/Topbar'
-import MarkdownText from '@/components/AI/MarkdownText'
-import { AI_MODELS, buildPipelineSummaryContext, buildOpportunityContext } from '@/services/groqService'
-import { computeKPIs } from '@/utils/kpiHelpers'
-import styles from './AIChat.module.css'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { sendAIMessage, getConversationHistory, clearConversation, executeClientTool } from '@/services/groqService'
 
-const C_CN    = 'Contract Number / Notice ID'
-const C_TITLE = 'Project Title / Description*'
+// Mirrors the Worker's own MAX_TOOL_ROUNDS safety net — belt and suspenders
+// against a pathological loop where the model keeps asking for more tools.
+const MAX_TOOL_ROUNDS = 5
+const MAX_RATE_LIMIT_RETRIES = 1
+const MAX_RATE_LIMIT_WAIT_SECONDS = 60
 
-// Generate a stable conversation ID
-function makeConvId(base) {
-  return `conv_${base}_${new Date().toISOString().split('T')[0]}`
+// Friendly status labels shown while a tool call is being executed, so the
+// user sees "Searching your pipeline…" instead of a longer silent spinner
+// during the extra round trip(s) tool calling adds.
+const TOOL_ACTIVITY_LABELS = {
+  search_pipeline:        'Searching your pipeline…',
+  get_opportunity:        'Looking up that opportunity…',
+  search_tasks:           'Checking tasks…',
+  search_contacts:        'Searching contacts…',
+  get_expiring_contracts: 'Checking expiring contracts…',
+  get_pipeline_metrics:   'Pulling pipeline metrics…',
 }
 
-export default function AIChat({ toast }) {
-  const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const { pipeline } = usePipeline()
-  const { tasks } = useTasks()
-  const { contacts } = useContacts()
-  const [preferredModel, setPreferredModel] = useState(() => {
-    try {
-      const saved = localStorage.getItem('tag_ai_preferred_model')
-      return AI_MODELS.some((model) => model.id === saved) ? saved : AI_MODELS[0].id
-    } catch {
-      return AI_MODELS[0].id
-    }
-  })
+/**
+ * useAIChat — manages conversational AI state, including the client-side
+ * half of tool calling: when the Worker/Groq wants to call a custom tool
+ * (search_pipeline, get_opportunity, etc.), this hook executes it locally
+ * against already-loaded data and sends the result back, looping until a
+ * final answer comes back. (Groq's built-in browser_search tool resolves
+ * entirely server-side and never surfaces here as a round trip.)
+ *
+ * @param {string} conversationId — unique ID for this conversation thread
+ * @param {string} promptType     — 'general' | 'opportunity_detail' etc
+ * @param {object} initialContext — context to seed the conversation (opportunity data etc)
+ * @param {object} data           — { pipeline, tasks, contacts } for tool execution
+ */
+export function useAIChat({ conversationId, promptType = 'general', initialContext = {}, data = {}, preferredModel = null }) {
+  const [messages,  setMessages]  = useState([])   // { role, content }[]
+  const [loading,   setLoading]   = useState(false)
+  const [error,     setError]     = useState(null)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [toolActivity, setToolActivity] = useState(null)   // friendly label while a tool call is in flight
+  const abortRef = useRef(null)
 
-  const oppCN      = searchParams.get('opportunity')
-  const freshParam = searchParams.get('fresh') === '1'
-
-  // Find opportunity if opened from OpportunityDetail
-  const opp = useMemo(
-    () => oppCN ? pipeline.find((o) => o[C_CN] === oppCN) : null,
-    [pipeline, oppCN]
-  )
-
-  const promptType = opp ? 'opportunity_detail' : 'general'
-
-  // Build context — always include pipeline summary for general chat
-  const context = useMemo(() => {
-    if (opp) {
-      // Opportunity-specific: include the opp details + pipeline summary for broader questions
-      return {
-        ...buildOpportunityContext(opp, ''),
-        ...buildPipelineSummaryContext(computeKPIs(pipeline, tasks), pipeline),
+  const sendWithRateLimitRetry = useCallback(async (payload) => {
+    let retries = 0
+    while (true) {
+      try {
+        return await sendAIMessage({ ...payload, preferredModel })
+      } catch (err) {
+        if (err.status !== 429 || retries >= MAX_RATE_LIMIT_RETRIES) throw err
+        retries++
+        const seconds = Math.min(
+          Math.max(Math.ceil(err.retryAfterSeconds || MAX_RATE_LIMIT_WAIT_SECONDS), 1),
+          MAX_RATE_LIMIT_WAIT_SECONDS
+        )
+        setToolActivity(`Groq is rate-limited — retrying in ${seconds}s…`)
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000))
       }
     }
-    // General chat: full pipeline context so AI can answer any operational question
-    return buildPipelineSummaryContext(computeKPIs(pipeline, tasks), pipeline)
-  }, [opp, pipeline, tasks])
-
-  const convId = opp
-    ? makeConvId(oppCN.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40))
-    : makeConvId('general')
-
-  const { messages, loading, error, historyLoaded, send, startFresh, toolActivity } = useAIChat({
-    conversationId: convId,
-    promptType,
-    initialContext: context,
-    data: { pipeline, tasks, contacts },
-    preferredModel,
-  })
-
-  const [input, setInput] = useState('')
-  const bottomRef = useRef(null)
-  const inputRef  = useRef(null)
-
-  useEffect(() => {
-    try { localStorage.setItem('tag_ai_preferred_model', preferredModel) } catch {}
   }, [preferredModel])
 
-  // Start fresh if requested via URL param
+  // Keep the latest data available to the tool loop without needing to
+  // recreate send()/runToolLoop() every time pipeline/tasks/contacts update
+  // from the background poll mid-conversation.
+  const dataRef = useRef(data)
+  useEffect(() => { dataRef.current = data }, [data])
+
+  // Load existing history on mount
   useEffect(() => {
-    if (freshParam && historyLoaded) {
-      startFresh()
-      // Remove ?fresh=1 from URL
-      const p = new URLSearchParams(searchParams)
-      p.delete('fresh')
-      navigate({ search: p.toString() }, { replace: true })
+    if (!conversationId) { setHistoryLoaded(true); return }
+    getConversationHistory(conversationId).then((history) => {
+      // Filter out internal plumbing (context seeding, tool_calls messages,
+      // tool results) — only real conversational turns get displayed.
+      const displayable = history.filter((m) => {
+        if (m.role === 'user' && m.content?.startsWith('Context for this conversation:')) return false
+        if (m.role === 'assistant' && m.content?.startsWith('Understood. I have reviewed')) return false
+        if (m.role === 'tool') return false
+        if (m.role === 'assistant' && !m.content) return false   // tool_calls-only, no displayable text
+        return true
+      })
+      setMessages(displayable)
+      setHistoryLoaded(true)
+    })
+  }, [conversationId])
+
+  // Drives the tool-calling loop: given a response from the Worker, keep
+  // executing tool calls and sending results back until a final answer
+  // comes back (or the round cap is hit, mirroring the Worker's own cap).
+  const runToolLoop = useCallback(async (initialResult) => {
+    let result = initialResult
+    let round = 0
+    while (result.type === 'tool_calls' && round < MAX_TOOL_ROUNDS) {
+      round++
+      const label = TOOL_ACTIVITY_LABELS[result.toolCalls[0]?.name] || 'Checking your data…'
+      setToolActivity(label)
+
+      const toolResults = result.toolCalls.map((call) => ({
+        tool_call_id: call.id,
+        name: call.name,
+        content: executeClientTool(call.name, call.arguments, dataRef.current),
+      }))
+
+      result = await sendWithRateLimitRetry({
+        promptType, context: initialContext,
+        conversationId: result.conversationId,
+        toolResults, toolRound: round,
+      })
     }
-  }, [freshParam, historyLoaded])
+    setToolActivity(null)
+    return result
+  }, [promptType, initialContext, sendWithRateLimitRetry])
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading])
+  const send = useCallback(async (userMessage) => {
+    if (!userMessage.trim() || loading) return
 
-  const handleSend = () => {
-    if (!input.trim()) return
-    send(input.trim())
-    setInput('')
-    inputRef.current?.focus()
-  }
+    const newUserMsg = { role: 'user', content: userMessage }
+    setMessages((prev) => [...prev, newUserMsg])
+    setLoading(true)
+    setError(null)
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
-  const clearAction = useAsyncAction()
-
-  const handleStartFresh = async () => {
     try {
-      await clearAction.run(() => startFresh())
-      toast?.success('Conversation cleared')
+      let result = await sendWithRateLimitRetry({
+        message: userMessage,
+        promptType,
+        context: initialContext,
+        conversationId,
+        startFresh: false,
+      })
+      result = await runToolLoop(result)
+      setMessages((prev) => [...prev, { role: 'assistant', content: result.content, model: result.model }])
     } catch (err) {
-      toast?.error(`Failed to clear conversation: ${err.message}`)
+      if (err.name !== 'AbortError') {
+        setError('Failed to get response. Please try again.')
+        // Remove the user message on error so they can retry
+        setMessages((prev) => prev.slice(0, -1))
+      }
+    } finally {
+      setLoading(false)
+      setToolActivity(null)
     }
-  }
+  }, [loading, promptType, initialContext, conversationId, runToolLoop, sendWithRateLimitRetry])
 
-  const subtitle = opp
-    ? `Discussing: ${opp[C_TITLE]}`
-    : 'General pipeline advisor'
+  const startFresh = useCallback(async () => {
+    if (conversationId) await clearConversation(conversationId)
+    setMessages([])
+    setError(null)
+  }, [conversationId])
 
-  return (
-    <>
-      <Topbar
-        title="AI Advisor"
-        subtitle1={subtitle}
-        showFilter={false}
-        showNew={false}
-      />
-      <div className={styles.layout}>
-        {/* ── Conversation area ── */}
-        <div className={styles.messages}>
-          {!historyLoaded && (
-            <div className={styles.loadingHistory}>
-              <span className={styles.dot} />
-              <span className={styles.dot} />
-              <span className={styles.dot} />
-            </div>
-          )}
-
-          {historyLoaded && messages.length === 0 && !loading && (
-            <div className={styles.empty}>
-              <div className={styles.emptyIcon}>✦</div>
-              <div className={styles.emptyTitle}>
-                {opp ? `Ask anything about ${opp[C_TITLE]}` : 'Ask anything about your pipeline'}
-              </div>
-              <div className={styles.emptyHint}>
-                Try: "What are our highest-risk opportunities?" or "Draft a follow-up for this contract"
-              </div>
-              {opp && (
-                <div className={styles.suggestionRow}>
-                  {[
-                    'Summarise this opportunity',
-                    'What should our win strategy be?',
-                    'Are there any red flags?',
-                    'Draft a follow-up email',
-                  ].map((s) => (
-                    <button key={s} className={styles.suggestion} disabled={loading}
-                      onClick={() => { send(s) }}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {!opp && (
-                <div className={styles.suggestionRow}>
-                  {[
-                    'Give me a pipeline health summary',
-                    'Which opportunities are stalling?',
-                    'What needs attention this week?',
-                    'Show me contracts expiring soon',
-                  ].map((s) => (
-                    <button key={s} className={styles.suggestion} disabled={loading}
-                      onClick={() => { send(s) }}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {messages.map((m, i) => (
-            <div key={i} className={`${styles.message} ${m.role === 'user' ? styles.user : styles.assistant}`}>
-              {m.role === 'assistant' && (
-                <div className={styles.assistantIcon}>✦</div>
-              )}
-              <div className={styles.bubble}>
-                {m.role === 'assistant'
-                  ? <>
-                      <MarkdownText content={m.content} />
-                      {m.model && <div className="text-xs text-muted" style={{ marginTop: 7 }}>via {AI_MODELS.find((model) => model.id === m.model)?.label || m.model}</div>}
-                    </>
-                  : <p className={styles.messageText}>{m.content}</p>
-                }
-              </div>
-            </div>
-          ))}
-
-          {loading && (
-            <div className={`${styles.message} ${styles.assistant}`}>
-              <div className={styles.assistantIcon}>✦</div>
-              <div className={styles.bubble}>
-                {toolActivity && (
-                  <div className="text-xs text-muted" style={{ marginBottom: 6 }}>{toolActivity}</div>
-                )}
-                <div className={styles.typingDots}>
-                  <span className={styles.dot} />
-                  <span className={styles.dot} />
-                  <span className={styles.dot} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className={styles.errorMsg}>{error}</div>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-
-        {/* ── Input area ── */}
-        <div className={styles.inputArea}>
-          <div className={styles.inputRow}>
-            <textarea
-              ref={inputRef}
-              className={styles.input}
-              placeholder={opp ? `Ask about ${opp[C_TITLE]}…` : 'Ask anything about your pipeline…'}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              rows={1}
-              disabled={loading}
-            />
-            <button
-              className={styles.sendBtn}
-              onClick={handleSend}
-              disabled={loading || !input.trim()}
-              aria-label="Send"
-            >
-              {loading ? '…' : '↑'}
-            </button>
-          </div>
-          <div className={styles.inputMeta}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className={styles.hint}>Enter to send · Shift+Enter for new line</span>
-              <label className={styles.hint} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                Model
-                <select
-                  value={preferredModel}
-                  disabled={loading}
-                  onChange={(e) => setPreferredModel(e.target.value)}
-                  style={{ font: 'inherit', color: 'var(--gray-700)', border: '0.5px solid var(--gray-200)', borderRadius: 4, background: '#fff', padding: '2px 4px' }}
-                >
-                  {AI_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-                </select>
-              </label>
-            </div>
-            {messages.length > 0 && (
-              <button className={styles.clearBtn} onClick={handleStartFresh} disabled={clearAction.isLoading}>
-                {clearAction.isLoading ? 'Clearing…' : 'Clear conversation'}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </>
-  )
+  return { messages, loading, error, historyLoaded, send, startFresh, toolActivity }
 }
