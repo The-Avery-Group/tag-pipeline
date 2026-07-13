@@ -26,6 +26,7 @@ export async function sendAIMessage({
   toolResults = null,   // present when responding to a prior 'tool_calls' response
   toolRound = 0,         // safety-net counter, mirrors MAX_TOOL_ROUNDS on the Worker
   preferredModel = null,
+  signal = undefined,
 } = {}) {
   if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
 
@@ -33,6 +34,7 @@ export async function sendAIMessage({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, promptType, context, conversationId, startFresh, toolResults, toolRound, preferredModel }),
+    signal,
   })
 
   if (!res.ok) {
