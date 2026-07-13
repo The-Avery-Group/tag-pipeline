@@ -62,6 +62,7 @@ const C = {
   otherLinks:     'Other Links*',
   incumbent:      'Incumbent (Company Name)',
   fiscalYear:     'Fiscal Year',
+  vehicleNumber:  'Contract Vehicle Number',
   vehicle:        'Contract Vehicle',
   classification: 'Contract Classification*',
 }
@@ -838,6 +839,7 @@ export default function OpportunityDetail({ toast }) {
             <Field label="Office"                  value={f(C.office)}         editing={editing} onChange={set(C.office)} />
             <Field label="NAICS Code"              value={f(C.naics)}          editing={editing} onChange={set(C.naics)}           raw />
             <Field label="Set-Aside"               value={f(C.setAside)}       editing={editing} onChange={set(C.setAside)}       options={setAsideOptions} />
+            <Field label="Contract Vehicle Number" value={f(C.vehicleNumber)}  editing={editing} onChange={set(C.vehicleNumber)} />
             <Field label="Contract Vehicle"        value={f(C.vehicle)}        editing={editing} onChange={set(C.vehicle)} />
             <Field label="Contract Classification" value={f(C.classification)} editing={editing} onChange={set(C.classification)} />
             <Field label="Incumbent"               value={f(C.incumbent)}      editing={editing} onChange={set(C.incumbent)} />
