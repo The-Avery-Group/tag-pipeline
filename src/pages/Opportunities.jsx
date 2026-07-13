@@ -822,16 +822,16 @@ export default function Opportunities({ toast }) {
                                   {!isActioned && (
                                     <>
                                       {/* Row 1: + Pipeline (blue) | Track (amber/white) */}
-                                      <button className="btn btn-primary" style={btnSm}
+                                      <button className={`btn btn-primary ${styles.newActionPipeline}`} style={btnSm}
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
                                         {isActioning ? '…' : '+ Pipeline'}
                                       </button>
-                                      <button style={{ ...btnSm, background: 'var(--amber-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                      <button className={`${styles.newAction} ${styles.newActionTrack}`} style={btnSm}
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'Tracking')}>
                                         {isActioning ? '…' : 'Track'}
                                       </button>
                                       {/* Row 2: Dismiss (red/white) | SAM.gov (blue) */}
-                                      <button style={{ ...btnSm, background: 'var(--red-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                      <button className={`${styles.newAction} ${styles.newActionDismiss}`} style={btnSm}
                                         disabled={isActioning} onClick={() => handleDismiss(opp)}>
                                         Dismiss
                                       </button>
@@ -839,7 +839,7 @@ export default function Opportunities({ toast }) {
                                   )}
                                   {opp['SAM.gov URL'] && (
                                     <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
-                                      style={{ ...btnSm, background: 'var(--blue-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                                      className={`${styles.newAction} ${styles.newActionSam}`} style={{ ...btnSm, textDecoration: 'none' }}>
                                       SAM.gov
                                     </a>
                                   )}
