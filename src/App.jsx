@@ -1,5 +1,5 @@
-import { Suspense, lazy, useState, useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Component, Suspense, lazy, useState, useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { MsalProvider } from '@azure/msal-react'
 import { msalInstance } from '@/auth/msalConfig'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/useToast'
 import { useAgingNotifications } from '@/hooks/useAgingNotifications'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
+import AIChat from '@/pages/AIChat'
 import { warmCache, startPolling, isCacheWarmed } from '@/services/dataCache'
 import '@/styles/global.css'
 const SearchModal = lazy(() => import('@/pages/SearchModal'))
@@ -15,7 +16,6 @@ const Dashboard         = lazy(() => import('@/pages/Dashboard'))
 const Opportunities     = lazy(() => import('@/pages/Opportunities'))
 const OpportunityDetail = lazy(() => import('@/pages/OpportunityDetail'))
 const PipelineBoard     = lazy(() => import('@/pages/PipelineBoard'))
-const AIChat            = lazy(() => import('@/pages/AIChat'))
 const Tasks             = lazy(() => import('@/pages/Tasks'))
 const Contacts          = lazy(() => import('@/pages/Contacts'))
 const Settings          = lazy(() => import('@/pages/Settings'))
@@ -31,6 +31,42 @@ function PageFallback() {
       ))}
     </div>
   )
+}
+
+// A failed lazy chunk or a render exception previously left the main content
+// area empty, which made an affected route (including AI Advisor) look like a
+// blank screen. Keep the sidebar available and give the user a safe recovery
+// action instead.
+class RouteErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Page failed to render:', error, info)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 32, maxWidth: 560 }}>
+          <h1 style={{ margin: '0 0 8px', fontSize: 20 }}>This page could not load</h1>
+          <p style={{ margin: '0 0 18px', color: 'var(--gray-500)', lineHeight: 1.55 }}>
+            Reload the app to retrieve the latest version. If this keeps happening, please report it to your administrator.
+          </p>
+          <button className="btn btn-primary" onClick={() => window.location.reload()}>
+            Reload app
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
 }
 
 // Shown only during the very first MSAL initialisation (first-ever page load
@@ -64,6 +100,7 @@ function AuthInitScreen() {
 
 function AppShell() {
   const { isAuthenticated, loading } = useAuth()
+  const location = useLocation()
   const { toasts, toast } = useToast()
   const [cacheReady,    setCacheReady]    = useState(isCacheWarmed)
   const [searchOpen,    setSearchOpen]    = useState(false)
@@ -106,20 +143,22 @@ function AppShell() {
     <div className="app-layout">
       <Sidebar onSearchOpen={() => setSearchOpen(true)} />
       <div className="main-content">
-        <Suspense fallback={<PageFallback />}>
-          <Routes>
-            <Route path="/"                              element={<Dashboard toast={toast} />} />
-            <Route path="/opportunities"                 element={<Opportunities toast={toast} />} />
-            <Route path="/opportunities/:contractNumber" element={<OpportunityDetail toast={toast} />} />
-            <Route path="/pipeline-board"                element={<PipelineBoard toast={toast} />} />
-            <Route path="/ai-chat"                       element={<AIChat toast={toast} />} />
-            <Route path="/tasks"                         element={<Tasks toast={toast} />} />
-            <Route path="/contacts"                      element={<Contacts toast={toast} />} />
-            <Route path="/settings"                      element={<Settings toast={toast} />} />
-            <Route path="/lookup"                         element={<Lookup toast={toast} />} />
-            <Route path="*"                              element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
+        <RouteErrorBoundary key={location.pathname}>
+          <Suspense fallback={<PageFallback />}>
+            <Routes>
+              <Route path="/"                              element={<Dashboard toast={toast} />} />
+              <Route path="/opportunities"                 element={<Opportunities toast={toast} />} />
+              <Route path="/opportunities/:contractNumber" element={<OpportunityDetail toast={toast} />} />
+              <Route path="/pipeline-board"                element={<PipelineBoard toast={toast} />} />
+              <Route path="/ai-chat"                       element={<AIChat toast={toast} />} />
+              <Route path="/tasks"                         element={<Tasks toast={toast} />} />
+              <Route path="/contacts"                      element={<Contacts toast={toast} />} />
+              <Route path="/settings"                      element={<Settings toast={toast} />} />
+              <Route path="/lookup"                         element={<Lookup toast={toast} />} />
+              <Route path="*"                              element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
+        </RouteErrorBoundary>
       </div>
       {searchOpen && (
           <Suspense fallback={null}>
