@@ -282,7 +282,7 @@ export function AIChat({ toast }) {
                   value={preferredModel}
                   disabled={loading}
                   onChange={(e) => setPreferredModel(e.target.value)}
-                  style={{ font: 'inherit', color: 'var(--gray-700)', border: '0.5px solid var(--gray-200)', borderRadius: 4, background: '#fff', padding: '2px 4px' }}
+                  style={{ font: 'inherit', color: 'var(--gray-700)', border: '0.5px solid var(--gray-200)', borderRadius: 4, background: 'var(--surface)', padding: '2px 4px' }}
                 >
                   {AI_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
                 </select>
