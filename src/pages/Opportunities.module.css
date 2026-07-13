@@ -25,6 +25,31 @@
 }
 .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+/* Compact SAM discovery actions use dedicated dark-mode fills instead of the
+   lighter general accents used for text and status treatments. */
+.newAction,
+.newActionPipeline {
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--new-action-text);
+  cursor: pointer;
+  font-family: var(--font);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.newActionPipeline,
+.newActionSam { background: var(--new-action-pipeline); }
+.newActionTrack { background: var(--new-action-track); }
+.newActionDismiss { background: var(--new-action-dismiss); }
+
+.newAction:hover:not(:disabled),
+.newActionPipeline:hover:not(:disabled) { filter: brightness(1.1); }
+.newAction:disabled,
+.newActionPipeline:disabled { cursor: default; opacity: 0.7; }
+
 .searchBar {
   display: flex;
   align-items: center;
