@@ -5,6 +5,12 @@
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
+export const AI_MODELS = [
+  { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', description: 'Best strategy and reasoning' },
+  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout', description: 'Faster, higher free-tier throughput' },
+  { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', description: 'Fast fallback for focused requests' },
+]
+
 // ── Core chat function ─────────────────────────────────────────────────────
 
 /**
@@ -19,18 +25,22 @@ export async function sendAIMessage({
   startFresh = false,
   toolResults = null,   // present when responding to a prior 'tool_calls' response
   toolRound = 0,         // safety-net counter, mirrors MAX_TOOL_ROUNDS on the Worker
+  preferredModel = null,
 } = {}) {
   if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
 
   const res = await fetch(`${WORKER_URL}/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, promptType, context, conversationId, startFresh, toolResults, toolRound }),
+    body: JSON.stringify({ message, promptType, context, conversationId, startFresh, toolResults, toolRound, preferredModel }),
   })
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `Worker AI error: ${res.status}`)
+    const error = new Error(err.error || `Worker AI error: ${res.status}`)
+    error.status = res.status
+    error.retryAfterSeconds = Number(err.retryAfterSeconds) || 0
+    throw error
   }
 
   // Either { type: 'final', content, model, conversationId }
@@ -120,14 +130,14 @@ export function executeClientTool(name, args = {}, data = {}) {
         const a = args.agency.toLowerCase()
         rows = rows.filter((o) => String(o[C_AGENCY] || '').toLowerCase().includes(a))
       }
-      const limit = args.limit || 20
+      const limit = Math.min(args.limit || 5, 8)
       return { count: rows.length, opportunities: rows.slice(0, limit).map(summarizeOpportunity) }
     }
 
     case 'get_opportunity': {
       const match = pipeline.find((o) => o[C_CN] === args.contractNumber)
       if (!match) return { found: false, message: `No opportunity found with contract number ${args.contractNumber}` }
-      return { found: true, opportunity: match }
+      return { found: true, opportunity: summarizeOpportunity(match) }
     }
 
     case 'search_tasks': {
@@ -139,8 +149,14 @@ export function executeClientTool(name, args = {}, data = {}) {
       }
       if (args.contractNumber) rows = rows.filter((t) => t.ContractNumber === args.contractNumber)
       if (args.overdueOnly) rows = rows.filter(isOverdueTask)
-      const limit = args.limit || 20
-      return { count: rows.length, tasks: rows.slice(0, limit) }
+      const limit = Math.min(args.limit || 5, 8)
+      return {
+        count: rows.length,
+        tasks: rows.slice(0, limit).map((t) => ({
+          title: t.Title, status: t.Status, priority: t.Priority, dueDate: t.DueDate,
+          assignedTo: t.AssignedTo, contractNumber: t.ContractNumber, contractTitle: t.ContractTitle,
+        })),
+      }
     }
 
     case 'search_contacts': {
@@ -151,8 +167,11 @@ export function executeClientTool(name, args = {}, data = {}) {
           [c.Name, c.Agency, c.Organization].some((v) => v && String(v).toLowerCase().includes(q))
         )
       }
-      const limit = args.limit || 20
-      return { count: rows.length, contacts: rows.slice(0, limit) }
+      const limit = Math.min(args.limit || 5, 8)
+      return {
+        count: rows.length,
+        contacts: rows.slice(0, limit).map((c) => ({ name: c.Name, title: c.Title, agency: c.Agency, organization: c.Organization, email: c.Email })),
+      }
     }
 
     case 'get_expiring_contracts': {
@@ -165,7 +184,7 @@ export function executeClientTool(name, args = {}, data = {}) {
           return !isNaN(d.getTime()) && d >= today && d <= end
         })
         .sort((a, b) => new Date(a[C_END]) - new Date(b[C_END]))
-      return { count: rows.length, contracts: rows.map(summarizeOpportunity) }
+      return { count: rows.length, contracts: rows.slice(0, 8).map(summarizeOpportunity) }
     }
 
     case 'get_pipeline_metrics': {
