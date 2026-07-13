@@ -17,13 +17,14 @@ const GROQ_BASE  = 'https://api.groq.com/openai/v1'
 const CAP_CACHE_KEY  = 'capabilities:tag_capabilities_docx'
 const CAP_TTL        = 60 * 60 * 24 * 30   // 30 days
 const CONV_TTL       = 60 * 60 * 24 * 30   // 30 days
-const MAX_HISTORY    = 20                   // max messages kept per conversation
+const MAX_HISTORY    = 12                   // max messages kept per conversation
+const MAX_HISTORY_CHARS = 12000              // ~3k tokens, leaves room for tools and responses on free tier
+const CAP_CONTEXT_MAX_CHARS = 2500
 
 const MODEL_PRIORITY = [
   'openai/gpt-oss-120b',
-  'llama-3.3-70b-versatile',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
   'openai/gpt-oss-20b',
-  'llama-3.1-8b-instant',
 ]
 
 // Maximum tool-calling round trips per user turn, so a pathological loop
@@ -212,7 +213,7 @@ async function getCapabilities(env) {
       .replace(/<[^>]+>/g, ' ')   // strip XML/HTML tags
       .replace(/\s+/g, ' ')       // collapse whitespace
       .trim()
-      .slice(0, 4000)              // cap at 4000 chars to stay within context limits
+      .slice(0, CAP_CONTEXT_MAX_CHARS)
 
     if (text) await kvSet(env, CAP_CACHE_KEY, text, CAP_TTL)
     return text || null
@@ -295,9 +296,15 @@ If you don't have enough data to answer confidently, say so and explain what inf
 
 // ── Groq call ──────────────────────────────────────────────────────────────
 
-async function callGroq(messages, apiKey, tools = null) {
+function modelOrder(preferredModel) {
+  if (!MODEL_PRIORITY.includes(preferredModel)) return MODEL_PRIORITY
+  return [preferredModel, ...MODEL_PRIORITY.filter((model) => model !== preferredModel)]
+}
+
+async function callGroq(messages, apiKey, tools = null, preferredModel = null) {
   let lastError = null
-  for (const model of MODEL_PRIORITY) {
+  const retryAfterSeconds = []
+  for (const model of modelOrder(preferredModel)) {
     try {
       const body = { model, max_tokens: 1000, messages }
       if (tools) { body.tools = tools; body.tool_choice = 'auto' }
@@ -311,7 +318,12 @@ async function callGroq(messages, apiKey, tools = null) {
         body: JSON.stringify(body),
       })
       if (res.status === 429 || res.status === 503) {
-        lastError = new Error(`Rate limited on ${model}`)
+        lastError = new Error(res.status === 429 ? `Rate limited on ${model}` : `Temporarily unavailable: ${model}`)
+        lastError.status = res.status
+        if (res.status === 429) {
+          const retryAfter = Number(res.headers.get('retry-after'))
+          if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterSeconds.push(retryAfter)
+        }
         continue
       }
       if (!res.ok) {
@@ -330,6 +342,11 @@ async function callGroq(messages, apiKey, tools = null) {
       if (!err.message.includes('Rate limited')) throw err
       lastError = err
     }
+  }
+  if (lastError?.status === 429) {
+    lastError.retryAfterSeconds = retryAfterSeconds.length > 0
+      ? Math.min(...retryAfterSeconds)
+      : 60
   }
   throw lastError || new Error('All Groq models failed')
 }
@@ -404,8 +421,16 @@ async function getHistory(env, conversationId) {
 }
 
 async function saveHistory(env, conversationId, messages) {
-  // Keep only last MAX_HISTORY messages to avoid context overflow
-  const trimmed = messages.slice(-MAX_HISTORY)
+  // Bound both turns and approximate input size. A message-count-only limit
+  // still lets one large tool result consume the free-tier TPM budget.
+  const trimmed = []
+  let chars = 0
+  for (const message of [...messages].reverse()) {
+    const size = JSON.stringify(message).length
+    if (trimmed.length > 0 && (trimmed.length >= MAX_HISTORY || chars + size > MAX_HISTORY_CHARS)) break
+    trimmed.unshift(message)
+    chars += size
+  }
   await kvSet(env, convKey(conversationId), trimmed, CONV_TTL)
 }
 
@@ -433,6 +458,7 @@ export async function handleAIChat(req, env) {
     context = {},
     conversationId,
     startFresh = false,
+    preferredModel = null,
   } = body
 
   const userMessage = message || question || ''
@@ -486,7 +512,7 @@ export async function handleAIChat(req, env) {
   const toolsForThisCall = toolCapable && !forceNoTools ? CLIENT_TOOLS : null
 
   try {
-    const result = await callGroq(messages, env.GROQ_API_KEY, toolsForThisCall)
+    const result = await callGroq(messages, env.GROQ_API_KEY, toolsForThisCall, preferredModel)
     const historyBase = [...existingHistory, ...turnMessages]
 
     if (result.toolCalls?.length > 0) {
@@ -518,7 +544,10 @@ export async function handleAIChat(req, env) {
     return json({ type: 'final', content: result.content, model: result.model, conversationId })
   } catch (err) {
     console.error('[AI] Groq call failed:', err)
-    return json({ error: err.message }, 502)
+    return json(
+      { error: err.message, retryAfterSeconds: err.retryAfterSeconds || undefined },
+      err.status === 429 ? 429 : 502
+    )
   }
 }
 
