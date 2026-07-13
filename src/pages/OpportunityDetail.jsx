@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
 import { useTasks } from '@/hooks/useTasks'
@@ -72,6 +72,10 @@ function safeUrl(url) {
   const s = String(url).trim()
   if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('//')) return s
   return `https://${s}`
+}
+
+function normalizeOpportunityKey(value) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 // ── Linkify note text ────────────────────────────────────────────────────
@@ -264,6 +268,7 @@ function RfiFollowUpPanel({ opp, pocEmail, linkedContractNumbers, onAddToPipelin
     pocEmail: pocEmail || '',
     title: opp?.[C.title] || '',
     noticeId: opp?.[C.contractNum] || '',
+    submissionDate: opp?.[C.submDate] || '',
   }, { enabled: ready })
   const [adding, setAdding] = useState(null)
 
@@ -353,7 +358,10 @@ function Field({ label, value, editing, onChange, type = 'text', options = null,
 // ── Main component ────────────────────────────────────────────────────────
 export default function OpportunityDetail({ toast }) {
   const { contractNumber } = useParams()
-  const decodedCN = decodeURIComponent(contractNumber)
+  const [searchParams] = useSearchParams()
+  const decodedCN = decodeURIComponent(contractNumber || '')
+  const rowParam = searchParams.get('row')
+  const routeRowIndex = rowParam !== null && /^\d+$/.test(rowParam) ? Number(rowParam) : null
   const navigate  = useNavigate()
   const { user }  = useAuth()
 
@@ -399,8 +407,15 @@ export default function OpportunityDetail({ toast }) {
   
 
   const opp = useMemo(
-    () => pipeline.find((o) => o[C.contractNum] === decodedCN),
-    [pipeline, decodedCN]
+    () => {
+      const byRow = routeRowIndex !== null
+        ? pipeline.find((o) => o._rowIndex === routeRowIndex)
+        : null
+      return byRow || pipeline.find((o) =>
+        normalizeOpportunityKey(o[C.contractNum]) === normalizeOpportunityKey(decodedCN)
+      )
+    },
+    [pipeline, decodedCN, routeRowIndex]
   )
 
 
