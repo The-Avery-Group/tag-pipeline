@@ -24,6 +24,51 @@ const STALL_THRESHOLD_MS = 3 * 60 * 1000
 // that's stuck for a persistent reason (bad secret, expired key, etc).
 let _resumeAttemptedThisSession = false
 
+// Pulls are initiated from both Settings and the New Opportunities tab. Keep
+// run state outside individual hook instances so navigation (and a second app
+// tab) can immediately render the same Worker-backed progress.
+let _sharedPullProgress = null
+let _sharedPollTimer = null
+let _sharedPollInFlight = false
+const _pullProgressListeners = new Set()
+
+function publishPullProgress(status) {
+  _sharedPullProgress = status
+  _pullProgressListeners.forEach((listener) => listener(status))
+}
+
+function subscribeToPullProgress(listener) {
+  _pullProgressListeners.add(listener)
+  return () => _pullProgressListeners.delete(listener)
+}
+
+function stopSharedPullPolling() {
+  if (_sharedPollTimer) {
+    clearInterval(_sharedPollTimer)
+    _sharedPollTimer = null
+  }
+}
+
+async function refreshSharedPullProgress() {
+  if (_sharedPollInFlight) return
+  _sharedPollInFlight = true
+  try {
+    const status = await getSAMRunStatus()
+    publishPullProgress(status)
+    if (status?.status === 'success' || status?.status === 'error' || status?.status === 'partial') {
+      stopSharedPullPolling()
+      await invalidateCache()
+    }
+  } finally {
+    _sharedPollInFlight = false
+  }
+}
+
+function startSharedPullPolling() {
+  if (_sharedPollTimer) return
+  _sharedPollTimer = setInterval(refreshSharedPullProgress, POLL_MS)
+}
+
 async function retryThrice(fn) {
   let lastErr
   for (let i = 0; i < 3; i++) {
@@ -78,36 +123,17 @@ export function useSAMOpportunities() {
   // /sam/run-status endpoint. null when no pull is currently being tracked
   // by this hook instance. Shape: { status: 'running'|'success'|'error',
   // phase: 'fetching'|'writing', naicsProcessed, naicsTotal, toWrite, written, ... }
-  const [pullProgress, setPullProgress] = useState(null)
-  const pollTimerRef = useRef(null)
+  const [pullProgress, setPullProgress] = useState(() => _sharedPullProgress)
   const continuingRef = useRef(false)
   // A defensive guard for a bad/legacy Worker status: never keep resuming
   // the exact same cursor after it has twice reported a partial run with no
   // writes. A healthy bounded pull either writes a chunk or moves its cursor.
   const zeroWritePartialsRef = useRef(new Map())
 
-  const stopPolling = useCallback(() => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current)
-      pollTimerRef.current = null
-    }
-  }, [])
-
-  const startPolling = useCallback(() => {
-    stopPolling()
-    pollTimerRef.current = setInterval(async () => {
-      const status = await getSAMRunStatus()
-      setPullProgress(status)
-      if (status?.status === 'success' || status?.status === 'error' || status?.status === 'partial') {
-        stopPolling()
-        await invalidateCache()
-      }
-    }, POLL_MS)
-  }, [stopPolling])
-
-  // Stop polling if this hook instance unmounts mid-run (e.g. user
-  // navigates away from the Opportunities page while a pull is active)
-  useEffect(() => stopPolling, [stopPolling])
+  // Subscribe every mounted consumer to the single shared run state. The
+  // poll intentionally survives page navigation, because a Worker pull keeps
+  // running after the page that triggered it is left.
+  useEffect(() => subscribeToPullProgress(setPullProgress), [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -284,11 +310,11 @@ export function useSAMOpportunities() {
     // done — replaces a previous blind 5s timeout, which had no way to
     // tell whether the pull had finished, was still running, or had
     // silently gotten stuck.
-    setPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: resumeFrom, naicsTotal: null })
-    startPolling()
+    publishPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: resumeFrom, naicsTotal: null })
+    startSharedPullPolling()
 
     return { throttled: false, message: data.message }
-  }, [startPolling])
+  }, [])
 
   // ── Auto-resume a stalled run ─────────────────────────────────────────
   // If a previous pull got killed mid-run (most likely a Cloudflare
@@ -302,18 +328,22 @@ export function useSAMOpportunities() {
     _resumeAttemptedThisSession = true
     ;(async () => {
       const status = await getSAMRunStatus()
-      if (status?.status === 'partial') {
-        setPullProgress(status)
-      } else if (status?.status === 'running' && status?.startedAt) {
+      if (status) publishPullProgress(status)
+      if (status?.status === 'running' || status?.status === 'partial') {
+        startSharedPullPolling()
+      }
+      // A partial status is handled by the continuation effect below. A
+      // running status may need a recovery trigger if the Worker stopped
+      // updating it before completing.
+      if (status?.status === 'running' && status?.startedAt) {
         const age = Date.now() - new Date(status.startedAt).getTime()
         if (age > STALL_THRESHOLD_MS) {
           console.log('[SAM] Detected a stalled pull — auto-resuming')
-          setPullProgress(status)   // show "resuming" state immediately, before the retrigger call completes
           try {
             await triggerPull({ force: true, resumeFrom: status.nextNaicsIndex || 0 })
           } catch (err) {
             console.warn('[SAM] Auto-resume of a stalled pull failed:', err.message)
-            setPullProgress(null)
+            publishPullProgress(null)
           }
         }
       }
@@ -333,7 +363,7 @@ export function useSAMOpportunities() {
       if (previousZeroWritePartials >= 1) {
         const error = 'Pull stopped to avoid repeating a zero-opportunity continuation. Please refresh after the deployed Worker update.'
         console.warn('[SAM]', error, { resumeFrom, pullProgress })
-        setPullProgress({ ...pullProgress, status: 'error', error })
+        publishPullProgress({ ...pullProgress, status: 'error', error })
         return
       }
       zeroWritePartialsRef.current.set(resumeFrom, previousZeroWritePartials + 1)
@@ -349,7 +379,7 @@ export function useSAMOpportunities() {
         await triggerPull({ resumeFrom })
       } catch (err) {
         console.warn('[SAM] Automatic continuation failed:', err.message)
-        setPullProgress({ ...pullProgress, status: 'error', error: err.message })
+        publishPullProgress({ ...pullProgress, status: 'error', error: err.message })
       } finally {
         continuingRef.current = false
       }
