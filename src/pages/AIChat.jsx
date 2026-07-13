@@ -3,6 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
 import { useContacts } from '@/hooks/useContacts'
+import { useNotes } from '@/hooks/useNotes'
+import { useAuth } from '@/auth/AuthContext'
 import { useAIChat } from '@/hooks/useAIChat'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
@@ -14,9 +16,13 @@ import styles from './AIChat.module.css'
 const C_CN    = 'Contract Number / Notice ID'
 const C_TITLE = 'Project Title / Description*'
 
-// Generate a stable conversation ID
-function makeConvId(base) {
-  return `conv_${base}_${new Date().toISOString().split('T')[0]}`
+// Conversation history must be scoped to the signed-in user. The date keeps
+// general conversations short-lived while still allowing a natural back and
+// forth throughout a working day.
+function makeConvId(userId, base) {
+  const safeUser = String(userId || 'current-user').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 48)
+  const safeBase = String(base || 'general').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40)
+  return `conv_${safeUser}_${safeBase}_${new Date().toISOString().split('T')[0]}`
 }
 
 export function AIChat({ toast }) {
@@ -25,6 +31,8 @@ export function AIChat({ toast }) {
   const { pipeline } = usePipeline()
   const { tasks } = useTasks()
   const { contacts } = useContacts()
+  const { notes } = useNotes()
+  const { user } = useAuth()
   const [preferredModel, setPreferredModel] = useState(() => {
     try {
       const saved = localStorage.getItem('tag_ai_preferred_model')
@@ -45,28 +53,40 @@ export function AIChat({ toast }) {
 
   const promptType = opp ? 'opportunity_detail' : 'general'
 
+  const recentOpportunityNotes = useMemo(() => {
+    if (!opp) return ''
+    return notes
+      .filter((note) => note.ContractNumber === opp[C_CN] && !String(note.NoteText || '').startsWith('[TAG_RELATED_OPPORTUNITY]'))
+      .sort((a, b) => new Date(b.Date || 0) - new Date(a.Date || 0))
+      .slice(0, 3)
+      .map((note) => note.NoteText)
+      .filter(Boolean)
+      .join(' | ')
+  }, [notes, opp])
+
   // Build context — always include pipeline summary for general chat
   const context = useMemo(() => {
     if (opp) {
       // Opportunity-specific: include the opp details + pipeline summary for broader questions
       return {
-        ...buildOpportunityContext(opp, ''),
+        ...buildOpportunityContext(opp, recentOpportunityNotes),
         ...buildPipelineSummaryContext(computeKPIs(pipeline, tasks), pipeline),
       }
     }
     // General chat: full pipeline context so AI can answer any operational question
     return buildPipelineSummaryContext(computeKPIs(pipeline, tasks), pipeline)
-  }, [opp, pipeline, tasks])
+  }, [opp, pipeline, tasks, recentOpportunityNotes])
 
-  const convId = opp
-    ? makeConvId(oppCN.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40))
-    : makeConvId('general')
+  const convId = useMemo(() => makeConvId(
+    user?.id || user?.email,
+    opp ? oppCN : 'general'
+  ), [user?.id, user?.email, opp, oppCN])
 
   const { messages, loading, error, historyLoaded, send, startFresh, toolActivity } = useAIChat({
     conversationId: convId,
     promptType,
     initialContext: context,
-    data: { pipeline, tasks, contacts },
+    data: { pipeline, tasks, contacts, notes },
     preferredModel,
   })
 
