@@ -1,6 +1,6 @@
 /**
  * dataCache.js
- * Preloads all four Excel tables into memory and keeps them fresh
+ * Preloads the workbook datasets into memory and keeps them fresh
  * by polling for changes every POLL_INTERVAL_MS.
  *
  * How it works:
@@ -19,16 +19,15 @@ import {
   invalidateAll,
 } from '@/services/graphService'
 
-// How often to poll for external changes (e.g. another user's edits).
-// Was 2 minutes — shortened so changes from other sessions show up without
-// a manual refresh. Trade-off: more Graph API calls per active tab (6
-// parallel GETs per tick). 20s is a reasonable balance; raise it if this
-// starts hitting Graph API throttling limits with more concurrent users.
-const POLL_INTERVAL_MS = 20 * 1000
+// Refresh active tabs often enough for collaborative work without repeatedly
+// competing with users' own Graph writes. Hidden tabs do not poll at all.
+const POLL_INTERVAL_MS = 30 * 1000
 
 let _warmed    = false
 let _warming   = false
 let _pollTimer = null
+let _pollInFlight = false
+let _visibilityHandler = null
 
 // Listeners notified when cache refreshes so hooks can re-render
 const _listeners = new Set()
@@ -57,6 +56,19 @@ async function _fetchAll() {
     getValidationLists(),
     getSAMOpportunities(),
   ])
+}
+
+async function _refreshInBackground() {
+  if (_pollInFlight || document.hidden) return
+  _pollInFlight = true
+  try {
+    await _fetchAll()
+    _notify()
+  } catch {
+    // Preserve the current cache if a background refresh fails.
+  } finally {
+    _pollInFlight = false
+  }
 }
 
 export async function warmCache() {
@@ -88,14 +100,11 @@ export async function invalidateCache() {
 
 export function startPolling() {
   if (_pollTimer) return   // already polling
-  _pollTimer = setInterval(async () => {
-    try {
-      await _fetchAll()
-      _notify()
-    } catch {
-      // Silent fail — stale cache is better than a crash
-    }
-  }, POLL_INTERVAL_MS)
+  _pollTimer = setInterval(_refreshInBackground, POLL_INTERVAL_MS)
+  _visibilityHandler = () => {
+    if (!document.hidden) _refreshInBackground()
+  }
+  document.addEventListener('visibilitychange', _visibilityHandler)
 }
 
 export function stopPolling() {
@@ -103,6 +112,11 @@ export function stopPolling() {
     clearInterval(_pollTimer)
     _pollTimer = null
   }
+  if (_visibilityHandler) {
+    document.removeEventListener('visibilitychange', _visibilityHandler)
+    _visibilityHandler = null
+  }
+  _pollInFlight = false
   _warmed  = false
   _warming = false
 }
