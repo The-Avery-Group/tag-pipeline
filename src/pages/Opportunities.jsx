@@ -419,6 +419,8 @@ export default function Opportunities({ toast }) {
     addToPipeline,
     dismiss,
     undismiss,
+    failedStatuses,
+    retryStatus,
     triggerPull,
     pullProgress,
   } = useSAMOpportunities()
@@ -527,7 +529,7 @@ export default function Opportunities({ toast }) {
     try {
       await dismiss(row._rowIndex)
     } catch (err) {
-      toast?.error('Could not dismiss — will retry on next sync')
+      toast?.error('Could not dismiss. Use Retry sync on this row.')
     } finally {
       setActioningRow(null)
     }
@@ -550,7 +552,7 @@ export default function Opportunities({ toast }) {
     })
     const dismissed = rowIndices.length - failed
     if (dismissed > 0) toast?.success(`${dismissed} opportunit${dismissed === 1 ? 'y' : 'ies'} dismissed`)
-    if (failed > 0) toast?.error(`${failed} could not be dismissed — will retry on next sync`)
+    if (failed > 0) toast?.error(`${failed} could not be dismissed. Use Retry sync on the affected rows.`)
   }
 
   const handleUndismiss = async (row) => {
@@ -561,6 +563,19 @@ export default function Opportunities({ toast }) {
       toast?.success('Restored')
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setActioningRow(null)
+    }
+  }
+
+  const handleRetryStatus = async (row) => {
+    if (actioningRow === row._rowIndex) return
+    setActioningRow(row._rowIndex)
+    try {
+      await retryStatus(row._rowIndex)
+      toast?.success('Status synchronized')
+    } catch (err) {
+      toast?.error(`Still unable to save: ${err.message}`)
     } finally {
       setActioningRow(null)
     }
@@ -750,7 +765,7 @@ export default function Opportunities({ toast }) {
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360 }}>
                   {samOpps.length === 0
-                    ? 'Opportunities from SAM.gov matching your NAICS codes will appear here after the nightly pull.'
+                    ? 'Use Refresh to pull opportunities from SAM.gov that match your NAICS codes.'
                     : 'All opportunities have been dismissed. Toggle "Show dismissed" to see them.'}
                 </div>
               </div>
@@ -792,6 +807,7 @@ export default function Opportunities({ toast }) {
                     {visibleSAMOpps.map((opp) => {
                       const isDismissed = opp.Status === 'dismissed'
                       const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
+                      const syncFailure = failedStatuses[opp._rowIndex]
                       const linkedOpportunity = pipelineByOpportunityKey.get(
                         normalizeOpportunityKey(opp['Solicitation Number'] || opp['Notice ID'])
                       )
@@ -822,6 +838,7 @@ export default function Opportunities({ toast }) {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
                               {samStatusBadge(opp.Status)}
+                              {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Sync failed</span>}
                             </div>
                           </td>
                           <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
@@ -833,10 +850,18 @@ export default function Opportunities({ toast }) {
                           <td onClick={(e) => e.stopPropagation()}>
                             {isDismissed
                               ? (
-                                <button className="btn" style={btnSm}
-                                  disabled={isActioning} onClick={() => handleUndismiss(opp)}>
-                                  {isActioning ? '…' : 'Restore'}
-                                </button>
+                                <div style={{ display: 'grid', gridTemplateColumns: syncFailure ? '1fr 1fr' : '1fr', gap: 4 }}>
+                                  <button className="btn" style={btnSm}
+                                    disabled={isActioning} onClick={() => handleUndismiss(opp)}>
+                                    {isActioning ? '…' : 'Restore'}
+                                  </button>
+                                  {syncFailure && (
+                                    <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                      title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
+                                      {isActioning ? '…' : 'Retry sync'}
+                                    </button>
+                                  )}
+                                </div>
                               )
                               : (
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
@@ -862,6 +887,12 @@ export default function Opportunities({ toast }) {
                                     <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
                                       onClick={() => openOpportunity(linkedOpportunity)}>
                                       View pipeline
+                                    </button>
+                                  )}
+                                  {syncFailure && (
+                                    <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                      title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
+                                      {isActioning ? '…' : 'Retry sync'}
                                     </button>
                                   )}
                                   {opp['SAM.gov URL'] && (
