@@ -205,7 +205,7 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
         onClick={handleToggle}
         style={{
           display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-          padding: '12px 16px', background: '#fff', border: 'none', cursor: 'pointer',
+          padding: '12px 16px', background: 'var(--surface)', border: 'none', cursor: 'pointer',
           textAlign: 'left', fontFamily: 'var(--font)',
         }}
       >
