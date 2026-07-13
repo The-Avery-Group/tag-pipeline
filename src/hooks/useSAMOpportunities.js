@@ -80,6 +80,10 @@ export function useSAMOpportunities() {
   const [pullProgress, setPullProgress] = useState(null)
   const pollTimerRef = useRef(null)
   const continuingRef = useRef(false)
+  // A defensive guard for a bad/legacy Worker status: never keep resuming
+  // the exact same cursor after it has twice reported a partial run with no
+  // writes. A healthy bounded pull either writes a chunk or moves its cursor.
+  const zeroWritePartialsRef = useRef(new Map())
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
@@ -310,10 +314,28 @@ export function useSAMOpportunities() {
   // rather than requiring the user to refresh and press Pull again.
   useEffect(() => {
     if (pullProgress?.status !== 'partial' || continuingRef.current) return
+    const resumeFrom = Number(pullProgress.nextNaicsIndex) || 0
+    const written = Number(pullProgress.written) || 0
+
+    if (written === 0) {
+      const previousZeroWritePartials = zeroWritePartialsRef.current.get(resumeFrom) || 0
+      if (previousZeroWritePartials >= 1) {
+        const error = 'Pull stopped to avoid repeating a zero-opportunity continuation. Please refresh after the deployed Worker update.'
+        console.warn('[SAM]', error, { resumeFrom, pullProgress })
+        setPullProgress({ ...pullProgress, status: 'error', error })
+        return
+      }
+      zeroWritePartialsRef.current.set(resumeFrom, previousZeroWritePartials + 1)
+    } else {
+      // A successful write means a repeated cursor is normal: the Worker
+      // deliberately resumes the same NAICS code to process the next chunk.
+      zeroWritePartialsRef.current.delete(resumeFrom)
+    }
+
     continuingRef.current = true
     ;(async () => {
       try {
-        await triggerPull({ resumeFrom: pullProgress.nextNaicsIndex || 0 })
+        await triggerPull({ resumeFrom })
       } catch (err) {
         console.warn('[SAM] Automatic continuation failed:', err.message)
         setPullProgress({ ...pullProgress, status: 'error', error: err.message })
