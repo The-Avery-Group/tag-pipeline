@@ -79,6 +79,7 @@ export function useSAMOpportunities() {
   // phase: 'fetching'|'writing', naicsProcessed, naicsTotal, toWrite, written, ... }
   const [pullProgress, setPullProgress] = useState(null)
   const pollTimerRef = useRef(null)
+  const continuingRef = useRef(false)
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
@@ -92,7 +93,7 @@ export function useSAMOpportunities() {
     pollTimerRef.current = setInterval(async () => {
       const status = await getSAMRunStatus()
       setPullProgress(status)
-      if (status?.status === 'success' || status?.status === 'error') {
+      if (status?.status === 'success' || status?.status === 'error' || status?.status === 'partial') {
         stopPolling()
         await invalidateCache()
       }
@@ -225,7 +226,7 @@ export function useSAMOpportunities() {
 
   // ── Trigger SAM pull ─────────────────────────────────────────────────
   // force=true bypasses the 12h throttle (used by Settings page force pull)
-  const triggerPull = useCallback(async ({ force = false } = {}) => {
+  const triggerPull = useCallback(async ({ force = false, resumeFrom = 0 } = {}) => {
     if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
     const secret = import.meta.env.VITE_SAM_TRIGGER_SECRET
     if (!secret) throw new Error('VITE_SAM_TRIGGER_SECRET not set')
@@ -252,6 +253,7 @@ export function useSAMOpportunities() {
           windowDays: settings.windowDays,
         },
         force,
+        resumeFrom,
       }),
     })
 
@@ -267,7 +269,7 @@ export function useSAMOpportunities() {
     // done — replaces a previous blind 5s timeout, which had no way to
     // tell whether the pull had finished, was still running, or had
     // silently gotten stuck.
-    setPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: 0, naicsTotal: null })
+    setPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: resumeFrom, naicsTotal: null })
     startPolling()
 
     return { throttled: false, message: data.message }
@@ -285,13 +287,15 @@ export function useSAMOpportunities() {
     _resumeAttemptedThisSession = true
     ;(async () => {
       const status = await getSAMRunStatus()
-      if (status?.status === 'running' && status?.startedAt) {
+      if (status?.status === 'partial') {
+        setPullProgress(status)
+      } else if (status?.status === 'running' && status?.startedAt) {
         const age = Date.now() - new Date(status.startedAt).getTime()
         if (age > STALL_THRESHOLD_MS) {
           console.log('[SAM] Detected a stalled pull — auto-resuming')
           setPullProgress(status)   // show "resuming" state immediately, before the retrigger call completes
           try {
-            await triggerPull({ force: true })
+            await triggerPull({ force: true, resumeFrom: status.nextNaicsIndex || 0 })
           } catch (err) {
             console.warn('[SAM] Auto-resume of a stalled pull failed:', err.message)
             setPullProgress(null)
@@ -300,6 +304,24 @@ export function useSAMOpportunities() {
       }
     })()
   }, [triggerPull])
+
+  // Each Worker invocation writes a bounded chunk to stay under execution
+  // limits. Continue partial chunks automatically while the app is open,
+  // rather than requiring the user to refresh and press Pull again.
+  useEffect(() => {
+    if (pullProgress?.status !== 'partial' || continuingRef.current) return
+    continuingRef.current = true
+    ;(async () => {
+      try {
+        await triggerPull({ resumeFrom: pullProgress.nextNaicsIndex || 0 })
+      } catch (err) {
+        console.warn('[SAM] Automatic continuation failed:', err.message)
+        setPullProgress({ ...pullProgress, status: 'error', error: err.message })
+      } finally {
+        continuingRef.current = false
+      }
+    })()
+  }, [pullProgress, triggerPull])
 
   const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
   const undismiss = useCallback((rowIndex) => updateStatus(rowIndex, 'new'),       [updateStatus])
