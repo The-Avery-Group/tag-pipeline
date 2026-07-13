@@ -690,7 +690,14 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
       if (!noticeId || existingIds.has(noticeKey)) continue
       if (String(raw.active || '').toLowerCase() !== 'yes') continue
       const mapped = mapRecord(raw, naics)
-      candidates.push({ mapped, noticeId, noticeKey, solNum: normalizeSolNum(mapped['Solicitation Number']) })
+      const solNum = normalizeSolNum(mapped['Solicitation Number'])
+      // Do this inexpensive dedup check BEFORE filling the bounded chunk.
+      // Without it, a batch of stale variants can consume all 15 slots,
+      // later collapse to zero writes, and repeatedly resume the same NAICS.
+      const knownSol = solNum ? solNumIndex.get(solNum) : null
+      if (knownSol && !newerRecord(mapped['Posted Date'], knownSol.postedDate)) continue
+
+      candidates.push({ mapped, noticeId, noticeKey, solNum })
       if (candidates.length >= MAX_WRITES_PER_RUN) {
         // Resume this same NAICS code next time. Already-written notice IDs
         // will be skipped, allowing the next chunk to make progress without
@@ -748,7 +755,7 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
   // ── Phase 2: write survivors, capped to stay within subrequest budget ──
   // Skipped entirely if phase 1 hit a fatal error (nothing valid to write).
   let totalWritten = 0
-  if (!fatalError) {
+  if (!fatalError && toWrite.length > 0) {
     await setRunLog(env, {
       status: 'running', phase: 'writing', timestamp: runStart, startedAt: runStart,
       // If this invocation is killed during Graph writes, resume from the
@@ -766,10 +773,10 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
         console.error(`[SAM] Write failed for ${c.noticeId}:`, err.message)
       }
     }
-
-    // Clear key-expired flag — only reachable when the key demonstrably worked
-    await setKeyExpired(env, false)
   }
+  // Any completed fetch phase proves the key is valid, even when it produced
+  // no new rows to write.
+  if (!fatalError) await setKeyExpired(env, false)
 
   // ── Cleanup: expired rows + solicitation-superseded rows, one shared cap ──
   // Runs unconditionally (as long as existingRows was read successfully,
