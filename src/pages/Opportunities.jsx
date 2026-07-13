@@ -337,6 +337,14 @@ export default function Opportunities({ toast }) {
     setShowFilter(false)
   }
 
+  // The visible contract/notice number may contain whitespace or characters
+  // that Excel/URLs normalize differently. Carrying the stable table row
+  // index makes detail navigation reliable while retaining the readable URL.
+  const openOpportunity = (opp) => {
+    const cn = opp[C.contractNum] || ''
+    navigate(`/opportunities/${encodeURIComponent(cn)}?row=${opp._rowIndex}`)
+  }
+
   // ── CRUD handlers ─────────────────────────────────────────────────────
   const submitOpp = async ({ setSubmittedRfi = false } = {}) => {
     const payload = setSubmittedRfi ? { ...form, [C.activityPhase]: 'Submitted RFI' } : form
@@ -893,7 +901,7 @@ export default function Opportunities({ toast }) {
           const cn = opp[C.contractNum]
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
-              onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
+              onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 240 }}>{opp[C.title]}</td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td>
@@ -940,7 +948,7 @@ export default function Opportunities({ toast }) {
           const cn = opp[C.contractNum]
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
-              onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
+              onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 300 }}>{opp[C.title]}</td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
@@ -972,7 +980,7 @@ export default function Opportunities({ toast }) {
           const cn = opp[C.contractNum]
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
-              onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
+              onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}>{opp[C.title]}</td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
@@ -1014,7 +1022,7 @@ export default function Opportunities({ toast }) {
           const cn = opp[C.contractNum]
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
-              onClick={() => navigate(`/opportunities/${encodeURIComponent(cn)}`)}>
+              onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}>{opp[C.title]}</td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td>
