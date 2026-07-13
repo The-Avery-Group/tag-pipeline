@@ -120,10 +120,10 @@
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: #fff;
+  background: var(--surface-raised);
   border: 0.5px solid var(--gray-200);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  box-shadow: 0 4px 12px var(--shadow-color);
   z-index: 50;
   max-height: 200px;
   overflow-y: auto;
