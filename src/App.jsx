@@ -5,6 +5,7 @@ import { msalInstance } from '@/auth/msalConfig'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { useToast } from '@/hooks/useToast'
 import { useAgingNotifications } from '@/hooks/useAgingNotifications'
+import { ThemeProvider } from '@/theme/ThemeContext'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
 import AIChat from '@/pages/AIChat'
@@ -175,7 +176,9 @@ export default function App() {
     <MsalProvider instance={msalInstance}>
       <AuthProvider>
         <BrowserRouter basename="/tag-pipeline">
-          <AppShell />
+          <ThemeProvider>
+            <AppShell />
+          </ThemeProvider>
         </BrowserRouter>
       </AuthProvider>
     </MsalProvider>
