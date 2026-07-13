@@ -10,7 +10,10 @@ export const msalConfig = {
     postLogoutRedirectUri: appUrl,
   },
   cache: {
-    cacheLocation: 'sessionStorage',
+    // localStorage is shared by tabs on the same origin. This lets a user
+    // open an opportunity or task in a new tab without having to authenticate
+    // again, while MSAL continues to acquire access tokens silently.
+    cacheLocation: 'localStorage',
     storeAuthStateInCookie: false,
   },
   system: {
