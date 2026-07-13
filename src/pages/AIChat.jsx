@@ -7,7 +7,7 @@ import { useAIChat } from '@/hooks/useAIChat'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import MarkdownText from '@/components/AI/MarkdownText'
-import { buildPipelineSummaryContext, buildOpportunityContext } from '@/services/groqService'
+import { AI_MODELS, buildPipelineSummaryContext, buildOpportunityContext } from '@/services/groqService'
 import { computeKPIs } from '@/utils/kpiHelpers'
 import styles from './AIChat.module.css'
 
@@ -25,6 +25,14 @@ export default function AIChat({ toast }) {
   const { pipeline } = usePipeline()
   const { tasks } = useTasks()
   const { contacts } = useContacts()
+  const [preferredModel, setPreferredModel] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tag_ai_preferred_model')
+      return AI_MODELS.some((model) => model.id === saved) ? saved : AI_MODELS[0].id
+    } catch {
+      return AI_MODELS[0].id
+    }
+  })
 
   const oppCN      = searchParams.get('opportunity')
   const freshParam = searchParams.get('fresh') === '1'
@@ -59,11 +67,16 @@ export default function AIChat({ toast }) {
     promptType,
     initialContext: context,
     data: { pipeline, tasks, contacts },
+    preferredModel,
   })
 
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
   const inputRef  = useRef(null)
+
+  useEffect(() => {
+    try { localStorage.setItem('tag_ai_preferred_model', preferredModel) } catch {}
+  }, [preferredModel])
 
   // Start fresh if requested via URL param
   useEffect(() => {
@@ -178,7 +191,10 @@ export default function AIChat({ toast }) {
               )}
               <div className={styles.bubble}>
                 {m.role === 'assistant'
-                  ? <MarkdownText content={m.content} />
+                  ? <>
+                      <MarkdownText content={m.content} />
+                      {m.model && <div className="text-xs text-muted" style={{ marginTop: 7 }}>via {AI_MODELS.find((model) => model.id === m.model)?.label || m.model}</div>}
+                    </>
                   : <p className={styles.messageText}>{m.content}</p>
                 }
               </div>
@@ -231,7 +247,20 @@ export default function AIChat({ toast }) {
             </button>
           </div>
           <div className={styles.inputMeta}>
-            <span className={styles.hint}>Enter to send · Shift+Enter for new line</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className={styles.hint}>Enter to send · Shift+Enter for new line</span>
+              <label className={styles.hint} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                Model
+                <select
+                  value={preferredModel}
+                  disabled={loading}
+                  onChange={(e) => setPreferredModel(e.target.value)}
+                  style={{ font: 'inherit', color: 'var(--gray-700)', border: '0.5px solid var(--gray-200)', borderRadius: 4, background: '#fff', padding: '2px 4px' }}
+                >
+                  {AI_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                </select>
+              </label>
+            </div>
             {messages.length > 0 && (
               <button className={styles.clearBtn} onClick={handleStartFresh} disabled={clearAction.isLoading}>
                 {clearAction.isLoading ? 'Clearing…' : 'Clear conversation'}
