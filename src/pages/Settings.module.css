@@ -49,6 +49,18 @@
   gap: 14px;
   padding: 4px 0 16px;
 }
+
+.triggerPullBtn {
+  background: var(--blue-50);
+  border: 1px solid var(--blue-600);
+  color: var(--blue-800);
+}
+
+.triggerPullBtn:hover:not(:disabled) {
+  background: var(--blue-600);
+  border-color: var(--blue-600);
+  color: var(--text-on-brand);
+}
 /* ── Collapsible sections ── */
 .collapsible {
   border: 0.5px solid var(--gray-200);
