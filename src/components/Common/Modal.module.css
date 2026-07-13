@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.35);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9,7 +9,7 @@
 }
 
 .modal {
-  background: #fff;
+  background: var(--surface-raised);
   border-radius: var(--radius-lg);
   width: 520px;
   max-width: calc(100vw - 48px);
