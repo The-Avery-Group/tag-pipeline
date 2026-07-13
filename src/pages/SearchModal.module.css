@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.4);
+  background: var(--overlay);
   z-index: 1000;
   display: flex;
   align-items: flex-start;
@@ -16,10 +16,10 @@
 }
 
 .modal {
-  background: #fff;
+  background: var(--surface-raised);
   border-radius: var(--radius-lg);
   border: 0.5px solid var(--gray-200);
-  box-shadow: 0 16px 48px rgba(0,0,0,0.18);
+  box-shadow: 0 16px 48px var(--shadow-color);
   width: 560px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 160px);
