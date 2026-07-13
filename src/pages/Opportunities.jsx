@@ -760,7 +760,7 @@ export default function Opportunities({ toast }) {
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
                       <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
                         {(selectedRows.size > 0 || bulkDismissAction.isLoading)
-                          ? <button style={{ fontSize: '10.5px', padding: '2px 8px', background: 'var(--red-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: bulkDismissAction.isLoading ? 'default' : 'pointer', fontFamily: 'var(--font)', fontWeight: 500, opacity: bulkDismissAction.isLoading ? 0.7 : 1 }}
+                          ? <button style={{ fontSize: '10.5px', padding: '2px 8px', background: 'var(--red-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: bulkDismissAction.isLoading ? 'default' : 'pointer', fontFamily: 'var(--font)', fontWeight: 500, opacity: bulkDismissAction.isLoading ? 0.7 : 1 }}
                               disabled={bulkDismissAction.isLoading}
                               onClick={handleBulkDismiss}>
                               {bulkDismissAction.isLoading ? 'Dismissing…' : `Dismiss ${selectedRows.size} selected`}
@@ -826,12 +826,12 @@ export default function Opportunities({ toast }) {
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
                                         {isActioning ? '…' : '+ Pipeline'}
                                       </button>
-                                      <button style={{ ...btnSm, background: 'var(--amber-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                      <button style={{ ...btnSm, background: 'var(--amber-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'Tracking')}>
                                         {isActioning ? '…' : 'Track'}
                                       </button>
                                       {/* Row 2: Dismiss (red/white) | SAM.gov (blue) */}
-                                      <button style={{ ...btnSm, background: 'var(--red-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                      <button style={{ ...btnSm, background: 'var(--red-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                         disabled={isActioning} onClick={() => handleDismiss(opp)}>
                                         Dismiss
                                       </button>
@@ -839,7 +839,7 @@ export default function Opportunities({ toast }) {
                                   )}
                                   {opp['SAM.gov URL'] && (
                                     <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
-                                      style={{ ...btnSm, background: 'var(--blue-600)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                                      style={{ ...btnSm, background: 'var(--blue-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontFamily: 'var(--font)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
                                       SAM.gov
                                     </a>
                                   )}
@@ -1140,7 +1140,7 @@ export default function Opportunities({ toast }) {
                 <button
                   type="button"
                   className="form-input"
-                  style={{ textAlign: 'left', cursor: 'pointer', background: '#fff' }}
+                  style={{ textAlign: 'left', cursor: 'pointer', background: 'var(--surface)' }}
                   onClick={() => setAgencyFilterOpen((v) => !v)}
                 >
                   {filters.agency.size === 0
