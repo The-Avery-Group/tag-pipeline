@@ -4,6 +4,8 @@ import { sendAIMessage, getConversationHistory, clearConversation, executeClient
 // Mirrors the Worker's own MAX_TOOL_ROUNDS safety net — belt and suspenders
 // against a pathological loop where the model keeps asking for more tools.
 const MAX_TOOL_ROUNDS = 5
+const MAX_RATE_LIMIT_RETRIES = 1
+const MAX_RATE_LIMIT_WAIT_SECONDS = 60
 
 // Friendly status labels shown while a tool call is being executed, so the
 // user sees "Searching your pipeline…" instead of a longer silent spinner
@@ -11,6 +13,10 @@ const MAX_TOOL_ROUNDS = 5
 const TOOL_ACTIVITY_LABELS = {
   search_pipeline:        'Searching your pipeline…',
   get_opportunity:        'Looking up that opportunity…',
+  get_opportunity_notes:  'Reviewing opportunity notes…',
+  get_opportunity_tasks:  'Checking linked tasks…',
+  get_opportunity_contacts: 'Checking linked contacts…',
+  search_notes:           'Searching CRM notes…',
   search_tasks:           'Checking tasks…',
   search_contacts:        'Searching contacts…',
   get_expiring_contracts: 'Checking expiring contracts…',
@@ -30,13 +36,31 @@ const TOOL_ACTIVITY_LABELS = {
  * @param {object} initialContext — context to seed the conversation (opportunity data etc)
  * @param {object} data           — { pipeline, tasks, contacts } for tool execution
  */
-export function useAIChat({ conversationId, promptType = 'general', initialContext = {}, data = {} }) {
+export function useAIChat({ conversationId, promptType = 'general', initialContext = {}, data = {}, preferredModel = null }) {
   const [messages,  setMessages]  = useState([])   // { role, content }[]
   const [loading,   setLoading]   = useState(false)
   const [error,     setError]     = useState(null)
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [toolActivity, setToolActivity] = useState(null)   // friendly label while a tool call is in flight
   const abortRef = useRef(null)
+
+  const sendWithRateLimitRetry = useCallback(async (payload) => {
+    let retries = 0
+    while (true) {
+      try {
+        return await sendAIMessage({ ...payload, preferredModel })
+      } catch (err) {
+        if (err.status !== 429 || retries >= MAX_RATE_LIMIT_RETRIES) throw err
+        retries++
+        const seconds = Math.min(
+          Math.max(Math.ceil(err.retryAfterSeconds || MAX_RATE_LIMIT_WAIT_SECONDS), 1),
+          MAX_RATE_LIMIT_WAIT_SECONDS
+        )
+        setToolActivity(`Groq is rate-limited — retrying in ${seconds}s…`)
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+      }
+    }
+  }, [preferredModel])
 
   // Keep the latest data available to the tool loop without needing to
   // recreate send()/runToolLoop() every time pipeline/tasks/contacts update
@@ -79,7 +103,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
         content: executeClientTool(call.name, call.arguments, dataRef.current),
       }))
 
-      result = await sendAIMessage({
+      result = await sendWithRateLimitRetry({
         promptType, context: initialContext,
         conversationId: result.conversationId,
         toolResults, toolRound: round,
@@ -87,7 +111,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
     }
     setToolActivity(null)
     return result
-  }, [promptType, initialContext])
+  }, [promptType, initialContext, sendWithRateLimitRetry])
 
   const send = useCallback(async (userMessage) => {
     if (!userMessage.trim() || loading) return
@@ -98,7 +122,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
     setError(null)
 
     try {
-      let result = await sendAIMessage({
+      let result = await sendWithRateLimitRetry({
         message: userMessage,
         promptType,
         context: initialContext,
@@ -106,7 +130,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
         startFresh: false,
       })
       result = await runToolLoop(result)
-      setMessages((prev) => [...prev, { role: 'assistant', content: result.content }])
+      setMessages((prev) => [...prev, { role: 'assistant', content: result.content, model: result.model }])
     } catch (err) {
       if (err.name !== 'AbortError') {
         setError('Failed to get response. Please try again.')
@@ -117,7 +141,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
       setLoading(false)
       setToolActivity(null)
     }
-  }, [loading, promptType, initialContext, conversationId, runToolLoop])
+  }, [loading, promptType, initialContext, conversationId, runToolLoop, sendWithRateLimitRetry])
 
   const startFresh = useCallback(async () => {
     if (conversationId) await clearConversation(conversationId)
