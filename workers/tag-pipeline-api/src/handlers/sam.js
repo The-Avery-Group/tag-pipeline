@@ -39,6 +39,10 @@ const PAGE_SIZE = 500
 const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
+// SAM rejects a range whose endpoints are exactly a calendar year apart in
+// practice, despite documenting a one-year maximum. Keep every individual
+// request strictly below that boundary and combine adjacent windows.
+const MAX_SAM_DATE_RANGE_DAYS = 364
 
 // Shared subrequest budget — Cloudflare Workers cap outbound fetch() calls
 // per request (50 on the free plan, higher on paid). Every SAM.gov fetch,
@@ -96,6 +100,21 @@ function dateFromValue(value) {
   if (!match) return null
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
   return isNaN(date.getTime()) ? null : date
+}
+
+function splitSAMDateRange(from, to) {
+  const windows = []
+  const last = new Date(to)
+  let start = new Date(from)
+  while (start <= last) {
+    const end = new Date(start)
+    end.setUTCDate(end.getUTCDate() + MAX_SAM_DATE_RANGE_DAYS)
+    if (end > last) end.setTime(last.getTime())
+    windows.push({ from: new Date(start), to: end })
+    start = new Date(end)
+    start.setUTCDate(start.getUTCDate() + 1)
+  }
+  return windows
 }
 
 function parseResponseDate(val) {
@@ -348,6 +367,11 @@ function matchingPOC(raw, email) {
 }
 
 function followUpCandidate(raw, source) {
+  const sourceSubmission = dateFromValue(source.submissionDate)
+  const candidatePosted = dateFromValue(raw.postedDate)
+  // A follow-on must be posted strictly AFTER the RFI was submitted. This
+  // guards against a broad API response ever admitting an older notice.
+  if (sourceSubmission && (!candidatePosted || candidatePosted <= sourceSubmission)) return null
   const org = parseOrg(raw.fullParentPathName)
   if (normalized(org.department) !== normalized(source.department)) return null
   if (normalized(org.agency) !== normalized(source.agency)) return null
@@ -366,6 +390,7 @@ function followUpCandidate(raw, source) {
     agency:             org.agency,
     office:             org.office,
     responseDate:       parseResponseDate(raw.responseDeadLine),
+    postedDate:         parseResponseDate(raw.postedDate),
     naicsCode:          String(raw.naicsCode || raw.naics || '').trim(),
     samLink:            String(raw.uiLink || '').trim(),
     pocName:            String(poc.fullName || poc.fullname || '').trim(),
@@ -412,21 +437,24 @@ async function findRFIFollowUps(env, source) {
   const to = submissionDate ? new Date(submissionDate) : new Date(now)
 
   if (submissionDate) {
-    // SAM permits at most a one-year Posted Date range. Start at the RFI's
-    // submission date so only later notices can qualify as follow-ons.
+    // Start on the following day: a follow-on must be posted strictly after
+    // the RFI submission date, never on or before it.
+    from.setUTCDate(from.getUTCDate() + 1)
     to.setUTCFullYear(to.getUTCFullYear() + 1)
   } else {
-    // With no submission date, center the one-year search window on today.
-    from.setUTCMonth(from.getUTCMonth() - 6)
-    to.setUTCMonth(to.getUTCMonth() + 6)
+    // With no submission date, search a ten-month window centered on today.
+    from.setUTCMonth(from.getUTCMonth() - 5)
+    to.setUTCMonth(to.getUTCMonth() + 5)
   }
 
-  const [rfps, rfqs] = await Promise.all([
-    fetchFollowUpNotices(env, 'o', formatDateParam(from), formatDateParam(to)),
-    fetchFollowUpNotices(env, 'k', formatDateParam(from), formatDateParam(to)),
-  ])
+  const responseSets = await Promise.all(
+    splitSAMDateRange(from, to).flatMap(({ from: windowFrom, to: windowTo }) => [
+      fetchFollowUpNotices(env, 'o', formatDateParam(windowFrom), formatDateParam(windowTo)),
+      fetchFollowUpNotices(env, 'k', formatDateParam(windowFrom), formatDateParam(windowTo)),
+    ])
+  )
   const unique = new Map()
-  for (const raw of [...rfps, ...rfqs]) {
+  for (const raw of responseSets.flat()) {
     const candidate = followUpCandidate(raw, source)
     if (!candidate) continue
     const key = candidate.noticeId || candidate.solicitationNumber
