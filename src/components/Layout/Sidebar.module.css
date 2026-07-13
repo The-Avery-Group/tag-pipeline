@@ -1,6 +1,6 @@
 .sidebar {
   width: var(--sidebar-width);
-  background: #fff;
+  background: var(--surface);
   border-right: 0.5px solid var(--gray-200);
   display: flex;
   flex-direction: column;
@@ -215,7 +215,7 @@
 .kbd {
   font-size: 10px;
   font-family: var(--font);
-  background: #fff;
+  background: var(--surface-raised);
   border: 0.5px solid var(--gray-200);
   border-radius: 4px;
   padding: 1px 4px;
