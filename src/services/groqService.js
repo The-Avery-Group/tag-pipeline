@@ -85,6 +85,13 @@ const C_OUTLOOK  = 'Opportunity Outlook'
 const C_VALUE    = 'Total Contract Value ($)*'
 const C_END      = 'Contract End Date*'
 const C_ASSIGNEE = 'Assigned To*'
+const C_DEPARTMENT = 'Department*'
+const C_OFFICE   = 'Office*'
+const C_ACTIVITY = 'TAG Pipeline Activity Phase'
+const C_SUBMISSION = 'Submission Date (Response Date)*'
+const C_POC      = 'Contracting Officer / Specialist (POC)*'
+const C_SET_ASIDE = 'Set- Aside*'
+const C_PRIORITY = 'Priority'
 
 function summarizeOpportunity(o) {
   return {
@@ -96,7 +103,37 @@ function summarizeOpportunity(o) {
     value:          o[C_VALUE],
     endDate:        o[C_END],
     assignedTo:     o[C_ASSIGNEE],
+    department:     o[C_DEPARTMENT],
+    office:          o[C_OFFICE],
+    activityPhase:  o[C_ACTIVITY],
+    submissionDate: o[C_SUBMISSION],
+    pointOfContact: o[C_POC],
+    setAside:       o[C_SET_ASIDE],
+    priority:       o[C_PRIORITY],
   }
+}
+
+function summarizeTask(t) {
+  return {
+    title: t.Title, status: t.Status, priority: t.Priority, dueDate: t.DueDate,
+    assignedTo: t.AssignedTo, contractNumber: t.ContractNumber, contractTitle: t.ContractTitle,
+  }
+}
+
+function isSystemNote(note) {
+  return String(note.NoteText || '').startsWith('[TAG_RELATED_OPPORTUNITY]')
+}
+
+function recentNotesForContract(notes, contractNumber, limit = 8) {
+  return notes
+    .filter((note) => note.ContractNumber === contractNumber && !isSystemNote(note))
+    .sort((a, b) => new Date(b.Date || 0) - new Date(a.Date || 0))
+    .slice(0, limit)
+    .map((note) => ({
+      date: note.Date,
+      author: note.Author,
+      text: String(note.NoteText || '').slice(0, 600),
+    }))
 }
 
 function isOverdueTask(t) {
@@ -113,7 +150,7 @@ function isOverdueTask(t) {
  * @param data - { pipeline, tasks, contacts } — the in-memory arrays
  */
 export function executeClientTool(name, args = {}, data = {}) {
-  const { pipeline = [], tasks = [], contacts = [] } = data
+  const { pipeline = [], tasks = [], contacts = [], notes = [] } = data
 
   switch (name) {
     case 'search_pipeline': {
@@ -140,6 +177,68 @@ export function executeClientTool(name, args = {}, data = {}) {
       return { found: true, opportunity: summarizeOpportunity(match) }
     }
 
+    case 'get_opportunity_notes': {
+      const limit = Math.min(args.limit || 8, 12)
+      return {
+        contractNumber: args.contractNumber,
+        count: notes.filter((note) => note.ContractNumber === args.contractNumber && !isSystemNote(note)).length,
+        notes: recentNotesForContract(notes, args.contractNumber, limit),
+      }
+    }
+
+    case 'get_opportunity_tasks': {
+      const limit = Math.min(args.limit || 8, 12)
+      const matchingTasks = tasks.filter((task) => task.ContractNumber === args.contractNumber)
+      return {
+        contractNumber: args.contractNumber,
+        count: matchingTasks.length,
+        tasks: matchingTasks.slice(0, limit).map(summarizeTask),
+      }
+    }
+
+    case 'get_opportunity_contacts': {
+      const opportunity = pipeline.find((o) => o[C_CN] === args.contractNumber)
+      if (!opportunity) return { found: false, message: `No opportunity found with contract number ${args.contractNumber}` }
+      const pointOfContact = String(opportunity[C_POC] || '').toLowerCase()
+      const linked = contacts.filter((contact) => {
+        const name = String(contact.Name || '').trim().toLowerCase()
+        const email = String(contact.Email || '').trim().toLowerCase()
+        return (name.length >= 3 && pointOfContact.includes(name)) || (email && pointOfContact.includes(email))
+      })
+      return {
+        found: true,
+        pointOfContact: opportunity[C_POC] || '',
+        count: linked.length,
+        contacts: linked.slice(0, 8).map((contact) => ({
+          name: contact.Name, title: contact.Title, agency: contact.Agency,
+          organization: contact.Organization, email: contact.Email, phone: contact.Phone,
+        })),
+      }
+    }
+
+    case 'search_notes': {
+      const query = String(args.query || '').trim().toLowerCase()
+      const contractNumber = String(args.contractNumber || '').trim()
+      const limit = Math.min(args.limit || 5, 10)
+      let matchingNotes = notes.filter((note) => !isSystemNote(note))
+      if (contractNumber) matchingNotes = matchingNotes.filter((note) => note.ContractNumber === contractNumber)
+      if (query) {
+        matchingNotes = matchingNotes.filter((note) =>
+          [note.NoteText, note.Author, note.ContractNumber].some((value) => String(value || '').toLowerCase().includes(query))
+        )
+      }
+      matchingNotes.sort((a, b) => new Date(b.Date || 0) - new Date(a.Date || 0))
+      return {
+        count: matchingNotes.length,
+        notes: matchingNotes.slice(0, limit).map((note) => ({
+          contractNumber: note.ContractNumber,
+          date: note.Date,
+          author: note.Author,
+          text: String(note.NoteText || '').slice(0, 600),
+        })),
+      }
+    }
+
     case 'search_tasks': {
       let rows = tasks
       if (args.status) rows = rows.filter((t) => t.Status === args.status)
@@ -152,10 +251,7 @@ export function executeClientTool(name, args = {}, data = {}) {
       const limit = Math.min(args.limit || 5, 8)
       return {
         count: rows.length,
-        tasks: rows.slice(0, limit).map((t) => ({
-          title: t.Title, status: t.Status, priority: t.Priority, dueDate: t.DueDate,
-          assignedTo: t.AssignedTo, contractNumber: t.ContractNumber, contractTitle: t.ContractTitle,
-        })),
+        tasks: rows.slice(0, limit).map(summarizeTask),
       }
     }
 
@@ -277,7 +373,7 @@ export function buildOpportunityContext(opportunity, recentNotes = '') {
       value:          opportunity['Total Contract Value ($)*']              || '',
       naics:          opportunity['NAICS Code*']                            || '',
       assignedTo:     opportunity['Assigned To*']                           || '',
-      rfiSubmissionDate: opportunity['Submission Date (Response Date)*']       || '',
+      submissionDate:    opportunity['Submission Date (Response Date)*']       || '',
       outlook:        opportunity['Opportunity Outlook']                    || '',
       recentNotes,
     },
