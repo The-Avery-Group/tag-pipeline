@@ -899,8 +899,12 @@ export default function OpportunityDetail({ toast }) {
         {/* ── Section 1: Opportunity Details ── */}
         <Section title="Opportunity Details">
           <div className={styles.fieldGrid}>
-            <Field label="Opportunity Title" value={f(C.title)} editing={editing} onChange={set(C.title)} />
-            <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing={editing} onChange={set(C.contractNum)} raw />
+            {editing && (
+              <>
+                <Field label="Opportunity Title" value={f(C.title)} editing onChange={set(C.title)} />
+                <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
+              </>
+            )}
             <Field label="Agency"      value={f(C.agency)}     editing={editing} onChange={set(C.agency)} />
             <Field label="Department"  value={f(C.department)} editing={editing} onChange={set(C.department)} />
             <Field label="Office"                  value={f(C.office)}         editing={editing} onChange={set(C.office)} />
