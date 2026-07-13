@@ -1,7 +1,7 @@
 /**
  * MarkdownText — lightweight markdown renderer for AI responses.
  * Handles: bold, italic, inline code, numbered lists, bullet lists,
- * headers (h1-h3), horizontal rules, and line breaks.
+ * headers (h1-h3), horizontal rules, Markdown tables, and line breaks.
  * No external dependencies.
  */
 
@@ -27,10 +27,46 @@ function parseInline(text) {
   return parts.length === 1 && typeof parts[0] === 'string' ? parts[0] : parts
 }
 
+function splitTableRow(line) {
+  let value = line.trim()
+  if (value.startsWith('|')) value = value.slice(1)
+  if (value.endsWith('|')) value = value.slice(0, -1)
+  const cells = []
+  let cell = ''
+  let escaped = false
+  for (const char of value) {
+    if (char === '|' && !escaped) {
+      cells.push(cell.trim())
+      cell = ''
+      continue
+    }
+    cell += char
+    escaped = char === '\\' && !escaped
+    if (char !== '\\') escaped = false
+  }
+  cells.push(cell.trim())
+  return cells.map((value) => value.replace(/\\\|/g, '|'))
+}
+
+function isTableDivider(line) {
+  const cells = splitTableRow(line)
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+}
+
+function tableAlignment(cell) {
+  const left = cell.startsWith(':')
+  const right = cell.endsWith(':')
+  if (left && right) return 'center'
+  if (right) return 'right'
+  return 'left'
+}
+
 export default function MarkdownText({ content, className }) {
   if (!content) return null
 
-  const lines = content.split('\n')
+  // Also normalizes legacy/history responses produced before the Worker-side
+  // response rule was introduced.
+  const lines = String(content).replace(/\u2014/g, ' - ').split('\n')
   const elements = []
   let i = 0
 
@@ -54,6 +90,48 @@ export default function MarkdownText({ content, className }) {
     if (h1) { elements.push(<p key={i} style={{ fontWeight: 700, fontSize: 14, margin: '8px 0 4px' }}>{parseInline(h1[1])}</p>); i++; continue }
     if (h2) { elements.push(<p key={i} style={{ fontWeight: 600, fontSize: 13, margin: '8px 0 4px' }}>{parseInline(h2[1])}</p>); i++; continue }
     if (h3) { elements.push(<p key={i} style={{ fontWeight: 600, fontSize: 12, margin: '6px 0 2px', color: 'var(--gray-600)' }}>{parseInline(h3[1])}</p>); i++; continue }
+
+    // Markdown table — a header row followed by a |---| separator row.
+    if (trimmed.includes('|') && i + 1 < lines.length && isTableDivider(lines[i + 1].trim())) {
+      const headers = splitTableRow(trimmed)
+      const alignments = splitTableRow(lines[i + 1].trim()).map(tableAlignment)
+      const rows = []
+      i += 2
+
+      while (i < lines.length && lines[i].trim().includes('|') && lines[i].trim()) {
+        const cells = splitTableRow(lines[i].trim())
+        rows.push(cells.slice(0, headers.length))
+        i++
+      }
+
+      elements.push(
+        <div key={`table-${i}`} style={{ overflowX: 'auto', margin: '8px 0', border: '0.5px solid var(--gray-200)', borderRadius: 6 }}>
+          <table style={{ width: '100%', minWidth: 'max-content', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: 'var(--gray-50)' }}>
+                {headers.map((header, index) => (
+                  <th key={index} style={{ padding: '7px 9px', borderBottom: '0.5px solid var(--gray-200)', textAlign: alignments[index] || 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    {parseInline(header)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {headers.map((_, cellIndex) => (
+                    <td key={cellIndex} style={{ padding: '7px 9px', borderBottom: rowIndex < rows.length - 1 ? '0.5px solid var(--gray-100)' : 'none', textAlign: alignments[cellIndex] || 'left', verticalAlign: 'top', lineHeight: 1.45 }}>
+                      {parseInline(row[cellIndex] || '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+      continue
+    }
 
     // Numbered list — collect consecutive numbered items
     if (/^\d+\.\s/.test(trimmed)) {
