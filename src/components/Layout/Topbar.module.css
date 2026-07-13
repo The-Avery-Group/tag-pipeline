@@ -4,7 +4,7 @@
   justify-content: space-between;
   padding: 0 24px;
   height: var(--topbar-height);
-  background: #fff;
+  background: var(--surface);
   border-bottom: 0.5px solid var(--gray-200);
   flex-shrink: 0;
   /* Fix: contain content so subtitles never overflow the box */
@@ -75,7 +75,7 @@
   height: 32px;
   border-radius: var(--radius-md);
   border: 0.5px solid var(--gray-200);
-  background: #fff;
+  background: var(--surface);
   color: var(--gray-600);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -86,6 +86,6 @@
 .iconBtnPrimary {
   background: var(--blue-600);
   border-color: var(--blue-600);
-  color: #fff;
+  color: var(--text-on-brand);
 }
 .iconBtnPrimary:hover { background: var(--blue-800); border-color: var(--blue-800); }
