@@ -20,13 +20,13 @@ const C = {
 }
 
 const PHASE_COLORS = {
-  'Identified':       '#C7D9F5',
-  'Research':         '#FAC775',
-  'Qualified':        '#F59B42',
-  'Proposal':         '#85B7EB',
-  'Pending Award':    '#B39DDB',
-  'Contract Awarded': '#9FE1CB',
-  'Cancelled':        '#E0E0E0',
+  'Identified':       'var(--chart-phase-identified)',
+  'Research':         'var(--chart-phase-research)',
+  'Qualified':        'var(--chart-phase-qualified)',
+  'Proposal':         'var(--chart-phase-proposal)',
+  'Pending Award':    'var(--chart-phase-pending)',
+  'Contract Awarded': 'var(--chart-phase-awarded)',
+  'Cancelled':        'var(--chart-phase-cancelled)',
 }
 
 function parseValue(v) {
