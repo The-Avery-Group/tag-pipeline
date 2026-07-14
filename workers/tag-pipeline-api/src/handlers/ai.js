@@ -23,7 +23,7 @@ const CAP_CONTEXT_MAX_CHARS = 2500
 
 const MODEL_PRIORITY = [
   'openai/gpt-oss-120b',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'qwen/qwen3.6-27b',
   'openai/gpt-oss-20b',
 ]
 
