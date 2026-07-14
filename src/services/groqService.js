@@ -7,7 +7,7 @@ const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
 export const AI_MODELS = [
   { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', description: 'Best strategy and reasoning' },
-  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout', description: 'Faster, higher free-tier throughput' },
+  { id: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B', description: 'Long-context reasoning and tool use' },
   { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', description: 'Fast fallback for focused requests' },
 ]
 
