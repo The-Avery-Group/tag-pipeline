@@ -625,6 +625,10 @@ export default function Opportunities({ toast }) {
   useEffect(() => {
     if (pullProgress?.status === 'success' || pullProgress?.status === 'error' || pullProgress?.status === 'partial') {
       setSamRunStatus(pullProgress)
+      // This is the exact transition that replaces live activity with the
+      // durable Last pulled / failure summary. Clear its transient companion
+      // in the same update so the two displays cannot get out of sync.
+      setPullMessage(null)
     }
   }, [pullProgress])
 
