@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { useMsal } from '@azure/msal-react'
 import { loginRequest, graphConfig } from './msalConfig'
 import { warmCache, startPolling, stopPolling } from '@/services/dataCache'
@@ -9,8 +9,15 @@ export function AuthProvider({ children }) {
   const { instance, accounts } = useMsal()
   const [user, setUser]     = useState(null)
   const [authState, setAuthState] = useState('initializing')
+  const signingOutRef = useRef(false)
 
   useEffect(() => {
+    if (signingOutRef.current) {
+      setUser(null)
+      setAuthState('idle')
+      return
+    }
+
     if (accounts.length === 0) {
       setAuthState('idle')
       return
@@ -27,6 +34,7 @@ export function AuthProvider({ children }) {
       )
       .then((res) => res.json())
       .then((me) => {
+        if (signingOutRef.current) return
         setUser({
           displayName: me.displayName,
           firstName:   me.givenName || me.displayName.split(' ')[0],
@@ -36,6 +44,7 @@ export function AuthProvider({ children }) {
         warmCache().then(() => startPolling())
       })
       .catch((err) => {
+        if (signingOutRef.current) return
         console.error('Failed to load user profile:', err)
         setUser({
           displayName: account.name,
@@ -48,12 +57,25 @@ export function AuthProvider({ children }) {
       .finally(() => setAuthState('idle'))
   }, [accounts, instance])
 
-  const login = () => instance.loginRedirect(loginRequest)
+  const login = () => {
+    signingOutRef.current = false
+    return instance.loginRedirect(loginRequest)
+  }
 
   const logout = () => {
+    // Clear the app session before leaving for Entra. This guarantees the
+    // login screen appears even if the identity-provider redirect is delayed
+    // or fails, and prevents an in-flight profile request restoring the user.
+    signingOutRef.current = true
+    setUser(null)
+    setAuthState('idle')
     stopPolling()
-    instance.logoutRedirect({
+    return instance.logoutRedirect({
       postLogoutRedirectUri: import.meta.env.VITE_APP_BASE_URL || window.location.origin,
+    }).catch((err) => {
+      // The local session is already cleared. Keep the user safely on the
+      // sign-in page and expose the redirect failure for diagnosis.
+      console.error('Sign-out redirect failed:', err)
     })
   }
 
