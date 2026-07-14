@@ -130,6 +130,12 @@ function AppShell() {
     })
   }, [isAuthenticated, cacheReady])
 
+  // Sign-out clears the in-memory cache. Reset this component's readiness
+  // state as well, so a later sign-in always warms the new session first.
+  useEffect(() => {
+    if (!isAuthenticated) setCacheReady(false)
+  }, [isAuthenticated])
+
   if (loading || (isAuthenticated && !cacheReady)) return <AuthInitScreen />
 
   if (!isAuthenticated) {
