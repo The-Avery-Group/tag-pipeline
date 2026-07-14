@@ -89,6 +89,10 @@ function AuthInitScreen() {
           }} />
         ))}
       </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ color: 'var(--gray-900)', fontSize: 14, fontWeight: 600 }}>Signing you in</div>
+        <div style={{ color: 'var(--gray-500)', fontSize: 12, marginTop: 4 }}>Preparing your workspace…</div>
+      </div>
       <style>{`
         @keyframes authDot {
           0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
