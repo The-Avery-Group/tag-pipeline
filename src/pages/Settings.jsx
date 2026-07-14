@@ -98,7 +98,7 @@ export default function Settings({ toast }) {
     setTriggering(true)
     setTriggerResult(null)
     try {
-      const result = await triggerPull({ force: true })   // force=true bypasses 12h throttle
+      const result = await triggerPull({ force: true, source: 'settings' })   // force=true bypasses 12h throttle
       setTriggerResult({ ok: true, message: result.message || 'Pull started' })
       toast?.success('SAM pull started')
     } catch (err) {
