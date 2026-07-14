@@ -633,6 +633,12 @@ export default function Opportunities({ toast }) {
   // described as though another user or device started it.
   useEffect(() => {
     if (pullProgress?.status !== 'running') return
+    if (pullProgress?.status !== 'running') {
+      // The running-state label is temporary. Completed, failed, and partial
+      // runs already have a durable summary in the status line above it.
+      setPullMessage((message) => message?.type === 'info' ? null : message)
+      return
+    }
     if (pullOrigin?.source === 'settings') {
       setPullMessage({ type: 'info', text: 'A pull started from Settings is running.' })
     } else if (pullOrigin?.source === 'recovery') {
