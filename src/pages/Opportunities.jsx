@@ -470,8 +470,9 @@ export default function Opportunities({ toast }) {
   }, [deptOpen])
 
   // ── Scroll save/restore safety net ──────────────────────────────────
-  // Saves scrollTop before any render that could reset it, restores after.
-  // useLayoutEffect runs after DOM mutations but before paint — invisible to user.
+  // Save continuously, not only before button actions. SAM row refreshes are
+  // also caused by the shared workbook poll, which otherwise has no user
+  // event at which to capture the current position.
   const savedScrollTop = useRef(0)
   useLayoutEffect(() => {
     const el = tableScrollRef.current
@@ -482,7 +483,7 @@ export default function Opportunities({ toast }) {
     }
   })
 
-  // Call this before any state update that might re-render the table
+  // Call this before any state update that might re-render the table.
   const saveScroll = useCallback(() => {
     savedScrollTop.current = tableScrollRef.current?.scrollTop ?? 0
   }, [])
@@ -646,7 +647,10 @@ export default function Opportunities({ toast }) {
     return null
   }
 
-  const NewTab = () => (
+  // Keep this as a render function, not an inline React component. An inline
+  // <NewTab /> gets a new component identity on every parent render and makes
+  // React unmount the scroll container, sending users back to the top.
+  const renderNewTab = () => (
     <div>
       {samKeyExpired && (
         <div style={{
@@ -771,7 +775,11 @@ export default function Opportunities({ toast }) {
               </div>
             )
             : (
-              <div ref={tableScrollRef} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - var(--topbar-height) - 100px)' }}>
+              <div
+                ref={tableScrollRef}
+                onScroll={(event) => { savedScrollTop.current = event.currentTarget.scrollTop }}
+                style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - var(--topbar-height) - 100px)' }}
+              >
                 <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                     <tr>
@@ -1318,7 +1326,7 @@ export default function Opportunities({ toast }) {
         )}
 
         {/* ── New tab: SAM.gov opportunities ── */}
-        {activeTab === 'New' && <NewTab />}
+        {activeTab === 'New' && renderNewTab()}
 
         {/* ── Pipeline tabs: RFIs / Expiring / Tracked ── */}
         {activeTab !== 'New' && (
