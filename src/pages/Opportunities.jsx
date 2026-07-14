@@ -423,6 +423,7 @@ export default function Opportunities({ toast }) {
     retryStatus,
     triggerPull,
     pullProgress,
+    pullOrigin,
   } = useSAMOpportunities()
 
   const [showDismissed, setShowDismissed] = useState(false)
@@ -627,18 +628,19 @@ export default function Opportunities({ toast }) {
     }
   }, [pullProgress])
 
-  // Let the user know if a pull just started that THIS tab didn't initiate
-  // (i.e. the auto-resume-a-stalled-run logic in the hook kicked in)
-  const autoResumeNoticedRef = useRef(false)
+  // Explain a running pull accurately. Settings and the New Opportunities
+  // tab share browser-local run state, so a Settings-triggered pull is not
+  // described as though another user or device started it.
   useEffect(() => {
-    if (pullProgress?.status === 'running' && !pulling && !autoResumeNoticedRef.current) {
-      autoResumeNoticedRef.current = true
-      setPullMessage({ type: 'info', text: 'Resuming an opportunity pull that didn\u2019t finish in an earlier session…' })
+    if (pullProgress?.status !== 'running') return
+    if (pullOrigin?.source === 'settings') {
+      setPullMessage({ type: 'info', text: 'A pull started from Settings is running.' })
+    } else if (pullOrigin?.source === 'recovery') {
+      setPullMessage({ type: 'info', text: 'Resuming an interrupted opportunity pull…' })
+    } else if (!pullOrigin) {
+      setPullMessage({ type: 'info', text: 'An opportunity pull is currently running.' })
     }
-    if (pullProgress?.status === 'success' || pullProgress?.status === 'error') {
-      autoResumeNoticedRef.current = false   // reset so a future stall can be noticed again
-    }
-  }, [pullProgress, pulling])
+  }, [pullProgress, pullOrigin])
 
   const samStatusBadge = (status) => {
     if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>Added</span>
@@ -732,7 +734,9 @@ export default function Opportunities({ toast }) {
                 {samRunStatus?.success === true && (
                   <>
                     {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
-                    {samRunStatus.written > 0 && <> · {samRunStatus.written} new</>}
+                    {samRunStatus.written > 0
+                      ? <> · {samRunStatus.written} new</>
+                      : <> · No new opportunities found</>}
                     {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
                     {samRunStatus.warnings?.length > 0 && (
                       <span style={{ color: 'var(--amber-600)' }} title={samRunStatus.warnings.join('\n')}>
