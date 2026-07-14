@@ -169,14 +169,16 @@ function Section({ title, children }) {
 }
 
 // ── Individual read/edit field ────────────────────────────────────────────
-// Collapsible SAM.gov Award Lookup panel — lazily fires the lookup the
+// Collapsible SAM.gov Award Lookup panel. It lazily fires the lookup the
 // first time it's expanded (not on page load, to avoid spending the shared
 // 1,000/day SAM API quota on panels nobody opens). Each returned field gets
 // a hover-revealed "Update pipeline" button so the user can selectively
 // pull in just the fields that changed, rather than an all-or-nothing sync.
+// The PIID itself is intentionally display-only here: an award lookup can
+// never overwrite the pipeline identifier.
 function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
   const [open, setOpen] = useState(false)
-  const { results, loading, error, searched, lookup } = useAwardsLookup()
+  const { results, loading, error, searched, cache, lookup } = useAwardsLookup()
   // Tracks which specific fields have been applied this session, keyed by
   // PIID then field key, so the button can flip to a "✓ Updated" confirmed
   // state without needing a full re-lookup.
@@ -197,6 +199,24 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
       toast?.success(`${field.column.replace(/\*$/, '')} updated`)
     } catch (err) {
       toast?.error(`Failed to update: ${err.message}`)
+    }
+  }
+
+  const handleAddAwardNoticeLink = async (piid, fieldKey, field) => {
+    const link = String(field.value || '').trim()
+    if (!link) return
+    const existing = cleanLinks(opp[C.otherLinks])
+    if (existing.some((value) => value.toLowerCase() === link.toLowerCase())) {
+      toast?.success('Award Notice link is already in Other Links')
+      setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
+      return
+    }
+    try {
+      await updateOpp(opp._rowIndex, { [C.otherLinks]: joinLinks([...existing, link]) }, opp)
+      setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
+      toast?.success('Award Notice link added to Other Links')
+    } catch (err) {
+      toast?.error(`Failed to add link: ${err.message}`)
     }
   }
 
@@ -227,8 +247,8 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
             <p className="text-sm text-muted">No award data found for {contractNumber}.</p>
           )}
           {results.map((r) => {
-            const piid = r.raw?.contractId?.piid
-            const isIDV = r.raw?.coreData?.awardOrIDV === 'IDV'
+            const piid = r.piid || r.raw?.contractId?.piid
+            const isIDV = r.isIDV
             return (
               <AwardRecordCard
                 key={piid || Math.random()}
@@ -237,10 +257,24 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
                 modificationCount={r.modificationCount}
                 originalSignedDate={r.originalSignedDate}
                 samLink={r.samLink}
+                cache={cache}
+                onRefresh={() => lookup({ piid: contractNumber, forceRefresh: true })}
+                refreshing={loading}
                 fields={r.fields}
                 renderFieldAction={(fieldKey, field) => {
-                  if (!field.column) return null   // display-only field, nowhere in the pipeline to write it
                   const done = !!updatedFields[piid]?.[fieldKey]
+                  if (field.action === 'addOtherLink') {
+                    return (
+                      <button
+                        className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
+                        onClick={() => handleAddAwardNoticeLink(piid, fieldKey, field)}
+                        disabled={done}
+                      >
+                        {done ? 'Added' : 'Add to Other Links'}
+                      </button>
+                    )
+                  }
+                  if (!field.column) return null   // display-only field, nowhere in the pipeline to write it
                   return (
                     <button
                       className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
