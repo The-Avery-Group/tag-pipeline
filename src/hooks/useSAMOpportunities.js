@@ -31,8 +31,31 @@ let _sharedPullProgress = null
 let _sharedPollTimer = null
 let _sharedPollInFlight = false
 const _pullProgressListeners = new Set()
+const PULL_ORIGIN_STORAGE_KEY = 'tag_sam_pull_origin'
+
+function readStoredPullOrigin() {
+  try {
+    const origin = JSON.parse(localStorage.getItem(PULL_ORIGIN_STORAGE_KEY) || 'null')
+    // A source marker is only meaningful for a current, bounded pull. Ignore
+    // an abandoned browser marker rather than mislabelling a later run.
+    return origin?.startedAt && Date.now() - origin.startedAt < 15 * 60 * 1000 ? origin : null
+  } catch {
+    return null
+  }
+}
+
+let _sharedPullOrigin = typeof window === 'undefined' ? null : readStoredPullOrigin()
+
+function setSharedPullOrigin(origin) {
+  _sharedPullOrigin = origin
+  try {
+    if (origin) localStorage.setItem(PULL_ORIGIN_STORAGE_KEY, JSON.stringify(origin))
+    else localStorage.removeItem(PULL_ORIGIN_STORAGE_KEY)
+  } catch {}
+}
 
 function publishPullProgress(status) {
+  if (status?.status === 'success' || status?.status === 'error') setSharedPullOrigin(null)
   _sharedPullProgress = status
   _pullProgressListeners.forEach((listener) => listener(status))
 }
@@ -124,6 +147,7 @@ export function useSAMOpportunities() {
   // by this hook instance. Shape: { status: 'running'|'success'|'error',
   // phase: 'fetching'|'writing', naicsProcessed, naicsTotal, toWrite, written, ... }
   const [pullProgress, setPullProgress] = useState(() => _sharedPullProgress)
+  const [pullOrigin, setPullOrigin] = useState(() => _sharedPullOrigin)
   const continuingRef = useRef(false)
   // A defensive guard for a bad/legacy Worker status: never keep resuming
   // the exact same cursor after it has twice reported a partial run with no
@@ -133,7 +157,23 @@ export function useSAMOpportunities() {
   // Subscribe every mounted consumer to the single shared run state. The
   // poll intentionally survives page navigation, because a Worker pull keeps
   // running after the page that triggered it is left.
-  useEffect(() => subscribeToPullProgress(setPullProgress), [])
+  useEffect(() => subscribeToPullProgress((status) => {
+    setPullProgress(status)
+    setPullOrigin(_sharedPullOrigin)
+  }), [])
+
+  // The module-level state covers same-tab navigation. This listener extends
+  // the source label to other tabs in the same browser without claiming that
+  // an unknown remote run belongs to the current user.
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key !== PULL_ORIGIN_STORAGE_KEY) return
+      _sharedPullOrigin = readStoredPullOrigin()
+      setPullOrigin(_sharedPullOrigin)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const load = useCallback(async ({ keepVisible = false } = {}) => {
     // A background workbook refresh must not replace the discovery table with
@@ -270,7 +310,7 @@ export function useSAMOpportunities() {
 
   // ── Trigger SAM pull ─────────────────────────────────────────────────
   // force=true bypasses the 12h throttle (used by Settings page force pull)
-  const triggerPull = useCallback(async ({ force = false, resumeFrom = 0 } = {}) => {
+  const triggerPull = useCallback(async ({ force = false, resumeFrom = 0, source = 'opportunities' } = {}) => {
     if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
     const secret = import.meta.env.VITE_SAM_TRIGGER_SECRET
     if (!secret) throw new Error('VITE_SAM_TRIGGER_SECRET not set')
@@ -313,6 +353,10 @@ export function useSAMOpportunities() {
     // done — replaces a previous blind 5s timeout, which had no way to
     // tell whether the pull had finished, was still running, or had
     // silently gotten stuck.
+    setSharedPullOrigin({
+      source: resumeFrom ? 'recovery' : source,
+      startedAt: Date.now(),
+    })
     publishPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: resumeFrom, naicsTotal: null })
     startSharedPullPolling()
 
@@ -343,7 +387,7 @@ export function useSAMOpportunities() {
         if (age > STALL_THRESHOLD_MS) {
           console.log('[SAM] Detected a stalled pull — auto-resuming')
           try {
-            await triggerPull({ force: true, resumeFrom: status.nextNaicsIndex || 0 })
+            await triggerPull({ force: true, resumeFrom: status.nextNaicsIndex || 0, source: 'recovery' })
           } catch (err) {
             console.warn('[SAM] Auto-resume of a stalled pull failed:', err.message)
             publishPullProgress(null)
@@ -379,7 +423,7 @@ export function useSAMOpportunities() {
     continuingRef.current = true
     ;(async () => {
       try {
-        await triggerPull({ resumeFrom })
+        await triggerPull({ resumeFrom, source: 'recovery' })
       } catch (err) {
         console.warn('[SAM] Automatic continuation failed:', err.message)
         publishPullProgress({ ...pullProgress, status: 'error', error: err.message })
@@ -415,5 +459,6 @@ export function useSAMOpportunities() {
     retryStatus,
     triggerPull,
     pullProgress,
+    pullOrigin,
   }
 }
