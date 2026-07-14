@@ -135,8 +135,11 @@ export function useSAMOpportunities() {
   // running after the page that triggered it is left.
   useEffect(() => subscribeToPullProgress(setPullProgress), [])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async ({ keepVisible = false } = {}) => {
+    // A background workbook refresh must not replace the discovery table with
+    // a skeleton. Keeping the existing rows mounted preserves scroll position
+    // while the latest SAM rows load in behind them.
+    if (!keepVisible) setLoading(true)
     setError(null)
     try {
       const rows = await getSAMOpportunities()
@@ -155,12 +158,12 @@ export function useSAMOpportunities() {
     } catch (err) {
       setError(err.message)
     } finally {
-      setLoading(false)
+      if (!keepVisible) setLoading(false)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => onCacheRefresh(load), [load])
+  useEffect(() => onCacheRefresh(() => load({ keepVisible: true })), [load])
 
   // ── Contact lookup or create ─────────────────────────────────────────
   const resolveContact = useCallback(async (poc, agency, department) => {
