@@ -23,6 +23,10 @@ export function AuthProvider({ children }) {
       return
     }
 
+    // MSAL first restores the redirect result, then exposes the selected
+    // account. Return to a loading state for the profile/token step so the
+    // login screen is never briefly shown after account selection.
+    setAuthState('initializing')
     const account = accounts[0]
     instance
       .initialize()
