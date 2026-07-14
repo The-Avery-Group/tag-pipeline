@@ -87,9 +87,13 @@ async function refreshSharedPullProgress() {
   }
 }
 
-function startSharedPullPolling() {
+function startSharedPullPolling({ reconcileNow = false } = {}) {
   if (_sharedPollTimer) return
   _sharedPollTimer = setInterval(refreshSharedPullProgress, POLL_MS)
+  // Used when a page mounts with a pull already marked as running. The
+  // triggering page waits for its normal interval so it cannot accidentally
+  // read the previous run before the Worker writes the new running status.
+  if (reconcileNow) refreshSharedPullProgress()
 }
 
 async function retryThrice(fn) {
@@ -161,6 +165,13 @@ export function useSAMOpportunities() {
     setPullProgress(status)
     setPullOrigin(_sharedPullOrigin)
   }), [])
+
+  // A global poll can outlive the page that started it. Conversely, a page
+  // can mount after that poll was stopped or a browser suspended its timer.
+  // Ensure a visible running state always has an active Worker-status watcher.
+  useEffect(() => {
+    if (pullProgress?.status === 'running') startSharedPullPolling({ reconcileNow: true })
+  }, [pullProgress?.status])
 
   // The module-level state covers same-tab navigation. This listener extends
   // the source label to other tabs in the same browser without claiming that
