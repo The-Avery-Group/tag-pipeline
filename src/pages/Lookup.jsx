@@ -17,26 +17,13 @@ const C_CONTRACT_NUM = 'Contract Number / Notice ID'
 // querying both in parallel (see useAwardsLookup / the Worker's awards.js)
 // rather than asking the user to specify which type they typed.
 
-// Flattens one entry from a result's `modifications` array (which nests
-// current-state fields under `.currentState` alongside that mod's own
-// transaction fields) into a single flat map — what AwardRecordCard expects.
-function flattenModification(mod) {
-  const { currentState, ...transactionFields } = mod
-  return { ...currentState, ...transactionFields }
-}
-
 export default function Lookup({ toast }) {
   const navigate = useNavigate()
   const { pipeline, add } = usePipeline()
   const { lists } = useValidationLists()
   const outlookOptions = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
-  const { results, loading, error, searched, lookup } = useAwardsLookup()
+  const { results, loading, error, searched, cache, lookup } = useAwardsLookup()
   const [input, setInput] = useState('')
-
-  // Which modification is currently displayed per result, keyed by PIID —
-  // defaults to 0 (most recent) per the "shown the most recent one by
-  // default" requirement; the user can toggle to an older one.
-  const [selectedModIndex, setSelectedModIndex] = useState({})
 
   // Adding to the pipeline is a two-step confirm, not an immediate write —
   // specifically because Outlook defaults to "Expiring" (this data source
@@ -80,7 +67,7 @@ export default function Lookup({ toast }) {
         'TAG Opportunity Phase':           'Identified',
         'Opportunity Outlook':             pendingOutlook,
         'Solicitation Number':             f.solicitationNumber?.value || '',
-        'Total Contract Value ($)*':       f.totalEstimatedOrderValue?.value || '',
+        'Total Contract Value ($)*':       f.totalContractValue?.value || '',
         'Contract End Date*':              f.contractEndDate?.value || '',
         'NAICS Code*':                     f.naicsCode?.value || '',
         'Department*':                     f.department?.value || '',
@@ -91,6 +78,7 @@ export default function Lookup({ toast }) {
         'Incumbent (Company UEI)':         f.incumbentUEI?.value || '',
         'Contract Vehicle Number':         f.contractVehicleNumber?.value || '',
         'Fiscal Year':                     f.fiscalYear?.value || '',
+        'Other Links*':                    f.awardNoticeLink?.value || '',
       })
       toast?.success('Added to pipeline')
       setPendingResult(null)
@@ -135,35 +123,22 @@ export default function Lookup({ toast }) {
         )}
 
         {results.map((r) => {
-          const piid = r.raw?.contractId?.piid
-          const isIDV = r.raw?.coreData?.awardOrIDV === 'IDV'
+          const piid = r.piid || r.raw?.contractId?.piid
+          const isIDV = r.isIDV
           const already = isInPipeline(piid)
-          const mods = r.modifications || []
-          const activeIdx = selectedModIndex[piid] ?? 0
-          const activeFields = mods[activeIdx] ? flattenModification(mods[activeIdx]) : r.fields
 
           return (
             <div key={piid || Math.random()}>
-              {mods.length > 1 && (
-                <div className="filter-chips" style={{ marginBottom: 8 }}>
-                  {mods.map((mod, i) => (
-                    <button
-                      key={i}
-                      className={`filter-chip ${activeIdx === i ? 'active' : ''}`}
-                      onClick={() => setSelectedModIndex((prev) => ({ ...prev, [piid]: i }))}
-                    >
-                      {i === 0 ? 'Current' : `Mod ${mod.modificationNumber?.value || i}`}
-                    </button>
-                  ))}
-                </div>
-              )}
               <AwardRecordCard
                 piid={piid}
                 isIDV={isIDV}
                 modificationCount={r.modificationCount}
                 originalSignedDate={r.originalSignedDate}
                 samLink={r.samLink}
-                fields={activeFields}
+                cache={cache}
+                onRefresh={() => lookup({ piid: input.trim(), solicitationID: input.trim(), forceRefresh: true })}
+                refreshing={loading}
+                fields={r.fields}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6, marginBottom: 14 }}>
                 {already
