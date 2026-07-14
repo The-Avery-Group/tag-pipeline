@@ -1,103 +1,89 @@
 import styles from './AwardRecordCard.module.css'
 
-// Section display order — the Worker embeds section/label directly on each
-// field now (see extractCurrentStateFields/extractTransactionFields in
-// awards.js), so this component just groups and orders rather than
-// maintaining its own duplicate label map.
 const SECTION_ORDER = [
-  'Summary', 'Modification Details', 'Performance', 'Solicitation',
-  'Description', 'Contract Details', 'History',
+  'Contract identity', 'Contract snapshot', 'Agency and scope',
+  'Latest modification', 'Award notice',
 ]
 
-function formatFieldValue(key, value) {
-  if (value == null || value === '') return '—'
-  if (key === 'totalEstimatedOrderValue') {
-    const n = Number(value)
-    return isNaN(n) ? String(value) : `$${n.toLocaleString('en-US')}`
+function formatFieldValue(field, value) {
+  if (value == null || value === '') return 'Not provided'
+  if (field.format === 'currency') {
+    const number = Number(value)
+    return Number.isNaN(number) ? String(value) : `$${number.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
   }
-  if (/date/i.test(key)) {
-    const d = new Date(value)
-    return isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  if (field.format === 'date') {
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
   return String(value)
 }
 
-/**
- * AwardRecordCard
- *
- * Pure presentational display of one award record's field set — grouped
- * into sections (Summary, Modification Details, Performance, Solicitation,
- * Description, Contract Details, History) with a preserved 2-column field
- * grid and hover-revealed per-field action buttons, same look as before.
- *
- * Has no idea how to write data anywhere, and no idea about modification
- * history/toggling — the caller decides which fields to pass in (e.g.
- * OpportunityDetail passes the merged "current" view; the Lookup page
- * passes whichever modification snapshot is currently selected).
- *
- * @param piid, isIDV, modificationCount, originalSignedDate, samLink — header info
- * @param fields - flat field-key → { section, label, value, column } map
- * @param renderFieldAction - optional (fieldKey, field) => ReactNode
- */
+function formatCacheTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
 export default function AwardRecordCard({
   piid, isIDV, modificationCount, originalSignedDate, samLink,
-  fields, renderFieldAction,
+  cache, fields, renderFieldAction, onRefresh, refreshing,
 }) {
-  const visibleFields = Object.entries(fields || {}).filter(([, field]) => field.value != null && field.value !== '')
-
+  const visibleFields = Object.entries(fields || {}).filter(([, item]) => item.value != null && item.value !== '')
   const bySection = {}
-  for (const [key, field] of visibleFields) {
-    const section = field.section || 'Other'
+  for (const [key, item] of visibleFields) {
+    const section = item.section || 'Other'
     if (!bySection[section]) bySection[section] = []
-    bySection[section].push([key, field])
+    bySection[section].push([key, item])
   }
-  const sections = SECTION_ORDER.filter((s) => bySection[s]?.length)
+  const sections = SECTION_ORDER.filter((section) => bySection[section]?.length)
+  const cacheLabel = cache?.source === 'cache' ? 'Cached SAM data' : cache?.source === 'live' ? 'Live SAM data' : null
 
   return (
-    <div className="card" style={{ marginBottom: 10 }}>
-      <div className={styles.cardHeader}>
+    <article className={`card ${styles.recordCard}`}>
+      <header className={styles.cardHeader}>
         <div>
-          <div className={styles.piid}>{piid || 'Unknown PIID'}</div>
-          <div className={styles.recordType}>
-            {isIDV ? 'Contract Vehicle (IDV)' : 'Definitive Contract / Order'}
-            {originalSignedDate && ` · originally signed ${formatFieldValue('date', originalSignedDate)}`}
-          </div>
+          <div className={styles.eyebrow}>Contract Award Record</div>
+          <h3 className={styles.piid}>{piid || 'Unknown PIID'}</h3>
+          <p className={styles.recordType}>
+            {isIDV ? 'Contract vehicle (IDV)' : 'Definitive contract or order'}
+            {originalSignedDate && ` · originally signed ${formatFieldValue({ format: 'date' }, originalSignedDate)}`}
+          </p>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          {modificationCount > 1 && (
-            <div className={styles.modBadge} title="Modification history was merged into this view">
-              {modificationCount} modifications
-            </div>
+        <div className={styles.headerActions}>
+          {cacheLabel && <span className={styles.cacheBadge} title={formatCacheTime(cache?.fetchedAt)}>{cacheLabel}</span>}
+          {modificationCount > 1 && <span className={styles.modBadge}>{modificationCount} transactions</span>}
+          {onRefresh && (
+            <button type="button" className={styles.refreshButton} onClick={onRefresh} disabled={refreshing}>
+              {refreshing ? 'Refreshing…' : 'Refresh from SAM.gov'}
+            </button>
           )}
-          {samLink && (
-            <a href={samLink} target="_blank" rel="noreferrer" className={styles.samLink}>
-              View on SAM.gov ↗
-            </a>
-          )}
+          {samLink && <a href={samLink} target="_blank" rel="noreferrer" className={styles.samLink}>View contract on SAM.gov ↗</a>}
         </div>
-      </div>
+      </header>
 
       {sections.length === 0
         ? <p className="text-sm text-muted">No usable field data on this record.</p>
         : sections.map((section) => (
-          <div key={section}>
-            <div className={styles.sectionHeader}>{section}</div>
+          <section key={section} className={styles.section}>
+            <h4 className={styles.sectionHeader}>{section}</h4>
             <div className={styles.fieldGrid}>
-              {bySection[section].map(([key, field]) => (
-                <div key={key} className={styles.fieldRow}>
-                  <div className={styles.fieldLabel}>{field.label || key}</div>
+              {bySection[section].map(([key, item]) => (
+                <div key={key} className={`${styles.fieldRow} ${item.fullWidth ? styles.fullWidth : ''}`}>
+                  <div className={styles.fieldLabel} title={item.helpText || ''}>{item.label || key}</div>
                   <div className={styles.fieldValueRow}>
-                    <span className={styles.fieldValue} title={formatFieldValue(key, field.value)}>
-                      {formatFieldValue(key, field.value)}
-                    </span>
-                    {renderFieldAction?.(key, field)}
+                    {item.format === 'link'
+                      ? <a href={item.value} target="_blank" rel="noreferrer" className={styles.inlineLink}>Open Award Notice ↗</a>
+                      : <span className={styles.fieldValue} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
+                    {renderFieldAction?.(key, item)}
                   </div>
+                  {item.provenance?.lastModifiedDate && (
+                    <div className={styles.provenance}>SAM transaction updated {formatFieldValue({ format: 'date' }, item.provenance.lastModifiedDate)}</div>
+                  )}
                 </div>
               ))}
             </div>
-          </div>
-        ))
-      }
-    </div>
+          </section>
+        ))}
+    </article>
   )
 }
