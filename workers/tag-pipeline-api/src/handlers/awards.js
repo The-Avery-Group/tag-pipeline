@@ -164,6 +164,49 @@ function extractTransactionFields(record) {
   }
 }
 
+// A later option exercise means the contract is treated as active again for
+// the purposes of this UI alert. Other later modifications do not clear a
+// termination, cancellation, or close-out event.
+const LIFECYCLE_REASON_TYPES = {
+  E: 'terminated',
+  F: 'terminated',
+  X: 'terminated',
+  N: 'cancelled',
+  K: 'closedOut',
+}
+
+const LIFECYCLE_REASON_FALLBACKS = {
+  E: 'Terminate for Default',
+  F: 'Terminate for Convenience',
+  X: 'Terminate for Cause',
+  N: 'Legal Contract Cancellation',
+  K: 'Close Out',
+}
+
+function getContractLifecycleAlert(records) {
+  let alert = null
+
+  for (const record of records) {
+    const reason = record?.contractId?.reasonForModification
+    const code = String(reason?.code || '').trim().toUpperCase()
+    if (code === 'G') {
+      alert = null
+      continue
+    }
+    if (!LIFECYCLE_REASON_TYPES[code]) continue
+
+    alert = {
+      type: LIFECYCLE_REASON_TYPES[code],
+      reason: reason?.name || LIFECYCLE_REASON_FALLBACKS[code],
+      modificationNumber: record?.contractId?.modificationNumber || null,
+      transactionNumber: record?.contractId?.transactionNumber || null,
+      dateSigned: record?.awardDetails?.dates?.dateSigned || null,
+    }
+  }
+
+  return alert
+}
+
 async function fetchAwards(env, params) {
   const records = []
   let aggregation = null
@@ -352,6 +395,7 @@ async function buildResult(env, records, includeAwardNotice = true) {
     fields,
     awardNotice,
     aggregation,
+    contractLifecycleAlert: getContractLifecycleAlert(records),
     // Preserve raw transaction history for later automatic change monitoring
     // and for a future UI history view without fabricating composite records.
     modifications: records.slice(-3).reverse().map((record) => extractTransactionFields(record)),
@@ -375,7 +419,7 @@ async function handleLookup(req, env) {
   const forceRefresh = url.searchParams.get('refresh') === '1'
   if (!piid && !solicitationID) return json({ error: 'Provide at least one of: piid, solicitationID' }, 400)
 
-  const cacheKey = `awards_lookup:v2:${piid || ''}:${solicitationID || ''}`
+  const cacheKey = `awards_lookup:v3:${piid || ''}:${solicitationID || ''}`
   if (!forceRefresh) {
     const cached = await getCached(env, cacheKey)
     if (cached) {
