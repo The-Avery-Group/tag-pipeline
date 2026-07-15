@@ -7,6 +7,7 @@ import { OPPORTUNITY_OUTLOOK } from '@/services/graphService'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
+import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 
 const C_CONTRACT_NUM = 'Contract Number / Notice ID'
 
@@ -17,6 +18,39 @@ const C_CONTRACT_NUM = 'Contract Number / Notice ID'
 // querying both in parallel (see useAwardsLookup / the Worker's awards.js)
 // rather than asking the user to specify which type they typed.
 
+function ModificationTabs({ modifications, activeIndex, onSelect }) {
+  if (!modifications?.length) return null
+
+  return (
+    <div className={awardStyles.modificationTabs} role="tablist" aria-label="Recent modifications">
+      {modifications.map((modification, index) => {
+        const number = modification.modificationNumber?.value || (index === modifications.length - 1 ? 'Base award' : 'Modification')
+        const label = index === 0 ? `Latest · ${number}` : number
+        return (
+          <button
+            key={`${number}-${modification.dateSigned?.value || index}`}
+            type="button"
+            role="tab"
+            aria-selected={activeIndex === index}
+            className={`${awardStyles.modificationTab} ${activeIndex === index ? awardStyles.modificationTabActive : ''}`}
+            onClick={() => onSelect(index)}
+          >
+            {label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function fieldsForModification(fields, modification) {
+  if (!modification) return fields
+  const withoutLatestModification = Object.fromEntries(
+    Object.entries(fields || {}).filter(([, field]) => field.section !== 'Latest modification')
+  )
+  return { ...withoutLatestModification, ...modification }
+}
+
 export default function Lookup({ toast }) {
   const navigate = useNavigate()
   const { pipeline, add } = usePipeline()
@@ -24,6 +58,7 @@ export default function Lookup({ toast }) {
   const outlookOptions = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
   const { results, loading, error, searched, cache, lookup } = useAwardsLookup()
   const [input, setInput] = useState('')
+  const [selectedModification, setSelectedModification] = useState({})
 
   // Adding to the pipeline is a two-step confirm, not an immediate write —
   // specifically because Outlook defaults to "Expiring" (this data source
@@ -127,9 +162,17 @@ export default function Lookup({ toast }) {
           const piid = r.piid || r.raw?.contractId?.piid
           const isIDV = r.isIDV
           const already = isInPipeline(piid)
+          const modifications = r.modifications || []
+          const activeModificationIndex = Math.min(selectedModification[piid] ?? 0, Math.max(modifications.length - 1, 0))
+          const activeFields = fieldsForModification(r.fields, modifications[activeModificationIndex])
 
           return (
             <div key={piid || Math.random()}>
+              <ModificationTabs
+                modifications={modifications}
+                activeIndex={activeModificationIndex}
+                onSelect={(index) => setSelectedModification((previous) => ({ ...previous, [piid]: index }))}
+              />
               <AwardRecordCard
                 piid={piid}
                 isIDV={isIDV}
@@ -139,7 +182,7 @@ export default function Lookup({ toast }) {
                 cache={cache}
                 onRefresh={() => lookup({ piid: input.trim(), solicitationID: input.trim(), forceRefresh: true })}
                 refreshing={loading}
-                fields={r.fields}
+                fields={activeFields}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6, marginBottom: 14 }}>
                 {already
