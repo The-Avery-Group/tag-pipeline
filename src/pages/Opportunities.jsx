@@ -636,7 +636,6 @@ export default function Opportunities({ toast }) {
   // tab share browser-local run state, so a Settings-triggered pull is not
   // described as though another user or device started it.
   useEffect(() => {
-    if (pullProgress?.status !== 'running') return
     if (pullProgress?.status !== 'running') {
       // The running-state label is temporary. Completed, failed, and partial
       // runs already have a durable summary in the status line above it.
@@ -878,7 +877,7 @@ export default function Opportunities({ toast }) {
                                     {isActioning ? '…' : 'Restore'}
                                   </button>
                                   {syncFailure && (
-                                    <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                    <button className={`btn ${styles.newActionSam}`} style={btnSm}
                                       title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
                                       {isActioning ? '…' : 'Retry sync'}
                                     </button>
@@ -889,7 +888,7 @@ export default function Opportunities({ toast }) {
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
                                   {!isActioned && (
                                     <>
-                                      {/* Row 1: + Pipeline (blue) | Track (amber/white) */}
+                                      {/* Row 1: + Pipeline (green) | Track (amber/white) */}
                                       <button className={`btn btn-primary ${styles.newActionPipeline}`} style={btnSm}
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
                                         {isActioning ? '…' : '+ Pipeline'}
@@ -912,7 +911,7 @@ export default function Opportunities({ toast }) {
                                     </button>
                                   )}
                                   {syncFailure && (
-                                    <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                    <button className={`btn ${styles.newActionSam}`} style={btnSm}
                                       title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
                                       {isActioning ? '…' : 'Retry sync'}
                                     </button>
