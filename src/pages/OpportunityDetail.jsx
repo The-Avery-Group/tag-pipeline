@@ -176,9 +176,9 @@ function Section({ title, children }) {
 // pull in just the fields that changed, rather than an all-or-nothing sync.
 // The PIID itself is intentionally display-only here: an award lookup can
 // never overwrite the pipeline identifier.
-function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
+function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
   const [open, setOpen] = useState(false)
-  const { results, loading, error, searched, cache, lookup } = useAwardsLookup()
+  const { results, loading, error, searched, cache, lookup } = awards
   // Tracks which specific fields have been applied this session, keyed by
   // PIID then field key, so the button can flip to a "✓ Updated" confirmed
   // state without needing a full re-lookup.
@@ -414,6 +414,7 @@ export default function OpportunityDetail({ toast }) {
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
   const { lists }     = useValidationLists()
+  const awards = useAwardsLookup()
 
   const phaseOptions      = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
   const activityPhaseOptions = pickList(lists, 'TAG Pipeline Activity Phase', ACTIVITY_PHASES)
@@ -518,6 +519,39 @@ export default function OpportunityDetail({ toast }) {
     [notes]
   )
   const recentNotesStr = visibleNotes.slice(0, 3).map((n) => n.NoteText).join(' | ')
+
+  const isExpiringContract = opp?.[C.outlook] === 'Expiring'
+  useEffect(() => {
+    awards.reset()
+  }, [decodedCN, isExpiringContract, awards.reset])
+
+  useEffect(() => {
+    if (!isExpiringContract || !decodedCN || awards.searched || awards.loading) return undefined
+
+    const timer = window.setTimeout(() => {
+      awards.lookup({ piid: decodedCN })
+    }, 550)
+    return () => window.clearTimeout(timer)
+  }, [decodedCN, isExpiringContract, awards.loading, awards.lookup, awards.searched])
+
+  const contractLifecycleAlert = useMemo(() => {
+    if (!isExpiringContract) return null
+    const result = awards.results.find((item) =>
+      normalizeOpportunityKey(item.piid) === normalizeOpportunityKey(opp?.[C.contractNum] || decodedCN)
+    )
+    return result?.contractLifecycleAlert || null
+  }, [awards.results, decodedCN, isExpiringContract, opp])
+
+  const contractLifecycleTooltip = contractLifecycleAlert
+    ? [
+        contractLifecycleAlert.modificationNumber && `Modification ${contractLifecycleAlert.modificationNumber}`,
+        contractLifecycleAlert.dateSigned && `Signed ${formatDate(contractLifecycleAlert.dateSigned)}`,
+      ].filter(Boolean).join(' · ')
+    : ''
+
+  const contractLifecycleBadgeClass = contractLifecycleAlert?.type === 'closedOut'
+    ? 'badge-tracking'
+    : 'badge-closed-lost'
 
   const emailPrompt = useCallback(
     () => buildEmailDraftContext(opp ?? {}, contact, recentNotesStr),
@@ -841,6 +875,11 @@ export default function OpportunityDetail({ toast }) {
         }
         showFilter={false}
         showNew={false}
+        rightContent={contractLifecycleAlert && (
+          <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>
+            {contractLifecycleAlert.reason}
+          </span>
+        )}
       />
 
       <div className="page-body">
@@ -1321,6 +1360,7 @@ export default function OpportunityDetail({ toast }) {
           contractNumber={decodedCN}
           updateOpp={updateOpp}
           toast={toast}
+          awards={awards}
         />
 
         {/* ── AI panels ── */}
