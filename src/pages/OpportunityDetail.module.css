@@ -173,6 +173,8 @@
   font-size: 13px;
   color: var(--gray-900);
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .noteAdd {
