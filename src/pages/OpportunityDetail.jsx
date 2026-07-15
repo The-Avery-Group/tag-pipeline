@@ -183,6 +183,7 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
   // PIID then field key, so the button can flip to a "✓ Updated" confirmed
   // state without needing a full re-lookup.
   const [updatedFields, setUpdatedFields] = useState({})
+  const [updatingFields, setUpdatingFields] = useState({})
 
   const handleToggle = () => {
     const next = !open
@@ -193,12 +194,15 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
   }
 
   const handleUpdateField = async (piid, fieldKey, field) => {
+    setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
     try {
       await updateOpp(opp._rowIndex, { [field.column]: field.value }, opp)
       setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
       toast?.success(`${field.column.replace(/\*$/, '')} updated`)
     } catch (err) {
       toast?.error(`Failed to update: ${err.message}`)
+    } finally {
+      setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: false } }))
     }
   }
 
@@ -211,12 +215,15 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
       setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
       return
     }
+    setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
     try {
       await updateOpp(opp._rowIndex, { [C.otherLinks]: joinLinks([...existing, link]) }, opp)
       setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
       toast?.success('Award Notice link added to Other Links')
     } catch (err) {
       toast?.error(`Failed to add link: ${err.message}`)
+    } finally {
+      setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: false } }))
     }
   }
 
@@ -263,14 +270,15 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
                 fields={r.fields}
                 renderFieldAction={(fieldKey, field) => {
                   const done = !!updatedFields[piid]?.[fieldKey]
+                  const updating = !!updatingFields[piid]?.[fieldKey]
                   if (field.action === 'addOtherLink') {
                     return (
                       <button
                         className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
                         onClick={() => handleAddAwardNoticeLink(piid, fieldKey, field)}
-                        disabled={done}
+                        disabled={done || updating}
                       >
-                        {done ? 'Added' : 'Add to Other Links'}
+                        {done ? 'Added' : updating ? 'Adding…' : 'Add to Other Links'}
                       </button>
                     )
                   }
@@ -279,9 +287,9 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast }) {
                     <button
                       className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
                       onClick={() => handleUpdateField(piid, fieldKey, field)}
-                      disabled={done}
+                      disabled={done || updating}
                     >
-                      {done ? '✓ Updated' : 'Update pipeline'}
+                      {done ? '✓ Updated' : updating ? 'Updating…' : 'Update pipeline'}
                     </button>
                   )
                 }}
