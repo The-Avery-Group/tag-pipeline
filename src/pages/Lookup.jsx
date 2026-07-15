@@ -67,6 +67,7 @@ export default function Lookup({ toast }) {
         'TAG Opportunity Phase':           'Identified',
         'Opportunity Outlook':             pendingOutlook,
         'Solicitation Number':             f.solicitationNumber?.value || '',
+        'Contract Classification*':        f.awardType?.value || '',
         'Total Contract Value ($)*':       f.totalContractValue?.value || '',
         'Contract End Date*':              f.contractEndDate?.value || '',
         'NAICS Code*':                     f.naicsCode?.value || '',
