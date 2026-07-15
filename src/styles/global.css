@@ -56,7 +56,8 @@
   --chart-phase-pending: #B39DDB;
   --chart-phase-awarded: #9FE1CB;
   --chart-phase-cancelled: #E0E0E0;
-  --new-action-pipeline: #185FA5;
+  --new-action-pipeline: #3B6D11;
+  --new-action-sam: #185FA5;
   --new-action-track: #854F0B;
   --new-action-dismiss: #A32D2D;
   --new-action-text: #fff;
@@ -118,7 +119,8 @@ html[data-theme='dark'] {
   --chart-phase-awarded: #4c987e;
   --chart-phase-cancelled: #62635e;
   /* Richer action fills keep the compact New-tab controls legible and calm. */
-  --new-action-pipeline: #1f5f97;
+  --new-action-pipeline: #3f7228;
+  --new-action-sam: #1f5f97;
   --new-action-track: #885f1c;
   --new-action-dismiss: #984245;
   --new-action-text: #fff;
