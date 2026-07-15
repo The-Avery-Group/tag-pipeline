@@ -268,6 +268,7 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
                 onRefresh={() => lookup({ piid: contractNumber, forceRefresh: true })}
                 refreshing={loading}
                 fields={r.fields}
+                contractLifecycleAlert={r.contractLifecycleAlert}
                 renderFieldAction={(fieldKey, field) => {
                   const done = !!updatedFields[piid]?.[fieldKey]
                   const updating = !!updatingFields[piid]?.[fieldKey]
