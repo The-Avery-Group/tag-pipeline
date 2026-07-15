@@ -1,9 +1,15 @@
 import styles from './AwardRecordCard.module.css'
 
 const SECTION_ORDER = [
-  'Contract identity', 'Contract snapshot', 'Agency and scope',
+  'Contract identity', 'Contract status', 'Contract snapshot', 'Agency and scope',
   'Latest modification', 'Award notice',
 ]
+
+const LIFECYCLE_REASON_PATTERN = /\b(?:terminat(?:e|ed|ion)|cancel(?:led|lation)?|close[ -]?out)\b/i
+
+function isLifecycleReason(item) {
+  return Boolean(item?.lifecycleAlert) || LIFECYCLE_REASON_PATTERN.test(String(item?.value || ''))
+}
 
 function formatFieldValue(field, value) {
   if (value == null || value === '') return 'Not provided'
@@ -26,9 +32,27 @@ function formatCacheTime(value) {
 
 export default function AwardRecordCard({
   piid, isIDV, modificationCount, originalSignedDate, samLink,
-  cache, fields, renderFieldAction, onRefresh, refreshing,
+  cache, fields, contractLifecycleAlert, renderFieldAction, onRefresh, refreshing,
 }) {
-  const visibleFields = Object.entries(fields || {}).filter(([, item]) => item.value != null && item.value !== '')
+  const directReasonIsLifecycleAlert = isLifecycleReason(fields?.reasonForModification)
+  const displayFields = {
+    ...(fields || {}),
+    // The latest transaction may be an administrative change after a
+    // termination or close-out. Keep the active lifecycle reason visible in
+    // that case, instead of making users infer it only from the page badge.
+    ...(!directReasonIsLifecycleAlert && contractLifecycleAlert?.reason
+      ? {
+          contractLifecycleReason: {
+            section: 'Contract status',
+            label: 'Lifecycle Reason for Modification',
+            value: contractLifecycleAlert.reason,
+            fullWidth: true,
+            lifecycleAlert: true,
+          },
+        }
+      : {}),
+  }
+  const visibleFields = Object.entries(displayFields).filter(([, item]) => item.value != null && item.value !== '')
   const bySection = {}
   for (const [key, item] of visibleFields) {
     const section = item.section || 'Other'
@@ -67,20 +91,23 @@ export default function AwardRecordCard({
           <section key={section} className={styles.section}>
             <h4 className={styles.sectionHeader}>{section}</h4>
             <div className={styles.fieldGrid}>
-              {bySection[section].map(([key, item]) => (
-                <div key={key} className={`${styles.fieldRow} ${item.fullWidth ? styles.fullWidth : ''} ${item.lifecycleAlert ? styles.lifecycleField : ''}`}>
+              {bySection[section].map(([key, item]) => {
+                const lifecycleReason = isLifecycleReason(item)
+                return (
+                <div key={key} className={`${styles.fieldRow} ${item.fullWidth ? styles.fullWidth : ''} ${lifecycleReason ? styles.lifecycleField : ''}`}>
                   <div className={styles.fieldLabel} title={item.helpText || ''}>{item.label || key}</div>
                   <div className={styles.fieldValueRow}>
                     {item.format === 'link'
                       ? <a href={item.value} target="_blank" rel="noreferrer" className={styles.inlineLink}>Open Award Notice ↗</a>
-                      : <span className={`${styles.fieldValue} ${item.lifecycleAlert ? styles.lifecycleValue : ''}`} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
+                      : <span className={`${styles.fieldValue} ${lifecycleReason ? styles.lifecycleValue : ''}`} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
                     {renderFieldAction?.(key, item)}
                   </div>
                   {item.provenance?.lastModifiedDate && (
                     <div className={styles.provenance}>SAM transaction updated {formatFieldValue({ format: 'date' }, item.provenance.lastModifiedDate)}</div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           </section>
         ))}
