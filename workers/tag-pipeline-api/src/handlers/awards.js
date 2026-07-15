@@ -186,21 +186,55 @@ const LIFECYCLE_REASON_FALLBACKS = {
   K: 'Close Out',
 }
 
+function getLifecycleReason(record) {
+  const reason = record?.contractId?.reasonForModification
+  const code = String(reason?.code || '').trim().toUpperCase()
+  const type = LIFECYCLE_REASON_TYPES[code]
+  if (!type) return null
+  return {
+    type,
+    reason: reason?.name || LIFECYCLE_REASON_FALLBACKS[code],
+  }
+}
+
+function extractTransactionFields(record) {
+  const transaction = record?.awardDetails?.transactionData
+  const lifecycleReason = getLifecycleReason(record)
+  return {
+    modificationNumber: field('Latest modification', 'Modification Number', { value: record?.contractId?.modificationNumber ?? null, source: sourceFor(record) }),
+    dateSigned: field('Latest modification', 'Date Signed', { value: record?.awardDetails?.dates?.dateSigned ?? null, source: sourceFor(record) }, null, { format: 'date' }),
+    reasonForModification: field(
+      'Latest modification',
+      'Reason for Modification',
+      { value: lifecycleReason?.reason || record?.contractId?.reasonForModification?.name || null, source: sourceFor(record) },
+      null,
+      { fullWidth: true, lifecycleAlert: Boolean(lifecycleReason) },
+    ),
+    approvedDate: field('Latest modification', 'Approved Date', { value: transaction?.approvedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
+    samLastModifiedBy: field('Latest modification', 'SAM Record Last Modified By', { value: transaction?.lastModifiedBy ?? null, source: sourceFor(record) }),
+    samLastModifiedDate: field('Latest modification', 'SAM Record Last Modified Date', { value: transaction?.lastModifiedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
+  }
+}
+
 function getContractLifecycleAlert(records) {
   let alert = null
 
   for (const record of records) {
     const reason = record?.contractId?.reasonForModification
     const code = String(reason?.code || '').trim().toUpperCase()
+    const code = String(record?.contractId?.reasonForModification?.code || '').trim().toUpperCase()
     if (code === 'G') {
       alert = null
       continue
     }
     if (!LIFECYCLE_REASON_TYPES[code]) continue
+    const lifecycleReason = getLifecycleReason(record)
+    if (!lifecycleReason) continue
 
     alert = {
       type: LIFECYCLE_REASON_TYPES[code],
       reason: reason?.name || LIFECYCLE_REASON_FALLBACKS[code],
+      ...lifecycleReason,
       modificationNumber: record?.contractId?.modificationNumber || null,
       transactionNumber: record?.contractId?.transactionNumber || null,
       dateSigned: record?.awardDetails?.dates?.dateSigned || null,
@@ -423,6 +457,7 @@ async function handleLookup(req, env) {
   if (!piid && !solicitationID) return json({ error: 'Provide at least one of: piid, solicitationID' }, 400)
 
   const cacheKey = `awards_lookup:v4:${piid || ''}:${solicitationID || ''}`
+  const cacheKey = `awards_lookup:v5:${piid || ''}:${solicitationID || ''}`
   if (!forceRefresh) {
     const cached = await getCached(env, cacheKey)
     if (cached) {
