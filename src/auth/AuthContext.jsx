@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { useMsal } from '@azure/msal-react'
+import { InteractionStatus } from '@azure/msal-browser'
 import { loginRequest, graphConfig } from './msalConfig'
 import { warmCache, startPolling, stopPolling } from '@/services/dataCache'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
-  const { instance, accounts } = useMsal()
+  const { instance, accounts, inProgress } = useMsal()
   const [user, setUser]     = useState(null)
   const [authState, setAuthState] = useState('initializing')
   const signingOutRef = useRef(false)
@@ -86,7 +87,10 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user,
-      loading: authState === 'initializing',
+      // During a redirect return, MSAL handles the response before it places
+      // the account in `accounts`. Keeping this state in the loading signal
+      // removes the otherwise visible Login-page flash in that interval.
+      loading: authState === 'initializing' || inProgress !== InteractionStatus.None,
       login,
       logout,
       isAuthenticated: !!user,
