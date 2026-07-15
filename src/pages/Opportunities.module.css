@@ -40,8 +40,8 @@
   justify-content: center;
 }
 
-.newActionPipeline,
-.newActionSam { background: var(--new-action-pipeline); }
+.newActionPipeline { background: var(--new-action-pipeline); }
+.newActionSam { background: var(--new-action-sam); }
 .newActionTrack { background: var(--new-action-track); }
 .newActionDismiss { background: var(--new-action-dismiss); }
 
