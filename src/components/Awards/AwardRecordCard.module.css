@@ -40,6 +40,20 @@
 .fieldRow:hover .fieldAction, .fieldAction:focus-visible { opacity: 1; }
 .fieldActionDone { background: var(--green-50); border-color: transparent; color: var(--green-600); cursor: default; opacity: 1 !important; }
 
+.modificationTabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.modificationTab {
+  background: var(--surface);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  color: var(--gray-600);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 5px 9px;
+}
+.modificationTab:hover { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-800); }
+.modificationTabActive { background: var(--blue-50); border-color: var(--blue-600); color: var(--blue-800); font-weight: 650; }
+
 @media (max-width: 720px) {
   .cardHeader { flex-direction: column; }
   .headerActions { justify-content: flex-start; max-width: none; }
