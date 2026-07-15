@@ -125,7 +125,7 @@ function extractCurrentStateFields(records, aggregation, awardNotice) {
     incumbentUEI: field('Contract snapshot', 'Awardee UEI', latest((r) => r?.awardDetails?.awardeeData?.awardeeUEIInformation?.uniqueEntityId), 'Incumbent (Company UEI)'),
     totalContractValue: field('Contract snapshot', 'Total Contract Value (Base + All Options)', totalContractValue, 'Total Contract Value ($)*', { format: 'currency' }),
     actualAggregateObligations: field('Contract snapshot', 'Actual Aggregate Obligations', { value: aggregation?.awardFamilySummary?.totalDollars ?? null, source: null }, null, { format: 'currency', helpText: 'Dollars the government has obligated across the award family to date.' }),
-    awardType: field('Contract identity', 'Award Type', latest((r) => r?.coreData?.awardOrIDVType?.name)),
+    awardType: field('Contract identity', 'Award Type', latest((r) => r?.coreData?.awardOrIDVType?.name), 'Contract Classification*'),
     contractVehicleNumber: field('Contract identity', 'Referenced IDV PIID', latest((r) => r?.contractId?.referencedIDVPiid), 'Contract Vehicle Number'),
     solicitationNumber: field('Contract identity', 'Solicitation Number', latest((r) => r?.coreData?.solicitationId), 'Solicitation Number'),
     department: field('Agency and scope', 'Department', latest((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingDepartment?.name), 'Department*'),
@@ -239,12 +239,7 @@ function noticeLink(notice) {
   return value && value !== 'null' ? value : null
 }
 
-async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDate, awardeeName }) {
-  const window = dateWindow(originalSignedDate)
-  if (!solicitationNumber || !window) {
-    return { status: 'No award notice search available for this record.' }
-  }
-
+async function searchAwardNotices(env, solicitationNumber, window) {
   const query = new URLSearchParams({
     api_key: env.SAM_API_KEY,
     ptype: 'a',
@@ -255,14 +250,37 @@ async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDa
     offset: '0',
   })
   const response = await fetch(`${OPPORTUNITIES_BASE}?${query}`)
-  if (response.status === 204) return { status: 'No matching Award Notice found.' }
+  if (response.status === 204) return []
   if (!response.ok) {
     const body = await response.text()
     console.info('[Awards] Award Notice lookup unavailable:', response.status, body.slice(0, 120))
-    return { status: 'Award Notice lookup unavailable.' }
+    return null
   }
   const data = await response.json()
-  const notices = data.opportunitiesData || data.data || []
+  return data.opportunitiesData || data.data || []
+}
+
+async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDate, awardeeName }) {
+  const window = dateWindow(originalSignedDate)
+  if (!solicitationNumber || !window) {
+    return { status: 'No Award Notice search available because this award has no solicitation number or signed date.' }
+  }
+
+  // Award Notices are found exclusively by solicitation number. Try the
+  // source value first, then retry without dashes when the exact form has no
+  // result. PIID is used only to corroborate a returned notice, never to
+  // drive this Opportunities API search.
+  const sourceSolicitationNumber = String(solicitationNumber).trim()
+  const dashlessSolicitationNumber = sourceSolicitationNumber.replace(/-/g, '')
+  let notices = await searchAwardNotices(env, sourceSolicitationNumber, window)
+  if (notices === null) return { status: 'Award Notice lookup unavailable.' }
+
+  let usedDashlessSolicitation = false
+  if (notices.length === 0 && dashlessSolicitationNumber && dashlessSolicitationNumber !== sourceSolicitationNumber) {
+    notices = await searchAwardNotices(env, dashlessSolicitationNumber, window)
+    usedDashlessSolicitation = true
+    if (notices === null) return { status: 'Award Notice lookup unavailable.' }
+  }
   if (!notices.length) return { status: 'No matching Award Notice found.' }
 
   const normalizedPiid = normalizedIdentifier(piid)
@@ -281,7 +299,9 @@ async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDa
   const exactAwardNumber = normalizedIdentifier(notice?.award?.number) === normalizedIdentifier(piid) ||
     normalizedIdentifier(notice?.award?.number) === normalizedPiid
   return {
-    status: exactAwardNumber ? 'Matched by award number.' : 'Matched by solicitation number. Verify the award number before relying on this notice.',
+    status: exactAwardNumber
+      ? `Located by solicitation number${usedDashlessSolicitation ? ' (without dashes)' : ''}; the Award Notice number agrees with the PIID.`
+      : `Located by solicitation number${usedDashlessSolicitation ? ' (without dashes)' : ''}. Verify the Award Notice number before relying on this notice.`,
     noticeId: notice?.noticeId || null,
     title: notice?.title || null,
     awardNumber: notice?.award?.number || null,
