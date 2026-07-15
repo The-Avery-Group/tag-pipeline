@@ -68,12 +68,12 @@ export default function AwardRecordCard({
             <h4 className={styles.sectionHeader}>{section}</h4>
             <div className={styles.fieldGrid}>
               {bySection[section].map(([key, item]) => (
-                <div key={key} className={`${styles.fieldRow} ${item.fullWidth ? styles.fullWidth : ''}`}>
+                <div key={key} className={`${styles.fieldRow} ${item.fullWidth ? styles.fullWidth : ''} ${item.lifecycleAlert ? styles.lifecycleField : ''}`}>
                   <div className={styles.fieldLabel} title={item.helpText || ''}>{item.label || key}</div>
                   <div className={styles.fieldValueRow}>
                     {item.format === 'link'
                       ? <a href={item.value} target="_blank" rel="noreferrer" className={styles.inlineLink}>Open Award Notice ↗</a>
-                      : <span className={styles.fieldValue} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
+                      : <span className={`${styles.fieldValue} ${item.lifecycleAlert ? styles.lifecycleValue : ''}`} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
                     {renderFieldAction?.(key, item)}
                   </div>
                   {item.provenance?.lastModifiedDate && (
