@@ -26,9 +26,12 @@ function isPresent(value) {
 }
 
 function recordDate(record) {
-  const value = record?.awardDetails?.transactionData?.lastModifiedDate ||
+  // A base award (modification number 0) can be re-indexed or edited in SAM
+  // long after it was signed. Its SAM metadata timestamp must not make it
+  // appear newer than subsequent modifications.
+  const value = record?.awardDetails?.dates?.dateSigned ||
     record?.awardDetails?.transactionData?.approvedDate ||
-    record?.awardDetails?.dates?.dateSigned
+    record?.awardDetails?.transactionData?.lastModifiedDate
   const date = value ? new Date(value) : null
   return date && !Number.isNaN(date.getTime()) ? date : new Date(0)
 }
@@ -419,7 +422,7 @@ async function handleLookup(req, env) {
   const forceRefresh = url.searchParams.get('refresh') === '1'
   if (!piid && !solicitationID) return json({ error: 'Provide at least one of: piid, solicitationID' }, 400)
 
-  const cacheKey = `awards_lookup:v3:${piid || ''}:${solicitationID || ''}`
+  const cacheKey = `awards_lookup:v4:${piid || ''}:${solicitationID || ''}`
   if (!forceRefresh) {
     const cached = await getCached(env, cacheKey)
     if (cached) {
