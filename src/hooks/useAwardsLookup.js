@@ -24,6 +24,8 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
   const [searched, setSearched] = useState(false)   // distinguishes "never searched" from "searched, found nothing"
   const [cache, setCache]       = useState(null)
   const inFlightLookupRef       = useRef(null)
+  const abortControllerRef      = useRef(null)
+  const requestSequenceRef      = useRef(0)
 
   const lookup = useCallback(({ piid, solicitationID, forceRefresh = false } = {}) => {
     if (!piid && !solicitationID) return
@@ -35,27 +37,40 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
     if (forceRefresh) params.set('refresh', '1')
     const requestKey = params.toString()
     if (inFlightLookupRef.current?.key === requestKey) return inFlightLookupRef.current.promise
+    const requestSequence = ++requestSequenceRef.current
+
+    // A new search must replace the previous view immediately. Aborting the
+    // former request and checking its sequence also prevent a slow response
+    // from restoring an older contract after the user has searched again.
+    abortControllerRef.current?.abort()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    setResults([])
+    setCache(null)
+    setSearched(false)
 
     const request = (async () => {
       setLoading(true)
       setError(null)
       try {
 
-        const res = await fetch(`${WORKER_URL}/awards/lookup?${params}`)
+        const res = await fetch(`${WORKER_URL}/awards/lookup?${params}`, { signal: controller.signal })
         const data = await res.json()
 
         if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
 
+        if (requestSequence !== requestSequenceRef.current) return
         setResults(data.results || [])
         setCache(data.cache || null)
         setSearched(true)
       } catch (err) {
+        if (err.name === 'AbortError' || requestSequence !== requestSequenceRef.current) return
         setError(err.message)
         setResults([])
         setCache(null)
         setSearched(true)
       } finally {
-        setLoading(false)
+        if (requestSequence === requestSequenceRef.current) setLoading(false)
       }
     })()
     inFlightLookupRef.current = { key: requestKey, promise: request }
@@ -66,6 +81,9 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
   }, [])
 
   const reset = useCallback(() => {
+    requestSequenceRef.current += 1
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
     setResults([])
     setError(null)
     setSearched(false)
