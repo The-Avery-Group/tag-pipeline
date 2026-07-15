@@ -4,7 +4,7 @@ import styles from './Topbar.module.css'
 export default function Topbar({
   title, subtitle1, subtitle2,
   showFilter, showNew, newLabel = 'New',
-  onFilter, onNew, greetingLarge = false,
+  onFilter, onNew, greetingLarge = false, rightContent,
 }) {
   const [filterActive, setFilterActive] = useState(false)
 
@@ -23,6 +23,7 @@ export default function Topbar({
         </div>
       </div>
       <div className={styles.actions}>
+        {rightContent}
         {showFilter && (
           <button
             className={`${styles.iconBtn} ${filterActive ? styles.iconBtnActive : ''}`}
