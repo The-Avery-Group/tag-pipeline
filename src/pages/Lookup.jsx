@@ -183,6 +183,7 @@ export default function Lookup({ toast }) {
                 onRefresh={() => lookup({ piid: input.trim(), solicitationID: input.trim(), forceRefresh: true })}
                 refreshing={loading}
                 fields={activeFields}
+                contractLifecycleAlert={r.contractLifecycleAlert}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6, marginBottom: 14 }}>
                 {already
