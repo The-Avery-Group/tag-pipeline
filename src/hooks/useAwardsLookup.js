@@ -23,34 +23,46 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
   const [error, setError]       = useState(null)
   const [searched, setSearched] = useState(false)   // distinguishes "never searched" from "searched, found nothing"
   const [cache, setCache]       = useState(null)
+  const inFlightLookupRef       = useRef(null)
 
-  const lookup = useCallback(async ({ piid, solicitationID, forceRefresh = false } = {}) => {
+  const lookup = useCallback(({ piid, solicitationID, forceRefresh = false } = {}) => {
     if (!piid && !solicitationID) return
     if (!WORKER_URL) { setError('VITE_API_BASE_URL not set'); return }
 
-    setLoading(true)
-    setError(null)
-    try {
-      const params = new URLSearchParams()
-      if (piid) params.set('piid', piid)
-      if (solicitationID) params.set('solicitationID', solicitationID)
-      if (forceRefresh) params.set('refresh', '1')
+    const params = new URLSearchParams()
+    if (piid) params.set('piid', piid)
+    if (solicitationID) params.set('solicitationID', solicitationID)
+    if (forceRefresh) params.set('refresh', '1')
+    const requestKey = params.toString()
+    if (inFlightLookupRef.current?.key === requestKey) return inFlightLookupRef.current.promise
 
-      const res = await fetch(`${WORKER_URL}/awards/lookup?${params}`)
-      const data = await res.json()
+    const request = (async () => {
+      setLoading(true)
+      setError(null)
+      try {
 
-      if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
+        const res = await fetch(`${WORKER_URL}/awards/lookup?${params}`)
+        const data = await res.json()
 
-      setResults(data.results || [])
-      setCache(data.cache || null)
-      setSearched(true)
-    } catch (err) {
-      setError(err.message)
-      setResults([])
-      setCache(null)
-    } finally {
-      setLoading(false)
-    }
+        if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
+
+        setResults(data.results || [])
+        setCache(data.cache || null)
+        setSearched(true)
+      } catch (err) {
+        setError(err.message)
+        setResults([])
+        setCache(null)
+        setSearched(true)
+      } finally {
+        setLoading(false)
+      }
+    })()
+    inFlightLookupRef.current = { key: requestKey, promise: request }
+    request.finally(() => {
+      if (inFlightLookupRef.current?.promise === request) inFlightLookupRef.current = null
+    })
+    return request
   }, [])
 
   const reset = useCallback(() => {
