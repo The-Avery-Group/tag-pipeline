@@ -82,6 +82,14 @@ function normalizeOpportunityKey(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
+function opportunityReturnPath(value) {
+  // Return destinations are only ever created by the Opportunities page.
+  // Keep this guard so a manually edited URL cannot navigate outside the app.
+  return typeof value === 'string' && /^\/opportunities(?:\?|$)/.test(value)
+    ? value
+    : '/opportunities'
+}
+
 // ── Linkify note text ────────────────────────────────────────────────────
 // Detects URLs inside a note's plain text and renders them as real,
 // clickable links instead of inert text. Built as React elements (not
@@ -460,6 +468,7 @@ export default function OpportunityDetail({ toast }) {
   const decodedCN = decodeURIComponent(contractNumber || '')
   const rowParam = searchParams.get('row')
   const routeRowIndex = rowParam !== null && /^\d+$/.test(rowParam) ? Number(rowParam) : null
+  const returnTo = opportunityReturnPath(searchParams.get('returnTo'))
   const navigate  = useNavigate()
   const { user }  = useAuth()
 
@@ -664,7 +673,7 @@ export default function OpportunityDetail({ toast }) {
   if (!opp) {
     return (
       <div className="page-body">
-        <button className="btn btn-ghost" onClick={() => navigate('/opportunities')}>← Back</button>
+        <button className="btn btn-ghost" onClick={() => navigate(returnTo)}>← Back</button>
         <p className="text-muted mt-3">Opportunity not found.</p>
       </div>
     )
@@ -748,7 +757,9 @@ export default function OpportunityDetail({ toast }) {
           : 'Saved'
       )
       if (newIdentifier !== opp[C.contractNum]) {
-        navigate(`/opportunities/${encodeURIComponent(newIdentifier)}?row=${opp._rowIndex}`, { replace: true })
+        const detailParams = new URLSearchParams({ row: String(opp._rowIndex) })
+        if (returnTo !== '/opportunities') detailParams.set('returnTo', returnTo)
+        navigate(`/opportunities/${encodeURIComponent(newIdentifier)}?${detailParams.toString()}`, { replace: true })
       }
     } catch (err) {
       toast?.error(err.message)
@@ -967,7 +978,7 @@ export default function OpportunityDetail({ toast }) {
 
       <div className="page-body">
         <button className="btn btn-ghost text-sm" style={{ marginBottom: 14 }}
-          onClick={() => navigate('/opportunities')}>
+          onClick={() => navigate(returnTo)}>
           ← Opportunities
         </button>
 
