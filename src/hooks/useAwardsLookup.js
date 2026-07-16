@@ -15,9 +15,9 @@ const WORKER_URL = import.meta.env.VITE_API_BASE_URL
  *
  * Usage — manual trigger for an arbitrary search (Lookup tab):
  *   const { results, loading, error, lookup } = useAwardsLookup()
- *   <button onClick={() => lookup({ piid: input, solicitationID: input })}>Search</button>
+ *   <button onClick={() => lookup({ piid: input, awardeeUEI })}>Search</button>
  */
-export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitationID, auto = false } = {}) {
+export function useAwardsLookup({ piid: autoPiid, auto = false } = {}) {
   const [results, setResults]   = useState([])
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
@@ -28,16 +28,13 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
   const abortControllerRef      = useRef(null)
   const requestSequenceRef      = useRef(0)
 
-  const lookup = useCallback(({ piid, solicitationID, referencedIdvPiid, incumbentUEI, incumbentName, forceRefresh = false } = {}) => {
-    if (!piid && !solicitationID && !referencedIdvPiid) return
+  const lookup = useCallback(({ piid, awardeeUEI, forceRefresh = false } = {}) => {
+    if (!piid) return
     if (!WORKER_URL) { setError('VITE_API_BASE_URL not set'); return }
 
     const params = new URLSearchParams()
     if (piid) params.set('piid', piid)
-    if (solicitationID) params.set('solicitationID', solicitationID)
-    if (referencedIdvPiid) params.set('referencedIdvPiid', referencedIdvPiid)
-    if (incumbentUEI) params.set('incumbentUEI', incumbentUEI)
-    if (incumbentName) params.set('incumbentName', incumbentName)
+    if (awardeeUEI) params.set('awardeeUEI', awardeeUEI)
     if (forceRefresh) params.set('refresh', '1')
     const requestKey = params.toString()
     if (inFlightLookupRef.current?.key === requestKey) return inFlightLookupRef.current.promise
@@ -67,7 +64,12 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
         if (requestSequence !== requestSequenceRef.current) return
         setResults(data.results || [])
         setCache(data.cache || null)
-        setResultMeta({ totalFamilies: data.totalFamilies ?? data.count ?? 0, truncated: data.truncated === true })
+        setResultMeta({
+          totalFamilies: data.totalFamilies ?? data.count ?? 0,
+          unfilteredFamilies: data.unfilteredFamilies ?? data.totalFamilies ?? data.count ?? 0,
+          filteredByAwardeeUEI: data.filteredByAwardeeUEI || null,
+          truncated: data.truncated === true,
+        })
         setSearched(true)
       } catch (err) {
         if (err.name === 'AbortError' || requestSequence !== requestSequenceRef.current) return
@@ -105,12 +107,12 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
   const lastAutoKey = useRef(null)
   useEffect(() => {
     if (!auto) return
-    if (!autoPiid && !autoSolicitationID) return
-    const key = `${autoPiid || ''}:${autoSolicitationID || ''}`
+    if (!autoPiid) return
+    const key = autoPiid
     if (lastAutoKey.current === key) return
     lastAutoKey.current = key
-    lookup({ piid: autoPiid, solicitationID: autoSolicitationID })
-  }, [auto, autoPiid, autoSolicitationID, lookup])
+    lookup({ piid: autoPiid })
+  }, [auto, autoPiid, lookup])
 
   return { results, loading, error, searched, cache, resultMeta, lookup, reset }
 }
