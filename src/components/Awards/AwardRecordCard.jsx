@@ -2,7 +2,7 @@ import styles from './AwardRecordCard.module.css'
 
 const SECTION_ORDER = [
   'Contract identity', 'Contract status', 'Contract snapshot', 'Agency and scope',
-  'Latest modification', 'Award notice',
+  'Latest modification', 'Modification details', 'Award notice',
 ]
 
 const LIFECYCLE_REASON_PATTERN = /\b(?:terminat(?:e|ed|ion)|cancel(?:led|lation)?|close[ -]?out)\b/i
