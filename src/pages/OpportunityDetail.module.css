@@ -74,6 +74,41 @@
   grid-column: 1 / -1;
 }
 
+.eightACallout {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  display: flex;
+  font-size: 11px;
+  gap: 9px;
+  grid-column: 1 / -1;
+  min-height: 32px;
+  padding: 6px 9px;
+}
+.eightACallout strong { font-weight: 700; }
+.eightAGreen { background: var(--green-50); border-color: var(--green-600); color: var(--green-600); }
+.eightAAmber { background: var(--amber-50); border-color: var(--amber-600); color: var(--amber-600); }
+.eightARed { background: var(--red-50); border-color: var(--red-600); color: var(--red-600); }
+.eightALoading { background: var(--gray-50); color: var(--gray-500); }
+.eightASource { color: var(--gray-500); font-size: 9px; margin-left: auto; white-space: nowrap; }
+.eightASource a { color: inherit; text-decoration: underline; }
+.eightAAddNote {
+  background: var(--surface-raised);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 10px;
+  margin-left: 2px;
+  opacity: 0;
+  padding: 2px 6px;
+  transition: opacity .12s;
+  white-space: nowrap;
+}
+.eightACallout:hover .eightAAddNote, .eightAAddNote:focus-visible, .eightAAddNote:disabled { opacity: 1; }
+.eightAAddNote:disabled { cursor: default; }
+
 /* ── Contacts ── */
 .contactCard {
   display: flex;
