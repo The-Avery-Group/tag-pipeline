@@ -161,11 +161,43 @@ function localDate(value) {
 }
 
 function EightAExitCallout({ entityData, loading, error, contractEndDate, onAddNote, addingNote, noteAdded }) {
+function sbaProfileUrl(entityData, incumbentUEI) {
+  const uei = String(entityData?.uei || incumbentUEI || '').trim().toUpperCase()
+  const cageCode = String(entityData?.cageCode || '').trim().toUpperCase()
+  return /^[A-Z0-9]{12}$/.test(uei) && /^[A-Z0-9]{5}$/.test(cageCode)
+    ? `https://search.certifications.sba.gov/profile/${encodeURIComponent(uei)}/${encodeURIComponent(cageCode)}?page=1`
+    : 'https://search.certifications.sba.gov/'
+}
+
+function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractEndDate, onAddNote, addingNote, noteAdded }) {
+  const hasValidUEI = /^[A-Z0-9]{12}$/.test(String(incumbentUEI || '').trim().toUpperCase())
+  if (!hasValidUEI) return null
+
   const exitDate = entityData?.eightA?.exitDate
   if (!exitDate) {
     if (loading) return <div className={`${styles.eightACallout} ${styles.eightALoading}`}>Checking 8(a) status…</div>
     if (error) return <div className={`${styles.eightACallout} ${styles.eightALoading}`} title={error}>8(a) status unavailable</div>
     return null
+    if (!entityData && !error) return null
+
+    const sbaLink = sbaProfileUrl(entityData, incumbentUEI)
+    if (error) {
+      return (
+        <div className={`${styles.eightACallout} ${styles.eightANeutral}`} title={error}>
+          <span>8(a) status unavailable. <a href={sbaLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
+        </div>
+      )
+    }
+
+    const statusText = entityData?.eightA
+      ? 'An 8(a) exit date was not returned.'
+      : 'No active 8(a) certification was returned. The entity may have exited the program or may not be a small business.'
+    return (
+      <div className={`${styles.eightACallout} ${styles.eightANeutral}`}>
+        <span>{statusText}</span>
+        <span className={styles.eightASource}>Source: SBA Entity Management API · <a href={sbaLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
+      </div>
+    )
   }
 
   const exit = localDate(exitDate)
@@ -183,12 +215,15 @@ function EightAExitCallout({ entityData, loading, error, contractEndDate, onAddN
   const sbaProfileLink = /^[A-Z0-9]{12}$/.test(uei) && /^[A-Z0-9]{5}$/.test(cageCode)
     ? `https://search.certifications.sba.gov/profile/${encodeURIComponent(uei)}/${encodeURIComponent(cageCode)}?page=1`
     : 'https://search.certifications.sba.gov/'
+  const sbaLink = sbaProfileUrl(entityData, incumbentUEI)
 
   return (
     <div className={`${styles.eightACallout} ${tone}`}>
       <span>8(a) exit: <strong>{formatDate(dateOnly(exitDate))}</strong></span>
       {exited ? <strong>Out of program</strong> : exitsBeforeContractEnd ? <strong>Exits before contract end</strong> : null}
       <span className={styles.eightASource}>Source: SBA Entity Management API · <a href={sbaProfileLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
+      {exited ? <strong>Past exit date. Verify on SBA</strong> : exitsBeforeContractEnd ? <strong>Exits before contract end</strong> : null}
+      <span className={styles.eightASource}>Source: SBA Entity Management API · <a href={sbaLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
       <button type="button" className={styles.eightAAddNote} onClick={onAddNote} disabled={addingNote || noteAdded}>
         {noteAdded ? 'Added' : addingNote ? 'Adding…' : 'Add as note'}
       </button>
@@ -1092,6 +1127,7 @@ export default function OpportunityDetail({ toast }) {
             <Field label="Incumbent UEI"           value={f(C.incumbentUEI)}   editing={editing} onChange={set(C.incumbentUEI)} raw />
             <EightAExitCallout
               entityData={incumbentEightA.data}
+              incumbentUEI={f(C.incumbentUEI)}
               loading={incumbentEightA.loading}
               error={incumbentEightA.error}
               contractEndDate={f(C.endDate)}
