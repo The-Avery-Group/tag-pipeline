@@ -535,7 +535,7 @@ export default function OpportunityDetail({ toast }) {
   const [newContactForm,  setNewContactForm]  = useState({
     Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government',
   })
-  const [hideDoneTasks, setHideDoneTasks] = useState(false)
+  const [hideDoneTasks, setHideDoneTasks] = useState(true)
   const [pendingRfiSave, setPendingRfiSave] = useState(null)
   const [pendingRenameSave, setPendingRenameSave] = useState(null)
   const [renamePreview, setRenamePreview] = useState(null)
