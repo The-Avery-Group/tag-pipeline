@@ -155,7 +155,8 @@ export default function Opportunities({ toast }) {
   // page can link directly into a pre-filtered, visibly-active view (e.g. a
   // Dashboard chart segment linking to /opportunities?tab=All&phase=Proposal
   // shows real, dismissible filter chips exactly as if applied manually).
-  const activeTab = searchParams.get('tab') || 'RFIs'
+  const requestedTab = searchParams.get('tab')
+  const activeTab = TABS.includes(requestedTab) ? requestedTab : 'All'
   const search    = searchParams.get('search') || ''
 
   const filters = useMemo(() => ({
@@ -360,7 +361,12 @@ export default function Opportunities({ toast }) {
   // index makes detail navigation reliable while retaining the readable URL.
   const openOpportunity = (opp) => {
     const cn = opp[C.contractNum] || ''
-    navigate(`/opportunities/${encodeURIComponent(cn)}?row=${opp._rowIndex}`)
+    // Keep the complete list URL so the detail page's own back button can
+    // restore the exact tab, search, and filters the user came from.
+    const detailParams = new URLSearchParams({ row: String(opp._rowIndex) })
+    const currentListQuery = searchParams.toString()
+    detailParams.set('returnTo', `/opportunities${currentListQuery ? `?${currentListQuery}` : ''}`)
+    navigate(`/opportunities/${encodeURIComponent(cn)}?${detailParams.toString()}`)
   }
 
   // ── CRUD handlers ─────────────────────────────────────────────────────
