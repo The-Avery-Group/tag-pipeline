@@ -549,6 +549,7 @@ async function handleLookup(req, env) {
   const referencedIdvPiid = url.searchParams.get('referencedIdvPiid')?.trim()
   const incumbentUEI = url.searchParams.get('incumbentUEI')?.trim().toUpperCase()
   const incumbentName = url.searchParams.get('incumbentName')?.trim()
+  const awardeeUEI = normalizeIdentifier(url.searchParams.get('awardeeUEI'))
   const forceRefresh = url.searchParams.get('refresh') === '1'
   if (!piid && !solicitationID && !referencedIdvPiid) {
     return json({ error: 'Provide at least one of: piid, solicitationID, referencedIdvPiid' }, 400)
@@ -556,8 +557,10 @@ async function handleLookup(req, env) {
   if (referencedIdvPiid && !incumbentUEI && !incumbentName) {
     return json({ error: 'A BPA task-order search requires an incumbent UEI or awardee name.' }, 400)
   }
+  if (!piid) return json({ error: 'Provide a PIID.' }, 400)
 
   const cacheKey = `awards_lookup:v6:${piid || ''}:${solicitationID || ''}:${referencedIdvPiid || ''}:${incumbentUEI || ''}:${incumbentName || ''}`
+  const cacheKey = `awards_lookup:v7:${piid}:${awardeeUEI || ''}`
   if (!forceRefresh) {
     const cached = await getCached(env, cacheKey)
     if (cached) {
@@ -596,6 +599,10 @@ async function handleLookup(req, env) {
       }))))
     }
     let records = dedupeRecords((await Promise.all(calls)).flat())
+    let records = dedupeRecords((await fetchAwards(env, { piid })).records.map((record) => ({
+      ...record,
+      _matchedBy: ['PIID'],
+    })))
 
     // Preserve the identifier exactly in the pipeline. This is a search-only
     // fallback for users who omit dashes when typing a PIID.
@@ -606,7 +613,15 @@ async function handleLookup(req, env) {
     }
 
     const families = groupByAwardFamily(records)
+    const allFamilies = groupByAwardFamily(records)
       .sort((a, b) => recordDate(b[b.length - 1]) - recordDate(a[a.length - 1]))
+    // A PIID can legitimately identify several award families. Apply the
+    // awardee constraint after all matching PIID records have been grouped,
+    // and before the display cap. This keeps a valid entity from being
+    // hidden behind five unrelated PIID collisions.
+    const families = awardeeUEI
+      ? allFamilies.filter((family) => awardeeUei(family[family.length - 1]) === awardeeUEI)
+      : allFamilies
     const visibleFamilies = families.slice(0, MAX_RESULT_FAMILIES)
     // Keep enrichment sequential and bounded. Besides preventing a runaway
     // request count, this stays below the six simultaneous connections limit.
@@ -619,6 +634,8 @@ async function handleLookup(req, env) {
       results,
       count: results.length,
       totalFamilies: families.length,
+      unfilteredFamilies: allFamilies.length,
+      filteredByAwardeeUEI: awardeeUEI || null,
       truncated: families.length > visibleFamilies.length,
       cachedAt,
       cacheExpiresAt: new Date(Date.now() + CACHE_TTL_SECONDS * 1000).toISOString(),
