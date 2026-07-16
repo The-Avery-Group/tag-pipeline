@@ -118,37 +118,54 @@ function field(section, label, resolved, column = null, options = {}) {
   }
 }
 
-function extractCurrentStateFields(records, aggregation, awardNotice) {
-  const latest = (getter) => latestValue(records, getter)
-  const totalContractValue = latest((record) =>
+function extractAwardFields(resolve, { aggregation = null, awardNotice = null, historical = false } = {}) {
+  const totalContractValue = resolve((record) =>
     record?.awardDetails?.totalContractDollars?.totalBaseAndAllOptionsValue ||
     record?.awardDetails?.dollars?.baseAndAllOptionsValue
   )
+  const description = resolve((record) => record?.awardDetails?.productOrServiceInformation?.descriptionOfContractRequirement)
+  const directDescription = historical && !isPresent(description.value)
+    ? { value: 'Not provided by SAM for this modification.', source: description.source }
+    : description
   const noticePoc = awardNotice?.primaryPoc
+  const fields = {
+    piid: field('Contract identity', 'PIID (Contract Number)', resolve((r) => r?.contractId?.piid)),
+    incumbentName: field('Contract snapshot', 'Awardee (Incumbent)', resolve((r) => r?.awardDetails?.awardeeData?.awardeeHeader?.awardeeName), 'Incumbent (Company Name)'),
+    incumbentUEI: field('Contract snapshot', 'Awardee UEI', resolve((r) => r?.awardDetails?.awardeeData?.awardeeUEIInformation?.uniqueEntityId), 'Incumbent (Company UEI)'),
+    totalContractValue: field('Contract snapshot', 'Total Contract Value (Base + All Options)', totalContractValue, 'Total Contract Value ($)*', { format: 'currency' }),
+    awardType: field('Contract identity', 'Award Type', resolve((r) => r?.coreData?.awardOrIDVType?.name), 'Contract Classification*'),
+    contractVehicleNumber: field('Contract identity', 'Referenced IDV PIID', resolve((r) => r?.contractId?.referencedIDVPiid), 'Contract Vehicle Number'),
+    solicitationNumber: field('Contract identity', 'Solicitation Number', resolve((r) => r?.coreData?.solicitationId), 'Solicitation Number'),
+    department: field('Agency and scope', 'Department', resolve((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingDepartment?.name), 'Department*'),
+    agency: field('Agency and scope', 'Contracting Subtier', resolve((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingSubtier?.name), 'Agency*'),
+    office: field('Agency and scope', 'Contracting Office', resolve((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingOffice?.name), 'Office*'),
+    fiscalYear: field('Agency and scope', 'Fiscal Year', resolve((r) => r?.awardDetails?.dates?.fiscalYear), 'Fiscal Year'),
+    periodOfPerformanceStart: field('Contract snapshot', 'Period of Performance Start', resolve((r) => r?.awardDetails?.dates?.periodOfPerformanceStartDate), null, { format: 'date' }),
+    contractEndDate: field('Contract snapshot', 'Estimated Completion Date', resolve((r) => r?.awardDetails?.dates?.ultimateCompletionDate), 'Contract End Date*', { format: 'date' }),
+    description: field('Agency and scope', 'Description', directDescription, null, { fullWidth: true }),
+    typeOfContract: field('Agency and scope', 'Type of Contract', resolve((r) => r?.coreData?.acquisitionData?.typeOfContractPricing?.name)),
+    numberOfActions: field('Agency and scope', 'Number of Actions', resolve((r) => r?.awardDetails?.contractData?.numberOfActions)),
+    productServiceCode: field('Agency and scope', 'Product/Service Code', resolve((r) => r?.coreData?.productOrServiceInformation?.productOrService?.code)),
+    naicsCode: field('Agency and scope', 'Principal NAICS Code', resolve((r) => r?.coreData?.productOrServiceInformation?.principalNaics?.[0]?.code), 'NAICS Code*'),
+    setAside: field('Agency and scope', 'Type of Set-Aside', resolve((r) => r?.coreData?.competitionInformation?.typeOfSetAside?.name), 'Set- Aside*'),
+    solicitationProcedures: field('Agency and scope', 'Solicitation Procedures', resolve((r) => r?.coreData?.competitionInformation?.solicitationProcedures?.name)),
+    numberOfOffersReceived: field('Agency and scope', 'Number of Offers Received', resolve((r) => r?.awardDetails?.competitionInformation?.numberOfOffersReceived)),
+  }
+
+  if (historical) {
+    fields.totalActionObligation = field(
+      'Contract snapshot',
+      'Total Action Obligation',
+      resolve((r) => r?.awardDetails?.totalContractDollars?.totalActionObligation ?? r?.awardDetails?.dollars?.totalActionObligation),
+      null,
+      { format: 'currency' },
+    )
+    return fields
+  }
 
   return {
-    piid: field('Contract identity', 'PIID (Contract Number)', latest((r) => r?.contractId?.piid)),
-    incumbentName: field('Contract snapshot', 'Awardee (Incumbent)', latest((r) => r?.awardDetails?.awardeeData?.awardeeHeader?.awardeeName), 'Incumbent (Company Name)'),
-    incumbentUEI: field('Contract snapshot', 'Awardee UEI', latest((r) => r?.awardDetails?.awardeeData?.awardeeUEIInformation?.uniqueEntityId), 'Incumbent (Company UEI)'),
-    totalContractValue: field('Contract snapshot', 'Total Contract Value (Base + All Options)', totalContractValue, 'Total Contract Value ($)*', { format: 'currency' }),
+    ...fields,
     actualAggregateObligations: field('Contract snapshot', 'Actual Aggregate Obligations', { value: aggregation?.awardFamilySummary?.totalDollars ?? null, source: null }, null, { format: 'currency', helpText: 'Dollars the government has obligated across the award family to date.' }),
-    awardType: field('Contract identity', 'Award Type', latest((r) => r?.coreData?.awardOrIDVType?.name), 'Contract Classification*'),
-    contractVehicleNumber: field('Contract identity', 'Referenced IDV PIID', latest((r) => r?.contractId?.referencedIDVPiid), 'Contract Vehicle Number'),
-    solicitationNumber: field('Contract identity', 'Solicitation Number', latest((r) => r?.coreData?.solicitationId), 'Solicitation Number'),
-    department: field('Agency and scope', 'Department', latest((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingDepartment?.name), 'Department*'),
-    agency: field('Agency and scope', 'Contracting Subtier', latest((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingSubtier?.name), 'Agency*'),
-    office: field('Agency and scope', 'Contracting Office', latest((r) => r?.coreData?.federalOrganization?.contractingInformation?.contractingOffice?.name), 'Office*'),
-    fiscalYear: field('Agency and scope', 'Fiscal Year', latest((r) => r?.awardDetails?.dates?.fiscalYear), 'Fiscal Year'),
-    periodOfPerformanceStart: field('Contract snapshot', 'Period of Performance Start', latest((r) => r?.awardDetails?.dates?.periodOfPerformanceStartDate), null, { format: 'date' }),
-    contractEndDate: field('Contract snapshot', 'Estimated Completion Date', latest((r) => r?.awardDetails?.dates?.ultimateCompletionDate), 'Contract End Date*', { format: 'date' }),
-    description: field('Agency and scope', 'Description', latest((r) => r?.awardDetails?.productOrServiceInformation?.descriptionOfContractRequirement), null, { fullWidth: true }),
-    typeOfContract: field('Agency and scope', 'Type of Contract', latest((r) => r?.coreData?.acquisitionData?.typeOfContractPricing?.name)),
-    numberOfActions: field('Agency and scope', 'Number of Actions', latest((r) => r?.awardDetails?.contractData?.numberOfActions)),
-    productServiceCode: field('Agency and scope', 'Product/Service Code', latest((r) => r?.coreData?.productOrServiceInformation?.productOrService?.code)),
-    naicsCode: field('Agency and scope', 'Principal NAICS Code', latest((r) => r?.coreData?.productOrServiceInformation?.principalNaics?.[0]?.code), 'NAICS Code*'),
-    setAside: field('Agency and scope', 'Type of Set-Aside', latest((r) => r?.coreData?.competitionInformation?.typeOfSetAside?.name), 'Set- Aside*'),
-    solicitationProcedures: field('Agency and scope', 'Solicitation Procedures', latest((r) => r?.coreData?.competitionInformation?.solicitationProcedures?.name)),
-    numberOfOffersReceived: field('Agency and scope', 'Number of Offers Received', latest((r) => r?.awardDetails?.competitionInformation?.numberOfOffersReceived)),
     awardNoticeStatus: field('Award notice', 'Corroboration', { value: awardNotice?.status || null, source: null }, null, { fullWidth: true }),
     awardNoticeNumber: field('Award notice', 'Award Notice Number', { value: awardNotice?.awardNumber || null, source: null }),
     awardNoticeDate: field('Award notice', 'Award Notice Date', { value: awardNotice?.awardDate || null, source: null }, null, { format: 'date' }),
@@ -156,6 +173,18 @@ function extractCurrentStateFields(records, aggregation, awardNotice) {
     awardNoticeAwardee: field('Award notice', 'Award Notice Awardee', { value: awardNotice?.awardeeName || null, source: null }),
     awardNoticePoc: field('Award notice', 'Primary Point of Contact', { value: noticePoc ? [noticePoc.fullName, noticePoc.title, noticePoc.email, noticePoc.phone].filter(Boolean).join(' · ') : null, source: null }, null, { fullWidth: true }),
     awardNoticeLink: field('Award notice', 'Award Notice Link', { value: awardNotice?.link || null, source: null }, null, { format: 'link', action: 'addOtherLink' }),
+  }
+}
+
+function extractCurrentStateFields(records, aggregation, awardNotice) {
+  return extractAwardFields((getter) => latestValue(records, getter), { aggregation, awardNotice })
+}
+
+function extractModificationSnapshotFields(record) {
+  const direct = (getter) => ({ value: getter(record), source: sourceFor(record) })
+  return {
+    ...extractAwardFields(direct, { historical: true }),
+    ...extractTransactionFields(record, 'Modification details'),
   }
 }
 
@@ -189,22 +218,22 @@ function getLifecycleReason(record) {
   }
 }
 
-function extractTransactionFields(record) {
+function extractTransactionFields(record, section = 'Latest modification') {
   const transaction = record?.awardDetails?.transactionData
   const lifecycleReason = getLifecycleReason(record)
   return {
-    modificationNumber: field('Latest modification', 'Modification Number', { value: record?.contractId?.modificationNumber ?? null, source: sourceFor(record) }),
-    dateSigned: field('Latest modification', 'Date Signed', { value: record?.awardDetails?.dates?.dateSigned ?? null, source: sourceFor(record) }, null, { format: 'date' }),
+    modificationNumber: field(section, 'Modification Number', { value: record?.contractId?.modificationNumber ?? null, source: sourceFor(record) }),
+    dateSigned: field(section, 'Date Signed', { value: record?.awardDetails?.dates?.dateSigned ?? null, source: sourceFor(record) }, null, { format: 'date' }),
     reasonForModification: field(
-      'Latest modification',
+      section,
       'Reason for Modification',
       { value: lifecycleReason?.reason || record?.contractId?.reasonForModification?.name || null, source: sourceFor(record) },
       null,
       { fullWidth: true, lifecycleAlert: Boolean(lifecycleReason) },
     ),
-    approvedDate: field('Latest modification', 'Approved Date', { value: transaction?.approvedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
-    samLastModifiedBy: field('Latest modification', 'SAM Record Last Modified By', { value: transaction?.lastModifiedBy ?? null, source: sourceFor(record) }),
-    samLastModifiedDate: field('Latest modification', 'SAM Record Last Modified Date', { value: transaction?.lastModifiedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
+    approvedDate: field(section, 'Approved Date', { value: transaction?.approvedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
+    samLastModifiedBy: field(section, 'SAM Record Last Modified By', { value: transaction?.lastModifiedBy ?? null, source: sourceFor(record) }),
+    samLastModifiedDate: field(section, 'SAM Record Last Modified Date', { value: transaction?.lastModifiedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
   }
 }
 
@@ -422,7 +451,10 @@ async function buildResult(env, records, includeAwardNotice = true) {
     contractLifecycleAlert: getContractLifecycleAlert(records),
     // Preserve raw transaction history for later automatic change monitoring
     // and for a future UI history view without fabricating composite records.
-    modifications: records.slice(-3).reverse().map((record) => extractTransactionFields(record)),
+    modifications: records.slice(-3).reverse().map((record) => ({
+      ...extractTransactionFields(record),
+      snapshotFields: extractModificationSnapshotFields(record),
+    })),
   }
 }
 
