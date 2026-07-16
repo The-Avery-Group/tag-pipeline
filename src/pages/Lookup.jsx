@@ -12,7 +12,6 @@ import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 const C_CONTRACT_NUM = 'Contract Number / Notice ID'
 const C_VEHICLE_NUM = 'Contract Vehicle Number'
 const C_INCUMBENT_UEI = 'Incumbent (Company UEI)'
-const C_INCUMBENT_NAME = 'Incumbent (Company Name)'
 
 function dateOnly(value) {
   const raw = String(value || '').trim()
@@ -23,12 +22,9 @@ function dateOnly(value) {
   return [parsed.getFullYear(), String(parsed.getMonth() + 1).padStart(2, '0'), String(parsed.getDate()).padStart(2, '0')].join('-')
 }
 
-// A single text input covers PIID, Solicitation Number, AND Contract
-// Vehicle Number — a vehicle number is just the PIID of an IDV-type award,
-// so there's no genuinely separate "vehicle" identifier to account for.
-// The ambiguity between plain PIID and Solicitation Number is resolved by
-// querying both in parallel (see useAwardsLookup / the Worker's awards.js)
-// rather than asking the user to specify which type they typed.
+// PIID is the sole contract-award lookup identifier. A PIID can identify
+// several award families, so users can optionally narrow those families by
+// the exact awardee UEI before the Worker applies its result cap.
 
 function ModificationTabs({ modifications, activeIndex, onSelect }) {
   if (!modifications?.length) return null
@@ -71,9 +67,7 @@ export default function Lookup({ toast }) {
   const outlookOptions = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
   const { results, loading, error, searched, cache, resultMeta, lookup } = useAwardsLookup()
   const [input, setInput] = useState('')
-  const [searchMode, setSearchMode] = useState('auto')
-  const [incumbentUEI, setIncumbentUEI] = useState('')
-  const [incumbentName, setIncumbentName] = useState('')
+  const [awardeeUEI, setAwardeeUEI] = useState('')
   const [selectedModification, setSelectedModification] = useState({})
 
   const matchedPipelineRecord = useMemo(() => {
@@ -98,18 +92,7 @@ export default function Lookup({ toast }) {
   const handleSearch = () => {
     const val = input.trim()
     if (!val) return
-    if (searchMode === 'piid') return lookup({ piid: val })
-    if (searchMode === 'solicitation') return lookup({ solicitationID: val })
-    if (searchMode === 'bpa') {
-      const resolvedUEI = incumbentUEI.trim() || matchedPipelineRecord?.[C_INCUMBENT_UEI] || ''
-      const resolvedName = incumbentName.trim() || matchedPipelineRecord?.[C_INCUMBENT_NAME] || ''
-      if (!resolvedUEI && !resolvedName) {
-        toast?.error('Enter an incumbent UEI or awardee name to search BPA task orders')
-        return
-      }
-      return lookup({ referencedIdvPiid: val, incumbentUEI: resolvedUEI, incumbentName: resolvedName })
-    }
-    lookup({ piid: val, solicitationID: val })
+    lookup({ piid: val, awardeeUEI: awardeeUEI.trim() })
   }
 
   const handleKeyDown = (e) => { if (e.key === 'Enter') handleSearch() }
@@ -165,22 +148,16 @@ export default function Lookup({ toast }) {
     <>
       <Topbar
         title="Lookup"
-        subtitle1="Search SAM.gov award data by PIID, Solicitation Number, or Contract Vehicle Number"
+        subtitle1="Search SAM.gov award data by PIID"
         showFilter={false}
         showNew={false}
       />
       <div className="page-body">
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <select className="form-input" style={{ width: 174 }} value={searchMode} onChange={(e) => setSearchMode(e.target.value)}>
-              <option value="auto">Auto</option>
-              <option value="piid">PIID</option>
-              <option value="solicitation">Solicitation</option>
-              <option value="bpa">BPA task orders</option>
-            </select>
             <input
               className="form-input" style={{ flex: 1 }}
-              placeholder={searchMode === 'bpa' ? 'Enter BPA / vehicle number…' : 'Enter a PIID or Solicitation Number…'}
+              placeholder="Enter PIID…"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -189,27 +166,24 @@ export default function Lookup({ toast }) {
               {loading ? 'Searching…' : 'Search'}
             </button>
           </div>
-          {searchMode === 'bpa' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, marginTop: 8 }}>
-              <input
-                className="form-input"
-                placeholder="Incumbent UEI (recommended)"
-                value={incumbentUEI}
-                onChange={(e) => setIncumbentUEI(e.target.value.toUpperCase())}
-              />
-              <input
-                className="form-input"
-                placeholder="Awardee name, if UEI is unavailable"
-                value={incumbentName}
-                onChange={(e) => setIncumbentName(e.target.value)}
-              />
-              {matchedPipelineRecord && (
-                <span className="text-xs text-muted" style={{ gridColumn: '1 / -1' }}>
-                  Uses the matching pipeline record’s incumbent details when these fields are blank.
-                </span>
-              )}
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <input
+              className="form-input"
+              style={{ flex: 1 }}
+              placeholder="Awardee UEI to narrow PIID results (optional)"
+              value={awardeeUEI}
+              onChange={(e) => setAwardeeUEI(e.target.value.toUpperCase())}
+            />
+            {matchedPipelineRecord?.[C_INCUMBENT_UEI] && !awardeeUEI.trim() && (
+              <button
+                type="button"
+                className="btn text-sm"
+                onClick={() => setAwardeeUEI(String(matchedPipelineRecord[C_INCUMBENT_UEI]).toUpperCase())}
+              >
+                Use pipeline UEI
+              </button>
+            )}
+          </div>
         </div>
 
         {error && (
@@ -218,7 +192,14 @@ export default function Lookup({ toast }) {
           </p>
         )}
         {searched && !loading && !error && results.length === 0 && (
-          <p className="text-sm text-muted">No results found for "{input}".</p>
+          <p className="text-sm text-muted">
+            No results found for "{input}"{awardeeUEI.trim() ? ` with awardee UEI ${awardeeUEI.trim()}` : ''}.
+          </p>
+        )}
+        {resultMeta?.filteredByAwardeeUEI && !loading && !error && (
+          <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
+            Showing {resultMeta.totalFamilies} {resultMeta.totalFamilies === 1 ? 'PIID family' : 'PIID families'} matching awardee UEI {resultMeta.filteredByAwardeeUEI} out of {resultMeta.unfilteredFamilies} total PIID families.
+          </p>
         )}
         {resultMeta?.truncated && !loading && !error && (
           <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
@@ -256,17 +237,7 @@ export default function Lookup({ toast }) {
                 cache={cache}
                 onRefresh={() => {
                   const val = input.trim()
-                  if (searchMode === 'piid') return lookup({ piid: val, forceRefresh: true })
-                  if (searchMode === 'solicitation') return lookup({ solicitationID: val, forceRefresh: true })
-                  if (searchMode === 'bpa') {
-                    return lookup({
-                      referencedIdvPiid: val,
-                      incumbentUEI: incumbentUEI.trim() || matchedPipelineRecord?.[C_INCUMBENT_UEI] || '',
-                      incumbentName: incumbentName.trim() || matchedPipelineRecord?.[C_INCUMBENT_NAME] || '',
-                      forceRefresh: true,
-                    })
-                  }
-                  return lookup({ piid: val, solicitationID: val, forceRefresh: true })
+                  return lookup({ piid: val, awardeeUEI: awardeeUEI.trim(), forceRefresh: true })
                 }}
                 refreshing={loading}
                 fields={activeFields}
