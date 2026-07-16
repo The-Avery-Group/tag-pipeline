@@ -23,17 +23,21 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
   const [error, setError]       = useState(null)
   const [searched, setSearched] = useState(false)   // distinguishes "never searched" from "searched, found nothing"
   const [cache, setCache]       = useState(null)
+  const [resultMeta, setResultMeta] = useState(null)
   const inFlightLookupRef       = useRef(null)
   const abortControllerRef      = useRef(null)
   const requestSequenceRef      = useRef(0)
 
-  const lookup = useCallback(({ piid, solicitationID, forceRefresh = false } = {}) => {
-    if (!piid && !solicitationID) return
+  const lookup = useCallback(({ piid, solicitationID, referencedIdvPiid, incumbentUEI, incumbentName, forceRefresh = false } = {}) => {
+    if (!piid && !solicitationID && !referencedIdvPiid) return
     if (!WORKER_URL) { setError('VITE_API_BASE_URL not set'); return }
 
     const params = new URLSearchParams()
     if (piid) params.set('piid', piid)
     if (solicitationID) params.set('solicitationID', solicitationID)
+    if (referencedIdvPiid) params.set('referencedIdvPiid', referencedIdvPiid)
+    if (incumbentUEI) params.set('incumbentUEI', incumbentUEI)
+    if (incumbentName) params.set('incumbentName', incumbentName)
     if (forceRefresh) params.set('refresh', '1')
     const requestKey = params.toString()
     if (inFlightLookupRef.current?.key === requestKey) return inFlightLookupRef.current.promise
@@ -47,6 +51,7 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
     abortControllerRef.current = controller
     setResults([])
     setCache(null)
+    setResultMeta(null)
     setSearched(false)
 
     const request = (async () => {
@@ -62,12 +67,14 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
         if (requestSequence !== requestSequenceRef.current) return
         setResults(data.results || [])
         setCache(data.cache || null)
+        setResultMeta({ totalFamilies: data.totalFamilies ?? data.count ?? 0, truncated: data.truncated === true })
         setSearched(true)
       } catch (err) {
         if (err.name === 'AbortError' || requestSequence !== requestSequenceRef.current) return
         setError(err.message)
         setResults([])
         setCache(null)
+        setResultMeta(null)
         setSearched(true)
       } finally {
         if (requestSequence === requestSequenceRef.current) setLoading(false)
@@ -88,6 +95,7 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
     setError(null)
     setSearched(false)
     setCache(null)
+    setResultMeta(null)
   }, [])
 
   // Auto-fire once for a known identifier (OpportunityDetail's use case).
@@ -104,5 +112,5 @@ export function useAwardsLookup({ piid: autoPiid, solicitationID: autoSolicitati
     lookup({ piid: autoPiid, solicitationID: autoSolicitationID })
   }, [auto, autoPiid, autoSolicitationID, lookup])
 
-  return { results, loading, error, searched, cache, lookup, reset }
+  return { results, loading, error, searched, cache, resultMeta, lookup, reset }
 }
