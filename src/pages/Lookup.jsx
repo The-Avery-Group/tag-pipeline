@@ -11,6 +11,15 @@ import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 
 const C_CONTRACT_NUM = 'Contract Number / Notice ID'
 
+function dateOnly(value) {
+  const raw = String(value || '').trim()
+  const iso = raw.match(/^\d{4}-\d{2}-\d{2}/)
+  if (iso) return iso[0]
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return raw
+  return [parsed.getFullYear(), String(parsed.getMonth() + 1).padStart(2, '0'), String(parsed.getDate()).padStart(2, '0')].join('-')
+}
+
 // A single text input covers PIID, Solicitation Number, AND Contract
 // Vehicle Number — a vehicle number is just the PIID of an IDV-type award,
 // so there's no genuinely separate "vehicle" identifier to account for.
@@ -104,7 +113,7 @@ export default function Lookup({ toast }) {
         'Solicitation Number':             f.solicitationNumber?.value || '',
         'Contract Classification*':        f.awardType?.value || '',
         'Total Contract Value ($)*':       f.totalContractValue?.value || '',
-        'Contract End Date*':              f.contractEndDate?.value || '',
+        'Contract End Date*':              dateOnly(f.contractEndDate?.value),
         'NAICS Code*':                     f.naicsCode?.value || '',
         'Department*':                     f.department?.value || '',
         'Agency*':                         f.agency?.value || '',
