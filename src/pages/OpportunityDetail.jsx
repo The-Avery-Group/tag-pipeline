@@ -152,9 +152,13 @@ function localDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00`) : new Date(NaN)
 }
 
-function EightAExitCallout({ entityData, loading, contractEndDate, onAddNote, addingNote, noteAdded }) {
+function EightAExitCallout({ entityData, loading, error, contractEndDate, onAddNote, addingNote, noteAdded }) {
   const exitDate = entityData?.eightA?.exitDate
-  if (!exitDate) return loading ? <div className={`${styles.eightACallout} ${styles.eightALoading}`}>Checking 8(a) status…</div> : null
+  if (!exitDate) {
+    if (loading) return <div className={`${styles.eightACallout} ${styles.eightALoading}`}>Checking 8(a) status…</div>
+    if (error) return <div className={`${styles.eightACallout} ${styles.eightALoading}`} title={error}>8(a) status unavailable</div>
+    return null
+  }
 
   const exit = localDate(exitDate)
   if (Number.isNaN(exit.getTime())) return null
@@ -1078,6 +1082,7 @@ export default function OpportunityDetail({ toast }) {
             <EightAExitCallout
               entityData={incumbentEightA.data}
               loading={incumbentEightA.loading}
+              error={incumbentEightA.error}
               contractEndDate={f(C.endDate)}
               onAddNote={handleAddEightANote}
               addingNote={addingEightANote}
