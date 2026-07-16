@@ -8,6 +8,7 @@ import { useAuth } from '@/auth/AuthContext'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
+import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUps } from '@/hooks/useRfiFollowUps'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
@@ -62,6 +63,7 @@ const C = {
   slideDeck:      'Link to Slide Deck',
   otherLinks:     'Other Links*',
   incumbent:      'Incumbent (Company Name)',
+  incumbentUEI:   'Incumbent (Company UEI)',
   fiscalYear:     'Fiscal Year',
   vehicleNumber:  'Contract Vehicle Number',
   vehicle:        'Contract Vehicle',
@@ -136,6 +138,52 @@ function formatFieldValue(val) {
   return String(val)
 }
 
+function dateOnly(value) {
+  const raw = String(value || '').trim()
+  const iso = raw.match(/^\d{4}-\d{2}-\d{2}/)
+  if (iso) return iso[0]
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return raw
+  return [parsed.getFullYear(), String(parsed.getMonth() + 1).padStart(2, '0'), String(parsed.getDate()).padStart(2, '0')].join('-')
+}
+
+function localDate(value) {
+  const date = dateOnly(value)
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00`) : new Date(NaN)
+}
+
+function EightAExitCallout({ entityData, loading, contractEndDate, onAddNote, addingNote, noteAdded }) {
+  const exitDate = entityData?.eightA?.exitDate
+  if (!exitDate) return loading ? <div className={`${styles.eightACallout} ${styles.eightALoading}`}>Checking 8(a) status…</div> : null
+
+  const exit = localDate(exitDate)
+  if (Number.isNaN(exit.getTime())) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const sixMonthsFromNow = new Date(today)
+  sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6)
+  const contractEnd = localDate(contractEndDate)
+  const exited = exit < today
+  const exitsBeforeContractEnd = !exited && !Number.isNaN(contractEnd.getTime()) && exit < contractEnd
+  const tone = exited ? styles.eightAGreen : exit <= sixMonthsFromNow ? styles.eightAAmber : styles.eightARed
+  const uei = String(entityData?.uei || '').trim().toUpperCase()
+  const cageCode = String(entityData?.cageCode || '').trim().toUpperCase()
+  const sbaProfileLink = /^[A-Z0-9]{12}$/.test(uei) && /^[A-Z0-9]{5}$/.test(cageCode)
+    ? `https://search.certifications.sba.gov/profile/${encodeURIComponent(uei)}/${encodeURIComponent(cageCode)}?page=1`
+    : 'https://search.certifications.sba.gov/'
+
+  return (
+    <div className={`${styles.eightACallout} ${tone}`}>
+      <span>8(a) exit: <strong>{formatDate(dateOnly(exitDate))}</strong></span>
+      {exited ? <strong>Out of program</strong> : exitsBeforeContractEnd ? <strong>Exits before contract end</strong> : null}
+      <span className={styles.eightASource}>Source: SBA Entity Management API · <a href={sbaProfileLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
+      <button type="button" className={styles.eightAAddNote} onClick={onAddNote} disabled={addingNote || noteAdded}>
+        {noteAdded ? 'Added' : addingNote ? 'Adding…' : 'Add as note'}
+      </button>
+    </div>
+  )
+}
+
 function fmtValue(v) {
   const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''))
   if (!n) return null
@@ -196,7 +244,8 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
   const handleUpdateField = async (piid, fieldKey, field) => {
     setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
     try {
-      await updateOpp(opp._rowIndex, { [field.column]: field.value }, opp)
+      const value = field.column === C.endDate ? dateOnly(field.value) : field.value
+      await updateOpp(opp._rowIndex, { [field.column]: value }, opp)
       setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
       toast?.success(`${field.column.replace(/\*$/, '')} updated`)
     } catch (err) {
@@ -453,6 +502,8 @@ export default function OpportunityDetail({ toast }) {
   const [pendingRenameSave, setPendingRenameSave] = useState(null)
   const [renamePreview, setRenamePreview] = useState(null)
   const [renameProgress, setRenameProgress] = useState('')
+  const [addingEightANote, setAddingEightANote] = useState(false)
+  const [eightANoteAdded, setEightANoteAdded] = useState(false)
   
 
   const opp = useMemo(
@@ -466,6 +517,12 @@ export default function OpportunityDetail({ toast }) {
     },
     [pipeline, decodedCN, routeRowIndex]
   )
+
+  const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI])
+
+  useEffect(() => {
+    setEightANoteAdded(false)
+  }, [decodedCN, incumbentEightA.data?.eightA?.exitDate])
 
 
   // ── Unsaved changes detection ──────────────────────────────────────
@@ -520,6 +577,27 @@ export default function OpportunityDetail({ toast }) {
     [notes]
   )
   const recentNotesStr = visibleNotes.slice(0, 3).map((n) => n.NoteText).join(' | ')
+
+  const handleAddEightANote = async () => {
+    const exitDate = incumbentEightA.data?.eightA?.exitDate
+    if (!exitDate || addingEightANote) return
+    const note = `The 8(a) Exit Date of the incumbent is ${dateOnly(exitDate)}`
+    if (notes.some((item) => String(item.NoteText || '') === note)) {
+      setEightANoteAdded(true)
+      toast?.success('8(a) exit note is already attached')
+      return
+    }
+    setAddingEightANote(true)
+    try {
+      await addNote(user.firstName, note)
+      setEightANoteAdded(true)
+      toast?.success('8(a) exit date added as a note')
+    } catch (error) {
+      toast?.error(`Failed to add note: ${error.message}`)
+    } finally {
+      setAddingEightANote(false)
+    }
+  }
 
   const isExpiringContract = opp?.[C.outlook] === 'Expiring'
   useEffect(() => {
@@ -996,6 +1074,15 @@ export default function OpportunityDetail({ toast }) {
             <Field label="Contract Vehicle"        value={f(C.vehicle)}        editing={editing} onChange={set(C.vehicle)} />
             <Field label="Contract Classification" value={f(C.classification)} editing={editing} onChange={set(C.classification)} />
             <Field label="Incumbent"               value={f(C.incumbent)}      editing={editing} onChange={set(C.incumbent)} />
+            <Field label="Incumbent UEI"           value={f(C.incumbentUEI)}   editing={editing} onChange={set(C.incumbentUEI)} raw />
+            <EightAExitCallout
+              entityData={incumbentEightA.data}
+              loading={incumbentEightA.loading}
+              contractEndDate={f(C.endDate)}
+              onAddNote={handleAddEightANote}
+              addingNote={addingEightANote}
+              noteAdded={eightANoteAdded}
+            />
           </div>
         </Section>
 
@@ -1017,7 +1104,7 @@ export default function OpportunityDetail({ toast }) {
                 )}
                 <Field label="Contract End Date"      value={f(C.endDate)}    editing={editing} onChange={set(C.endDate)}    type="date" />
                 <Field label="Anticipated Award Date" value={f(C.awardDate)}  editing={editing} onChange={set(C.awardDate)}  type="date" />
-                <Field label="Fiscal Year"            value={f(C.fiscalYear)} editing={editing} onChange={set(C.fiscalYear)} />
+                <Field label="Fiscal Year"            value={f(C.fiscalYear)} editing={editing} onChange={set(C.fiscalYear)} raw />
               </div>
             </Section>
           )
