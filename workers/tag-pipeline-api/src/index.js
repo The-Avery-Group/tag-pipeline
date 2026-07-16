@@ -12,6 +12,7 @@ import { handleNotify }             from './handlers/notify.js'
 import { handleAIChat }             from './handlers/ai.js'
 import { handleSAM } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
+import { handleEntityEightA } from './handlers/entities.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -95,6 +96,9 @@ export default {
 
       } else if (path === '/awards/lookup' && req.method === 'GET') {
         response = await handleAwards(req, env)
+
+      } else if (path === '/entities/8a' && req.method === 'GET') {
+        response = await handleEntityEightA(req, env)
 
       } else {
         response = json({ error: 'Not found' }, 404)
