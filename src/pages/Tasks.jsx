@@ -322,7 +322,7 @@ export default function Tasks({ toast }) {
     return s === 'overdue' ? 'Overdue' : 'All'
   })
   const [priorityFilter, setPriorityFilter] = useState('All')
-  const [hideDone, setHideDone]             = useState(false)
+  const [hideDone, setHideDone]             = useState(true)
   const [groupBy, setGroupBy]           = useState('None')
   const [sortBy, setSortBy]             = useState(() => localStorage.getItem('tasks_sort_by') || 'Due Date')
   const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
@@ -438,57 +438,65 @@ export default function Tasks({ toast }) {
         <div ref={listPaneRef} className={styles.listPane}>
           {/* Filter + group bar */}
           <div className={styles.controls}>
-            <div className="filter-chips">
-              {STATUSES.map((s) => (
-                <button key={s} className={`filter-chip ${statusFilter === s ? 'active' : ''}`}
-                  onClick={() => setStatusFilter(s)}>
-                  {s}
-                </button>
-              ))}
+            <div className={styles.primaryControls}>
+              <div className={styles.controlGroup}>
+                <span className={styles.controlLabel}>Status</span>
+                <div className="filter-chips">
+                  {STATUSES.map((s) => (
+                    <button key={s} className={`filter-chip ${statusFilter === s ? 'active' : ''}`}
+                      onClick={() => setStatusFilter(s)}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className={styles.controlGroup}>
+                <span className={styles.controlLabel}>Priority</span>
+                <div className="filter-chips">
+                  {PRIORITIES.map((p) => (
+                    <button key={p} className={`filter-chip ${priorityFilter === p ? 'active' : ''}`}
+                      onClick={() => setPriorityFilter(p)}>
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className={styles.groupRow}>
-              <span className="text-xs text-muted">Priority</span>
-              {PRIORITIES.map((p) => (
-                <button key={p} className={`filter-chip ${priorityFilter === p ? 'active' : ''}`}
-                  onClick={() => setPriorityFilter(p)}>
-                  {p}
-                </button>
-              ))}
-            </div>
-            <div className={styles.groupRow}>
+            <div className={styles.secondaryControls}>
               <button
                 className={`filter-chip ${hideDone ? 'active' : ''}`}
                 onClick={() => setHideDone((value) => !value)}
               >
                 Hide completed
               </button>
-            </div>
-            <div className={styles.groupRow}>
-              <span className="text-xs text-muted">Group by</span>
-              {GROUPS.map((g) => (
-                <button key={g} className={`filter-chip ${groupBy === g ? 'active' : ''}`}
-                  onClick={() => setGroupBy(g)}>
-                  {g}
+              <div className={styles.controlDivider} />
+              <div className={styles.controlGroup}>
+                <span className={styles.controlLabel}>Group</span>
+                {GROUPS.map((g) => (
+                  <button key={g} className={`filter-chip ${groupBy === g ? 'active' : ''}`}
+                    onClick={() => setGroupBy(g)}>
+                    {g}
+                  </button>
+                ))}
+              </div>
+              <div className={styles.controlDivider} />
+              <div className={styles.controlGroup}>
+                <span className={styles.controlLabel}>Sort</span>
+                {SORTS.map((s) => (
+                  <button key={s} className={`filter-chip ${sortBy === s ? 'active' : ''}`}
+                    onClick={() => setSortBy(s)}>
+                    {s}
+                  </button>
+                ))}
+                <button
+                  className="btn btn-ghost btn-icon text-xs"
+                  onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
+                  title={sortDir === 'asc' ? 'Ascending, click for descending' : 'Descending, click for ascending'}
+                  aria-label="Toggle sort direction"
+                >
+                  {sortDir === 'asc' ? '↑' : '↓'}
                 </button>
-              ))}
-            </div>
-            <div className={styles.groupRow}>
-              <span className="text-xs text-muted">Sort by</span>
-              {SORTS.map((s) => (
-                <button key={s} className={`filter-chip ${sortBy === s ? 'active' : ''}`}
-                  onClick={() => setSortBy(s)}>
-                  {s}
-                </button>
-              ))}
-              <button
-                className="btn btn-ghost btn-icon text-xs"
-                style={{ marginLeft: 2 }}
-                onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
-                title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
-                aria-label="Toggle sort direction"
-              >
-                {sortDir === 'asc' ? '↑' : '↓'}
-              </button>
+              </div>
             </div>
           </div>
 
