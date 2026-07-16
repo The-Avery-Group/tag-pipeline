@@ -321,7 +321,7 @@ export function useSAMOpportunities() {
 
   // ── Trigger SAM pull ─────────────────────────────────────────────────
   // force=true bypasses the 12h throttle (used by Settings page force pull)
-  const triggerPull = useCallback(async ({ force = false, resumeFrom = 0, source = 'opportunities' } = {}) => {
+  const triggerPull = useCallback(async ({ force = false, resumeCursor = null, source = 'opportunities' } = {}) => {
     if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
     const secret = import.meta.env.VITE_SAM_TRIGGER_SECRET
     if (!secret) throw new Error('VITE_SAM_TRIGGER_SECRET not set')
@@ -333,6 +333,7 @@ export function useSAMOpportunities() {
     const [naicsCodes, settings] = await Promise.all([getSAMNAICS(), getSAMSettings()])
 
     if (!naicsCodes.length) throw new Error('No NAICS codes found in SAMNAICSTable')
+    if (!resumeCursor) zeroWritePartialsRef.current.clear()
 
     const res = await fetch(`${WORKER_URL}/sam/trigger`, {
       method: 'POST',
@@ -348,7 +349,7 @@ export function useSAMOpportunities() {
           windowDays: settings.windowDays,
         },
         force,
-        resumeFrom,
+        resumeCursor,
       }),
     })
 
@@ -365,13 +366,19 @@ export function useSAMOpportunities() {
     // tell whether the pull had finished, was still running, or had
     // silently gotten stuck.
     setSharedPullOrigin({
-      source: resumeFrom ? 'recovery' : source,
+      source: resumeCursor ? 'recovery' : source,
       startedAt: Date.now(),
     })
-    publishPullProgress({ status: 'running', phase: 'fetching', naicsProcessed: resumeFrom, naicsTotal: null })
+    publishPullProgress({
+      status: 'running',
+      phase: 'fetching',
+      naicsProcessed: Number(resumeCursor?.naicsIndex) || 0,
+      naicsTotal: null,
+    })
+    if (data.result) publishPullProgress(data.result)
     startSharedPullPolling()
 
-    return { throttled: false, message: data.message }
+    return { throttled: false, message: data.message, result: data.result }
   }, [])
 
   // ── Auto-resume a stalled run ─────────────────────────────────────────
@@ -398,7 +405,11 @@ export function useSAMOpportunities() {
         if (age > STALL_THRESHOLD_MS) {
           console.log('[SAM] Detected a stalled pull — auto-resuming')
           try {
-            await triggerPull({ force: true, resumeFrom: status.nextNaicsIndex || 0, source: 'recovery' })
+            await triggerPull({
+              force: true,
+              resumeCursor: status.nextCursor || { naicsIndex: status.nextNaicsIndex || 0, offset: 0 },
+              source: 'recovery',
+            })
           } catch (err) {
             console.warn('[SAM] Auto-resume of a stalled pull failed:', err.message)
             publishPullProgress(null)
@@ -413,28 +424,25 @@ export function useSAMOpportunities() {
   // rather than requiring the user to refresh and press Pull again.
   useEffect(() => {
     if (pullProgress?.status !== 'partial' || continuingRef.current) return
-    const resumeFrom = Number(pullProgress.nextNaicsIndex) || 0
-    const written = Number(pullProgress.written) || 0
-
-    if (written === 0) {
-      const previousZeroWritePartials = zeroWritePartialsRef.current.get(resumeFrom) || 0
-      if (previousZeroWritePartials >= 1) {
-        const error = 'Pull stopped to avoid repeating a zero-opportunity continuation. Please refresh after the deployed Worker update.'
-        console.warn('[SAM]', error, { resumeFrom, pullProgress })
-        publishPullProgress({ ...pullProgress, status: 'error', error })
-        return
-      }
-      zeroWritePartialsRef.current.set(resumeFrom, previousZeroWritePartials + 1)
-    } else {
-      // A successful write means a repeated cursor is normal: the Worker
-      // deliberately resumes the same NAICS code to process the next chunk.
-      zeroWritePartialsRef.current.delete(resumeFrom)
+    const resumeCursor = pullProgress.nextCursor || {
+      naicsIndex: Number(pullProgress.nextNaicsIndex) || 0,
+      offset: 0,
     }
+    const cursorKey = `${resumeCursor.naicsIndex}:${resumeCursor.offset}`
+    const previousVisits = zeroWritePartialsRef.current.get(cursorKey) || 0
+    if (previousVisits >= 1) {
+      const error = 'Pull stopped because its checkpoint did not advance. Please try the pull again.'
+      console.warn('[SAM]', error, { resumeCursor, pullProgress })
+      publishPullProgress({ ...pullProgress, status: 'error', error })
+      return
+    }
+    zeroWritePartialsRef.current.clear()
+    zeroWritePartialsRef.current.set(cursorKey, previousVisits + 1)
 
     continuingRef.current = true
     ;(async () => {
       try {
-        await triggerPull({ resumeFrom, source: 'recovery' })
+        await triggerPull({ resumeCursor, source: 'recovery' })
       } catch (err) {
         console.warn('[SAM] Automatic continuation failed:', err.message)
         publishPullProgress({ ...pullProgress, status: 'error', error: err.message })
