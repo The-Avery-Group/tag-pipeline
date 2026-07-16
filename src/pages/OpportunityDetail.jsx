@@ -160,7 +160,6 @@ function localDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00`) : new Date(NaN)
 }
 
-function EightAExitCallout({ entityData, loading, error, contractEndDate, onAddNote, addingNote, noteAdded }) {
 function sbaProfileUrl(entityData, incumbentUEI) {
   const uei = String(entityData?.uei || incumbentUEI || '').trim().toUpperCase()
   const cageCode = String(entityData?.cageCode || '').trim().toUpperCase()
@@ -176,8 +175,6 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
   const exitDate = entityData?.eightA?.exitDate
   if (!exitDate) {
     if (loading) return <div className={`${styles.eightACallout} ${styles.eightALoading}`}>Checking 8(a) status…</div>
-    if (error) return <div className={`${styles.eightACallout} ${styles.eightALoading}`} title={error}>8(a) status unavailable</div>
-    return null
     if (!entityData && !error) return null
 
     const sbaLink = sbaProfileUrl(entityData, incumbentUEI)
@@ -210,18 +207,11 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
   const exited = exit < today
   const exitsBeforeContractEnd = !exited && !Number.isNaN(contractEnd.getTime()) && exit < contractEnd
   const tone = exited ? styles.eightAGreen : exit <= sixMonthsFromNow ? styles.eightAAmber : styles.eightARed
-  const uei = String(entityData?.uei || '').trim().toUpperCase()
-  const cageCode = String(entityData?.cageCode || '').trim().toUpperCase()
-  const sbaProfileLink = /^[A-Z0-9]{12}$/.test(uei) && /^[A-Z0-9]{5}$/.test(cageCode)
-    ? `https://search.certifications.sba.gov/profile/${encodeURIComponent(uei)}/${encodeURIComponent(cageCode)}?page=1`
-    : 'https://search.certifications.sba.gov/'
   const sbaLink = sbaProfileUrl(entityData, incumbentUEI)
 
   return (
     <div className={`${styles.eightACallout} ${tone}`}>
       <span>8(a) exit: <strong>{formatDate(dateOnly(exitDate))}</strong></span>
-      {exited ? <strong>Out of program</strong> : exitsBeforeContractEnd ? <strong>Exits before contract end</strong> : null}
-      <span className={styles.eightASource}>Source: SBA Entity Management API · <a href={sbaProfileLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
       {exited ? <strong>Past exit date. Verify on SBA</strong> : exitsBeforeContractEnd ? <strong>Exits before contract end</strong> : null}
       <span className={styles.eightASource}>Source: SBA Entity Management API · <a href={sbaLink} target="_blank" rel="noreferrer">Verify on SBA</a></span>
       <button type="button" className={styles.eightAAddNote} onClick={onAddNote} disabled={addingNote || noteAdded}>
