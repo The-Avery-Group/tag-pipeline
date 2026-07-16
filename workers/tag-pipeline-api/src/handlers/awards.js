@@ -13,6 +13,10 @@ const CACHE_TTL_SECONDS = 24 * 60 * 60
 const PAGE_SIZE = 100
 const MAX_PAGES = 4
 const MAX_AWARD_NOTICE_LOOKUPS = 5
+// A broad BPA lookup can contain hundreds of task-order families. Enriching
+// each family requires additional SAM requests, which can exceed the Worker
+// subrequest limit. Return a useful, bounded set and ask the user to refine.
+const MAX_RESULT_FAMILIES = 5
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -436,10 +440,18 @@ async function handleLookup(req, env) {
   const url = new URL(req.url)
   const piid = url.searchParams.get('piid')?.trim()
   const solicitationID = url.searchParams.get('solicitationID')?.trim()
+  const referencedIdvPiid = url.searchParams.get('referencedIdvPiid')?.trim()
+  const incumbentUEI = url.searchParams.get('incumbentUEI')?.trim().toUpperCase()
+  const incumbentName = url.searchParams.get('incumbentName')?.trim()
   const forceRefresh = url.searchParams.get('refresh') === '1'
-  if (!piid && !solicitationID) return json({ error: 'Provide at least one of: piid, solicitationID' }, 400)
+  if (!piid && !solicitationID && !referencedIdvPiid) {
+    return json({ error: 'Provide at least one of: piid, solicitationID, referencedIdvPiid' }, 400)
+  }
+  if (referencedIdvPiid && !incumbentUEI && !incumbentName) {
+    return json({ error: 'A BPA task-order search requires an incumbent UEI or awardee name.' }, 400)
+  }
 
-  const cacheKey = `awards_lookup:v5:${piid || ''}:${solicitationID || ''}`
+  const cacheKey = `awards_lookup:v6:${piid || ''}:${solicitationID || ''}:${referencedIdvPiid || ''}:${incumbentUEI || ''}:${incumbentName || ''}`
   if (!forceRefresh) {
     const cached = await getCached(env, cacheKey)
     if (cached) {
@@ -455,6 +467,15 @@ async function handleLookup(req, env) {
     const calls = []
     if (piid) calls.push(fetchAwards(env, { piid }).then(({ records }) => records.map((record) => ({ ...record, _matchedBy: ['PIID'] }))))
     if (solicitationID) calls.push(fetchAwards(env, { solicitationID }).then(({ records }) => records.map((record) => ({ ...record, _matchedBy: ['Solicitation Number'] }))))
+    if (referencedIdvPiid) {
+      const taskOrderParams = { referencedIdvPiid }
+      if (incumbentUEI) taskOrderParams.awardeeUniqueEntityId = incumbentUEI
+      else taskOrderParams.awardeeLegalBusinessName = incumbentName
+      calls.push(fetchAwards(env, taskOrderParams).then(({ records }) => records.map((record) => ({
+        ...record,
+        _matchedBy: [incumbentUEI ? 'BPA task order and incumbent UEI' : 'BPA task order and awardee name'],
+      }))))
+    }
     let records = dedupeRecords((await Promise.all(calls)).flat())
 
     // Preserve the identifier exactly in the pipeline. This is a search-only
@@ -466,11 +487,20 @@ async function handleLookup(req, env) {
     }
 
     const families = groupByAwardFamily(records)
-    const results = await Promise.all(families.map((family, index) => buildResult(env, family, index < MAX_AWARD_NOTICE_LOOKUPS)))
+      .sort((a, b) => recordDate(b[b.length - 1]) - recordDate(a[a.length - 1]))
+    const visibleFamilies = families.slice(0, MAX_RESULT_FAMILIES)
+    // Keep enrichment sequential and bounded. Besides preventing a runaway
+    // request count, this stays below the six simultaneous connections limit.
+    const results = []
+    for (let index = 0; index < visibleFamilies.length; index++) {
+      results.push(await buildResult(env, visibleFamilies[index], index < MAX_AWARD_NOTICE_LOOKUPS))
+    }
     const cachedAt = new Date().toISOString()
     const response = {
       results,
       count: results.length,
+      totalFamilies: families.length,
+      truncated: families.length > visibleFamilies.length,
       cachedAt,
       cacheExpiresAt: new Date(Date.now() + CACHE_TTL_SECONDS * 1000).toISOString(),
     }
