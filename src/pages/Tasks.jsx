@@ -438,7 +438,8 @@ export default function Tasks({ toast }) {
         <div ref={listPaneRef} className={styles.listPane}>
           {/* Filter + group bar */}
           <div className={styles.controls}>
-            <div className={styles.primaryControls}>
+            <div className={styles.controlsRow}>
+              <div className={styles.controlClusters}>
               <div className={styles.controlGroup}>
                 <span className={styles.controlLabel}>Status</span>
                 <div className="filter-chips">
@@ -461,33 +462,17 @@ export default function Tasks({ toast }) {
                   ))}
                 </div>
               </div>
-            </div>
-            <div className={styles.secondaryControls}>
-              <button
-                className={`filter-chip ${hideDone ? 'active' : ''}`}
-                onClick={() => setHideDone((value) => !value)}
-              >
-                Hide completed
-              </button>
-              <div className={styles.controlDivider} />
               <div className={styles.controlGroup}>
                 <span className={styles.controlLabel}>Group</span>
-                {GROUPS.map((g) => (
-                  <button key={g} className={`filter-chip ${groupBy === g ? 'active' : ''}`}
-                    onClick={() => setGroupBy(g)}>
-                    {g}
-                  </button>
-                ))}
+                <select className={styles.controlSelect} value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Group tasks by">
+                  {GROUPS.map((group) => <option key={group} value={group}>{group}</option>)}
+                </select>
               </div>
-              <div className={styles.controlDivider} />
               <div className={styles.controlGroup}>
                 <span className={styles.controlLabel}>Sort</span>
-                {SORTS.map((s) => (
-                  <button key={s} className={`filter-chip ${sortBy === s ? 'active' : ''}`}
-                    onClick={() => setSortBy(s)}>
-                    {s}
-                  </button>
-                ))}
+                <select className={styles.controlSelect} value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Sort tasks by">
+                  {SORTS.map((sort) => <option key={sort} value={sort}>{sort}</option>)}
+                </select>
                 <button
                   className="btn btn-ghost btn-icon text-xs"
                   onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
@@ -497,6 +482,13 @@ export default function Tasks({ toast }) {
                   {sortDir === 'asc' ? '↑' : '↓'}
                 </button>
               </div>
+              </div>
+              <button
+                className={`filter-chip ${hideDone ? '' : 'active'}`}
+                onClick={() => setHideDone((value) => !value)}
+              >
+                {hideDone ? 'Show completed' : 'Hide completed'}
+              </button>
             </div>
           </div>
 
