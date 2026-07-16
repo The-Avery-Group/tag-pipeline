@@ -57,6 +57,7 @@ function ModificationTabs({ modifications, activeIndex, onSelect }) {
 
 function fieldsForModification(fields, modification) {
   if (!modification) return fields
+  if (modification.snapshotFields) return modification.snapshotFields
   const withoutLatestModification = Object.fromEntries(
     Object.entries(fields || {}).filter(([, field]) => field.section !== 'Latest modification')
   )
@@ -232,6 +233,7 @@ export default function Lookup({ toast }) {
           const modifications = r.modifications || []
           const activeModificationIndex = Math.min(selectedModification[piid] ?? 0, Math.max(modifications.length - 1, 0))
           const activeFields = fieldsForModification(r.fields, modifications[activeModificationIndex])
+          const viewingLatestModification = activeModificationIndex === 0
 
           return (
             <div key={piid || Math.random()}>
@@ -240,6 +242,11 @@ export default function Lookup({ toast }) {
                 activeIndex={activeModificationIndex}
                 onSelect={(index) => setSelectedModification((previous) => ({ ...previous, [piid]: index }))}
               />
+              {modifications.length > 0 && (
+                <p className="text-xs text-muted" style={{ margin: '0 0 8px' }}>
+                  Each tab shows data reported by SAM for that modification. Values from later modifications are not carried back.
+                </p>
+              )}
               <AwardRecordCard
                 piid={piid}
                 isIDV={isIDV}
@@ -263,7 +270,7 @@ export default function Lookup({ toast }) {
                 }}
                 refreshing={loading}
                 fields={activeFields}
-                contractLifecycleAlert={r.contractLifecycleAlert}
+                contractLifecycleAlert={viewingLatestModification ? r.contractLifecycleAlert : null}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6, marginBottom: 14 }}>
                 {already
