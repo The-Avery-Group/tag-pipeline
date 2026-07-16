@@ -48,6 +48,20 @@ function normalizedIdentifier(value) {
   return normalizeIdentifier(value).replace(/-/g, '')
 }
 
+function identifierVariants(value) {
+  const exact = normalizeIdentifier(value)
+  const withoutDashes = normalizedIdentifier(value)
+  return [...new Set([exact, withoutDashes].filter(Boolean))]
+}
+
+function awardeeUei(record) {
+  return normalizeIdentifier(record?.awardDetails?.awardeeData?.awardeeUEIInformation?.uniqueEntityId)
+}
+
+function awardeeName(record) {
+  return normalizeIdentifier(record?.awardDetails?.awardeeData?.awardeeHeader?.awardeeName)
+}
+
 function stableRecordId(record) {
   const contract = record?.contractId || {}
   return [
@@ -283,6 +297,66 @@ async function fetchAwards(env, params) {
   return { records, aggregation }
 }
 
+async function fetchByIdentifierVariants(env, parameter, value, additionalParams = {}) {
+  const variants = identifierVariants(value)
+  let records = []
+  let matchedVariant = null
+
+  for (const variant of variants) {
+    const response = await fetchAwards(env, { ...additionalParams, [parameter]: variant })
+    if (response.records.length > 0) {
+      records = response.records
+      matchedVariant = variant
+      break
+    }
+  }
+
+  return { records, matchedVariant, usedNormalizedIdentifier: matchedVariant && matchedVariant !== variants[0] }
+}
+
+async function fetchBpaTaskOrders(env, referencedIdvPiid, incumbentUEI, incumbentName) {
+  const candidateLabel = incumbentUEI ? 'incumbent UEI' : 'awardee name'
+  const candidateValue = incumbentUEI ? normalizeIdentifier(incumbentUEI) : normalizeIdentifier(incumbentName)
+  const candidateParameter = incumbentUEI ? 'awardeeUniqueEntityId' : 'awardeeLegalBusinessName'
+  const candidateMatches = incumbentUEI
+    ? (record) => awardeeUei(record) === candidateValue
+    : (record) => awardeeName(record) === candidateValue
+
+  // The API supports the combined query. Start there because it is the most
+  // efficient, exact result. Some historic award records are not indexed
+  // consistently for the combined filter, so fall back to the same BPA
+  // search and locally retain only the exact supplied awardee.
+  const direct = await fetchByIdentifierVariants(
+    env,
+    'referencedIdvPiid',
+    referencedIdvPiid,
+    { [candidateParameter]: candidateValue }
+  )
+  if (direct.records.length > 0) {
+    return {
+      records: direct.records,
+      usedNormalizedIdentifier: direct.usedNormalizedIdentifier,
+      locallyVerified: false,
+      candidateLabel,
+    }
+  }
+
+  for (const variant of identifierVariants(referencedIdvPiid)) {
+    const response = await fetchAwards(env, { referencedIdvPiid: variant })
+    const verified = response.records.filter(candidateMatches)
+    if (verified.length > 0) {
+      return {
+        records: verified,
+        usedNormalizedIdentifier: variant !== identifierVariants(referencedIdvPiid)[0],
+        locallyVerified: true,
+        candidateLabel,
+      }
+    }
+  }
+
+  return { records: [], usedNormalizedIdentifier: false, locallyVerified: false, candidateLabel }
+}
+
 async function fetchPiidAggregation(env, piid) {
   if (!piid) return null
   try {
@@ -498,14 +572,27 @@ async function handleLookup(req, env) {
   try {
     const calls = []
     if (piid) calls.push(fetchAwards(env, { piid }).then(({ records }) => records.map((record) => ({ ...record, _matchedBy: ['PIID'] }))))
-    if (solicitationID) calls.push(fetchAwards(env, { solicitationID }).then(({ records }) => records.map((record) => ({ ...record, _matchedBy: ['Solicitation Number'] }))))
+    if (solicitationID) {
+      calls.push(fetchByIdentifierVariants(env, 'solicitationID', solicitationID).then(({ records, usedNormalizedIdentifier }) => (
+        records.map((record) => ({
+          ...record,
+          _matchedBy: [usedNormalizedIdentifier ? 'Solicitation Number (without dashes)' : 'Solicitation Number'],
+        }))
+      )))
+    }
     if (referencedIdvPiid) {
-      const taskOrderParams = { referencedIdvPiid }
-      if (incumbentUEI) taskOrderParams.awardeeUniqueEntityId = incumbentUEI
-      else taskOrderParams.awardeeLegalBusinessName = incumbentName
-      calls.push(fetchAwards(env, taskOrderParams).then(({ records }) => records.map((record) => ({
+      calls.push(fetchBpaTaskOrders(env, referencedIdvPiid, incumbentUEI, incumbentName).then(({
+        records,
+        usedNormalizedIdentifier,
+        locallyVerified,
+        candidateLabel,
+      }) => records.map((record) => ({
         ...record,
-        _matchedBy: [incumbentUEI ? 'BPA task order and incumbent UEI' : 'BPA task order and awardee name'],
+        _matchedBy: [
+          `BPA task order and ${candidateLabel}` +
+          (usedNormalizedIdentifier ? ' (without dashes)' : '') +
+          (locallyVerified ? ' (locally verified)' : ''),
+        ],
       }))))
     }
     let records = dedupeRecords((await Promise.all(calls)).flat())
