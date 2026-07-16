@@ -155,18 +155,6 @@ function extractCurrentStateFields(records, aggregation, awardNotice) {
   }
 }
 
-function extractTransactionFields(record) {
-  const transaction = record?.awardDetails?.transactionData
-  return {
-    modificationNumber: field('Latest modification', 'Modification Number', { value: record?.contractId?.modificationNumber ?? null, source: sourceFor(record) }),
-    dateSigned: field('Latest modification', 'Date Signed', { value: record?.awardDetails?.dates?.dateSigned ?? null, source: sourceFor(record) }, null, { format: 'date' }),
-    reasonForModification: field('Latest modification', 'Reason for Modification', { value: record?.contractId?.reasonForModification?.name ?? null, source: sourceFor(record) }, null, { fullWidth: true }),
-    approvedDate: field('Latest modification', 'Approved Date', { value: transaction?.approvedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
-    samLastModifiedBy: field('Latest modification', 'SAM Record Last Modified By', { value: transaction?.lastModifiedBy ?? null, source: sourceFor(record) }),
-    samLastModifiedDate: field('Latest modification', 'SAM Record Last Modified Date', { value: transaction?.lastModifiedDate ?? null, source: sourceFor(record) }, null, { format: 'date' }),
-  }
-}
-
 // A later option exercise means the contract is treated as active again for
 // the purposes of this UI alert. Other later modifications do not clear a
 // termination, cancellation, or close-out event.
@@ -220,20 +208,15 @@ function getContractLifecycleAlert(records) {
   let alert = null
 
   for (const record of records) {
-    const reason = record?.contractId?.reasonForModification
-    const code = String(reason?.code || '').trim().toUpperCase()
     const code = String(record?.contractId?.reasonForModification?.code || '').trim().toUpperCase()
     if (code === 'G') {
       alert = null
       continue
     }
-    if (!LIFECYCLE_REASON_TYPES[code]) continue
     const lifecycleReason = getLifecycleReason(record)
     if (!lifecycleReason) continue
 
     alert = {
-      type: LIFECYCLE_REASON_TYPES[code],
-      reason: reason?.name || LIFECYCLE_REASON_FALLBACKS[code],
       ...lifecycleReason,
       modificationNumber: record?.contractId?.modificationNumber || null,
       transactionNumber: record?.contractId?.transactionNumber || null,
@@ -456,7 +439,6 @@ async function handleLookup(req, env) {
   const forceRefresh = url.searchParams.get('refresh') === '1'
   if (!piid && !solicitationID) return json({ error: 'Provide at least one of: piid, solicitationID' }, 400)
 
-  const cacheKey = `awards_lookup:v4:${piid || ''}:${solicitationID || ''}`
   const cacheKey = `awards_lookup:v5:${piid || ''}:${solicitationID || ''}`
   if (!forceRefresh) {
     const cached = await getCached(env, cacheKey)
