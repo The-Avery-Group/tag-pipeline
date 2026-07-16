@@ -30,13 +30,11 @@
  */
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
-const PAGE_SIZE = 500
-// Was referenced (`sleep(PAGE_DELAY)`) but never defined anywhere in this file —
-// pre-existing bug, unrelated to this changeset. Fixed opportunistically since
-// it's directly adjacent to code being touched here; a missing constant means
-// `sleep(undefined)` → NaN delay → effectively no pause between paginated
-// SAM.gov requests, which risks tripping their rate limiter on large result sets.
-const PAGE_DELAY = 250   // ms between paginated SAM.gov requests
+// Pulls are intentionally paged in small, checkpointable units. The browser
+// advances the next unit while it remains open, which is reliable with the
+// current delegated Graph token and avoids depending on waitUntil().
+const PAGE_SIZE = 10
+const PAGE_DELAY = 250   // ms between paginated follow-up requests
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
 // SAM rejects a range whose endpoints are exactly a calendar year apart in
@@ -49,7 +47,7 @@ const MAX_SAM_DATE_RANGE_DAYS = 364
 // every Graph API read/write/delete, and every KV put/get all count against
 // this. Kept as module-level constants so the write cap and the delete cap
 // can be reasoned about together.
-const MAX_WRITES_PER_RUN  = 15
+const MAX_WRITES_PER_RUN  = 10
 const MAX_DELETES_PER_RUN = 10
 
 // Hardcoded — matches frontend graphService.js constant exactly
@@ -259,45 +257,40 @@ async function appendOpportunity(env, token, data) {
 
 // ── SAM API fetcher ───────────────────────────────────────────────────────
 
-async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, rdlTo) {
-  const records = []
-  let offset = 0
-  let total  = null
+async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, rdlTo, offset = 0) {
+  const params = new URLSearchParams({
+    api_key:    env.SAM_API_KEY,
+    ptype:      'r',
+    ncode:      naicsCode,
+    postedFrom,
+    postedTo,
+    rdlfrom:    rdlFrom,
+    rdlto:      rdlTo,
+    limit:      String(PAGE_SIZE),
+    offset:     String(offset),
+  })
 
-  while (true) {
-    const params = new URLSearchParams({
-      api_key:    env.SAM_API_KEY,
-      ptype:      'r',
-      ncode:      naicsCode,
-      postedFrom,
-      postedTo,
-      rdlfrom:    rdlFrom,
-      rdlto:      rdlTo,
-      limit:      String(PAGE_SIZE),
-      offset:     String(offset),
-    })
+  const res = await fetchWithRetry(`${SAM_BASE}?${params}`)
 
-    const res = await fetchWithRetry(`${SAM_BASE}?${params}`)
-
-    if (res.status === 401) {
-      await setKeyExpired(env, true)
-      throw Object.assign(new Error('SAM API key expired or invalid'), { code: 'KEY_EXPIRED' })
-    }
-    if (!res.ok) {
-      const body = await res.text()
-      throw new Error(`SAM API error ${res.status}: ${body.slice(0, 200)}`)
-    }
-
-    const data = await res.json()
-    const page = data.opportunitiesData || []
-    if (total === null) total = data.totalRecords || 0
-    records.push(...page)
-    if (page.length === 0 || records.length >= total) break
-    offset += PAGE_SIZE
-    await sleep(PAGE_DELAY)
+  if (res.status === 401) {
+    await setKeyExpired(env, true)
+    throw Object.assign(new Error('SAM API key expired or invalid'), { code: 'KEY_EXPIRED' })
+  }
+  if (res.status === 204) return { records: [], nextOffset: offset, hasMore: false }
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`SAM API error ${res.status}: ${body.slice(0, 200)}`)
   }
 
-  return records
+  const data = await res.json()
+  const records = data.opportunitiesData || []
+  const total = Number(data.totalRecords)
+  const nextOffset = offset + records.length
+  return {
+    records,
+    nextOffset,
+    hasMore: records.length === PAGE_SIZE && (!Number.isFinite(total) || nextOffset < total),
+  }
 }
 
 // ── Map a SAM record to our column structure ──────────────────────────────
@@ -534,12 +527,18 @@ async function handleFollowUps(req, env) {
 
 // ── Core pull logic (shared by trigger) ──────────────────────────────────
 
-async function runSAMPull(env, token, config, resumeFrom = 0) {
+async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeFrom = 0) {
   const runStart = new Date().toISOString()
   console.log('[SAM] Pull started:', runStart)
 
   const { naicsCodes = [], skipDays = 3, windowDays = 90 } = config
-  const startIndex = Math.max(0, Math.min(Number(resumeFrom) || 0, naicsCodes.length))
+  const startIndex = Math.max(
+    0,
+    Math.min(Number(resumeCursor?.naicsIndex ?? legacyResumeFrom) || 0, naicsCodes.length)
+  )
+  const startOffset = startIndex < naicsCodes.length
+    ? Math.max(0, Number(resumeCursor?.offset) || 0)
+    : 0
 
   if (!naicsCodes.length) {
     const err = 'No NAICS codes provided'
@@ -555,6 +554,7 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
   await setRunLog(env, {
     status: 'running', phase: 'fetching', timestamp: runStart, startedAt: runStart,
     naicsTotal: naicsCodes.length, naicsProcessed: startIndex, nextNaicsIndex: startIndex,
+    nextCursor: { naicsIndex: startIndex, offset: startOffset },
   })
 
   // Build date ranges
@@ -619,10 +619,8 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
   // ── Phase 1: fetch + buffer candidates (not written yet) ───────────────
   // Buffering before writing lets us resolve Solicitation-Number dedup
   // correctly across the whole batch instead of writing blindly as we go.
-  // Stops once we've buffered roughly enough candidates to fill this run's
-  // write cap (mirrors the previous early-exit-on-cap behavior) so we don't
-  // spend the full NAICS-list fetch budget on runs that would hit the write
-  // cap anyway — any NAICS codes left unprocessed are picked up next run.
+  // Every invocation fetches exactly one small page for one NAICS code. Its
+  // cursor is persisted before the next page or NAICS code is started.
   //
   // Wrapped so a hard failure here (expired key, systemic SAM.gov outage)
   // is *recorded* rather than thrown immediately — cleanup below only
@@ -639,79 +637,61 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
   const candidates  = []   // { mapped, noticeId, noticeKey, solNum }
   let fatalError = null
 
-  for (let naicsIndex = startIndex; naicsIndex < naicsCodes.length; naicsIndex++) {
-    const naics = naicsCodes[naicsIndex]
-    if (fatalError) break
-    if (candidates.length >= MAX_WRITES_PER_RUN) {
-      hasMoreWork = true
-      nextNaicsIndex = naicsIndex
-      naicsErrors.push(`Write capacity reached — ${naicsCodes.length - naicsIndex} NAICS code(s) will continue automatically`)
-      break
-    }
-
-    let records
+  let nextCursor = { naicsIndex: startIndex, offset: startOffset }
+  if (startIndex < naicsCodes.length) {
+    const naics = naicsCodes[startIndex]
+    let page
     try {
-      records = await fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo)
-      console.log(`[SAM] NAICS ${naics}: ${records.length} record(s)`)
-      totalFetched += records.length
+      page = await fetchSAMForNAICS(env, naics, postedFrom, postedTo, rdlFrom, rdlTo, startOffset)
+      console.log(`[SAM] NAICS ${naics}, offset ${startOffset}: ${page.records.length} record(s)`)
+      totalFetched += page.records.length
     } catch (err) {
       if (err.code === 'KEY_EXPIRED') {
         fatalError = 'SAM API key expired or invalid'
-        naicsProcessed = naicsIndex + 1
-        break
+      } else {
+        naicsErrors.push(`NAICS ${naics}: ${err.message}`)
+        console.error('[SAM] Fetch error:', err.message)
+        if (/SAM API error 5\d\d/.test(err.message)) {
+          fatalError = `SAM.gov API appears to be unavailable (${err.message}). Try the pull again shortly.`
+        } else {
+          // A malformed or isolated NAICS request should not block all later
+          // codes. Move to the next code and surface the warning at the end.
+          nextNaicsIndex = startIndex + 1
+          naicsProcessed = nextNaicsIndex
+          nextCursor = { naicsIndex: nextNaicsIndex, offset: 0 }
+          hasMoreWork = nextNaicsIndex < naicsCodes.length
+        }
       }
-
-      naicsErrors.push(`NAICS ${naics}: ${err.message}`)
-      console.error('[SAM] Fetch error:', err.message)
-
-      // If the very FIRST NAICS code we attempt fails with a server-side
-      // (5xx) error — even after the retries already attempted inside
-      // fetchSAMForNAICS — this is very likely a systemic SAM.gov outage
-      // rather than a one-off blip on that specific request. Stop
-      // immediately instead of burning the rest of the run's subrequest
-      // budget hammering a dead upstream with every remaining NAICS code.
-      // A failure on a LATER code, after others already succeeded, is
-      // treated as an isolated per-request issue and doesn't abort the run.
-      if (naicsIndex === startIndex && /SAM API error 5\d\d/.test(err.message)) {
-        fatalError = `SAM.gov API appears to be unavailable (${err.message}). Will retry automatically on the next pull.`
-        console.error('[SAM]', fatalError)
-        naicsProcessed = naicsIndex + 1
-        break
-      }
-
-      naicsProcessed = naicsIndex + 1
-      nextNaicsIndex = naicsIndex + 1
-      continue
     }
 
-    for (const raw of records) {
+    if (!fatalError && page) {
+      for (const raw of page.records) {
       const noticeId = String(raw.noticeId || '').trim()
       const noticeKey = normalizeNoticeId(noticeId)
       if (!noticeId || existingIds.has(noticeKey)) continue
       if (String(raw.active || '').toLowerCase() !== 'yes') continue
       const mapped = mapRecord(raw, naics)
       const solNum = normalizeSolNum(mapped['Solicitation Number'])
-      // Do this inexpensive dedup check BEFORE filling the bounded chunk.
-      // Without it, a batch of stale variants can consume all 15 slots,
-      // later collapse to zero writes, and repeatedly resume the same NAICS.
+      // Deduplicate before buffering. A page is at most ten records, matching
+      // the write cap for this checkpointed pull unit.
       const knownSol = solNum ? solNumIndex.get(solNum) : null
       if (knownSol && !newerRecord(mapped['Posted Date'], knownSol.postedDate)) continue
 
       candidates.push({ mapped, noticeId, noticeKey, solNum })
-      if (candidates.length >= MAX_WRITES_PER_RUN) {
-        // Resume this same NAICS code next time. Already-written notice IDs
-        // will be skipped, allowing the next chunk to make progress without
-        // losing the rest of a large SAM response.
-        hasMoreWork = true
-        nextNaicsIndex = naicsIndex
-        naicsErrors.push(`Write capacity reached while processing NAICS ${naics}; continuing automatically`)
-        break
-      }
     }
 
-    if (hasMoreWork) break
-    naicsProcessed = naicsIndex + 1
-    nextNaicsIndex = naicsIndex + 1
+      if (page.hasMore) {
+        hasMoreWork = true
+        nextNaicsIndex = startIndex
+        naicsProcessed = startIndex
+        nextCursor = { naicsIndex: startIndex, offset: page.nextOffset }
+      } else {
+        nextNaicsIndex = startIndex + 1
+        naicsProcessed = nextNaicsIndex
+        hasMoreWork = nextNaicsIndex < naicsCodes.length
+        nextCursor = { naicsIndex: nextNaicsIndex, offset: 0 }
+      }
+    }
   }
 
   // ── Resolve dedup ────────────────────────────────────────────────────────
@@ -762,6 +742,7 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
       // start of this chunk. Existing Notice IDs make that retry idempotent;
       // resuming at the next NAICS could otherwise lose rows not yet written.
       naicsTotal: naicsCodes.length, naicsProcessed, nextNaicsIndex: startIndex,
+      nextCursor: { naicsIndex: startIndex, offset: startOffset },
       toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: 0,
     })
 
@@ -805,6 +786,7 @@ async function runSAMPull(env, token, config, resumeFrom = 0) {
     status:    complete ? 'success' : 'partial',
     timestamp: runStart,
     nextNaicsIndex,
+    nextCursor,
     naicsTotal: naicsCodes.length,
     naicsProcessed,
     fetched:   totalFetched,
@@ -903,13 +885,13 @@ export async function handleSAM(req, env, ctx) {
       return json({ error: 'Invalid JSON body' }, 400)
     }
 
-    const { token, config, force = false, resumeFrom = 0 } = body
+    const { token, config, force = false, resumeCursor = null, resumeFrom = 0 } = body
 
     if (!token) return json({ error: 'Missing token in request body' }, 400)
     if (!config?.naicsCodes?.length) return json({ error: 'Missing or empty config.naicsCodes' }, 400)
 
     // 12h throttle check (skipped when force=true, e.g. Settings page force pull)
-    if (!force && !resumeFrom) {
+    if (!force && !resumeCursor && !resumeFrom) {
       const lastLog = await getRunLog(env)
       if (lastLog?.success && lastLog?.timestamp) {
         const lastRun  = new Date(lastLog.timestamp)
@@ -925,18 +907,19 @@ export async function handleSAM(req, env, ctx) {
       }
     }
 
-    // Run in background so response returns immediately
-    const pullPromise = runSAMPull(env, token, config, resumeFrom)
-    if (ctx?.waitUntil) ctx.waitUntil(pullPromise)
-    else pullPromise.catch((err) => console.error('[SAM] Pull error:', err))
-
+    // Complete one small, checkpointed chunk while the browser request is
+    // still open. This is deliberately not waitUntil(): delegated Graph
+    // access is only reliable while the user keeps the app open, whereas a
+    // waitUntil task can be terminated shortly after this response returns.
+    const result = await runSAMPull(env, token, config, resumeCursor, resumeFrom)
     return json({
-      ok:      true,
-      message: resumeFrom
-        ? 'SAM pull continuation started — remaining opportunities are being written'
-        : 'SAM pull started — check /sam/run-status in a few minutes for results',
+      ok: true,
+      message: result.status === 'partial'
+        ? 'SAM pull chunk completed. Continuing automatically.'
+        : 'SAM pull completed.',
       force,
-      resumeFrom,
+      resumeCursor,
+      result,
     })
   }
 
