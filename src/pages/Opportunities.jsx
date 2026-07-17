@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hooks/useSAMOpportunities'
+import { useSAMChangeMonitor } from '@/hooks/useSAMChangeMonitor'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
@@ -432,6 +433,8 @@ export default function Opportunities({ toast }) {
     pullOrigin,
   } = useSAMOpportunities()
 
+  const { changesByRow: samChangesByRow, checking: checkingSAMChanges, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(samOpps)
+
   const [showDismissed, setShowDismissed] = useState(false)
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
@@ -448,6 +451,16 @@ export default function Opportunities({ toast }) {
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
   const [pullMessage,   setPullMessage]   = useState(null)
+  const lastAutomaticSAMCheck = useRef('')
+
+  const handleCheckSAMChanges = async () => {
+    try {
+      await checkSAMChanges()
+      toast?.success('SAM change check completed')
+    } catch (error) {
+      toast?.error(`SAM change check failed: ${error.message}`)
+    }
+  }
 
   useEffect(() => {
     Promise.all([checkSAMKeyExpired(), getSAMRunStatus()])
@@ -638,6 +651,16 @@ export default function Opportunities({ toast }) {
     }
   }, [pullProgress])
 
+  // Refresh remains a discovery pull. Once it has actually completed, run a
+  // separate monitor pass for already-pulled opportunities. This is kept out
+  // of the pull Worker path so it cannot contribute to pull timeouts.
+  useEffect(() => {
+    if (pullProgress?.status !== 'success' || !pullProgress.timestamp) return
+    if (lastAutomaticSAMCheck.current === pullProgress.timestamp) return
+    lastAutomaticSAMCheck.current = pullProgress.timestamp
+    checkSAMChanges().catch((error) => console.warn('[SAM monitor]', error.message))
+  }, [checkSAMChanges, pullProgress])
+
   // Explain a running pull accurately. Settings and the New Opportunities
   // tab share browser-local run state, so a Settings-triggered pull is not
   // described as though another user or device started it.
@@ -662,6 +685,21 @@ export default function Opportunities({ toast }) {
     if (status === 'tracked')           return <span className="badge badge-proposal" style={{ fontSize: 10 }}>Tracked</span>
     if (status === 'dismissed')         return <span className="badge badge-tracking" style={{ fontSize: 10, opacity: 0.6 }}>Dismissed</span>
     return null
+  }
+
+  const samChangeBadge = (opportunity) => {
+    const change = samChangesByRow[opportunity._rowIndex]?.change
+    if (!change || change.reviewedAt) return null
+    return (
+      <button
+        className={styles.samUpdatedBadge}
+        title={change.summary || 'SAM has updated this opportunity.'}
+        onClick={() => markSAMChangeReviewed(opportunity).catch((error) => toast?.error(error.message))}
+      >
+        SAM updated
+        <span className={styles.samUpdatedTooltip}>{change.summary || 'SAM has updated this opportunity.'}<br /><strong>Click to mark reviewed</strong></span>
+      </button>
+    )
   }
 
   // Keep this as a render function, not an inline React component. An inline
@@ -697,6 +735,10 @@ export default function Opportunities({ toast }) {
           <button className="btn text-xs" style={{ padding: '3px 10px' }}
             onClick={() => handlePull()} disabled={isPulling}>
             {isPulling ? '⏳ Pulling…' : '↻ Refresh'}
+          </button>
+          <button className="btn text-xs" style={{ padding: '3px 10px' }}
+            onClick={handleCheckSAMChanges} disabled={checkingSAMChanges || isPulling}>
+            {checkingSAMChanges ? 'Checking SAM…' : 'Check SAM changes'}
           </button>
           {/* Department filter — controlled multi-select, stays open on selection, always visible */}
           {samDepartments.length > 0 && (
@@ -865,6 +907,7 @@ export default function Opportunities({ toast }) {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
                               {samStatusBadge(opp.Status)}
+                              {samChangeBadge(opp)}
                               {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Sync failed</span>}
                             </div>
                           </td>
