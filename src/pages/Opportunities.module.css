@@ -244,3 +244,37 @@
 tr:hover .rowCheckbox {
   opacity: 1;
 }
+
+/* SAM monitor badge: compact by default, with a useful hover explanation. */
+.samUpdatedBadge {
+  position: relative;
+  appearance: none;
+  border: 0.5px solid var(--amber-600);
+  background: var(--amber-50);
+  color: var(--amber-600);
+  border-radius: 10px;
+  padding: 2px 7px;
+  font: 600 10px var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.samUpdatedBadge:hover { background: var(--amber-100); }
+.samUpdatedTooltip {
+  visibility: hidden;
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: calc(100% + 6px);
+  width: 250px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--gray-900);
+  color: var(--surface);
+  box-shadow: 0 4px 12px var(--shadow-color);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+}
+.samUpdatedBadge:hover .samUpdatedTooltip,
+.samUpdatedBadge:focus-visible .samUpdatedTooltip { visibility: visible; }
