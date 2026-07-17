@@ -350,11 +350,16 @@ export default function Opportunities({ toast }) {
     })
   }, [pipeline, activeTab, search, filters, sortKey, sortDir])
 
-  // ── Tab switch — keep search + filters (they persist across tabs now,
-  //    same as they persist across navigation away and back) ────────────
+  // ── Tab switch — filters are scoped to the tab that applied them. Search
+  // remains because it is a separate, deliberate cross-tab lookup.
   const handleTabChange = (tab) => {
-    updateParams({ tab })
+    updateParams({
+      tab,
+      outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
+      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '',
+    })
     setShowFilter(false)
+    setAgencyFilterOpen(false)
   }
 
   // The visible contract/notice number may contain whitespace or characters
