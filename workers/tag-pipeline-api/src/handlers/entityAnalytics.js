@@ -6,6 +6,7 @@ const CONTRACT_CODES = ['A', 'B', 'C', 'D']
 const PAGE_SIZE = 100
 const MAX_AWARD_PAGES = 20
 const AWARD_PAGE_CONCURRENCY = 3
+const UPSTREAM_TIMEOUT_MS = 12_000
 
 function json(data, status = 200) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }) }
 function validUEI(uei) { return /^[A-Z0-9]{12}$/.test(String(uei || '').trim().toUpperCase()) }
@@ -26,15 +27,22 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 async function post(path, body, { attempts = 3 } = {}) {
   let lastStatus = null
   for (let attempt = 0; attempt < attempts; attempt++) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort('USAspending request timed out'), UPSTREAM_TIMEOUT_MS)
     try {
-      const response = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const response = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal })
       if (response.ok) return response.json()
       lastStatus = response.status
       // A 525 is an upstream TLS handshake error. 429 and 5xx responses are
       // similarly transient, so retry them with a short bounded backoff.
       if (![429, 502, 503, 504, 525].includes(response.status) || attempt === attempts - 1) break
     } catch (error) {
-      if (attempt === attempts - 1) throw error
+      if (attempt === attempts - 1) {
+        if (controller.signal.aborted) throw new Error('USAspending did not respond in time. Please try again.')
+        throw error
+      }
+    } finally {
+      clearTimeout(timeout)
     }
     await sleep(350 * (attempt + 1))
   }
