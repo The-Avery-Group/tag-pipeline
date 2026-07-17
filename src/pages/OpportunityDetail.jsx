@@ -245,6 +245,30 @@ function formatCompactCurrency(value) {
   return `${sign}$${absolute.toFixed(0)}`
 }
 
+function roundedAxisLimit(value) {
+  if (!value) return 0
+  const magnitude = 10 ** Math.floor(Math.log10(Math.abs(value)))
+  const scaled = Math.abs(value) / magnitude
+  const rounded = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10
+  return rounded * magnitude
+}
+
+function obligationAxis(series) {
+  let negative = 0
+  let positive = 0
+  series.forEach((item) => {
+    const prime = Number(item.primeValue || 0)
+    const subcontract = Number(item.subcontractValue || 0)
+    negative = Math.min(negative, Math.min(prime, 0) + Math.min(subcontract, 0))
+    positive = Math.max(positive, Math.max(prime, 0) + Math.max(subcontract, 0))
+  })
+  const negativeLimit = negative < 0 ? -roundedAxisLimit(Math.abs(negative) * 1.1) : 0
+  const positiveLimit = positive > 0 ? roundedAxisLimit(positive * 1.08) : 1
+  const step = roundedAxisLimit(positiveLimit / 4)
+  const positiveTicks = Array.from({ length: Math.ceil(positiveLimit / step) + 1 }, (_, index) => index * step)
+  return { domain: [negativeLimit, positiveLimit], ticks: [...(negativeLimit ? [negativeLimit] : []), ...positiveTicks] }
+}
+
 function IncumbentActivityTooltip({ active, label, payload }) {
   if (!active || !payload?.length) return null
   return (
@@ -286,6 +310,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
   const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group, { enabled: open, includeSubcontracts: true })
   if (!valid) return null
   const historySeries = data?.series || []
+  const historyAxis = obligationAxis(historySeries)
   const historyTickInterval = Math.max(0, Math.ceil(historySeries.length / 12) - 1)
   const allAgencies = data?.agencies || []
   const agencyCount = allAgencies.reduce((sum, item) => sum + item.count, 0)
@@ -319,8 +344,8 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
             <div className={styles.incumbentHistoryContent}>
               <div>
                 <div className={styles.incumbentChartTitle}>Net contract obligations</div>
-                <div className={styles.incumbentChartLegend} aria-label="Chart legend"><small>Legend</small><span><i style={{ background: PRIME_OBLIGATION_COLOR }} />Prime contracts</span>{data.subcontractDataAvailable && <span><i style={{ background: SUBCONTRACT_OBLIGATION_COLOR }} />Subcontracts</span>}</div>
-                <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} margin={{ top: 18, right: 12, bottom: 4, left: 4 }}><XAxis dataKey="label" interval={historyTickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><YAxis width={58} tickFormatter={formatCompactCurrency} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><ReferenceLine y={0} stroke="var(--gray-300)" /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentActivityTooltip />} /><Bar dataKey="primeValue" name="Prime contracts" stackId="obligations" fill={PRIME_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />{data.subcontractDataAvailable && <Bar dataKey="subcontractValue" name="Subcontracts" stackId="obligations" fill={SUBCONTRACT_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />}</BarChart></ResponsiveContainer></div>
+                <div className={styles.incumbentChartLegend} aria-label="Chart legend"><span><i style={{ background: PRIME_OBLIGATION_COLOR }} />Prime contracts</span>{data.subcontractDataAvailable && <span><i style={{ background: SUBCONTRACT_OBLIGATION_COLOR }} />Subcontracts</span>}</div>
+                <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} margin={{ top: 18, right: 12, bottom: 4, left: 4 }}><XAxis dataKey="label" interval={historyTickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={{ stroke: 'var(--gray-300)', strokeWidth: 0.75 }} tickLine={false} /><YAxis width={58} domain={historyAxis.domain} ticks={historyAxis.ticks} tickFormatter={formatCompactCurrency} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={{ stroke: 'var(--gray-300)', strokeWidth: 0.75 }} tickLine={false} /><ReferenceLine y={0} stroke="var(--gray-300)" strokeWidth={0.75} /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentActivityTooltip />} /><Bar dataKey="primeValue" name="Prime contracts" stackId="obligations" fill={PRIME_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />{data.subcontractDataAvailable && <Bar dataKey="subcontractValue" name="Subcontracts" stackId="obligations" fill={SUBCONTRACT_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />}</BarChart></ResponsiveContainer></div>
               </div>
               <div className={styles.incumbentAgencyPanel}>
                 <div className={styles.incumbentChartTitle}>Prime contracts by agency</div>
@@ -330,7 +355,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
                 </div>}
               </div>
             </div>
-            <div className="text-xs text-muted">USAspending.gov · Last 5 years · {data.cache === 'cache' ? 'cached' : 'live'}{data.subcontractDataAvailable ? '' : ' · Subcontract data unavailable'} · Negative amounts reflect deobligations or downward modifications.</div>
+            <div className={styles.incumbentHistorySource}>USAspending.gov · Last 5 years · {data.cache === 'cache' ? 'cached' : 'live'}{data.subcontractDataAvailable ? '' : ' · Subcontract data unavailable'} · Negative amounts reflect deobligations or downward modifications.</div>
           </>}
       </div>}
     </div>
