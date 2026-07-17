@@ -125,12 +125,19 @@
 .incumbentHistoryMetrics strong { color: var(--gray-900); font-size: 13px; margin-right: 3px; }
 .incumbentHistoryContent { align-items: start; display: grid; gap: 14px; grid-template-columns: minmax(0, 1.15fr) minmax(220px, .85fr); margin-bottom: 7px; }
 .incumbentChartTitle { color: var(--gray-900); font-size: 11px; font-weight: 600; margin-bottom: 5px; }
+.incumbentChartLegend { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; margin: -1px 0 6px; }
+.incumbentChartLegend small { color: var(--gray-400); font-size: 10px; margin-right: 1px; }
+.incumbentChartLegend span { align-items: center; background: var(--gray-50); border: 0.5px solid var(--gray-200); border-radius: 999px; color: var(--gray-700); display: inline-flex; font-size: 10px; gap: 5px; padding: 2px 6px; }
+.incumbentChartLegend i, .incumbentTooltipRow i { border-radius: 50%; display: inline-block; flex: 0 0 auto; height: 7px; width: 7px; }
 .incumbentActivityChart { height: 280px; min-width: 0; }
 .incumbentAgencyPanel { align-self: start; min-width: 0; }
 .incumbentAgencyLayout { align-items: center; display: grid; grid-template-columns: minmax(180px, .9fr) minmax(150px, 1fr); min-width: 0; }
 .incumbentDoughnut { height: 245px; min-width: 0; }
-.incumbentChartTooltip { background: var(--surface-raised); border: 0.5px solid var(--gray-200); border-radius: var(--radius-sm); box-shadow: 0 2px 8px var(--shadow-color); color: var(--gray-900); display: grid; font-size: 11px; gap: 2px; padding: 6px 8px; }
+.incumbentChartTooltip { background: var(--surface-raised); border: 0.5px solid var(--gray-200); border-radius: var(--radius-sm); box-shadow: 0 4px 14px var(--shadow-color); color: var(--gray-900); display: grid; font-size: 11px; gap: 5px; min-width: 245px; padding: 10px 12px; }
 .incumbentChartTooltip span { color: var(--gray-600); }
+.incumbentTooltipRow { align-items: center; display: grid; gap: 6px; grid-template-columns: auto minmax(0, 1fr) auto; min-width: 0; }
+.incumbentTooltipRow span { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.incumbentTooltipRow strong { color: var(--gray-900); font-weight: 600; justify-self: end; text-align: right; white-space: nowrap; }
 .incumbentHistoryAgencies { display: grid; gap: 3px; }
 .incumbentHistoryAgencies div { display: flex; font-size: 10px; gap: 6px; justify-content: space-between; padding: 2px 0; }
 .incumbentHistoryAgencies span { color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
