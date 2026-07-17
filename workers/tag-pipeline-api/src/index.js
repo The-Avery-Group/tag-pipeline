@@ -14,7 +14,6 @@ import { handleSAM } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
-import { handleEntityAnalytics } from './handlers/entityAnalytics.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -104,9 +103,6 @@ export default {
 
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
-
-      } else if (path === '/entities/award-history' && req.method === 'GET') {
-        response = await handleEntityAnalytics(req, env)
 
       } else {
         response = json({ error: 'Not found' }, 404)
