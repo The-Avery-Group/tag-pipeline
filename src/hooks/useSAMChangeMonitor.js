@@ -17,6 +17,7 @@ function payload(opportunity) {
     Department: opportunity.Department,
     Status: opportunity.Status || 'new',
     'SAM.gov URL': opportunity['SAM.gov URL'],
+    'Date Added': opportunity['Date Added'],
   }
 }
 
@@ -24,6 +25,8 @@ export function useSAMChangeMonitor(opportunities) {
   const [changesByRow, setChangesByRow] = useState({})
   const [run, setRun] = useState(null)
   const [checking, setChecking] = useState(false)
+  const [progress, setProgress] = useState(null)
+  const [checkError, setCheckError] = useState(null)
   const lastSyncFingerprint = useRef('')
   const automaticallyChecked = useRef(false)
 
@@ -52,7 +55,7 @@ export function useSAMChangeMonitor(opportunities) {
 
   const checkChanges = useCallback(async () => {
     if (!WORKER_URL || checking || monitored.length === 0) return
-    setChecking(true)
+    setChecking(true); setCheckError(null); setProgress({ checked: 0, total: monitored.length })
     try {
       await synchronize()
       let cursor = 0
@@ -62,10 +65,17 @@ export function useSAMChangeMonitor(opportunities) {
         })
         if (!response.ok) throw new Error('SAM change check failed')
         const result = await response.json()
+        if (result.errors?.length) {
+          setCheckError(`${result.errors.length} opportunit${result.errors.length === 1 ? 'y' : 'ies'} could not be checked. Try again later.`)
+        }
+        setProgress({ checked: Math.min(result.checked || 0, result.total || monitored.length), total: result.total || monitored.length })
         setRun(result)
         cursor = result.nextCursor
       } while (cursor !== null && cursor !== undefined)
       await loadStatus()
+    } catch (error) {
+      setCheckError(error.message || 'SAM change check failed')
+      throw error
     } finally {
       setChecking(false)
     }
@@ -101,5 +111,5 @@ export function useSAMChangeMonitor(opportunities) {
     }).catch(() => {})
   }, [checkChanges, loadStatus, monitored.length])
 
-  return { changesByRow, checking, run, checkChanges, markReviewed, loadStatus }
+  return { changesByRow, checking, progress, checkError, run, checkChanges, markReviewed, loadStatus }
 }
