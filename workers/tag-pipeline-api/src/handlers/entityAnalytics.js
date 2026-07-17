@@ -5,6 +5,7 @@ const CACHE_TTL = 6 * 60 * 60
 const CONTRACT_CODES = ['A', 'B', 'C', 'D']
 const PAGE_SIZE = 100
 const MAX_AWARD_PAGES = 20
+const AWARD_PAGE_CONCURRENCY = 3
 
 function json(data, status = 200) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }) }
 function validUEI(uei) { return /^[A-Z0-9]{12}$/.test(String(uei || '').trim().toUpperCase()) }
@@ -20,20 +21,40 @@ function filters(uei, yearType) {
   return { time_period: [period(yearType)], recipient_search_text: [uei], award_type_codes: CONTRACT_CODES }
 }
 
-async function post(path, body) {
-  const response = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (!response.ok) throw new Error(`USAspending API error ${response.status}`)
-  return response.json()
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
+
+async function post(path, body, { attempts = 3 } = {}) {
+  let lastStatus = null
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const response = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (response.ok) return response.json()
+      lastStatus = response.status
+      // A 525 is an upstream TLS handshake error. 429 and 5xx responses are
+      // similarly transient, so retry them with a short bounded backoff.
+      if (![429, 502, 503, 504, 525].includes(response.status) || attempt === attempts - 1) break
+    } catch (error) {
+      if (attempt === attempts - 1) throw error
+    }
+    await sleep(350 * (attempt + 1))
+  }
+  if (lastStatus === 525) throw new Error('USAspending is temporarily unavailable. Please try again.')
+  throw new Error(`USAspending API error ${lastStatus || 'unavailable'}`)
 }
 
 async function awardRecords(filter, count) {
   const pages = Math.min(Math.ceil(Number(count || 0) / PAGE_SIZE), MAX_AWARD_PAGES)
-  const requests = Array.from({ length: pages }, (_, index) => post('/search/spending_by_award/', {
-    filters: filter,
-    fields: ['Award ID', 'Award Amount', 'Awarding Agency', 'Start Date', 'End Date'],
-    page: index + 1, limit: PAGE_SIZE, sort: 'Award Amount', order: 'desc', subawards: false,
-  }))
-  const pagesData = await Promise.all(requests)
+  const pagesData = []
+  // Avoid opening twenty external TLS connections at once. USAspending is
+  // more reliable when a large entity history is fetched in small groups.
+  for (let start = 0; start < pages; start += AWARD_PAGE_CONCURRENCY) {
+    const requests = Array.from({ length: Math.min(AWARD_PAGE_CONCURRENCY, pages - start) }, (_, offset) => post('/search/spending_by_award/', {
+      filters: filter,
+      fields: ['Award ID', 'Award Amount', 'Awarding Agency', 'Start Date', 'End Date'],
+      page: start + offset + 1, limit: PAGE_SIZE, sort: 'Award Amount', order: 'desc', subawards: false,
+    }))
+    pagesData.push(...await Promise.all(requests))
+  }
   return { records: pagesData.flatMap((page) => page.results || []), truncated: pages < Math.ceil(Number(count || 0) / PAGE_SIZE) }
 }
 
@@ -70,33 +91,34 @@ export async function handleEntityAnalytics(req, env) {
   const group = { year: yearType === 'fiscal' ? 'fiscal_year' : 'calendar_year', quarter: 'quarter', month: 'month' }[groupParam] || 'calendar_year'
   if (!validUEI(uei)) return json({ error: 'Provide a valid 12-character UEI' }, 400)
 
-  const cacheKey = `entity_award_history:v1:${uei}:${yearType}:${groupParam}`
+  const cacheKey = `entity_award_history:v2:${uei}:${yearType}:${groupParam}`
+  const summaryCacheKey = `entity_award_summary:v1:${uei}:${yearType}`
   const cached = await env.CACHE?.get(cacheKey, 'json')
   if (cached) return json({ ...cached, cache: 'cache' })
 
   try {
     const filter = filters(uei, yearType)
-    const [countResponse, timeSeries] = await Promise.all([
-      post('/search/spending_by_award_count/', { filters: filter, spending_level: 'awards' }),
+    const [cachedSummary, timeSeries] = await Promise.all([
+      env.CACHE?.get(summaryCacheKey, 'json'),
       post('/search/spending_over_time/', { group, filters: filter }),
     ])
-    const contractCount = Number(countResponse?.results?.contracts || 0)
-    const { records, truncated } = await awardRecords(filter, contractCount)
-    const summary = summarizeAwards(records)
+    let summaryData = cachedSummary
+    if (!summaryData) {
+      const countResponse = await post('/search/spending_by_award_count/', { filters: filter, spending_level: 'awards' })
+      const contractCount = Number(countResponse?.results?.contracts || 0)
+      const { records, truncated } = await awardRecords(filter, contractCount)
+      summaryData = { contractCount, displayedAwardCount: records.length, truncated, ...summarizeAwards(records) }
+      await env.CACHE?.put(summaryCacheKey, JSON.stringify(summaryData), { expirationTtl: CACHE_TTL })
+    }
     const result = {
       uei, yearType, group: groupParam, period: period(yearType),
-      contractCount,
-      displayedAwardCount: records.length,
-      truncated,
+      ...summaryData,
+      expiringAwards: summaryData.expiring,
       series: (timeSeries?.results || []).map((item) => ({
         label: Object.values(item.time_period || {}).filter(Boolean).join(' '),
         value: money(item.aggregated_amount),
       })),
       // Values below are award amounts within the chosen five-year window.
-      totalAwardValue: summary.totalAwardValue,
-      averageAwardValue: summary.averageAwardValue,
-      expiringAwards: summary.expiring,
-      agencies: summary.agencies,
       source: 'USAspending.gov',
       fetchedAt: new Date().toISOString(),
     }
