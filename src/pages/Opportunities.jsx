@@ -433,7 +433,7 @@ export default function Opportunities({ toast }) {
     pullOrigin,
   } = useSAMOpportunities()
 
-  const { changesByRow: samChangesByRow, checking: checkingSAMChanges, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(samOpps)
+  const { changesByRow: samChangesByRow, checking: checkingSAMChanges, progress: samCheckProgress, checkError: samCheckError, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(samOpps)
 
   const [showDismissed, setShowDismissed] = useState(false)
   const [samKeyExpired, setSamKeyExpired] = useState(false)
@@ -580,8 +580,12 @@ export default function Opportunities({ toast }) {
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
     try {
-      await undismiss(row._rowIndex)
-      toast?.success('Restored')
+      const pipelineRecord = pipelineByOpportunityKey.get(normalizeOpportunityKey(row['Solicitation Number'] || row['Notice ID']))
+      const restoredStatus = pipelineRecord
+        ? (pipelineRecord[C.outlook] === 'Tracking' ? 'tracked' : 'added_to_pipeline')
+        : 'new'
+      await undismiss(row._rowIndex, restoredStatus)
+      toast?.success(pipelineRecord ? 'Restored as an existing pipeline opportunity' : 'Restored')
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
@@ -740,6 +744,12 @@ export default function Opportunities({ toast }) {
             onClick={handleCheckSAMChanges} disabled={checkingSAMChanges || isPulling}>
             {checkingSAMChanges ? 'Checking SAM…' : 'Check SAM changes'}
           </button>
+          {checkingSAMChanges && (
+            <span className="text-xs" style={{ color: 'var(--blue-600)' }}>
+              Checking SAM changes{samCheckProgress?.total ? `: ${samCheckProgress.checked}/${samCheckProgress.total}` : '…'}
+            </span>
+          )}
+          {!checkingSAMChanges && samCheckError && <span className="text-xs" style={{ color: 'var(--red-600)' }}>{samCheckError}</span>}
           {/* Department filter — controlled multi-select, stays open on selection, always visible */}
           {samDepartments.length > 0 && (
             <div ref={deptFilterRef} style={{ position: 'relative' }}>
