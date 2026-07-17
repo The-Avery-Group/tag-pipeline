@@ -60,6 +60,7 @@ function snapshot(record) {
     resourceLinks: (record?.resourceLinks || []).map(clean).filter(Boolean).sort(),
     additionalInfoLink: clean(record?.additionalInfoLink),
     uiLink: clean(record?.uiLink),
+    modifiedDate: clean(record?.modifiedDate || record?.lastModifiedDate || record?.lastModified || record?.updatedDate),
   }
 }
 
@@ -68,6 +69,7 @@ const LABELS = {
   responseDate: 'response date', setAside: 'set-aside', naics: 'NAICS', organization: 'organization',
   pointOfContact: 'point of contact', resourceLinks: 'attachments', additionalInfoLink: 'additional information',
   solicitationNumber: 'solicitation number', noticeId: 'notice ID',
+  samUpdate: 'SAM notice update',
 }
 
 function differences(previous, next) {
@@ -91,6 +93,7 @@ function toWatch(item, existing = null) {
     department: clean(item.department ?? item.Department),
     agency: clean(item.agency ?? item.Agency),
     status: clean(item.status ?? item.Status).toLowerCase(),
+    dateAdded: clean(item.dateAdded ?? item['Date Added']),
     updatedAt: new Date().toISOString(),
   }
 }
@@ -187,6 +190,8 @@ export async function runSAMMonitorCheck(env, cursor = 0) {
   cursor = Math.max(0, Number(cursor) || 0)
   const watches = await listWatches(env)
   const batch = watches.slice(cursor, cursor + CHECK_BATCH_SIZE)
+  await env.CACHE.put(RUN_KEY, JSON.stringify({ status: 'running', startedAt: new Date().toISOString(), total: watches.length, checked: cursor, nextCursor: cursor }))
+  console.info(JSON.stringify({ event: 'sam_monitor_started', cursor, batchSize: batch.length, total: watches.length }))
   const errors = []
   let checked = 0
   for (const watch of batch) {
@@ -195,6 +200,9 @@ export async function runSAMMonitorCheck(env, cursor = 0) {
       watch.lastCheckedAt = new Date().toISOString()
       if (record) {
         const nextSnapshot = snapshot(record)
+        const sourceDate = nextSnapshot.modifiedDate || nextSnapshot.postedDate
+        const added = Date.parse(watch.dateAdded || '')
+        const changedAfterAdded = Number.isFinite(added) && Date.parse(sourceDate || '') > added
         if (watch.snapshot) {
           const fields = differences(watch.snapshot, nextSnapshot)
           if (fields.length) {
@@ -204,6 +212,25 @@ export async function runSAMMonitorCheck(env, cursor = 0) {
               changedAt: watch.lastCheckedAt,
               uiLink: nextSnapshot.uiLink,
             }
+          } else if (changedAfterAdded && (!watch.change?.reviewedAt || watch.change.changedAt !== sourceDate)) {
+            watch.change = {
+              fields: ['samUpdate'],
+              summary: 'SAM reports this notice was updated after it was added to the pipeline.',
+              changedAt: sourceDate,
+              uiLink: nextSnapshot.uiLink,
+            }
+          }
+        } else {
+          // Older watches created before snapshots existed can still be
+          // flagged once when SAM reports that the notice itself was posted
+          // or modified after it entered this pipeline.
+          if (changedAfterAdded) {
+            watch.change = {
+              fields: ['samUpdate'],
+              summary: 'SAM reports this notice was updated after it was added to the pipeline.',
+              changedAt: sourceDate,
+              uiLink: nextSnapshot.uiLink,
+            }
           }
         }
         watch.snapshot = nextSnapshot
@@ -211,6 +238,7 @@ export async function runSAMMonitorCheck(env, cursor = 0) {
       await writeWatch(env, watch)
       checked++
     } catch (error) {
+      console.warn(JSON.stringify({ event: 'sam_monitor_opportunity_failed', rowIndex: watch.rowIndex, message: error.message }))
       errors.push({ rowIndex: watch.rowIndex, message: error.message })
     }
   }
@@ -218,6 +246,7 @@ export async function runSAMMonitorCheck(env, cursor = 0) {
   const completed = nextCursor >= watches.length
   const run = { status: completed ? 'success' : 'partial', checkedAt: new Date().toISOString(), total: watches.length, checked: nextCursor, nextCursor: completed ? null : nextCursor, errors }
   await env.CACHE.put(RUN_KEY, JSON.stringify(run))
+  console.info(JSON.stringify({ event: 'sam_monitor_completed', status: run.status, checked: run.checked, total: run.total, errors: errors.length }))
   return { ok: true, ...run }
 }
 
