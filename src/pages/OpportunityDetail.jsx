@@ -244,7 +244,6 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
   const [group, setGroup] = useState('year')
   const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group, { enabled: open })
   if (!valid) return null
-  const historySeries = [...(data?.series || [])].reverse()
   const historySeries = data?.series || []
   const historyTickInterval = Math.max(0, Math.ceil(historySeries.length / 12) - 1)
   const allAgencies = data?.agencies || []
@@ -279,7 +278,6 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
             <div className={styles.incumbentHistoryContent}>
               <div>
                 <div className={styles.incumbentChartTitle}>Prime contract activity</div>
-                <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} layout="vertical" margin={{ top: 8, right: 58, bottom: 8, left: 0 }}><XAxis type="number" hide /><YAxis type="category" dataKey="label" width={58} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentHistoryTooltip />} /><Bar dataKey="value" fill="var(--blue-600)" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" formatter={(value) => fmtValue(value) || '$0'} style={{ fontSize: 10, fill: 'var(--gray-600)' }} /></Bar></BarChart></ResponsiveContainer></div>
                 <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} margin={{ top: 18, right: 12, bottom: 4, left: 0 }}><XAxis dataKey="label" interval={historyTickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><YAxis hide /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentHistoryTooltip />} /><Bar dataKey="value" fill="var(--blue-600)" radius={[4, 4, 0, 0]}>{historySeries.length <= 12 && <LabelList dataKey="value" position="top" formatter={(value) => fmtValue(value) || '$0'} style={{ fontSize: 10, fill: 'var(--gray-600)' }} />}</Bar></BarChart></ResponsiveContainer></div>
               </div>
               <div className={styles.incumbentAgencyPanel}>
