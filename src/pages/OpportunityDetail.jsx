@@ -319,7 +319,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
             <div className={styles.incumbentHistoryContent}>
               <div>
                 <div className={styles.incumbentChartTitle}>Net contract obligations</div>
-                <div className={styles.incumbentChartLegend}><span><i style={{ background: PRIME_OBLIGATION_COLOR }} />Prime contracts</span>{data.subcontractDataAvailable && <span><i style={{ background: SUBCONTRACT_OBLIGATION_COLOR }} />Subcontracts</span>}</div>
+                <div className={styles.incumbentChartLegend} aria-label="Chart legend"><small>Legend</small><span><i style={{ background: PRIME_OBLIGATION_COLOR }} />Prime contracts</span>{data.subcontractDataAvailable && <span><i style={{ background: SUBCONTRACT_OBLIGATION_COLOR }} />Subcontracts</span>}</div>
                 <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} margin={{ top: 18, right: 12, bottom: 4, left: 4 }}><XAxis dataKey="label" interval={historyTickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><YAxis width={58} tickFormatter={formatCompactCurrency} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><ReferenceLine y={0} stroke="var(--gray-300)" /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentActivityTooltip />} /><Bar dataKey="primeValue" name="Prime contracts" stackId="obligations" fill={PRIME_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />{data.subcontractDataAvailable && <Bar dataKey="subcontractValue" name="Subcontracts" stackId="obligations" fill={SUBCONTRACT_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />}</BarChart></ResponsiveContainer></div>
               </div>
               <div className={styles.incumbentAgencyPanel}>
@@ -330,8 +330,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
                 </div>}
               </div>
             </div>
-            <div className="text-xs text-muted">{data.subcontractDataAvailable ? 'Prime contracts and reported subcontracts' : 'Prime contracts only. Subcontract data is currently unavailable'} · {data.cache === 'cache' ? 'cached' : 'live'}</div>
-            <div className="text-xs text-muted">Negative values reflect deobligations or downward modifications.</div>
+            <div className="text-xs text-muted">USAspending.gov · Last 5 years · {data.cache === 'cache' ? 'cached' : 'live'}{data.subcontractDataAvailable ? '' : ' · Subcontract data unavailable'} · Negative amounts reflect deobligations or downward modifications.</div>
           </>}
       </div>}
     </div>
