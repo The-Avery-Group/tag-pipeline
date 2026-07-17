@@ -7,6 +7,7 @@ import {
 import { useAuth } from '@/auth/AuthContext'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
+import { useEntityAwardHistory } from '@/hooks/useEntityAwardHistory'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
@@ -289,6 +290,59 @@ function CollapsibleCard({ title, count, defaultOpen = true, children, onViewAll
     </div>
   )
 }
+
+function EntityAwardHistory() {
+  const [uei, setUEI] = useState(() => localStorage.getItem('tag_entity_uei') || '')
+  const [submittedUEI, setSubmittedUEI] = useState(() => localStorage.getItem('tag_entity_uei') || '')
+  const [yearType, setYearType] = useState('calendar')
+  const [group, setGroup] = useState('year')
+  const { data, loading, error, refresh } = useEntityAwardHistory(submittedUEI, yearType, group)
+  const agencies = data?.agencies || []
+  const total = agencies.reduce((sum, item) => sum + item.count, 0)
+  const doughnut = agencies.slice(0, 8).map((item) => ({ ...item, percent: total ? item.count / total * 100 : 0 }))
+  const save = (event) => {
+    event.preventDefault()
+    const value = uei.trim().toUpperCase()
+    localStorage.setItem('tag_entity_uei', value)
+    setUEI(value); setSubmittedUEI(value)
+  }
+  return <CollapsibleCard title="Entity award history" defaultOpen={false}>
+    <form className={styles.entityControls} onSubmit={save}>
+      <input className="form-input" value={uei} maxLength={12} placeholder="Company UEI" onChange={(e) => setUEI(e.target.value.toUpperCase())} />
+      <button className="btn btn-primary text-sm" type="submit">Load</button>
+      <div className={styles.entityControlGroup}>
+        <button type="button" className={`${styles.entityChoice} ${yearType === 'calendar' ? styles.entityChoiceActive : ''}`} onClick={() => setYearType('calendar')}>Calendar year</button>
+        <button type="button" className={`${styles.entityChoice} ${yearType === 'fiscal' ? styles.entityChoiceActive : ''}`} onClick={() => setYearType('fiscal')}>Fiscal year</button>
+      </div>
+      <div className={styles.entityControlGroup}>{['year', 'quarter', 'month'].map((value) => <button key={value} type="button" className={`${styles.entityChoice} ${group === value ? styles.entityChoiceActive : ''}`} onClick={() => setGroup(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+      {data && <button className="btn btn-ghost text-sm" type="button" onClick={refresh} disabled={loading}>Refresh</button>}
+    </form>
+    {!submittedUEI ? <p className="text-sm text-muted">Enter your organization’s UEI to view its last five years of prime contract activity.</p>
+      : loading ? <div className={`skeleton ${styles.entitySkeleton}`} />
+      : error ? <p className="text-sm text-danger">Could not load award history: {error}</p>
+      : data && <>
+        <div className={styles.entityKpis}>
+          <KpiCard label="Prime contracts" value={data.contractCount} sub="Last five years" />
+          <KpiCard label="Average award value" value={formatCurrency(data.averageAwardValue)} sub="Award amounts in period" />
+          <KpiCard label="Award value" value={formatCurrency(data.totalAwardValue)} sub="Last five years" />
+          <KpiCard label="Near expiration" value={data.expiringAwards} sub="Ends within 6 months" danger={data.expiringAwards > 0} />
+        </div>
+        {data.truncated && <p className="text-xs text-muted">Agency counts cover the first {data.displayedAwardCount} awards. The total contract count remains exact.</p>}
+        <div className={styles.entityGrid}>
+          <div><div className={styles.entitySectionTitle}>Prime contract activity</div>
+            <ResponsiveContainer width="100%" height={240}><BarChart data={data.series || []} margin={{ top: 18, right: 12, bottom: 4, left: 0 }}><XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><YAxis hide /><Tooltip content={<ChartTooltip formatValue={(item) => formatCurrency(item.value)} />} /><Bar dataKey="value" fill="var(--blue-600)" radius={[4, 4, 0, 0]}><LabelList dataKey="value" position="top" formatter={(value) => value ? formatCurrency(value) : ''} style={{ fontSize: 10, fill: 'var(--gray-600)' }} /></Bar></BarChart></ResponsiveContainer>
+            <p className="text-xs text-muted">Obligations reported by USAspending in the selected period.</p></div>
+          <div><div className={styles.entitySectionTitle}>Prime contracts by agency</div>
+            {doughnut.length === 0 ? <p className="text-sm text-muted">No agency data.</p> : <div className={styles.agencyDistribution}>
+              <ResponsiveContainer width="48%" height={220}><PieChart><Tooltip content={<ChartTooltip formatLabel={(item) => item.name} formatValue={(item) => `${item.count} contract${item.count === 1 ? '' : 's'} · ${item.percent.toFixed(1)}%`} />} /><Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={48} outerRadius={78} label={({ percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>{doughnut.map((item, index) => <Cell key={item.name} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />)}</Pie></PieChart></ResponsiveContainer>
+              <div className={styles.entityAgencyTable}>{doughnut.map((item) => <div key={item.name} className={styles.entityAgencyRow} title={`${item.count} prime contract${item.count === 1 ? '' : 's'}`}><span>{item.name}</span><strong>{item.percent.toFixed(1)}%</strong></div>)}</div>
+            </div>}
+          </div>
+        </div>
+        <p className="text-xs text-muted">Source: USAspending.gov · {data.cache === 'cache' ? 'cached' : 'live'} · Prime contracts only. Subaward history is not shown until recipient-level subaward filtering is verified.</p>
+      </>}
+  </CollapsibleCard>
+}
 function OppRow({ opp, onClick }) {
   const value = parseFloat(String(opp[C.value] || '0').replace(/[^0-9.]/g, ''))
   return (
@@ -485,6 +539,8 @@ export default function Dashboard({ toast }) {
           buildPrompt={aiPrompt}
           defaultCollapsed={true}
         />
+
+        <EntityAwardHistory />
 
         {/* ── Row 1: KPI strip ── */}
         <div className={styles.kpiGrid}>
