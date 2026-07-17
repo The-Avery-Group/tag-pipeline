@@ -16,7 +16,12 @@ export function useEntityAwardHistory(uei, yearType, group, { enabled = true } =
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Could not load award history')
       setData(result)
-    } catch (err) { setError(err.message) } finally { setLoading(false) }
+    } catch (err) {
+      const message = err?.message === 'Failed to fetch'
+        ? 'Could not reach the award-history service. Please retry.'
+        : err.message
+      setError(message)
+    } finally { setLoading(false) }
   }, [enabled, group, uei, yearType])
   useEffect(() => { load() }, [load])
   return { data, loading, error, refresh: load }
