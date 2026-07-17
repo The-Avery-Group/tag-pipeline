@@ -94,9 +94,9 @@ function summarize(records) {
   }
 }
 
-async function getSummary(uei, yearType, signal) {
-  const key = `tag_usaspending_summary:v3:${uei}:${yearType}`
-  const cached = readCache(key)
+async function getSummary(uei, yearType, signal, { forceRefresh = false } = {}) {
+  const key = `tag_usaspending_summary:v4:${uei}:${yearType}`
+  const cached = forceRefresh ? null : readCache(key)
   if (cached) return { ...cached, cache: 'cache' }
   const filter = filters(uei, yearType)
   const countResponse = await post('/search/spending_by_award_count/', { filters: filter, spending_level: 'awards' }, signal)
@@ -122,25 +122,76 @@ async function getSummary(uei, yearType, signal) {
   return { ...data, cache: 'live' }
 }
 
-export async function getEntityAwardHistory({ uei, yearType = 'calendar', group = 'year', signal } = {}) {
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function formatPeriod(item, group) {
+  const periodData = item?.time_period || {}
+  const year = String(periodData.calendar_year || periodData.fiscal_year || '')
+  const numericYear = Number(year) || 0
+
+  if (group === 'month') {
+    const month = Number(periodData.month)
+    return {
+      key: `month:${year}:${month}`,
+      label: `${MONTH_NAMES[month - 1] || periodData.month || 'Unknown'}${year ? ` ${year}` : ''}`,
+      sortKey: numericYear * 100 + month,
+    }
+  }
+  if (group === 'quarter') {
+    const quarter = String(periodData.quarter || '')
+    return { key: `quarter:${year}:${quarter}`, label: `${quarter ? `Q${quarter}` : 'Quarter'}${year ? ` ${year}` : ''}`, sortKey: numericYear * 10 + (Number(quarter) || 0) }
+  }
+  return { key: `year:${year}`, label: year || 'Unknown', sortKey: numericYear }
+}
+
+function combineTimeSeries(primeResults, subcontractResults, group) {
+  const periods = new Map()
+  const add = (results, key) => (results || []).forEach((item) => {
+    const periodInfo = formatPeriod(item, group)
+    const entry = periods.get(periodInfo.key) || { ...periodInfo, value: 0, primeValue: 0, subcontractValue: 0 }
+    entry[key] = money(item.aggregated_amount)
+    // Keep value for the dashboard's existing prime-only chart.
+    entry.value = entry.primeValue
+    periods.set(periodInfo.key, entry)
+  })
+  add(primeResults, 'primeValue')
+  add(subcontractResults, 'subcontractValue')
+  return [...periods.values()].sort((a, b) => a.sortKey - b.sortKey)
+}
+
+export async function getEntityAwardHistory({ uei, yearType = 'calendar', group = 'year', signal, forceRefresh = false, includeSubcontracts = false } = {}) {
   const normalizedUEI = String(uei || '').trim().toUpperCase()
   if (!validUEI(normalizedUEI)) throw new Error('Provide a valid 12-character UEI')
-  const resultKey = `tag_usaspending_history:v4:${normalizedUEI}:${yearType}:${group}`
-  const cached = readCache(resultKey)
+  const resultKey = `tag_usaspending_history:v5:${normalizedUEI}:${yearType}:${group}:${includeSubcontracts ? 'with-subcontracts' : 'prime-only'}`
+  const cached = forceRefresh ? null : readCache(resultKey)
   if (cached) return { ...cached, cache: 'cache' }
   const apiGroup = { year: yearType === 'fiscal' ? 'fiscal_year' : 'calendar_year', quarter: 'quarter', month: 'month' }[group] || 'calendar_year'
-  const [summary, timeSeries] = await Promise.all([
-    getSummary(normalizedUEI, yearType, signal),
+  const requests = [
+    getSummary(normalizedUEI, yearType, signal, { forceRefresh }),
     post('/search/spending_over_time/', { group: apiGroup, filters: filters(normalizedUEI, yearType) }, signal),
-  ])
+  ]
+  if (includeSubcontracts) {
+    requests.push(post('/search/spending_over_time/', {
+      group: apiGroup,
+      filters: filters(normalizedUEI, yearType),
+      subawards: true,
+      spending_level: 'subawards',
+    }, signal))
+  }
+  const results = await Promise.allSettled(requests)
+  if (results[0].status === 'rejected') throw results[0].reason
+  if (results[1].status === 'rejected') throw results[1].reason
+  const summary = results[0].value
+  const primeTimeSeries = results[1].value
+  const subcontractResult = results[2]
+  const subcontractDataAvailable = !includeSubcontracts || subcontractResult?.status === 'fulfilled'
+  const subcontractTimeSeries = subcontractResult?.status === 'fulfilled' ? subcontractResult.value : null
   const data = {
     uei: normalizedUEI, yearType, group, period: period(yearType),
     ...summary,
     expiringAwards: summary.expiring,
-    series: (timeSeries?.results || []).map((item) => ({
-      label: Object.values(item.time_period || {}).filter(Boolean).join(' '),
-      value: money(item.aggregated_amount),
-    })),
+    series: combineTimeSeries(primeTimeSeries?.results, subcontractTimeSeries?.results, group),
+    subcontractDataAvailable,
     source: 'USAspending.gov', fetchedAt: new Date().toISOString(),
   }
   writeCache(resultKey, data)
