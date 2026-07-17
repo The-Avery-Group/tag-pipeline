@@ -26,6 +26,11 @@ id = "8e2b634e99384d5d9e9c0880fce935b0"
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 
+[triggers]
+# A bounded monitor batch runs each hour. It never performs Graph writes or
+# a full opportunity pull, so it cannot interfere with manual pulls.
+crons = ["0 * * * *"]
+
 [observability]
 enabled = false
 head_sampling_rate = 1
