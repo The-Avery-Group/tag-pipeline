@@ -29,10 +29,15 @@ function writeCache(key, data) {
 }
 
 function period(yearType) {
-  const year = new Date().getUTCFullYear()
+  const today = new Date()
+  const year = today.getUTCFullYear()
+  const currentDate = today.toISOString().slice(0, 10)
+  // The current calendar or fiscal year is included through today only. This
+  // avoids asking USAspending for future dates, which can produce future
+  // subaward periods when an award overlaps the requested range.
   return yearType === 'fiscal'
-    ? { start_date: `${year - 5}-10-01`, end_date: `${year}-09-30` }
-    : { start_date: `${year - 4}-01-01`, end_date: `${year}-12-31` }
+    ? { start_date: `${year - 5}-10-01`, end_date: currentDate }
+    : { start_date: `${year - 4}-01-01`, end_date: currentDate }
 }
 
 function filters(uei, yearType) {
@@ -124,30 +129,71 @@ async function getSummary(uei, yearType, signal, { forceRefresh = false } = {}) 
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-function formatPeriod(item, group) {
+function isoDate(year, month, day = 1) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function endOfMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
+}
+
+function formatPeriod(item, group, yearType) {
   const periodData = item?.time_period || {}
   const year = String(periodData.calendar_year || periodData.fiscal_year || '')
   const numericYear = Number(year) || 0
 
   if (group === 'month') {
-    const month = Number(periodData.month)
+    const fiscalMonth = Number(periodData.month)
+    // USAspending returns monthly and quarterly results as fiscal periods,
+    // even where the selected date range is calendar based. Fiscal month 1 is
+    // October, so fiscal year 2024 / month 8 is May 2024.
+    const calendarMonth = ((fiscalMonth + 8) % 12) + 1
+    const calendarYear = numericYear - (fiscalMonth <= 3 ? 1 : 0)
     return {
-      key: `month:${year}:${month}`,
-      label: `${MONTH_NAMES[month - 1] || periodData.month || 'Unknown'}${year ? ` ${year}` : ''}`,
-      sortKey: numericYear * 100 + month,
+      key: `month:${numericYear}:${fiscalMonth}`,
+      label: yearType === 'fiscal'
+        ? `${MONTH_NAMES[calendarMonth - 1] || 'Unknown'} FY${numericYear || ''}`
+        : `${MONTH_NAMES[calendarMonth - 1] || 'Unknown'}${calendarYear ? ` ${calendarYear}` : ''}`,
+      sortKey: yearType === 'fiscal' ? numericYear * 100 + fiscalMonth : calendarYear * 100 + calendarMonth,
+      startDate: isoDate(calendarYear, calendarMonth),
+      endDate: endOfMonth(calendarYear, calendarMonth),
     }
   }
   if (group === 'quarter') {
-    const quarter = String(periodData.quarter || '')
-    return { key: `quarter:${year}:${quarter}`, label: `${quarter ? `Q${quarter}` : 'Quarter'}${year ? ` ${year}` : ''}`, sortKey: numericYear * 10 + (Number(quarter) || 0) }
+    const fiscalQuarter = Number(periodData.quarter)
+    const calendarQuarter = ((fiscalQuarter + 2) % 4) + 1
+    const calendarYear = numericYear - (fiscalQuarter === 1 ? 1 : 0)
+    const startMonth = [10, 1, 4, 7][fiscalQuarter - 1]
+    const startYear = fiscalQuarter === 1 ? numericYear - 1 : numericYear
+    const endMonth = [12, 3, 6, 9][fiscalQuarter - 1]
+    const endYear = fiscalQuarter === 1 ? numericYear - 1 : numericYear
+    return {
+      key: `quarter:${numericYear}:${fiscalQuarter}`,
+      label: yearType === 'fiscal' ? `Q${fiscalQuarter || ''} FY${numericYear || ''}` : `Q${calendarQuarter || ''} ${calendarYear || ''}`,
+      sortKey: yearType === 'fiscal' ? numericYear * 10 + fiscalQuarter : calendarYear * 10 + calendarQuarter,
+      startDate: isoDate(startYear, startMonth),
+      endDate: endOfMonth(endYear, endMonth),
+    }
   }
-  return { key: `year:${year}`, label: year || 'Unknown', sortKey: numericYear }
+  const fiscal = Boolean(periodData.fiscal_year)
+  return {
+    key: `year:${year}`,
+    label: fiscal ? `FY${year}` : year || 'Unknown',
+    sortKey: numericYear,
+    startDate: fiscal ? isoDate(numericYear - 1, 10) : isoDate(numericYear, 1),
+    endDate: fiscal ? isoDate(numericYear, 9, 30) : isoDate(numericYear, 12, 31),
+  }
 }
 
-function combineTimeSeries(primeResults, subcontractResults, group) {
+function isVisiblePeriod(periodInfo, requestedPeriod) {
+  return periodInfo.startDate <= requestedPeriod.end_date && periodInfo.endDate >= requestedPeriod.start_date
+}
+
+function combineTimeSeries(primeResults, subcontractResults, group, yearType, requestedPeriod) {
   const periods = new Map()
   const add = (results, key) => (results || []).forEach((item) => {
-    const periodInfo = formatPeriod(item, group)
+    const periodInfo = formatPeriod(item, group, yearType)
+    if (!isVisiblePeriod(periodInfo, requestedPeriod)) return
     const entry = periods.get(periodInfo.key) || { ...periodInfo, value: 0, primeValue: 0, subcontractValue: 0 }
     entry[key] = money(item.aggregated_amount)
     // Keep value for the dashboard's existing prime-only chart.
@@ -162,7 +208,7 @@ function combineTimeSeries(primeResults, subcontractResults, group) {
 export async function getEntityAwardHistory({ uei, yearType = 'calendar', group = 'year', signal, forceRefresh = false, includeSubcontracts = false } = {}) {
   const normalizedUEI = String(uei || '').trim().toUpperCase()
   if (!validUEI(normalizedUEI)) throw new Error('Provide a valid 12-character UEI')
-  const resultKey = `tag_usaspending_history:v5:${normalizedUEI}:${yearType}:${group}:${includeSubcontracts ? 'with-subcontracts' : 'prime-only'}`
+  const resultKey = `tag_usaspending_history:v6:${normalizedUEI}:${yearType}:${group}:${includeSubcontracts ? 'with-subcontracts' : 'prime-only'}`
   const cached = forceRefresh ? null : readCache(resultKey)
   if (cached) return { ...cached, cache: 'cache' }
   const apiGroup = { year: yearType === 'fiscal' ? 'fiscal_year' : 'calendar_year', quarter: 'quarter', month: 'month' }[group] || 'calendar_year'
@@ -190,7 +236,7 @@ export async function getEntityAwardHistory({ uei, yearType = 'calendar', group 
     uei: normalizedUEI, yearType, group, period: period(yearType),
     ...summary,
     expiringAwards: summary.expiring,
-    series: combineTimeSeries(primeTimeSeries?.results, subcontractTimeSeries?.results, group),
+    series: combineTimeSeries(primeTimeSeries?.results, subcontractTimeSeries?.results, group, yearType, period(yearType)),
     subcontractDataAvailable,
     source: 'USAspending.gov', fetchedAt: new Date().toISOString(),
   }
