@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { getEntityAwardHistory } from '@/services/usaSpendingService'
 
 export function useEntityAwardHistory(uei, yearType, group, { enabled = true } = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal) => {
     const normalized = String(uei || '').trim().toUpperCase()
-    if (!enabled || !WORKER_URL || !/^[A-Z0-9]{12}$/.test(normalized)) { setData(null); return }
+    if (!enabled || !/^[A-Z0-9]{12}$/.test(normalized)) { setData(null); return }
     setLoading(true); setError(null)
     try {
-      const params = new URLSearchParams({ uei: normalized, yearType, group })
-      const response = await fetch(`${WORKER_URL}/entities/award-history?${params}`)
-      const result = await response.json()
-      if (!response.ok) throw new Error(result.error || 'Could not load award history')
-      setData(result)
+      setData(await getEntityAwardHistory({ uei: normalized, yearType, group, signal }))
     } catch (err) {
+      if (err?.name === 'AbortError') return
       const message = err?.message === 'Failed to fetch'
-        ? 'Could not reach the award-history service. Please retry.'
+        ? 'Could not reach USAspending. Please retry.'
         : err.message
       setError(message)
     } finally { setLoading(false) }
   }, [enabled, group, uei, yearType])
-  useEffect(() => { load() }, [load])
-  return { data, loading, error, refresh: load }
+  useEffect(() => {
+    const controller = new AbortController()
+    load(controller.signal)
+    return () => controller.abort()
+  }, [load])
+  return { data, loading, error, refresh: () => load() }
 }
