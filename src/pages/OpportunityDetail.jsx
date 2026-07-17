@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
@@ -222,6 +223,20 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
   )
 }
 
+const INCUMBENT_CHART_COLORS = ['var(--blue-600)', 'var(--chart-phase-research)', 'var(--chart-phase-awarded)', 'var(--chart-phase-pending)', 'var(--chart-phase-qualified)', 'var(--chart-phase-identified)', 'var(--gray-400)']
+
+function IncumbentHistoryTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const item = payload[0].payload
+  if (!item) return null
+  return (
+    <div className={styles.incumbentChartTooltip}>
+      <strong>{item.label || item.name}</strong>
+      <span>{item.value !== undefined ? fmtValue(item.value) || '$0' : `${item.count} contract${item.count === 1 ? '' : 's'} · ${item.percent.toFixed(1)}%`}</span>
+    </div>
+  )
+}
+
 function IncumbentAwardHistoryCallout({ incumbentUEI }) {
   const valid = /^[A-Z0-9]{12}$/.test(String(incumbentUEI || '').trim().toUpperCase())
   const [open, setOpen] = useState(false)
@@ -229,8 +244,13 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
   const [group, setGroup] = useState('year')
   const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group, { enabled: open })
   if (!valid) return null
-  const series = data?.series || []
-  const max = Math.max(...series.map((item) => Math.abs(Number(item.value) || 0)), 1)
+  const historySeries = [...(data?.series || [])].reverse()
+  const allAgencies = data?.agencies || []
+  const agencyCount = allAgencies.reduce((sum, item) => sum + item.count, 0)
+  const leadingAgencies = allAgencies.slice(0, 6)
+  const remainingAgencies = allAgencies.slice(6).reduce((sum, item) => sum + item.count, 0)
+  const doughnut = [...leadingAgencies, ...(remainingAgencies ? [{ name: 'Other agencies', count: remainingAgencies, value: 0 }] : [])]
+    .map((item) => ({ ...item, percent: agencyCount ? item.count / agencyCount * 100 : 0 }))
   return (
     <div className={styles.incumbentHistory}>
       <button type="button" className={styles.incumbentHistoryHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
@@ -243,7 +263,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
             <button type="button" className={yearType === 'calendar' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('calendar')}>Calendar</button>
             <button type="button" className={yearType === 'fiscal' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('fiscal')}>Fiscal</button>
           </div>
-          <div>{['year', 'quarter', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>
+          <div>{['year', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>
           <button type="button" className="btn btn-ghost text-xs" onClick={refresh} disabled={loading}>Refresh</button>
         </div>
         {loading ? <div className="text-xs text-muted">Loading incumbent award history…</div>
@@ -255,8 +275,17 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
               <span><strong>{data.expiringAwards}</strong> near expiration</span>
             </div>
             <div className={styles.incumbentHistoryContent}>
-              <div className={styles.incumbentHistoryBars}>{series.map((item) => <div key={item.label} className={styles.historyBarRow} title={`${item.label}: ${fmtValue(item.value) || '$0'}`}><span>{item.label}</span><i><b style={{ width: `${Math.max(2, Math.abs(Number(item.value) || 0) / max * 100)}%` }} /></i><strong>{fmtValue(item.value) || '$0'}</strong></div>)}</div>
-              <div className={styles.incumbentHistoryAgencies}>{(data.agencies || []).slice(0, 4).map((agency) => <div key={agency.name} title={`${agency.count} prime contract${agency.count === 1 ? '' : 's'}`}><span>{agency.name}</span><strong>{agency.count}</strong></div>)}</div>
+              <div>
+                <div className={styles.incumbentChartTitle}>Prime contract activity</div>
+                <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} layout="vertical" margin={{ top: 8, right: 58, bottom: 8, left: 0 }}><XAxis type="number" hide /><YAxis type="category" dataKey="label" width={58} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentHistoryTooltip />} /><Bar dataKey="value" fill="var(--blue-600)" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" formatter={(value) => fmtValue(value) || '$0'} style={{ fontSize: 10, fill: 'var(--gray-600)' }} /></Bar></BarChart></ResponsiveContainer></div>
+              </div>
+              <div className={styles.incumbentAgencyPanel}>
+                <div className={styles.incumbentChartTitle}>Prime contracts by agency</div>
+                {doughnut.length === 0 ? <div className="text-xs text-muted">No agency data.</div> : <div className={styles.incumbentAgencyLayout}>
+                  <div className={styles.incumbentDoughnut}><ResponsiveContainer width="100%" height="100%"><PieChart><Tooltip allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentHistoryTooltip />} /><Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={55} outerRadius={90} label={({ percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>{doughnut.map((item, index) => <Cell key={item.name} fill={INCUMBENT_CHART_COLORS[index % INCUMBENT_CHART_COLORS.length]} />)}</Pie></PieChart></ResponsiveContainer></div>
+                  <div className={styles.incumbentHistoryAgencies}>{doughnut.map((agency) => <div key={agency.name} title={`${agency.count} prime contract${agency.count === 1 ? '' : 's'}`}><span>{agency.name}</span><strong>{agency.percent.toFixed(1)}%</strong></div>)}</div>
+                </div>}
+              </div>
             </div>
             <div className="text-xs text-muted">Prime contracts only · {data.cache === 'cache' ? 'cached' : 'live'}</div>
           </>}
