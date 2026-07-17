@@ -453,7 +453,7 @@ export function useSAMOpportunities() {
   }, [pullProgress, triggerPull])
 
   const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
-  const undismiss = useCallback((rowIndex) => updateStatus(rowIndex, 'new'),       [updateStatus])
+  const undismiss = useCallback((rowIndex, restoredStatus = 'new') => updateStatus(rowIndex, restoredStatus), [updateStatus])
   const retryStatus = useCallback((rowIndex) => {
     const failed = failedStatuses[rowIndex]
     if (!failed) return Promise.resolve()
