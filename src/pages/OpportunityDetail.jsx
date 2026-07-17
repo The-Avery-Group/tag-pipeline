@@ -9,6 +9,7 @@ import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
+import { useEntityAwardHistory } from '@/hooks/useEntityAwardHistory'
 import { useRfiFollowUps } from '@/hooks/useRfiFollowUps'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
@@ -217,6 +218,49 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
       <button type="button" className={styles.eightAAddNote} onClick={onAddNote} disabled={addingNote || noteAdded}>
         {noteAdded ? 'Added' : addingNote ? 'Adding…' : 'Add as note'}
       </button>
+    </div>
+  )
+}
+
+function IncumbentAwardHistoryCallout({ incumbentUEI }) {
+  const valid = /^[A-Z0-9]{12}$/.test(String(incumbentUEI || '').trim().toUpperCase())
+  const [open, setOpen] = useState(false)
+  const [yearType, setYearType] = useState('calendar')
+  const [group, setGroup] = useState('year')
+  const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group)
+  if (!valid) return null
+  const series = data?.series || []
+  const max = Math.max(...series.map((item) => Math.abs(Number(item.value) || 0)), 1)
+  return (
+    <div className={styles.incumbentHistory}>
+      <button type="button" className={styles.incumbentHistoryHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <span><strong>Incumbent award history</strong><small>USAspending.gov · last 5 years</small></span>
+        <span>{open ? '⌃' : '⌄'}</span>
+      </button>
+      {open && <div className={styles.incumbentHistoryBody}>
+        <div className={styles.incumbentHistoryControls}>
+          <div>
+            <button type="button" className={yearType === 'calendar' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('calendar')}>Calendar</button>
+            <button type="button" className={yearType === 'fiscal' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('fiscal')}>Fiscal</button>
+          </div>
+          <div>{['year', 'quarter', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>
+          <button type="button" className="btn btn-ghost text-xs" onClick={refresh} disabled={loading}>Refresh</button>
+        </div>
+        {loading ? <div className="text-xs text-muted">Loading incumbent award history…</div>
+          : error ? <div className="text-xs text-danger">Could not load award history: {error}</div>
+          : data && <>
+            <div className={styles.incumbentHistoryMetrics}>
+              <span><strong>{data.contractCount}</strong> prime contracts</span>
+              <span><strong>{fmtValue(data.averageAwardValue) || '—'}</strong> average award</span>
+              <span><strong>{data.expiringAwards}</strong> near expiration</span>
+            </div>
+            <div className={styles.incumbentHistoryContent}>
+              <div className={styles.incumbentHistoryBars}>{series.map((item) => <div key={item.label} className={styles.historyBarRow} title={`${item.label}: ${fmtValue(item.value) || '$0'}`}><span>{item.label}</span><i><b style={{ width: `${Math.max(2, Math.abs(Number(item.value) || 0) / max * 100)}%` }} /></i><strong>{fmtValue(item.value) || '$0'}</strong></div>)}</div>
+              <div className={styles.incumbentHistoryAgencies}>{(data.agencies || []).slice(0, 4).map((agency) => <div key={agency.name} title={`${agency.count} prime contract${agency.count === 1 ? '' : 's'}`}><span>{agency.name}</span><strong>{agency.count}</strong></div>)}</div>
+            </div>
+            <div className="text-xs text-muted">Prime contracts only · {data.cache === 'cache' ? 'cached' : 'live'}</div>
+          </>}
+      </div>}
     </div>
   )
 }
@@ -710,6 +754,7 @@ export default function OpportunityDetail({ toast }) {
   const f = (key) => cur[key]
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
   const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
+  const hasSubmissionDate = !Number.isNaN(localDate(opp[C.submDate]).getTime())
   const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.contractNumber))
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
@@ -1125,6 +1170,7 @@ export default function OpportunityDetail({ toast }) {
               addingNote={addingEightANote}
               noteAdded={eightANoteAdded}
             />
+            <IncumbentAwardHistoryCallout incumbentUEI={f(C.incumbentUEI)} />
           </div>
         </Section>
 
@@ -1141,7 +1187,7 @@ export default function OpportunityDetail({ toast }) {
           return (
             <Section title="Timeline">
               <div className={styles.fieldGrid}>
-                {isRFI && (
+                {(isRFI || (editing && hasSubmissionDate)) && (
                   <Field label="RFI Submission Date" value={f(C.submDate)} editing={editing} onChange={set(C.submDate)} type="date" />
                 )}
                 <Field label="Contract End Date"      value={f(C.endDate)}    editing={editing} onChange={set(C.endDate)}    type="date" />
