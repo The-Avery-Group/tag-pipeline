@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, Cell, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
@@ -224,15 +224,56 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
 }
 
 const INCUMBENT_CHART_COLORS = ['var(--blue-600)', 'var(--chart-phase-research)', 'var(--chart-phase-awarded)', 'var(--chart-phase-pending)', 'var(--chart-phase-qualified)', 'var(--chart-phase-identified)', 'var(--gray-400)']
+const PRIME_OBLIGATION_COLOR = 'var(--blue-600)'
+const SUBCONTRACT_OBLIGATION_COLOR = 'var(--chart-phase-research)'
 
-function IncumbentHistoryTooltip({ active, payload }) {
+function formatFullCurrency(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  const sign = number < 0 ? '-' : ''
+  return `${sign}$${Math.abs(number).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function formatCompactCurrency(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return ''
+  const sign = number < 0 ? '-' : ''
+  const absolute = Math.abs(number)
+  if (absolute >= 1_000_000_000) return `${sign}$${(absolute / 1_000_000_000).toFixed(1)}B`
+  if (absolute >= 1_000_000) return `${sign}$${(absolute / 1_000_000).toFixed(1)}M`
+  if (absolute >= 1_000) return `${sign}$${(absolute / 1_000).toFixed(0)}K`
+  return `${sign}$${absolute.toFixed(0)}`
+}
+
+function IncumbentActivityTooltip({ active, label, payload }) {
   if (!active || !payload?.length) return null
-  const item = payload[0].payload
-  if (!item) return null
   return (
     <div className={styles.incumbentChartTooltip}>
-      <strong>{item.label || item.name}</strong>
-      <span>{item.value !== undefined ? fmtValue(item.value) || '$0' : `${item.count} contract${item.count === 1 ? '' : 's'} · ${item.percent.toFixed(1)}%`}</span>
+      <strong>{label}</strong>
+      {payload.map((item) => (
+        <div className={styles.incumbentTooltipRow} key={item.dataKey}>
+          <i style={{ background: item.color }} />
+          <span>{item.name}</span>
+          <strong>{formatFullCurrency(item.value)}</strong>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function IncumbentAgencyTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const agency = payload[0]?.payload
+  if (!agency) return null
+  return (
+    <div className={styles.incumbentChartTooltip}>
+      <strong>{agency.name}</strong>
+      <div className={styles.incumbentTooltipRow}>
+        <i style={{ background: agency.color }} />
+        <span>{agency.count} prime contract{agency.count === 1 ? '' : 's'}</span>
+        <strong>{agency.percent.toFixed(1)}%</strong>
+      </div>
+      <span>{formatFullCurrency(agency.value)} total award value</span>
     </div>
   )
 }
@@ -242,16 +283,16 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
   const [open, setOpen] = useState(false)
   const [yearType, setYearType] = useState('calendar')
   const [group, setGroup] = useState('year')
-  const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group, { enabled: open })
+  const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group, { enabled: open, includeSubcontracts: true })
   if (!valid) return null
   const historySeries = data?.series || []
   const historyTickInterval = Math.max(0, Math.ceil(historySeries.length / 12) - 1)
   const allAgencies = data?.agencies || []
   const agencyCount = allAgencies.reduce((sum, item) => sum + item.count, 0)
   const leadingAgencies = allAgencies.slice(0, 6)
-  const remainingAgencies = allAgencies.slice(6).reduce((sum, item) => sum + item.count, 0)
-  const doughnut = [...leadingAgencies, ...(remainingAgencies ? [{ name: 'Other agencies', count: remainingAgencies, value: 0 }] : [])]
-    .map((item) => ({ ...item, percent: agencyCount ? item.count / agencyCount * 100 : 0 }))
+  const remainingAgencies = allAgencies.slice(6).reduce((total, item) => ({ count: total.count + item.count, value: total.value + item.value }), { count: 0, value: 0 })
+  const doughnut = [...leadingAgencies, ...(remainingAgencies.count ? [{ name: 'Other agencies', ...remainingAgencies }] : [])]
+    .map((item, index) => ({ ...item, percent: agencyCount ? item.count / agencyCount * 100 : 0, color: INCUMBENT_CHART_COLORS[index % INCUMBENT_CHART_COLORS.length] }))
   return (
     <div className={styles.incumbentHistory}>
       <button type="button" className={styles.incumbentHistoryHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
@@ -264,7 +305,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
             <button type="button" className={yearType === 'calendar' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('calendar')}>Calendar</button>
             <button type="button" className={yearType === 'fiscal' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('fiscal')}>Fiscal</button>
           </div>
-          <div>{['year', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>
+          <div>{['year', 'quarter', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>
           <button type="button" className="btn btn-ghost text-xs" onClick={refresh} disabled={loading}>Refresh</button>
         </div>
         {loading ? <div className="text-xs text-muted">Loading incumbent award history…</div>
@@ -277,18 +318,20 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
             </div>
             <div className={styles.incumbentHistoryContent}>
               <div>
-                <div className={styles.incumbentChartTitle}>Prime contract activity</div>
-                <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} margin={{ top: 18, right: 12, bottom: 4, left: 0 }}><XAxis dataKey="label" interval={historyTickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><YAxis hide /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentHistoryTooltip />} /><Bar dataKey="value" fill="var(--blue-600)" radius={[4, 4, 0, 0]}>{historySeries.length <= 12 && <LabelList dataKey="value" position="top" formatter={(value) => fmtValue(value) || '$0'} style={{ fontSize: 10, fill: 'var(--gray-600)' }} />}</Bar></BarChart></ResponsiveContainer></div>
+                <div className={styles.incumbentChartTitle}>Net contract obligations</div>
+                <div className={styles.incumbentChartLegend}><span><i style={{ background: PRIME_OBLIGATION_COLOR }} />Prime contracts</span>{data.subcontractDataAvailable && <span><i style={{ background: SUBCONTRACT_OBLIGATION_COLOR }} />Subcontracts</span>}</div>
+                <div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={historySeries} margin={{ top: 18, right: 12, bottom: 4, left: 4 }}><XAxis dataKey="label" interval={historyTickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><YAxis width={58} tickFormatter={formatCompactCurrency} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} /><ReferenceLine y={0} stroke="var(--gray-300)" /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentActivityTooltip />} /><Bar dataKey="primeValue" name="Prime contracts" stackId="obligations" fill={PRIME_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />{data.subcontractDataAvailable && <Bar dataKey="subcontractValue" name="Subcontracts" stackId="obligations" fill={SUBCONTRACT_OBLIGATION_COLOR} radius={[4, 4, 0, 0]} />}</BarChart></ResponsiveContainer></div>
               </div>
               <div className={styles.incumbentAgencyPanel}>
                 <div className={styles.incumbentChartTitle}>Prime contracts by agency</div>
                 {doughnut.length === 0 ? <div className="text-xs text-muted">No agency data.</div> : <div className={styles.incumbentAgencyLayout}>
-                  <div className={styles.incumbentDoughnut}><ResponsiveContainer width="100%" height="100%"><PieChart><Tooltip allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentHistoryTooltip />} /><Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={55} outerRadius={90} label={({ percent }) => `${Number(percent).toFixed(0)}%`} labelLine={false}>{doughnut.map((item, index) => <Cell key={item.name} fill={INCUMBENT_CHART_COLORS[index % INCUMBENT_CHART_COLORS.length]} />)}</Pie></PieChart></ResponsiveContainer></div>
+                  <div className={styles.incumbentDoughnut}><ResponsiveContainer width="100%" height="100%"><PieChart><Tooltip allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<IncumbentAgencyTooltip />} /><Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={55} outerRadius={90} label={({ percent }) => `${Number(percent).toFixed(0)}%`} labelLine={false}>{doughnut.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie></PieChart></ResponsiveContainer></div>
                   <div className={styles.incumbentHistoryAgencies}>{doughnut.map((agency) => <div key={agency.name} title={`${agency.count} prime contract${agency.count === 1 ? '' : 's'}`}><span>{agency.name}</span><strong>{agency.percent.toFixed(1)}%</strong></div>)}</div>
                 </div>}
               </div>
             </div>
-            <div className="text-xs text-muted">Prime contracts only · {data.cache === 'cache' ? 'cached' : 'live'}</div>
+            <div className="text-xs text-muted">{data.subcontractDataAvailable ? 'Prime contracts and reported subcontracts' : 'Prime contracts only. Subcontract data is currently unavailable'} · {data.cache === 'cache' ? 'cached' : 'live'}</div>
+            <div className="text-xs text-muted">Negative values reflect deobligations or downward modifications.</div>
           </>}
       </div>}
     </div>
@@ -296,12 +339,15 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
 }
 
 function fmtValue(v) {
-  const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''))
-  if (!n) return null
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`
-  if (n >= 1_000_000)     return `$${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000)         return `$${(n / 1_000).toFixed(0)}K`
-  return `$${n.toFixed(0)}`
+  const input = String(v ?? '').trim()
+  const absolute = parseFloat(input.replace(/[^0-9.]/g, ''))
+  if (!absolute) return null
+  const negative = /^\s*-/.test(input) || /^\s*\(/.test(input)
+  const sign = negative ? '-' : ''
+  if (absolute >= 1_000_000_000) return `${sign}$${(absolute / 1_000_000_000).toFixed(2)}B`
+  if (absolute >= 1_000_000)     return `${sign}$${(absolute / 1_000_000).toFixed(1)}M`
+  if (absolute >= 1_000)         return `${sign}$${(absolute / 1_000).toFixed(0)}K`
+  return `${sign}$${absolute.toFixed(0)}`
 }
 
 const PHASE_BADGE = {
