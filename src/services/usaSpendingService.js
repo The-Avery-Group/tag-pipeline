@@ -69,15 +69,19 @@ function money(value) { return Number(value || 0) }
 
 function summarize(records) {
   const agencies = new Map()
+  const departments = new Map()
   const now = new Date(); now.setHours(0, 0, 0, 0)
   const sixMonths = new Date(now); sixMonths.setMonth(sixMonths.getMonth() + 6)
   let totalAwardValue = 0; let expiring = 0
   records.forEach((record) => {
     const amount = money(record['Award Amount'])
     totalAwardValue += amount
-    const name = record['Awarding Agency'] || 'Unknown agency'
+    const name = record['Awarding Sub Agency'] || record['Awarding Agency'] || 'Unknown agency'
+    const departmentName = record['Awarding Agency'] || 'Unknown department'
     const agency = agencies.get(name) || { name, count: 0, value: 0 }
     agency.count++; agency.value += amount; agencies.set(name, agency)
+    const department = departments.get(departmentName) || { name: departmentName, count: 0, value: 0 }
+    department.count++; department.value += amount; departments.set(departmentName, department)
     const end = new Date(record['End Date'])
     if (!Number.isNaN(end.getTime()) && end >= now && end <= sixMonths) expiring++
   })
@@ -86,11 +90,12 @@ function summarize(records) {
     averageAwardValue: records.length ? totalAwardValue / records.length : 0,
     expiring,
     agencies: [...agencies.values()].sort((a, b) => b.count - a.count || b.value - a.value),
+    departments: [...departments.values()].sort((a, b) => b.count - a.count || b.value - a.value),
   }
 }
 
 async function getSummary(uei, yearType, signal) {
-  const key = `tag_usaspending_summary:v1:${uei}:${yearType}`
+  const key = `tag_usaspending_summary:v3:${uei}:${yearType}`
   const cached = readCache(key)
   if (cached) return { ...cached, cache: 'cache' }
   const filter = filters(uei, yearType)
@@ -101,7 +106,7 @@ async function getSummary(uei, yearType, signal) {
   for (let start = 0; start < pages; start += PAGE_CONCURRENCY) {
     const batch = Array.from({ length: Math.min(PAGE_CONCURRENCY, pages - start) }, (_, offset) => post('/search/spending_by_award/', {
       filters: filter,
-      fields: ['Award ID', 'Award Amount', 'Awarding Agency', 'Start Date', 'End Date'],
+      fields: ['Award ID', 'Award Amount', 'Awarding Agency', 'Awarding Sub Agency', 'Start Date', 'End Date'],
       page: start + offset + 1, limit: PAGE_SIZE, sort: 'Award Amount', order: 'desc', subawards: false,
     }, signal))
     responses.push(...await Promise.all(batch))
@@ -120,7 +125,7 @@ async function getSummary(uei, yearType, signal) {
 export async function getEntityAwardHistory({ uei, yearType = 'calendar', group = 'year', signal } = {}) {
   const normalizedUEI = String(uei || '').trim().toUpperCase()
   if (!validUEI(normalizedUEI)) throw new Error('Provide a valid 12-character UEI')
-  const resultKey = `tag_usaspending_history:v2:${normalizedUEI}:${yearType}:${group}`
+  const resultKey = `tag_usaspending_history:v4:${normalizedUEI}:${yearType}:${group}`
   const cached = readCache(resultKey)
   if (cached) return { ...cached, cache: 'cache' }
   const apiGroup = { year: yearType === 'fiscal' ? 'fiscal_year' : 'calendar_year', quarter: 'quarter', month: 'month' }[group] || 'calendar_year'
