@@ -227,7 +227,7 @@ function IncumbentAwardHistoryCallout({ incumbentUEI }) {
   const [open, setOpen] = useState(false)
   const [yearType, setYearType] = useState('calendar')
   const [group, setGroup] = useState('year')
-  const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group)
+  const { data, loading, error, refresh } = useEntityAwardHistory(valid ? incumbentUEI : '', yearType, group, { enabled: open })
   if (!valid) return null
   const series = data?.series || []
   const max = Math.max(...series.map((item) => Math.abs(Number(item.value) || 0)), 1)
