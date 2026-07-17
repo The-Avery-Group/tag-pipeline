@@ -13,6 +13,8 @@ import { handleAIChat }             from './handlers/ai.js'
 import { handleSAM } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
+import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
+import { handleEntityAnalytics } from './handlers/entityAnalytics.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -94,11 +96,17 @@ export default {
       } else if (path === '/sam/search' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
 
+      } else if (path.startsWith('/sam/changes/') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleSAMMonitor(req, env)
+
       } else if (path === '/awards/lookup' && req.method === 'GET') {
         response = await handleAwards(req, env)
 
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
+
+      } else if (path === '/entities/award-history' && req.method === 'GET') {
+        response = await handleEntityAnalytics(req, env)
 
       } else {
         response = json({ error: 'Not found' }, 404)
@@ -109,5 +117,15 @@ export default {
     }
 
     return cors(env, req, response)
+  },
+
+  // Five records per hour keeps this background check comfortably below
+  // Worker subrequest limits while cycling through the entire watch list
+  // daily for normal pipeline sizes. The interactive button can still run
+  // all remaining batches immediately.
+  async scheduled(_controller, env, ctx) {
+    const run = await env.CACHE?.get('sam_monitor_run', 'json')
+    const cursor = run?.nextCursor ?? 0
+    ctx.waitUntil(runSAMMonitorCheck(env, cursor))
   },
 }
