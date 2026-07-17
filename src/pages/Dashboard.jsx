@@ -591,7 +591,7 @@ export default function Dashboard({ toast }) {
           {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} />
             : <RFIChart data={rfiData}
-                onMonthClick={(m) => goToOpportunities({ tab: 'RFIs', rfiMonth: m.monthKey })} />
+                onMonthClick={(m) => goToOpportunities({ tab: 'All', rfiMonth: m.monthKey })} />
           }
         </div>
 
