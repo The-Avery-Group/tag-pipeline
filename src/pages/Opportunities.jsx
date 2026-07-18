@@ -4,6 +4,8 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hooks/useSAMOpportunities'
 import { useSAMChangeMonitor } from '@/hooks/useSAMChangeMonitor'
+import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
+import { useContacts } from '@/hooks/useContacts'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
@@ -124,6 +126,7 @@ export default function Opportunities({ toast }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { pipeline, loading, add, remove } = usePipeline()
+  const { contacts } = useContacts()
   const { lists } = useValidationLists()
   useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
 
@@ -365,11 +368,12 @@ export default function Opportunities({ toast }) {
   // The visible contract/notice number may contain whitespace or characters
   // that Excel/URLs normalize differently. Carrying the stable table row
   // index makes detail navigation reliable while retaining the readable URL.
-  const openOpportunity = (opp) => {
+  const openOpportunity = (opp, { focusFollowUps = false } = {}) => {
     const cn = opp[C.contractNum] || ''
     // Keep the complete list URL so the detail page's own back button can
     // restore the exact tab, search, and filters the user came from.
     const detailParams = new URLSearchParams({ row: String(opp._rowIndex) })
+    if (focusFollowUps) detailParams.set('focus', 'follow-ups')
     const currentListQuery = searchParams.toString()
     detailParams.set('returnTo', `/opportunities${currentListQuery ? `?${currentListQuery}` : ''}`)
     navigate(`/opportunities/${encodeURIComponent(cn)}?${detailParams.toString()}`)
@@ -439,6 +443,7 @@ export default function Opportunities({ toast }) {
   } = useSAMOpportunities()
 
   const { changesByRow: samChangesByRow, checking: checkingSAMChanges, progress: samCheckProgress, checkError: samCheckError, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(samOpps)
+  const { statusByOpportunity: rfiFollowUpStatus, markSeen: markFollowUpsSeen } = useRfiFollowUpMonitor(pipeline, contacts, { replace: true })
 
   const [showDismissed, setShowDismissed] = useState(false)
   const [samKeyExpired, setSamKeyExpired] = useState(false)
@@ -710,6 +715,30 @@ export default function Opportunities({ toast }) {
       >
         SAM updated
         <span className={styles.samUpdatedTooltip}>{change.summary || 'SAM has updated this opportunity.'}<br /><strong>Click to mark reviewed</strong></span>
+      </button>
+    )
+  }
+
+  const rfiFollowUpBadge = (opportunity) => {
+    const status = rfiFollowUpStatus[String(opportunity[C.contractNum] || '').trim().toLowerCase()]
+    if (!status?.badgeVisible) return null
+    const seen = status.badgeState === 'seen'
+    return (
+      <button
+        className="badge"
+        style={{
+          background: seen ? 'var(--gray-100)' : 'var(--blue-50)',
+          border: `0.5px solid ${seen ? 'var(--gray-300)' : 'var(--blue-200)'}`,
+          color: seen ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer', fontSize: 10,
+        }}
+        title={`${status.pendingCount} possible follow-up${status.pendingCount === 1 ? '' : 's'}${seen ? ' (seen)' : ''}`}
+        onClick={async (event) => {
+          event.stopPropagation()
+          try { await markFollowUpsSeen(opportunity[C.contractNum]) } catch {}
+          openOpportunity(opportunity, { focusFollowUps: true })
+        }}
+      >
+        {seen ? 'Follow-ups seen' : `${status.pendingCount} possible follow-up${status.pendingCount === 1 ? '' : 's'}`}
       </button>
     )
   }
@@ -1095,7 +1124,11 @@ export default function Opportunities({ toast }) {
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
-              <td style={{ fontWeight: 500, maxWidth: 300 }}>{opp[C.title]}</td>
+              <td style={{ fontWeight: 500, maxWidth: 300 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span>{opp[C.title]}</span>{rfiFollowUpBadge(opp)}
+                </div>
+              </td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
               <td className={`text-sm ${opp[C.submDate] ? '' : 'text-muted'}`}>
