@@ -46,6 +46,11 @@ export default function Settings({ toast }) {
   const [naicsCodes,    setNaicsCodes]    = useState([])
   const [skipDays,      setSkipDays]      = useState(3)
   const [windowDays,    setWindowDays]    = useState(90)
+  const [rfiFollowUp,   setRfiFollowUp]   = useState({
+    monitoringEnabled: true, departmentRule: 'Exact', agencyRule: 'Exact', pocRule: 'Exact',
+    titleOverlapPercent: 40, noticeTypes: 'RFP, RFQ', submissionWindowDays: 364,
+    noSubmissionLookbackDays: 150, noSubmissionLookaheadDays: 150,
+  })
   const [samLoaded,     setSamLoaded]     = useState(false)
   const [savingSAM,     setSavingSAM]     = useState(false)
   const [savedSAM,      setSavedSAM]      = useState(false)
@@ -68,6 +73,7 @@ export default function Settings({ toast }) {
       setNaicsCodes(codes)
       setSkipDays(settings.skipDays)
       setWindowDays(settings.windowDays)
+      setRfiFollowUp(settings.rfiFollowUp)
       setSamLoaded(true)
     }).catch((err) => {
       console.warn('[Settings] Failed to load SAM config:', err.message)
@@ -82,7 +88,7 @@ export default function Settings({ toast }) {
       const cleanedCodes = naicsCodes.map((c) => String(c).trim()).filter(Boolean)
       await Promise.all([
         updateSAMNAICS(cleanedCodes),
-        updateSAMSettings(Number(skipDays), Number(windowDays)),
+        updateSAMSettings(Number(skipDays), Number(windowDays), rfiFollowUp),
       ])
       setNaicsCodes(cleanedCodes)
       setSavedSAM(true)
@@ -358,6 +364,59 @@ export default function Settings({ toast }) {
                       <span className="text-xs text-muted" style={{ marginTop: 3 }}>
                         Pull opportunities whose deadline falls within this many days from today
                       </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className={styles.sectionLabel}>RFI Follow-up Matching</div>
+                  <p className="text-xs text-muted" style={{ margin: '4px 0 10px' }}>
+                    Defaults for SAM.gov follow-on checks. Individual RFIs can override these rules.
+                  </p>
+                  <div className={styles.itemList}>
+                    <label className="text-sm" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={rfiFollowUp.monitoringEnabled}
+                        onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, monitoringEnabled: e.target.checked })); setSavedSAM(false) }} />
+                      Check RFIs in the background
+                    </label>
+                    {[
+                      ['departmentRule', 'Department match'],
+                      ['agencyRule', 'Agency match'],
+                      ['pocRule', 'POC email match'],
+                    ].map(([key, label]) => (
+                      <div className="form-field" key={key} style={{ marginTop: 8 }}>
+                        <label className="form-label">{label}</label>
+                        <select className="form-select" value={rfiFollowUp[key]}
+                          onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, [key]: e.target.value })); setSavedSAM(false) }}>
+                          <option value="Exact">Exact</option><option value="Ignore">Ignore</option>
+                        </select>
+                      </div>
+                    ))}
+                    <div className="form-field" style={{ marginTop: 8 }}>
+                      <label className="form-label">Minimum title overlap (%)</label>
+                      <input className="form-input" type="number" min={1} max={100} value={rfiFollowUp.titleOverlapPercent}
+                        onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, titleOverlapPercent: e.target.value })); setSavedSAM(false) }} />
+                    </div>
+                    <div className="form-field" style={{ marginTop: 8 }}>
+                      <label className="form-label">Notice types</label>
+                      <select className="form-select" value={rfiFollowUp.noticeTypes}
+                        onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, noticeTypes: e.target.value })); setSavedSAM(false) }}>
+                        <option value="RFP, RFQ">RFP and RFQ</option><option value="RFP">RFP only</option><option value="RFQ">RFQ only</option>
+                      </select>
+                    </div>
+                    <div className="form-field" style={{ marginTop: 8 }}>
+                      <label className="form-label">Post-submission window (days)</label>
+                      <input className="form-input" type="number" min={1} max={364} value={rfiFollowUp.submissionWindowDays}
+                        onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, submissionWindowDays: e.target.value })); setSavedSAM(false) }} />
+                    </div>
+                    <div className="form-field" style={{ marginTop: 8 }}>
+                      <label className="form-label">No-submission window (days before / after today)</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <input className="form-input" aria-label="Days before today" type="number" min={0} max={364} value={rfiFollowUp.noSubmissionLookbackDays}
+                          onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, noSubmissionLookbackDays: e.target.value })); setSavedSAM(false) }} />
+                        <input className="form-input" aria-label="Days after today" type="number" min={0} max={364} value={rfiFollowUp.noSubmissionLookaheadDays}
+                          onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, noSubmissionLookaheadDays: e.target.value })); setSavedSAM(false) }} />
+                      </div>
                     </div>
                   </div>
                 </div>
