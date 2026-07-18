@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { Bar, BarChart, Cell, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -11,7 +11,7 @@ import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useEntityAwardHistory } from '@/hooks/useEntityAwardHistory'
-import { useRfiFollowUps } from '@/hooks/useRfiFollowUps'
+import { effectiveRfiFollowUpCriteria, useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 import Modal from '@/components/Common/Modal'
@@ -23,6 +23,7 @@ import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
   parsePOCNames, parseRelatedOpportunityNote, linkRelatedOpportunities,
   previewOpportunityRename, renameOpportunityWithReferences,
+  saveRFIFollowUpDecision, saveRFIFollowUpOverride,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 
@@ -533,72 +534,115 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
   )
 }
 
-// RFI/Sources-Sought follow-up lookup. The request starts automatically for
-// eligible RFIs; matching remains strict and is enforced by the Worker.
-function RfiFollowUpPanel({ opp, pocEmail, linkedContractNumbers, onAddToPipeline }) {
-  const ready = Boolean(opp?.[C.department] && opp?.[C.agency] && opp?.[C.title] && pocEmail)
-  const { matches, loading, error, searched, refresh } = useRfiFollowUps({
-    department: opp?.[C.department] || '',
-    agency: opp?.[C.agency] || '',
-    pocEmail: pocEmail || '',
-    title: opp?.[C.title] || '',
-    noticeId: opp?.[C.contractNum] || '',
-    submissionDate: opp?.[C.submDate] || '',
-  }, { enabled: ready })
+function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers, monitor, onAddToPipeline, onSaveDecision, onSaveOverride, focusRequested, panelRef, toast }) {
+  const opportunityId = opp?.[C.contractNum] || ''
+  const status = monitor.statusByOpportunity[String(opportunityId).trim().toLowerCase()]
+  const override = monitor.overrides.find((row) => String(row['Opportunity ID'] || '').trim().toLowerCase() === String(opportunityId).trim().toLowerCase())
+  const effective = effectiveRfiFollowUpCriteria(opp, contacts, monitor.globalRules, override)
+  const [open, setOpen] = useState(false)
+  const [editingCriteria, setEditingCriteria] = useState(false)
+  const [criteria, setCriteria] = useState(null)
   const [adding, setAdding] = useState(null)
+  const [savingCriteria, setSavingCriteria] = useState(false)
+  const candidates = status?.candidates || []
+  const pending = candidates.filter((candidate) => !candidate.decision)
+  const reviewed = candidates.filter((candidate) => candidate.decision)
+
+  useEffect(() => {
+    if (!focusRequested) return
+    setOpen(true)
+    const timer = window.setTimeout(() => panelRef?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 180)
+    return () => window.clearTimeout(timer)
+  }, [focusRequested, panelRef])
+
+  const beginCriteriaEdit = () => {
+    setCriteria({
+      'Monitoring Enabled': override?.['Monitoring Enabled'] || 'Enabled',
+      'Use Global Criteria': override?.['Use Global Criteria'] || 'Yes',
+      'Department Rule': override?.['Department Rule'] || 'Exact', 'Department Override': override?.['Department Override'] || '',
+      'Agency Rule': override?.['Agency Rule'] || 'Exact', 'Agency Override': override?.['Agency Override'] || '',
+      'POC Rule': override?.['POC Rule'] || 'Exact', 'POC Email Override': override?.['POC Email Override'] || '',
+      'Title Overlap %': override?.['Title Overlap %'] || effective.rules.titleOverlapPercent,
+      'Notice Types': override?.['Notice Types'] || effective.rules.noticeTypes,
+      'Submission Window Days': override?.['Submission Window Days'] || effective.rules.submissionWindowDays,
+      'No-Submission Lookback Days': override?.['No-Submission Lookback Days'] || effective.rules.noSubmissionLookbackDays,
+      'No-Submission Lookahead Days': override?.['No-Submission Lookahead Days'] || effective.rules.noSubmissionLookaheadDays,
+    })
+    setEditingCriteria(true)
+  }
+
+  const saveCriteria = async () => {
+    setSavingCriteria(true)
+    try {
+      await onSaveOverride(opportunityId, criteria)
+      setEditingCriteria(false)
+      toast?.success('RFI follow-up criteria saved')
+    } catch (error) {
+      toast?.error(`Could not save criteria: ${error.message}`)
+    } finally { setSavingCriteria(false) }
+  }
+
+  const decide = async (candidate, decision) => {
+    monitor.applyDecision(opportunityId, candidate, decision)
+    try { await onSaveDecision(candidate, decision) } catch (error) {
+      await monitor.loadStatus().catch(() => {})
+      toast?.error(`Could not save decision: ${error.message}`)
+    }
+  }
 
   const add = async (candidate) => {
     const key = candidate.solicitationNumber || candidate.noticeId
     setAdding(key)
-    try {
-      await onAddToPipeline(candidate)
-    } finally {
-      setAdding(null)
-    }
+    try { await onAddToPipeline(candidate) } finally { setAdding(null) }
   }
 
+  const ruleSummary = `${effective.rules.departmentRule} department, ${effective.rules.agencyRule} agency, ${effective.rules.pocRule} POC, ${effective.rules.titleOverlapPercent}% title overlap`
+  const canCheck = Boolean(effective.rules.monitoringEnabled && effective.title && (effective.rules.departmentRule === 'Ignore' || effective.department) && (effective.rules.agencyRule === 'Ignore' || effective.agency) && (effective.rules.pocRule === 'Ignore' || effective.pocEmail))
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 16px', borderBottom: '0.5px solid var(--gray-200)' }}>
+    <div ref={panelRef} className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12, scrollMarginTop: 16 }}>
+      <button onClick={() => setOpen((value) => !value)} style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%', padding: '12px 16px', border: 'none', background: 'var(--surface)', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font)' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>RFI Follow-up Checker</div>
-          <div className="text-xs text-muted" style={{ marginTop: 2 }}>Checks SAM.gov RFPs and RFQs for the same department, agency, POC email, and title keywords.</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)' }}>RFI Follow-up Checker</div>
+          <div className="text-xs text-muted" style={{ marginTop: 2 }}>
+            {status?.lastCheckedAt ? `${pending.length} pending result${pending.length === 1 ? '' : 's'} · checked ${formatDate(status.lastCheckedAt)}` : 'Run a targeted SAM.gov follow-up check.'}
+          </div>
         </div>
-        <button className="btn text-sm" onClick={refresh} disabled={!ready || loading}>
-          {loading ? 'Checking…' : 'Refresh'}
-        </button>
-      </div>
-      <div style={{ padding: '12px 16px' }}>
-        {!ready && <p className="text-sm text-muted">A department, agency, title, and linked POC email are required before follow-ups can be checked.</p>}
-        {ready && loading && <p className="text-sm text-muted">Checking SAM.gov for RFP and RFQ follow-ons…</p>}
-        {ready && error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-up check failed: {error}</p>}
-        {ready && searched && !loading && !error && matches.length === 0 && (
-          <p className="text-sm text-muted">No matching follow-on RFPs or RFQs found.</p>
-        )}
-        {ready && matches.map((candidate) => {
+        <span className="text-xs text-muted">{open ? '⌃' : '⌄'}</span>
+      </button>
+      {open && <div style={{ borderTop: '0.5px solid var(--gray-200)', padding: '12px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <span className="text-xs text-muted">{ruleSummary}</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn text-xs" onClick={beginCriteriaEdit}>Criteria</button>
+            <button className="btn btn-primary text-xs" onClick={() => monitor.checkOne(opportunityId).catch((error) => toast?.error(`Follow-up check failed: ${error.message}`))} disabled={monitor.checking || !canCheck}>
+              {monitor.checking ? 'Checking…' : 'Run check'}
+            </button>
+          </div>
+        </div>
+        {editingCriteria && criteria && <div style={{ border: '0.5px solid var(--blue-200)', background: 'var(--blue-50)', borderRadius: 'var(--radius-sm)', padding: 10, marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+            <label className="text-xs"><input type="checkbox" checked={criteria['Monitoring Enabled'] === 'Enabled'} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Monitoring Enabled': e.target.checked ? 'Enabled' : 'Disabled' }))} /> Enable checks</label>
+            <label className="text-xs"><input type="checkbox" checked={criteria['Use Global Criteria'] === 'Yes'} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Use Global Criteria': e.target.checked ? 'Yes' : 'No' }))} /> Use global criteria</label>
+            {criteria['Use Global Criteria'] !== 'Yes' && <>
+              {[['Department Rule', 'Department Override'], ['Agency Rule', 'Agency Override'], ['POC Rule', 'POC Email Override']].map(([rule, value]) => <div key={rule}><select className="form-input" value={criteria[rule]} onChange={(e) => setCriteria((prev) => ({ ...prev, [rule]: e.target.value }))}><option>Exact</option><option>Ignore</option><option>Override</option></select>{criteria[rule] === 'Override' && <input className="form-input" style={{ marginTop: 4 }} placeholder={value} value={criteria[value]} onChange={(e) => setCriteria((prev) => ({ ...prev, [value]: e.target.value }))} />}</div>)}
+              <input className="form-input" type="number" min={1} max={100} value={criteria['Title Overlap %']} title="Minimum title overlap" onChange={(e) => setCriteria((prev) => ({ ...prev, 'Title Overlap %': e.target.value }))} />
+              <select className="form-input" value={criteria['Notice Types']} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Notice Types': e.target.value }))}><option>RFP, RFQ</option><option>RFP</option><option>RFQ</option></select>
+              {['Submission Window Days', 'No-Submission Lookback Days', 'No-Submission Lookahead Days'].map((key) => <input key={key} className="form-input" type="number" min={0} max={364} title={key} value={criteria[key]} onChange={(e) => setCriteria((prev) => ({ ...prev, [key]: e.target.value }))} />)}
+            </>}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}><button className="btn text-xs" onClick={() => setEditingCriteria(false)}>Cancel</button><button className="btn btn-primary text-xs" onClick={saveCriteria} disabled={savingCriteria}>{savingCriteria ? 'Saving…' : 'Save criteria'}</button></div>
+        </div>}
+        {!effective.rules.monitoringEnabled && <p className="text-sm text-muted">Follow-up monitoring is disabled for this RFI.</p>}
+        {effective.rules.monitoringEnabled && effective.rules.pocRule === 'Exact' && !effective.pocEmail && <p className="text-sm text-muted">Link a contact with an email address, choose an override, or set the POC rule to Ignore before checking.</p>}
+        {monitor.error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-up check failed: {monitor.error}</p>}
+        {!monitor.checking && status?.lastCheckedAt && candidates.length === 0 && <p className="text-sm text-muted">No matching follow-on RFPs or RFQs found.</p>}
+        {pending.map((candidate) => {
           const key = candidate.solicitationNumber || candidate.noticeId
           const alreadyLinked = linkedContractNumbers.has(key)
-          return (
-            <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '12px 0' }}>
-              <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{candidate.title || 'Untitled opportunity'}</div>
-                  <div className="text-xs text-muted" style={{ marginTop: 3 }}>
-                    {candidate.solicitationNumber || candidate.noticeId} · {candidate.type || 'Follow-on'} · {candidate.keywordOverlapPercent}% title overlap
-                  </div>
-                  {candidate.responseDate && <div className="text-xs text-muted" style={{ marginTop: 2 }}>Response: {formatDate(candidate.responseDate)}</div>}
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  {candidate.samLink && <a className="btn text-sm" href={safeUrl(candidate.samLink)} target="_blank" rel="noreferrer">SAM.gov ↗</a>}
-                  <button className="btn btn-primary text-sm" onClick={() => add(candidate)} disabled={Boolean(adding) || alreadyLinked}>
-                    {alreadyLinked ? 'Linked' : adding === key ? 'Adding…' : 'Add & link'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
+          return <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '10px 0' }}><div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start' }}><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{candidate.title || 'Untitled opportunity'}</div><div className="text-xs text-muted" style={{ marginTop: 3 }}>{candidate.solicitationNumber || candidate.noticeId} · {candidate.type || 'Follow-on'} · {candidate.keywordOverlapPercent}% title overlap</div>{candidate.responseDate && <div className="text-xs text-muted" style={{ marginTop: 2 }}>Response: {formatDate(candidate.responseDate)}</div>}</div><div style={{ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'center' }}><button className="btn btn-ghost btn-icon" title="Approve result" aria-label="Approve result" onClick={() => decide(candidate, 'Approved')}>✓</button><button className="btn btn-ghost btn-icon" title="Reject and remove result" aria-label="Reject and remove result" onClick={() => decide(candidate, 'Rejected')}>✕</button>{candidate.samLink && <a className="btn text-xs" href={safeUrl(candidate.samLink)} target="_blank" rel="noreferrer">SAM.gov ↗</a>}</div></div></div>
         })}
-      </div>
+        {reviewed.length > 0 && <details style={{ marginTop: 8 }}><summary className="text-xs text-muted" style={{ cursor: 'pointer' }}>Reviewed results ({reviewed.length})</summary>{reviewed.map((candidate) => { const key = candidate.solicitationNumber || candidate.noticeId; const approved = candidate.decision === 'Approved'; const alreadyLinked = linkedContractNumbers.has(key); return <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '9px 0', display: 'flex', justifyContent: 'space-between', gap: 8 }}><div><strong className="text-sm">{candidate.title || 'Untitled opportunity'}</strong><div className="text-xs text-muted">{candidate.decision}</div></div><div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>{approved && <button className="btn btn-primary text-xs" onClick={() => add(candidate)} disabled={Boolean(adding) || alreadyLinked}>{alreadyLinked ? 'Linked' : adding === key ? 'Adding…' : 'Add & link'}</button>}<button className="btn btn-ghost btn-icon" title="Reject and remove result" aria-label="Reject and remove result" onClick={() => decide(candidate, 'Rejected')}>✕</button></div></div> })}</details>}
+      </div>}
     </div>
   )
 }
@@ -701,6 +745,9 @@ export default function OpportunityDetail({ toast }) {
   )
 
   const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI])
+  const rfiFollowUpMonitor = useRfiFollowUpMonitor(opp ? [opp] : [], contacts)
+  const followUpPanelRef = useRef(null)
+  const focusFollowUps = searchParams.get('focus') === 'follow-ups'
 
   useEffect(() => {
     setEightANoteAdded(false)
@@ -738,13 +785,6 @@ export default function OpportunityDetail({ toast }) {
     }).slice(0, 20)
   }, [contacts, linkedContacts, contactSearch])
 
-  const rfiPocEmail = useMemo(() => {
-    const direct = String(opp?.[C.poc] || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
-    if (direct) return direct
-    const names = new Set(parsePOCNames(opp?.[C.poc]))
-    return contacts.find((contact) => names.has(contact.Name) && contact.Email)?.Email || ''
-  }, [opp, contacts])
-
   const contact = useMemo(
     () => contacts.find((c) => c.Notes?.includes(decodedCN)),
     [contacts, decodedCN]
@@ -759,6 +799,24 @@ export default function OpportunityDetail({ toast }) {
     [notes]
   )
   const recentNotesStr = visibleNotes.slice(0, 3).map((n) => n.NoteText).join(' | ')
+
+  const saveFollowUpDecision = async (candidate, decision) => {
+    await saveRFIFollowUpDecision({
+      'Opportunity ID': opp[C.contractNum],
+      'Follow-up Notice ID': candidate.noticeId || '',
+      'Follow-up Solicitation Number': candidate.solicitationNumber || '',
+      Decision: decision,
+      'Candidate Title': candidate.title || '',
+    })
+    await rfiFollowUpMonitor.synchronize({ forceReplace: false })
+    await rfiFollowUpMonitor.loadStatus()
+  }
+
+  const saveFollowUpOverride = async (opportunityId, values) => {
+    await saveRFIFollowUpOverride(opportunityId, values)
+    await rfiFollowUpMonitor.synchronize({ forceReplace: false })
+    await rfiFollowUpMonitor.loadStatus()
+  }
 
   const handleAddEightANote = async () => {
     const exitDate = incumbentEightA.data?.eightA?.exitDate
@@ -856,6 +914,7 @@ export default function OpportunityDetail({ toast }) {
   const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
   const hasSubmissionDate = !Number.isNaN(localDate(opp[C.submDate]).getTime())
   const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.contractNumber))
+  const followUpStatus = rfiFollowUpMonitor.statusByOpportunity[normalizeOpportunityKey(opp[C.contractNum])]
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
   const handleCancel = () => { setForm(null); setEditing(false) }
@@ -1139,11 +1198,12 @@ export default function OpportunityDetail({ toast }) {
         }
         showFilter={false}
         showNew={false}
-        rightContent={contractLifecycleAlert && (
-          <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>
-            {contractLifecycleAlert.reason}
-          </span>
-        )}
+        rightContent={<div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {followUpStatus?.badgeVisible && <button className="badge" style={{ background: followUpStatus.badgeState === 'seen' ? 'var(--gray-100)' : 'var(--blue-50)', border: `0.5px solid ${followUpStatus.badgeState === 'seen' ? 'var(--gray-300)' : 'var(--blue-200)'}`, color: followUpStatus.badgeState === 'seen' ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer' }} onClick={() => { rfiFollowUpMonitor.markSeen(opp[C.contractNum]).catch(() => {}); const next = new URLSearchParams(searchParams); next.set('focus', 'follow-ups'); navigate({ search: `?${next.toString()}` }, { replace: true }) }} title={`${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}>
+            {followUpStatus.badgeState === 'seen' ? 'Follow-ups seen' : `${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}
+          </button>}
+          {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
+        </div>}
       />
 
       <div className="page-body">
@@ -1622,15 +1682,6 @@ export default function OpportunityDetail({ toast }) {
           </button>
         </Section>
 
-        {/* ── RFI follow-up / Award lookup ── */}
-        {isRFI && (
-          <RfiFollowUpPanel
-            opp={opp}
-            pocEmail={rfiPocEmail}
-            linkedContractNumbers={linkedContractNumbers}
-            onAddToPipeline={handleAddFollowOn}
-          />
-        )}
         <AwardLookupPanel
           opp={opp}
           contractNumber={decodedCN}
@@ -1642,6 +1693,21 @@ export default function OpportunityDetail({ toast }) {
         {/* ── AI panels ── */}
         <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
         <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
+
+        {isRFI && (
+          <RfiFollowUpPanel
+            opp={opp}
+            contacts={contacts}
+            linkedContractNumbers={linkedContractNumbers}
+            monitor={rfiFollowUpMonitor}
+            onAddToPipeline={handleAddFollowOn}
+            onSaveDecision={saveFollowUpDecision}
+            onSaveOverride={saveFollowUpOverride}
+            focusRequested={focusFollowUps}
+            panelRef={followUpPanelRef}
+            toast={toast}
+          />
+        )}
       </div>
 
       {/* ── Add task modal ── */}
