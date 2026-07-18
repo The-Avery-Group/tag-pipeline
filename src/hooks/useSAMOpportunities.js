@@ -78,7 +78,10 @@ async function refreshSharedPullProgress() {
   try {
     const status = await getSAMRunStatus()
     publishPullProgress(status)
-    if (status?.status === 'success' || status?.status === 'error' || status?.status === 'partial') {
+    // A partial result is only a completed checkpoint. The next checkpoint
+    // must keep polling and remain visually in progress until the full pull
+    // succeeds or fails.
+    if (status?.status === 'success' || status?.status === 'error') {
       stopSharedPullPolling()
       await invalidateCache()
     }
@@ -326,59 +329,76 @@ export function useSAMOpportunities() {
     const secret = import.meta.env.VITE_SAM_TRIGGER_SECRET
     if (!secret) throw new Error('VITE_SAM_TRIGGER_SECRET not set')
 
-    // Get the user's current MSAL token
-    const token = await getToken()
-
-    // Read SAM config from the workbook (frontend already has access)
-    const [naicsCodes, settings] = await Promise.all([getSAMNAICS(), getSAMSettings()])
-
-    if (!naicsCodes.length) throw new Error('No NAICS codes found in SAMNAICSTable')
-    if (!resumeCursor) zeroWritePartialsRef.current.clear()
-
-    const res = await fetch(`${WORKER_URL}/sam/trigger`, {
-      method: 'POST',
-      headers: {
-        'Content-Type':    'application/json',
-        'X-Trigger-Secret': secret,
-      },
-      body: JSON.stringify({
-        token,
-        config: {
-          naicsCodes,
-          skipDays:   settings.skipDays,
-          windowDays: settings.windowDays,
-        },
-        force,
-        resumeCursor,
-      }),
-    })
-
-    const data = await res.json()
-
-    if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
-
-    // If throttled, return the throttle info so the UI can show the message
-    if (data.throttled) return { throttled: true, message: data.message, lastRun: data.lastRun }
-
-    // Pull started in the background on the Worker. Poll /sam/run-status so
-    // the UI can show live progress and know exactly when it's actually
-    // done — replaces a previous blind 5s timeout, which had no way to
-    // tell whether the pull had finished, was still running, or had
-    // silently gotten stuck.
     setSharedPullOrigin({
       source: resumeCursor ? 'recovery' : source,
       startedAt: Date.now(),
     })
     publishPullProgress({
       status: 'running',
-      phase: 'fetching',
+      phase: 'preparing',
       naicsProcessed: Number(resumeCursor?.naicsIndex) || 0,
       naicsTotal: null,
     })
-    if (data.result) publishPullProgress(data.result)
-    startSharedPullPolling()
 
-    return { throttled: false, message: data.message, result: data.result }
+    try {
+      // Get the user's current MSAL token.
+      const token = await getToken()
+
+      // Read SAM config from the workbook. The user has delegated access.
+      const [naicsCodes, settings] = await Promise.all([getSAMNAICS(), getSAMSettings()])
+
+      if (!naicsCodes.length) throw new Error('No NAICS codes found in SAMNAICSTable')
+      if (!resumeCursor) zeroWritePartialsRef.current.clear()
+
+      const res = await fetch(`${WORKER_URL}/sam/trigger`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':    'application/json',
+          'X-Trigger-Secret': secret,
+        },
+        body: JSON.stringify({
+          token,
+          config: {
+            naicsCodes,
+            skipDays:   settings.skipDays,
+            windowDays: settings.windowDays,
+          },
+          force,
+          resumeCursor,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
+
+      // A throttled request did not start a pull, so remove the provisional
+      // preparing state rather than leaving the UI looking active.
+      if (data.throttled) {
+        setSharedPullOrigin(null)
+        publishPullProgress(null)
+        return { throttled: true, message: data.message, lastRun: data.lastRun }
+      }
+
+      if (data.result) publishPullProgress(data.result)
+      else publishPullProgress({
+        status: 'running',
+        phase: 'fetching',
+        naicsProcessed: Number(resumeCursor?.naicsIndex) || 0,
+        naicsTotal: naicsCodes.length,
+      })
+      startSharedPullPolling()
+
+      return { throttled: false, message: data.message, result: data.result }
+    } catch (err) {
+      publishPullProgress({
+        success: false,
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        error: err.message || 'The opportunity pull could not be started.',
+      })
+      throw err
+    }
   }, [])
 
   // ── Auto-resume a stalled run ─────────────────────────────────────────
