@@ -633,7 +633,7 @@ function updateWithRetry(fn) {
   })()
 }
 
-function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes) {
+function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides = [], followUpDecisions = []) {
   const oldId = String(current[OPPORTUNITY_ID_COL] ?? '').trim()
   const newId = String(nextForm[OPPORTUNITY_ID_COL] ?? '').trim()
   const oldTitle = String(current[OPPORTUNITY_TITLE_COL] ?? '').trim()
@@ -693,6 +693,24 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes) 
   })
 
   const notePatches = [...notePatchMap.values()]
+  const overridePatches = identifierChanged
+    ? followUpOverrides
+      .filter((row) => String(row['Opportunity ID'] ?? '').trim() === oldId)
+      .map((row) => ({
+        rowIndex: row._rowIndex,
+        patch: { 'Opportunity ID': newId },
+        rollback: { 'Opportunity ID': row['Opportunity ID'] },
+      }))
+    : []
+  const followUpDecisionPatches = identifierChanged
+    ? followUpDecisions
+      .filter((row) => String(row['Opportunity ID'] ?? '').trim() === oldId)
+      .map((row) => ({
+        rowIndex: row._rowIndex,
+        patch: { 'Opportunity ID': newId },
+        rollback: { 'Opportunity ID': row['Opportunity ID'] },
+      }))
+    : []
   return {
     oldId,
     newId,
@@ -702,13 +720,17 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes) 
     titleChanged,
     taskPatches,
     notePatches,
+    overridePatches,
+    followUpDecisionPatches,
     preview: {
       identifierChanged,
       titleChanged,
       taskCount: taskPatches.length,
       noteCount: notePatches.length,
       relationshipCount: relationshipRows.size,
-      totalLinkedRecords: taskPatches.length + notePatches.length,
+      followUpOverrideCount: overridePatches.length,
+      followUpDecisionCount: followUpDecisionPatches.length,
+      totalLinkedRecords: taskPatches.length + notePatches.length + overridePatches.length + followUpDecisionPatches.length,
     },
   }
 }
@@ -723,10 +745,14 @@ export async function previewOpportunityRename(rowIndex, nextForm) {
   invalidate('PipelineTable')
   invalidate('TasksTable')
   invalidate('NotesTable')
-  const [pipeline, tasks, notes] = await Promise.all([getPipeline(), getTasks(), getNotes()])
+  invalidate('RFIFollowUpOverridesTable')
+  invalidate('RFIFollowUpDecisionsTable')
+  const [pipeline, tasks, notes, followUpOverrides, followUpDecisions] = await Promise.all([
+    getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(),
+  ])
   const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
   if (!current) throw new Error('Opportunity no longer exists in the pipeline')
-  return createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes).preview
+  return createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions).preview
 }
 
 /**
@@ -740,10 +766,14 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
   invalidate('PipelineTable')
   invalidate('TasksTable')
   invalidate('NotesTable')
-  const [pipeline, tasks, notes] = await Promise.all([getPipeline(), getTasks(), getNotes()])
+  invalidate('RFIFollowUpOverridesTable')
+  invalidate('RFIFollowUpDecisionsTable')
+  const [pipeline, tasks, notes, followUpOverrides, followUpDecisions] = await Promise.all([
+    getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(),
+  ])
   const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
   if (!current) throw new Error('Opportunity no longer exists in the pipeline')
-  const plan = createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes)
+  const plan = createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions)
 
   const operations = [
     ...plan.taskPatches.map((item) => ({
@@ -755,6 +785,16 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
       label: 'linked note',
       apply: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.patch, NOTES_HEADERS)),
       rollback: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.rollback, NOTES_HEADERS)),
+    })),
+    ...plan.overridePatches.map((item) => ({
+      label: 'RFI follow-up override',
+      apply: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
+      rollback: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
+    })),
+    ...plan.followUpDecisionPatches.map((item) => ({
+      label: 'RFI follow-up decision',
+      apply: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_DECISION_HEADERS)),
+      rollback: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_DECISION_HEADERS)),
     })),
     {
       label: 'opportunity',
@@ -866,6 +906,62 @@ export const SAM_NAICS_HEADERS = ['NAICS Code']
 
 export const SAM_SETTINGS_HEADERS = ['Setting', 'Value']
 
+export const RFI_FOLLOW_UP_OVERRIDE_HEADERS = [
+  'Opportunity ID', 'Monitoring Enabled', 'Use Global Criteria',
+  'Department Rule', 'Department Override',
+  'Agency Rule', 'Agency Override',
+  'POC Rule', 'POC Email Override',
+  'Title Overlap %', 'Notice Types',
+  'Submission Window Days', 'No-Submission Lookback Days',
+  'No-Submission Lookahead Days', 'Updated At',
+]
+
+export const RFI_FOLLOW_UP_DECISION_HEADERS = [
+  'Opportunity ID', 'Follow-up Notice ID', 'Follow-up Solicitation Number',
+  'Decision', 'Decided At', 'Candidate Title',
+]
+
+const RFI_FOLLOW_UP_SETTING_DEFAULTS = {
+  monitoringEnabled: true,
+  departmentRule: 'Exact',
+  agencyRule: 'Exact',
+  pocRule: 'Exact',
+  titleOverlapPercent: 40,
+  noticeTypes: 'RFP, RFQ',
+  submissionWindowDays: 364,
+  noSubmissionLookbackDays: 150,
+  noSubmissionLookaheadDays: 150,
+}
+
+function settingBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback
+  return ['true', 'yes', 'enabled', '1'].includes(String(value).trim().toLowerCase())
+}
+
+function settingNumber(value, fallback, min = 0, max = 364) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback
+}
+
+function rfiFollowUpSettingsFromRows(rows) {
+  const values = {}
+  rows.forEach((row) => {
+    const key = String(row.Setting || '').trim()
+    if (key) values[key] = row.Value
+  })
+  return {
+    monitoringEnabled: settingBoolean(values['RFI Follow-up Monitoring'], RFI_FOLLOW_UP_SETTING_DEFAULTS.monitoringEnabled),
+    departmentRule: ['Exact', 'Ignore'].includes(String(values['RFI Follow-up Department Rule'] || '')) ? String(values['RFI Follow-up Department Rule']) : RFI_FOLLOW_UP_SETTING_DEFAULTS.departmentRule,
+    agencyRule: ['Exact', 'Ignore'].includes(String(values['RFI Follow-up Agency Rule'] || '')) ? String(values['RFI Follow-up Agency Rule']) : RFI_FOLLOW_UP_SETTING_DEFAULTS.agencyRule,
+    pocRule: ['Exact', 'Ignore'].includes(String(values['RFI Follow-up POC Rule'] || '')) ? String(values['RFI Follow-up POC Rule']) : RFI_FOLLOW_UP_SETTING_DEFAULTS.pocRule,
+    titleOverlapPercent: settingNumber(values['RFI Follow-up Title Overlap %'], RFI_FOLLOW_UP_SETTING_DEFAULTS.titleOverlapPercent, 1, 100),
+    noticeTypes: String(values['RFI Follow-up Notice Types'] || RFI_FOLLOW_UP_SETTING_DEFAULTS.noticeTypes),
+    submissionWindowDays: settingNumber(values['RFI Follow-up Submission Window Days'], RFI_FOLLOW_UP_SETTING_DEFAULTS.submissionWindowDays, 1, 364),
+    noSubmissionLookbackDays: settingNumber(values['RFI Follow-up No-Submission Lookback Days'], RFI_FOLLOW_UP_SETTING_DEFAULTS.noSubmissionLookbackDays, 0, 364),
+    noSubmissionLookaheadDays: settingNumber(values['RFI Follow-up No-Submission Lookahead Days'], RFI_FOLLOW_UP_SETTING_DEFAULTS.noSubmissionLookaheadDays, 0, 364),
+  }
+}
+
 export async function getSAMNAICS() {
   const rows = await getSheetRows('SAMNAICSTable')
   return rows.map((r) => String(r['NAICS Code'] || '').trim()).filter(Boolean)
@@ -905,13 +1001,68 @@ export async function getSAMSettings() {
   return {
     skipDays:   Number(settings['Skip Days']   ?? 3),
     windowDays: Number(settings['Window Days'] ?? 90),
+    rfiFollowUp: rfiFollowUpSettingsFromRows(rows),
   }
 }
 
-export async function updateSAMSettings(skipDays, windowDays) {
+export async function updateSAMSettings(skipDays, windowDays, rfiFollowUp = null) {
   const rows = await getSheetRows('SAMSettingsTable')
-  const skipRow   = rows.find((r) => String(r['Setting'] || '').trim() === 'Skip Days')
-  const windowRow = rows.find((r) => String(r['Setting'] || '').trim() === 'Window Days')
-  if (skipRow)   await updateRow('SAMSettingsTable', skipRow._rowIndex,   { Setting: 'Skip Days',   Value: skipDays },   SAM_SETTINGS_HEADERS)
-  if (windowRow) await updateRow('SAMSettingsTable', windowRow._rowIndex, { Setting: 'Window Days', Value: windowDays }, SAM_SETTINGS_HEADERS)
+  const values = {
+    'Skip Days': skipDays,
+    'Window Days': windowDays,
+    ...(rfiFollowUp ? {
+      'RFI Follow-up Monitoring': rfiFollowUp.monitoringEnabled ? 'Enabled' : 'Disabled',
+      'RFI Follow-up Department Rule': rfiFollowUp.departmentRule,
+      'RFI Follow-up Agency Rule': rfiFollowUp.agencyRule,
+      'RFI Follow-up POC Rule': rfiFollowUp.pocRule,
+      'RFI Follow-up Title Overlap %': rfiFollowUp.titleOverlapPercent,
+      'RFI Follow-up Notice Types': rfiFollowUp.noticeTypes,
+      'RFI Follow-up Submission Window Days': rfiFollowUp.submissionWindowDays,
+      'RFI Follow-up No-Submission Lookback Days': rfiFollowUp.noSubmissionLookbackDays,
+      'RFI Follow-up No-Submission Lookahead Days': rfiFollowUp.noSubmissionLookaheadDays,
+    } : {}),
+  }
+  for (const [setting, value] of Object.entries(values)) {
+    const row = rows.find((item) => String(item.Setting || '').trim() === setting)
+    if (row) await updateRow('SAMSettingsTable', row._rowIndex, { Setting: setting, Value: value }, SAM_SETTINGS_HEADERS)
+    else await appendRow('SAMSettingsTable', { Setting: setting, Value: value }, SAM_SETTINGS_HEADERS)
+  }
+}
+
+export async function getRFIFollowUpOverrides() {
+  try { return await getSheetRows('RFIFollowUpOverridesTable') } catch (error) {
+    if (/not found|does not exist|itemNotFound|Graph API error: 404/i.test(error.message)) return []
+    throw error
+  }
+}
+
+export async function saveRFIFollowUpOverride(opportunityId, values) {
+  const rows = await getRFIFollowUpOverrides()
+  const existing = rows.find((row) => normalizedValue(row['Opportunity ID']) === normalizedValue(opportunityId))
+  const payload = {
+    ...values,
+    'Opportunity ID': opportunityId,
+    'Updated At': new Date().toISOString(),
+  }
+  if (existing) return updateRow('RFIFollowUpOverridesTable', existing._rowIndex, payload, RFI_FOLLOW_UP_OVERRIDE_HEADERS)
+  return appendRow('RFIFollowUpOverridesTable', payload, RFI_FOLLOW_UP_OVERRIDE_HEADERS)
+}
+
+export async function getRFIFollowUpDecisions() {
+  try { return await getSheetRows('RFIFollowUpDecisionsTable') } catch (error) {
+    if (/not found|does not exist|itemNotFound|Graph API error: 404/i.test(error.message)) return []
+    throw error
+  }
+}
+
+export async function saveRFIFollowUpDecision(values) {
+  const rows = await getRFIFollowUpDecisions()
+  const sameDecision = rows.find((row) =>
+    normalizedValue(row['Opportunity ID']) === normalizedValue(values['Opportunity ID']) &&
+    normalizedValue(row['Follow-up Notice ID']) === normalizedValue(values['Follow-up Notice ID']) &&
+    normalizedValue(row['Follow-up Solicitation Number']) === normalizedValue(values['Follow-up Solicitation Number'])
+  )
+  const payload = { ...values, 'Decided At': new Date().toISOString() }
+  if (sameDecision) return updateRow('RFIFollowUpDecisionsTable', sameDecision._rowIndex, payload, RFI_FOLLOW_UP_DECISION_HEADERS)
+  return appendRow('RFIFollowUpDecisionsTable', payload, RFI_FOLLOW_UP_DECISION_HEADERS)
 }
