@@ -14,6 +14,7 @@ import { handleSAM } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
+import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -98,6 +99,9 @@ export default {
       } else if (path.startsWith('/sam/changes/') && ['GET', 'POST'].includes(req.method)) {
         response = await handleSAMMonitor(req, env)
 
+      } else if (path.startsWith('/sam/follow-up-monitor/') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleRFIFollowUpMonitor(req, env)
+
       } else if (path === '/awards/lookup' && req.method === 'GET') {
         response = await handleAwards(req, env)
 
@@ -123,5 +127,6 @@ export default {
     const run = await env.CACHE?.get('sam_monitor_run', 'json')
     const cursor = run?.nextCursor ?? 0
     ctx.waitUntil(runSAMMonitorCheck(env, cursor))
+    ctx.waitUntil(runRFIFollowUpMonitor(env))
   },
 }
