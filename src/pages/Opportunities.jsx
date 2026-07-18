@@ -636,7 +636,9 @@ export default function Opportunities({ toast }) {
   const isPulling = pulling || pullProgress?.status === 'running' || pullProgress?.status === 'partial'
 
   const pullProgressText = (() => {
-    if (!pullProgress || pullProgress.status !== 'running') return null
+    if (!pullProgress || !['running', 'partial'].includes(pullProgress.status)) return null
+    if (pullProgress.status === 'partial') return 'Continuing opportunity pull…'
+    if (pullProgress.phase === 'preparing') return 'Preparing opportunity pull…'
     if (pullProgress.phase === 'writing') {
       const n = pullProgress.toWrite || 0
       return `Writing ${n} new opportunit${n === 1 ? 'y' : 'ies'} to the pipeline…`
@@ -651,7 +653,7 @@ export default function Opportunities({ toast }) {
   // "last pulled" summary immediately rather than waiting for the next
   // page load — pullProgress already carries the same shape samRunStatus expects.
   useEffect(() => {
-    if (pullProgress?.status === 'success' || pullProgress?.status === 'error' || pullProgress?.status === 'partial') {
+    if (pullProgress?.status === 'success' || pullProgress?.status === 'error') {
       setSamRunStatus(pullProgress)
       // This is the exact transition that replaces live activity with the
       // durable Last pulled / failure summary. Clear its transient companion
@@ -674,12 +676,13 @@ export default function Opportunities({ toast }) {
   // tab share browser-local run state, so a Settings-triggered pull is not
   // described as though another user or device started it.
   useEffect(() => {
-    if (pullProgress?.status !== 'running') {
-      // The running-state label is temporary. Completed, failed, and partial
-      // runs already have a durable summary in the status line above it.
+    if (!['running', 'partial'].includes(pullProgress?.status)) {
+      // The running-state label is temporary. Completed and failed runs have
+      // a durable summary in the status line above it.
       setPullMessage((message) => message?.type === 'info' ? null : message)
       return
     }
+    if (pullProgress.status === 'partial') return
     if (pullOrigin?.source === 'settings') {
       setPullMessage({ type: 'info', text: 'A pull started from Settings is running.' })
     } else if (pullOrigin?.source === 'recovery') {
@@ -819,7 +822,7 @@ export default function Opportunities({ toast }) {
                 )}
                 {samRunStatus?.success === false && (
                   <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
-                    Last run failed: {samRunStatus.error || 'Unknown error'}
+                    Last run failed: {samRunStatus.error || 'No error detail was recorded.'}
                   </span>
                 )}
                 {samRunStatus?.success == null && 'Not yet pulled'}
