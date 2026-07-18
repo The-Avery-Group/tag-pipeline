@@ -326,6 +326,44 @@ const TITLE_STOP_WORDS = new Set([
   'service', 'support', 'contract', 'program', 'project', 'requirement',
 ])
 
+const DEFAULT_FOLLOW_UP_RULES = {
+  departmentRule: 'Exact',
+  agencyRule: 'Exact',
+  pocRule: 'Exact',
+  titleOverlapPercent: 40,
+  noticeTypes: 'RFP, RFQ',
+  submissionWindowDays: 364,
+  noSubmissionLookbackDays: 150,
+  noSubmissionLookaheadDays: 150,
+}
+
+function numberRule(value, fallback, min, max) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback
+}
+
+function normalizedFollowUpRules(rules = {}) {
+  const choice = (value) => String(value || '').trim()
+  return {
+    departmentRule: ['Exact', 'Ignore'].includes(choice(rules.departmentRule)) ? choice(rules.departmentRule) : DEFAULT_FOLLOW_UP_RULES.departmentRule,
+    agencyRule: ['Exact', 'Ignore'].includes(choice(rules.agencyRule)) ? choice(rules.agencyRule) : DEFAULT_FOLLOW_UP_RULES.agencyRule,
+    pocRule: ['Exact', 'Ignore'].includes(choice(rules.pocRule)) ? choice(rules.pocRule) : DEFAULT_FOLLOW_UP_RULES.pocRule,
+    titleOverlapPercent: numberRule(rules.titleOverlapPercent, DEFAULT_FOLLOW_UP_RULES.titleOverlapPercent, 1, 100),
+    noticeTypes: choice(rules.noticeTypes) || DEFAULT_FOLLOW_UP_RULES.noticeTypes,
+    submissionWindowDays: numberRule(rules.submissionWindowDays, DEFAULT_FOLLOW_UP_RULES.submissionWindowDays, 1, 364),
+    noSubmissionLookbackDays: numberRule(rules.noSubmissionLookbackDays, DEFAULT_FOLLOW_UP_RULES.noSubmissionLookbackDays, 0, 364),
+    noSubmissionLookaheadDays: numberRule(rules.noSubmissionLookaheadDays, DEFAULT_FOLLOW_UP_RULES.noSubmissionLookaheadDays, 0, 364),
+  }
+}
+
+function requestedFollowUpTypes(noticeTypes) {
+  const text = String(noticeTypes || '').toUpperCase()
+  const types = []
+  if (text.includes('RFP')) types.push('o')
+  if (text.includes('RFQ')) types.push('k')
+  return types.length ? types : ['o', 'k']
+}
+
 function normalized(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
@@ -364,18 +402,19 @@ function matchingPOC(raw, email) {
 }
 
 function followUpCandidate(raw, source) {
+  const rules = normalizedFollowUpRules(source.rules)
   const sourceSubmission = dateFromValue(source.submissionDate)
   const candidatePosted = dateFromValue(raw.postedDate)
   // A follow-on must be posted strictly AFTER the RFI was submitted. This
   // guards against a broad API response ever admitting an older notice.
   if (sourceSubmission && (!candidatePosted || candidatePosted <= sourceSubmission)) return null
   const org = parseOrg(raw.fullParentPathName)
-  if (normalized(org.department) !== normalized(source.department)) return null
-  if (normalized(org.agency) !== normalized(source.agency)) return null
-  const poc = matchingPOC(raw, source.pocEmail)
-  if (!poc) return null
+  if (rules.departmentRule === 'Exact' && normalized(org.department) !== normalized(source.department)) return null
+  if (rules.agencyRule === 'Exact' && normalized(org.agency) !== normalized(source.agency)) return null
+  const poc = rules.pocRule === 'Exact' ? matchingPOC(raw, source.pocEmail) : null
+  if (rules.pocRule === 'Exact' && !poc) return null
   const overlap = titleOverlapPercent(source.title, raw.title)
-  if (overlap < 40) return null
+  if (overlap < rules.titleOverlapPercent) return null
   if (normalized(raw.noticeId) === normalized(source.noticeId)) return null
 
   return {
@@ -390,9 +429,9 @@ function followUpCandidate(raw, source) {
     postedDate:         parseResponseDate(raw.postedDate),
     naicsCode:          String(raw.naicsCode || raw.naics || '').trim(),
     samLink:            String(raw.uiLink || '').trim(),
-    pocName:            String(poc.fullName || poc.fullname || '').trim(),
-    pocEmail:           String(poc.email || '').trim(),
-    pocPhone:           String(poc.phone || '').trim(),
+    pocName:            String(poc?.fullName || poc?.fullname || '').trim(),
+    pocEmail:           String(poc?.email || '').trim(),
+    pocPhone:           String(poc?.phone || '').trim(),
     type:               String(raw.type || '').trim(),
     keywordOverlapPercent: overlap,
   }
@@ -427,7 +466,8 @@ async function fetchFollowUpNotices(env, ptype, postedFrom, postedTo) {
   return records
 }
 
-async function findRFIFollowUps(env, source) {
+export async function findRFIFollowUps(env, source) {
+  const rules = normalizedFollowUpRules(source.rules)
   const now = new Date()
   const submissionDate = dateFromValue(source.submissionDate)
   const from = submissionDate ? new Date(submissionDate) : new Date(now)
@@ -437,18 +477,19 @@ async function findRFIFollowUps(env, source) {
     // Start on the following day: a follow-on must be posted strictly after
     // the RFI submission date, never on or before it.
     from.setUTCDate(from.getUTCDate() + 1)
-    to.setUTCFullYear(to.getUTCFullYear() + 1)
+    to.setUTCDate(to.getUTCDate() + rules.submissionWindowDays)
   } else {
-    // With no submission date, search a ten-month window centered on today.
-    from.setUTCMonth(from.getUTCMonth() - 5)
-    to.setUTCMonth(to.getUTCMonth() + 5)
+    // With no submission date, use the configurable fallback around today.
+    from.setUTCDate(from.getUTCDate() - rules.noSubmissionLookbackDays)
+    to.setUTCDate(to.getUTCDate() + rules.noSubmissionLookaheadDays)
   }
 
   const responseSets = await Promise.all(
-    splitSAMDateRange(from, to).flatMap(({ from: windowFrom, to: windowTo }) => [
-      fetchFollowUpNotices(env, 'o', formatDateParam(windowFrom), formatDateParam(windowTo)),
-      fetchFollowUpNotices(env, 'k', formatDateParam(windowFrom), formatDateParam(windowTo)),
-    ])
+    splitSAMDateRange(from, to).flatMap(({ from: windowFrom, to: windowTo }) =>
+      requestedFollowUpTypes(rules.noticeTypes).map((ptype) =>
+        fetchFollowUpNotices(env, ptype, formatDateParam(windowFrom), formatDateParam(windowTo))
+      )
+    )
   )
   const unique = new Map()
   for (const raw of responseSets.flat()) {
@@ -498,9 +539,26 @@ async function handleFollowUps(req, env) {
     title:      url.searchParams.get('title')?.trim() || '',
     noticeId:   url.searchParams.get('noticeId')?.trim() || '',
     submissionDate: url.searchParams.get('submissionDate')?.trim() || '',
+    rules: {
+      departmentRule: url.searchParams.get('departmentRule')?.trim(),
+      agencyRule: url.searchParams.get('agencyRule')?.trim(),
+      pocRule: url.searchParams.get('pocRule')?.trim(),
+      titleOverlapPercent: url.searchParams.get('titleOverlapPercent')?.trim(),
+      noticeTypes: url.searchParams.get('noticeTypes')?.trim(),
+      submissionWindowDays: url.searchParams.get('submissionWindowDays')?.trim(),
+      noSubmissionLookbackDays: url.searchParams.get('noSubmissionLookbackDays')?.trim(),
+      noSubmissionLookaheadDays: url.searchParams.get('noSubmissionLookaheadDays')?.trim(),
+    },
   }
+  source.rules = normalizedFollowUpRules(source.rules)
   const missing = Object.entries(source)
-    .filter(([key, value]) => key !== 'noticeId' && key !== 'submissionDate' && !value)
+    .filter(([key, value]) => {
+      if (key === 'noticeId' || key === 'submissionDate' || key === 'rules') return false
+      if (key === 'department') return source.rules.departmentRule === 'Exact' && !value
+      if (key === 'agency') return source.rules.agencyRule === 'Exact' && !value
+      if (key === 'pocEmail') return source.rules.pocRule === 'Exact' && !value
+      return !value
+    })
     .map(([key]) => key)
   if (missing.length > 0) {
     return json({ error: `Missing follow-up criteria: ${missing.join(', ')}` }, 400)
@@ -514,7 +572,7 @@ async function handleFollowUps(req, env) {
 
   try {
     const matches = await findRFIFollowUps(env, source)
-    const response = { matches, count: matches.length }
+    const response = { matches, count: matches.length, rules: source.rules }
     if (env.CACHE) {
       await env.CACHE.put(cacheKey, JSON.stringify(response), { expirationTtl: FOLLOW_UP_CACHE_TTL_SECONDS })
     }
