@@ -620,23 +620,18 @@ function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers, monitor, onAdd
           </div>
         </div>
         {editingCriteria && criteria && <div style={{ border: '0.5px solid var(--blue-200)', background: 'var(--blue-50)', borderRadius: 'var(--radius-sm)', padding: 10, marginBottom: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: criteria['Use Global Criteria'] === 'Yes' ? 0 : 12 }}>
             <label className="text-xs"><input type="checkbox" checked={criteria['Monitoring Enabled'] === 'Enabled'} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Monitoring Enabled': e.target.checked ? 'Enabled' : 'Disabled' }))} /> Enable checks</label>
             <label className="text-xs"><input type="checkbox" checked={criteria['Use Global Criteria'] === 'Yes'} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Use Global Criteria': e.target.checked ? 'Yes' : 'No' }))} /> Use global criteria</label>
-            {criteria['Use Global Criteria'] !== 'Yes' && <>
           </div>
           {criteria['Use Global Criteria'] !== 'Yes' && <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '8px 14px', marginBottom: 12 }}>
               {[['Department match', 'Department Rule', 'Department Override'], ['Agency match', 'Agency Rule', 'Agency Override'], ['POC email match', 'POC Rule', 'POC Email Override']].map(([label, rule, value]) => <div key={rule}><div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 108px', gap: 6, alignItems: 'center' }}><label className="text-xs">{label}</label><select className="form-input" value={criteria[rule]} onChange={(e) => setCriteria((prev) => ({ ...prev, [rule]: e.target.value }))}><option>Exact</option><option>Ignore</option><option>Override</option></select></div>{criteria[rule] === 'Override' && <input className="form-input" style={{ marginTop: 4 }} placeholder={value} aria-label={value} value={criteria[value]} onChange={(e) => setCriteria((prev) => ({ ...prev, [value]: e.target.value }))} />}</div>)}
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 108px', gap: 6, alignItems: 'center' }}><label className="text-xs">Minimum title overlap (%)</label><input className="form-input" type="number" min={1} max={100} value={criteria['Title Overlap %']} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Title Overlap %': e.target.value }))} /></div>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 108px', gap: 6, alignItems: 'center' }}><label className="text-xs">Notice types</label><select className="form-input" value={criteria['Notice Types']} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Notice Types': e.target.value }))}><option>RFP, RFQ</option><option>RFP</option><option>RFQ</option></select></div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '8px 14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 108px', gap: 6, alignItems: 'center' }}><label className="text-xs">Minimum title overlap (%)</label><input className="form-input" type="number" min={1} max={100} value={criteria['Title Overlap %']} onChange={(e) => setCriteria((prev) => ({ ...prev, 'Title Overlap %': e.target.value }))} /></div>
               {[['Post-submission window (days)', 'Submission Window Days'], ['No-submission lookback (days)', 'No-Submission Lookback Days'], ['No-submission lookahead (days)', 'No-Submission Lookahead Days']].map(([label, key]) => <div key={key} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 108px', gap: 6, alignItems: 'center' }}><label className="text-xs">{label}</label><input className="form-input" type="number" min={0} max={364} value={criteria[key]} onChange={(e) => setCriteria((prev) => ({ ...prev, [key]: e.target.value }))} /></div>)}
-            </>}
-          </div>
             </div>
           </>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}><button className="btn text-xs" onClick={() => setEditingCriteria(false)}>Cancel</button><button className="btn btn-primary text-xs" onClick={saveCriteria} disabled={savingCriteria}>{savingCriteria ? 'Saving…' : 'Save criteria'}</button></div>
