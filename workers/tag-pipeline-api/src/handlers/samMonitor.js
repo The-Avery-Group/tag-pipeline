@@ -8,6 +8,10 @@ const SAM_BASE = 'https://api.sam.gov/opportunities/v2/search'
 const WATCH_PREFIX = 'sam_monitor_watch:'
 const RUN_KEY = 'sam_monitor_run'
 const CHECK_BATCH_SIZE = 5
+// Scheduled checks are intentionally larger than the interactive batches.
+// A watch can require one notice lookup and one solicitation fallback, so 15
+// still stays comfortably below the Free Workers external-subrequest limit.
+const SCHEDULED_CHECK_BATCH_SIZE = 15
 const DATE_RANGE_DAYS = 364
 
 function json(data, status = 200) {
@@ -94,8 +98,25 @@ function toWatch(item, existing = null) {
     agency: clean(item.agency ?? item.Agency),
     status: clean(item.status ?? item.Status).toLowerCase(),
     dateAdded: clean(item.dateAdded ?? item['Date Added']),
-    updatedAt: new Date().toISOString(),
   }
+}
+
+function watchSource(watch) {
+  return {
+    key: watch.key,
+    rowIndex: watch.rowIndex,
+    noticeId: watch.noticeId,
+    solicitationNumber: watch.solicitationNumber,
+    title: watch.title,
+    department: watch.department,
+    agency: watch.agency,
+    status: watch.status,
+    dateAdded: watch.dateAdded,
+  }
+}
+
+function sameWatchSource(left, right) {
+  return JSON.stringify(watchSource(left)) === JSON.stringify(watchSource(right))
 }
 
 async function readWatch(env, key) {
@@ -155,6 +176,7 @@ async function sync(req, env) {
 
   const currentWatches = await listWatches(env)
   let synchronized = 0
+  let unchanged = 0
   for (const item of eligible) {
     const notice = normalized(item['Notice ID'] ?? item.noticeId)
     const sol = normalized(item['Solicitation Number'] ?? item.solicitationNumber)
@@ -179,18 +201,32 @@ async function sync(req, env) {
         uiLink: clean(item['SAM.gov URL'] ?? item.samLink),
       }
     }
-    await writeWatch(env, next)
-    synchronized++
+    // A page refresh or the app-only workbook sync must not consume a KV
+    // write for every unchanged watch. Preserve the existing snapshot and
+    // check state unless the source record actually changed.
+    if (!existing || !sameWatchSource(existing, next)) {
+      next.updatedAt = new Date().toISOString()
+      await writeWatch(env, next)
+      synchronized++
+    } else {
+      unchanged++
+    }
   }
-  return json({ ok: true, synchronized })
+  return json({ ok: true, synchronized, unchanged })
 }
 
-export async function runSAMMonitorCheck(env, cursor = 0) {
+export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } = {}) {
   if (!env.SAM_API_KEY) return json({ error: 'SAM_API_KEY not configured' }, 503)
   cursor = Math.max(0, Number(cursor) || 0)
   const watches = await listWatches(env)
-  const batch = watches.slice(cursor, cursor + CHECK_BATCH_SIZE)
-  await env.CACHE.put(RUN_KEY, JSON.stringify({ status: 'running', startedAt: new Date().toISOString(), total: watches.length, checked: cursor, nextCursor: cursor }))
+  // A watch can be removed between scheduled batches. Restarting the cycle
+  // prevents an old cursor from stranding newly added watches past the end.
+  if (cursor >= watches.length) cursor = 0
+  const batchSize = scheduled ? SCHEDULED_CHECK_BATCH_SIZE : CHECK_BATCH_SIZE
+  const batch = watches.slice(cursor, cursor + batchSize)
+  if (!batch.length) {
+    return { ok: true, status: 'success', total: watches.length, checked: watches.length, nextCursor: null, errors: [], skipped: true }
+  }
   console.info(JSON.stringify({ event: 'sam_monitor_started', cursor, batchSize: batch.length, total: watches.length }))
   const errors = []
   let checked = 0
@@ -245,6 +281,8 @@ export async function runSAMMonitorCheck(env, cursor = 0) {
   const nextCursor = cursor + batch.length
   const completed = nextCursor >= watches.length
   const run = { status: completed ? 'success' : 'partial', checkedAt: new Date().toISOString(), total: watches.length, checked: nextCursor, nextCursor: completed ? null : nextCursor, errors }
+  // Persist one completed status only when work was performed. The old
+  // running/success pair was two writes every hour even with no useful work.
   await env.CACHE.put(RUN_KEY, JSON.stringify(run))
   console.info(JSON.stringify({ event: 'sam_monitor_completed', status: run.status, checked: run.checked, total: run.total, errors: errors.length }))
   return { ok: true, ...run }
