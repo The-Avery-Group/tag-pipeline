@@ -69,6 +69,12 @@ function normalizeDecision(decision) {
   }
 }
 
+function canonicalDecisions(decisions = []) {
+  return decisions
+    .map(normalizeDecision)
+    .sort((left, right) => `${candidateKey(left)}:${left.decision}`.localeCompare(`${candidateKey(right)}:${right.decision}`))
+}
+
 function normalizeWatch(input, existing = null) {
   const opportunityId = clean(input.opportunityId || input.contractNumber || input['Opportunity ID'])
   const source = {
@@ -79,12 +85,19 @@ function normalizeWatch(input, existing = null) {
   }
   const sourceFingerprint = hash(JSON.stringify(source))
   const changed = existing?.sourceFingerprint && existing.sourceFingerprint !== sourceFingerprint
+  const decisions = canonicalDecisions(input.decisions)
+  const inputFingerprint = hash(JSON.stringify({
+    opportunityId,
+    rowIndex: Number(input.rowIndex ?? input._rowIndex),
+    source,
+    decisions,
+  }))
   return {
     ...(existing || {}),
     key: existing?.key || watchKey(opportunityId),
     opportunityId, rowIndex: Number(input.rowIndex ?? input._rowIndex), source, sourceFingerprint,
-    decisions: (input.decisions || []).map(normalizeDecision),
-    syncedAt: new Date().toISOString(),
+    decisions,
+    inputFingerprint,
     ...(changed ? { candidates: [], resultFingerprint: '', lastCheckedAt: null, seenUntil: null, needsCheck: true } : {}),
   }
 }
@@ -145,6 +158,7 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
   const existing = await listWatches(env)
   const incomingKeys = new Set()
   const written = []
+  let unchanged = 0
   for (const input of inputs) {
     const opportunityId = clean(input.opportunityId || input.contractNumber || input['Opportunity ID'])
     if (!opportunityId) continue
@@ -152,13 +166,21 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
     incomingKeys.add(key)
     const previous = existing.find((watch) => watch.key === key) || null
     const watch = normalizeWatch(input, previous)
-    await writeWatch(env, watch)
-    written.push(watch)
+    // This path runs from browser synchronization and, when configured,
+    // app-only Graph reads. Do not rewrite a watch simply because a page was
+    // opened or a scheduled sync ran.
+    if (!previous || previous.inputFingerprint !== watch.inputFingerprint) {
+      watch.syncedAt = new Date().toISOString()
+      await writeWatch(env, watch)
+      written.push(watch)
+    } else {
+      unchanged++
+    }
   }
   if (replace) {
     await Promise.all(existing.filter((watch) => !incomingKeys.has(watch.key)).map((watch) => env.CACHE.delete(watch.key)))
   }
-  return written
+  return { written, unchanged }
 }
 
 async function appOnlyToken(env) {
@@ -242,9 +264,11 @@ export async function runRFIFollowUpMonitor(env) {
   const now = Date.now()
   const due = watches.filter((watch) => watch.needsCheck || !watch.lastCheckedAt || now - Date.parse(watch.lastCheckedAt) >= DAILY_MS)
   const batch = due.sort((a, b) => Date.parse(a.lastCheckedAt || 0) - Date.parse(b.lastCheckedAt || 0)).slice(0, BATCH_SIZE)
-  await env.CACHE.put(RUN_KEY, JSON.stringify({ status: 'running', startedAt: new Date().toISOString(), source, total: watches.length, due: due.length }))
+  if (!batch.length) return { ok: true, status: 'success', source, total: watches.length, due: 0, checked: 0, skipped: true }
   await Promise.all(batch.map((watch) => checkWatch(env, watch)))
   const run = { status: 'success', checkedAt: new Date().toISOString(), source, total: watches.length, due: Math.max(0, due.length - batch.length), checked: batch.length }
+  // One result write only when a real batch ran. Previously this wrote a
+  // running and success record every hour, including no-op hours.
   await env.CACHE.put(RUN_KEY, JSON.stringify(run))
   return { ok: true, ...run }
 }
@@ -257,7 +281,7 @@ export async function handleRFIFollowUpMonitor(req, env) {
     const watches = Array.isArray(body.watches) ? body.watches : []
     if (watches.length > 500) return json({ error: 'Too many RFIs to synchronize' }, 400)
     const result = await syncWatches(env, watches, { replace: body.replace === true })
-    return json({ ok: true, synchronized: result.length })
+    return json({ ok: true, synchronized: result.written.length, unchanged: result.unchanged })
   }
   if (path === '/sam/follow-up-monitor/status' && req.method === 'GET') {
     const [watches, run] = await Promise.all([listWatches(env), env.CACHE.get(RUN_KEY, 'json')])
