@@ -27,9 +27,10 @@ ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 
 [triggers]
-# A bounded monitor batch runs each hour. It never performs Graph writes or
-# a full opportunity pull, so it cannot interfere with manual pulls.
-crons = ["0 * * * *"]
+# SAM change checks run at 00:00 and 12:00 UTC. RFI follow-up batches run
+# hourly only on Monday, Wednesday, and Friday, allowing each RFI to be
+# checked three times per week without daily no-op KV writes.
+crons = ["0 0,12 * * *", "0 * * * 1,3,5"]
 
 [observability]
 enabled = true
