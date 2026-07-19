@@ -119,14 +119,19 @@ export default {
     return cors(env, req, response)
   },
 
-  // Five records per hour keeps this background check comfortably below
-  // Worker subrequest limits while cycling through the entire watch list
-  // daily for normal pipeline sizes. The interactive button can still run
-  // all remaining batches immediately.
-  async scheduled(_controller, env, ctx) {
-    const run = await env.CACHE?.get('sam_monitor_run', 'json')
-    const cursor = run?.nextCursor ?? 0
-    ctx.waitUntil(runSAMMonitorCheck(env, cursor))
-    ctx.waitUntil(runRFIFollowUpMonitor(env))
+  // SAM changes run twice daily. RFI follow-up cycles run in bounded batches
+  // on Monday, Wednesday, and Friday. The separate cron expressions below
+  // make the cadence explicit without hourly KV status writes.
+  async scheduled(controller, env, ctx) {
+    if (controller.cron === '0 0,12 * * *') {
+      ctx.waitUntil((async () => {
+        const run = await env.CACHE?.get('sam_monitor_run', 'json')
+        const cursor = run?.nextCursor ?? 0
+        return runSAMMonitorCheck(env, cursor, { scheduled: true })
+      })())
+    }
+    if (controller.cron === '0 * * * 1,3,5') {
+      ctx.waitUntil(runRFIFollowUpMonitor(env))
+    }
   },
 }
