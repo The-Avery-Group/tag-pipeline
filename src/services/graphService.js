@@ -32,6 +32,7 @@ function invalidate(sheet) {
 export function invalidateAll() {
   cache.clear()
   _resolvedBase = null  // also re-resolve drive path in case file moved
+  notificationRecipientsUnavailable = false
 }
 
 async function getTableHeaders(tableName) {
@@ -552,6 +553,29 @@ export async function getNotes() {
 
 export async function getContacts() {
   return getSheetRows('ContactsTable')
+}
+
+// Optional notification-recipient mapping. This keeps workbook assignee names
+// separate from the Teams UPN or Entra object ID required for a real mention.
+// Missing setup is non-fatal: notification cards still show the assignee name.
+const NOTIFICATION_RECIPIENTS_TABLE = 'NotificationRecipientsTable'
+export const NOTIFICATION_RECIPIENT_HEADERS = [
+  'Pipeline Assignee',
+  'Teams Display Name',
+  'Teams UPN / Entra Object ID',
+  'Mention Enabled',
+]
+let notificationRecipientsUnavailable = false
+
+export async function getNotificationRecipients() {
+  if (notificationRecipientsUnavailable) return []
+  try {
+    return await getSheetRows(NOTIFICATION_RECIPIENTS_TABLE)
+  } catch (error) {
+    notificationRecipientsUnavailable = true
+    console.info('[Notifications] NotificationRecipientsTable is not configured; sending names without Teams mentions.')
+    return []
+  }
 }
 
 export async function addOpportunity(data) {
