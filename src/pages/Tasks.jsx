@@ -350,6 +350,8 @@ export default function Tasks({ toast }) {
     }
   }, [searchParams, tasks, selected])
   const [taskForm, setTaskForm]         = useState(BLANK_FORM)
+  const [creatingTask, setCreatingTask] = useState(false)
+  const creatingTaskRef                 = useRef(false)
   const setFormField = useCallback((f, v) => setTaskForm((p) => ({ ...p, [f]: v })), [])
 
   // Persist sort preference across sessions
@@ -404,6 +406,14 @@ export default function Tasks({ toast }) {
   }
 
   const submitTask = async () => {
+    if (creatingTaskRef.current) return
+    if (!taskForm.Title.trim()) {
+      toast?.error('Enter a task title')
+      return
+    }
+
+    creatingTaskRef.current = true
+    setCreatingTask(true)
     const opp = pipeline.find((o) => o['Contract Number / Notice ID'] === taskForm.ContractNumber)
     try {
       await add({
@@ -415,6 +425,9 @@ export default function Tasks({ toast }) {
       setTaskForm(BLANK_FORM)
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
+    } finally {
+      creatingTaskRef.current = false
+      setCreatingTask(false)
     }
   }
 
@@ -588,11 +601,13 @@ export default function Tasks({ toast }) {
       {showAdd && (
         <Modal
           title="New task"
-          onClose={() => setShowAdd(false)}
+          onClose={() => !creatingTask && setShowAdd(false)}
           footer={
             <>
-              <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitTask}>Add task</button>
+              <button className="btn" onClick={() => setShowAdd(false)} disabled={creatingTask}>Cancel</button>
+              <button className="btn btn-primary" onClick={submitTask} disabled={creatingTask} aria-busy={creatingTask}>
+                {creatingTask ? 'Creating…' : 'Add task'}
+              </button>
             </>
           }
         >
