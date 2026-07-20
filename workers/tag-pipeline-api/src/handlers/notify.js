@@ -1,15 +1,6 @@
 /**
- * notify.js — Teams webhook proxy
- *
- * Receives a notification payload from the frontend and forwards it
- * to the Teams incoming webhook URL stored as a Worker secret.
- *
- * Expected request body:
- *   { type: string, payload: object }
- *
- * `type` maps to a card builder — the frontend sends minimal data,
- * the Worker assembles the full Adaptive Card so card structure
- * never leaks to the client.
+ * Teams notification proxy. The browser sends concise CRM payloads while this
+ * Worker owns Adaptive Card presentation and the webhook secret.
  */
 
 function json(data, status = 200) {
@@ -19,45 +10,152 @@ function json(data, status = 200) {
   })
 }
 
-// ── Adaptive Card builder ──────────────────────────────────────────────────
+const text = (value) => String(value ?? '').trim()
 
-function buildCard({ title, subtitle, facts = [], deepLinkUrl, color = 'accent' }) {
+function cardText(value, fallback = 'Not provided') {
+  return text(value) || fallback
+}
+
+function formatDate(value) {
+  const raw = text(value)
+  if (!raw) return 'Not provided'
+  const parsed = new Date(`${raw.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return raw
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  }).format(parsed)
+}
+
+function opportunityUrl(base, contractNumber) {
+  const identifier = text(contractNumber)
+  return identifier
+    ? `${base}/tag-pipeline/opportunities/${encodeURIComponent(identifier)}`
+    : `${base}/tag-pipeline/opportunities`
+}
+
+function mentionToken(recipient) {
+  const name = text(recipient?.name)
+  if (!name) return ''
+  return text(recipient?.id) ? `<at>${name}</at>` : `@${name}`
+}
+
+function mentionEntities(recipients = []) {
+  const seen = new Set()
+  return recipients
+    .filter((recipient) => text(recipient?.name) && text(recipient?.id))
+    .filter((recipient) => {
+      const key = text(recipient.id).toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((recipient) => ({
+      type: 'mention',
+      text: `<at>${text(recipient.name)}</at>`,
+      mentioned: { id: text(recipient.id), name: text(recipient.name) },
+    }))
+}
+
+function textBlock(value, options = {}) {
   return {
-    type: 'message',
-    attachments: [
-      {
-        contentType: 'application/vnd.microsoft.card.adaptive',
-        content: {
-          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-          type: 'AdaptiveCard',
-          version: '1.4',
-          body: [
-            {
-              type: 'Container',
-              style: color,
-              items: [
-                { type: 'TextBlock', text: title, weight: 'Bolder', size: 'Medium', wrap: true },
-                ...(subtitle
-                  ? [{ type: 'TextBlock', text: subtitle, isSubtle: true, wrap: true, spacing: 'None' }]
-                  : []),
-              ],
-            },
-            ...(facts.length > 0
-              ? [{ type: 'FactSet', facts: facts.map(([t, v]) => ({ title: t, value: String(v ?? '—') })) }]
-              : []),
-          ],
-          actions: deepLinkUrl
-            ? [{ type: 'Action.OpenUrl', title: 'Open in Pipeline Manager', url: deepLinkUrl }]
-            : [],
-        },
-      },
-    ],
+    type: 'TextBlock',
+    text: value,
+    wrap: options.wrap ?? true,
+    weight: options.weight || 'Bolder',
+    size: options.size,
+    isSubtle: options.isSubtle,
+    spacing: options.spacing || 'Small',
   }
 }
 
-// ── Card type builders ─────────────────────────────────────────────────────
+function detail(label, value) {
+  return textBlock(`**${label}:** ${cardText(value)}`)
+}
+
+function action(title, url) {
+  return { type: 'Action.OpenUrl', title, url }
+}
+
+function rfiRows(items) {
+  if (!items.length) return []
+  const column = (width, value, isHeader = false) => ({
+    type: 'Column',
+    width,
+    items: [textBlock(value, {
+      size: 'Small',
+      weight: isHeader ? 'Default' : 'Bolder',
+      isSubtle: isHeader,
+      spacing: 'None',
+    })],
+  })
+  const header = {
+    type: 'ColumnSet',
+    spacing: 'Medium',
+    columns: [
+      column(3, 'Title', true),
+      column(2, 'Notice ID', true),
+      column(1, 'Submitted', true),
+    ],
+  }
+  const rows = items.map((item) => ({
+    type: 'ColumnSet',
+    separator: true,
+    spacing: 'Small',
+    columns: [
+      column(3, cardText(item.title)),
+      column(2, cardText(item.contractNumber)),
+      column(1, formatDate(item.submissionDate)),
+    ],
+  }))
+  return [header, ...rows]
+}
+
+function buildCard({ title, subtitle, icon, color = 'accent', body = [], actions = [], recipients = [], noWrapTitle = false }) {
+  const entities = mentionEntities(recipients)
+  const content = {
+    $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+    type: 'AdaptiveCard',
+    version: '1.4',
+    body: [
+      {
+        type: 'Container',
+        style: color,
+        bleed: true,
+        items: [
+          textBlock(`${icon ? `${icon} ` : ''}${title}`, {
+            size: 'Small',
+            wrap: !noWrapTitle,
+            spacing: 'None',
+          }),
+          ...(subtitle
+            ? [textBlock(subtitle, { size: 'Small', weight: 'Default', isSubtle: true, spacing: 'None' })]
+            : []),
+        ],
+      },
+      ...(body.length ? [{ type: 'Container', items: body }] : []),
+      ...(actions.length
+        ? [{ type: 'ActionSet', separator: true, spacing: 'Medium', actions }]
+        : []),
+    ],
+  }
+
+  if (entities.length) content.msteams = { entities }
+
+  return {
+    type: 'message',
+    attachments: [{
+      contentType: 'application/vnd.microsoft.card.adaptive',
+      content,
+    }],
+  }
+}
 
 const APP_BASE = (env) => env.ALLOWED_ORIGIN || ''
+
+function firstUrl(value) {
+  const match = text(value).match(/https?:\/\/[^\s,|]+/i)
+  return match?.[0] || ''
+}
 
 function cardForType(type, payload, env) {
   const base = APP_BASE(env)
@@ -65,105 +163,120 @@ function cardForType(type, payload, env) {
   switch (type) {
     case 'new_opportunity':
       return buildCard({
-        title: '🆕 New Opportunity Added',
-        subtitle: payload.title,
-        facts: [
-          ['Contract #', payload.contractNumber],
-          ['Agency', payload.agency],
-          ['Phase', payload.phase],
-          ['Value', payload.value],
-          ['Assigned To', payload.assignedTo],
-        ],
-        deepLinkUrl: `${base}/tag-pipeline/opportunities/${encodeURIComponent(payload.contractNumber)}`,
+        title: 'New opportunity added',
+        subtitle: 'Pipeline update',
+        icon: '✚',
         color: 'good',
+        body: [
+          textBlock(cardText(payload.title)),
+          detail('Contract / Notice ID', payload.contractNumber),
+          detail('Agency', payload.agency),
+        ],
+        actions: [action('View in Pipeline', opportunityUrl(base, payload.contractNumber))],
       })
 
     case 'phase_change':
       return buildCard({
-        title: '🔄 Opportunity Phase Changed',
-        subtitle: payload.title,
-        facts: [
-          ['Contract #', payload.contractNumber],
-          ['From', payload.fromPhase],
-          ['To', payload.toPhase],
-          ['Assigned To', payload.assignedTo],
-        ],
-        deepLinkUrl: `${base}/tag-pipeline/opportunities/${encodeURIComponent(payload.contractNumber)}`,
+        title: 'Opportunity phase changed',
+        subtitle: 'Pipeline update',
+        icon: '↗',
         color: 'accent',
+        body: [
+          textBlock(cardText(payload.title)),
+          detail('Contract / Notice ID', payload.contractNumber),
+          detail('Previous phase', payload.fromPhase),
+          detail('New phase', payload.toPhase),
+        ],
+        actions: [action('View opportunity', opportunityUrl(base, payload.contractNumber))],
       })
 
-    case 'task_created':
+    case 'task_created': {
+      const opportunity = [text(payload.contractTitle), text(payload.contractNumber)].filter(Boolean).join(' · ')
       return buildCard({
-        title: '✅ New Task Created',
-        subtitle: payload.title,
-        facts: [
-          ['Contract', payload.contractTitle || payload.contractNumber],
-          ['Assigned to', payload.assignedTo],
-          ['Due date', payload.dueDate],
-          ['Priority', payload.priority],
+        title: 'New task created',
+        subtitle: 'Capture activity',
+        icon: '✓',
+        color: 'accent',
+        recipients: [payload.assignee],
+        body: [
+          textBlock(cardText(payload.title)),
+          ...(opportunity ? [detail('Opportunity', opportunity)] : []),
+          ...(payload.assignee?.name ? [detail('Assignee', mentionToken(payload.assignee))] : []),
+          detail('Due date', formatDate(payload.dueDate)),
+          detail('Priority', payload.priority),
         ],
-        deepLinkUrl: `${base}/tag-pipeline/tasks`,
-        color: 'good',
+        actions: [action('Open task', `${base}/tag-pipeline/tasks`)],
       })
+    }
 
     case 'overdue_summary':
       return buildCard({
-        title: `🚨 ${payload.count} Overdue Task${payload.count > 1 ? 's' : ''}`,
-        subtitle: payload.count > payload.items.length
-          ? `Showing ${payload.items.length} of ${payload.count}`
-          : 'Requires immediate attention',
-        facts: [
-          ...payload.items.map((t) => [t.contractTitle || t.contractNumber, `${t.title} · Due ${t.dueDate}`]),
-          ...(payload.count > payload.items.length ? [['', `…and ${payload.count - payload.items.length} more`]] : []),
-        ],
-        deepLinkUrl: `${base}/tag-pipeline/tasks`,
+        title: 'Overdue tasks',
+        subtitle: 'Action needed',
+        icon: '!',
         color: 'attention',
+        recipients: payload.people?.map((person) => person.recipient) || [],
+        body: (payload.people || []).map((person) => textBlock(
+          `${mentionToken(person.recipient)}, you have ${person.count} overdue task${person.count === 1 ? '' : 's'}`,
+        )),
+        actions: [action('View and complete tasks', `${base}/tag-pipeline/tasks`)],
       })
 
     case 'due_soon_summary':
       return buildCard({
-        title: `⏰ ${payload.count} Task${payload.count > 1 ? 's' : ''} Due Tomorrow`,
-        subtitle: payload.count > payload.items.length
-          ? `Showing ${payload.items.length} of ${payload.count}`
-          : 'Due tomorrow',
-        facts: [
-          ...payload.items.map((t) => [t.contractTitle || t.contractNumber, `${t.title} · ${t.assignedTo || 'Unassigned'}`]),
-          ...(payload.count > payload.items.length ? [['', `…and ${payload.count - payload.items.length} more`]] : []),
-        ],
-        deepLinkUrl: `${base}/tag-pipeline/tasks`,
+        title: 'Tasks due tomorrow',
+        subtitle: 'Action needed',
+        icon: '!',
         color: 'warning',
+        recipients: payload.people?.map((person) => person.recipient) || [],
+        body: (payload.people || []).map((person) => textBlock(
+          `${mentionToken(person.recipient)}, you have ${person.count} task${person.count === 1 ? '' : 's'} due tomorrow`,
+        )),
+        actions: [action('View tasks', `${base}/tag-pipeline/tasks`)],
       })
 
-    case 'rfi_followup':
+    case 'rfi_followup': {
+      const recipientText = (payload.recipients || []).map(mentionToken).filter(Boolean).join(' ')
       return buildCard({
-        title: `📋 ${payload.count} RFI Follow-Up${payload.count > 1 ? 's' : ''} Due`,
-        subtitle: '3 weeks since submission — follow up recommended',
-        facts: [
-          ...payload.items.map((o) => [o.agency || o.contractNumber, o.title]),
-          ...(payload.count > payload.items.length ? [['', `…and ${payload.count - payload.items.length} more`]] : []),
-        ],
-        deepLinkUrl: `${base}/tag-pipeline/opportunities`,
+        title: 'RFI follow-up due',
+        subtitle: '21 days since submission',
+        icon: '↻',
         color: 'warning',
+        recipients: payload.recipients || [],
+        body: [
+          ...(recipientText ? [textBlock(`Hey ${recipientText}, it has been 21 days since we submitted the RFIs below.`)] : []),
+          ...rfiRows(payload.items || []),
+          ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
+        ],
+        actions: [action('View in Pipeline', `${base}/tag-pipeline/opportunities?tab=RFIs`)],
       })
+    }
 
-    case 'stale_opportunities':
+    case 'rfi_response_due': {
+      const isTomorrow = Number(payload.daysUntil) <= 1
+      const actions = [action('View in Pipeline', opportunityUrl(base, payload.contractNumber))]
+      const samUrl = firstUrl(payload.samUrl)
+      if (samUrl) actions.push(action('View on SAM.gov', samUrl))
       return buildCard({
-        title: `⚠️ ${payload.count} Stale Opportunit${payload.count > 1 ? 'ies' : 'y'}`,
-        subtitle: 'No activity in the past 3 weeks',
-        facts: [
-          ...payload.items.map((o) => [o.phase || '—', o.title]),
-          ...(payload.count > payload.items.length ? [['', `…and ${payload.count - payload.items.length} more`]] : []),
+        title: isTomorrow ? 'RFI response due tomorrow' : 'RFI response due in two days',
+        subtitle: 'Response reminder',
+        icon: '!',
+        color: isTomorrow ? 'attention' : 'warning',
+        noWrapTitle: true,
+        recipients: payload.recipients || [],
+        body: [
+          textBlock(cardText(payload.title)),
+          detail('Agency', payload.agency),
+          detail('Response date', formatDate(payload.responseDate)),
         ],
-        deepLinkUrl: `${base}/tag-pipeline/opportunities`,
-        color: 'warning',
+        actions,
       })
+    }
 
     default:
       return null
   }
 }
-
-// ── Handler ────────────────────────────────────────────────────────────────
 
 export async function handleNotify(req, env) {
   if (!env.TEAMS_WEBHOOK_URL) {
@@ -179,28 +292,24 @@ export async function handleNotify(req, env) {
   }
 
   const { type, payload } = body
-  if (!type || !payload) {
-    return json({ error: 'Missing type or payload' }, 400)
-  }
+  if (!type || !payload) return json({ error: 'Missing type or payload' }, 400)
 
   const card = cardForType(type, payload, env)
-  if (!card) {
-    return json({ error: `Unknown notification type: ${type}` }, 400)
-  }
+  if (!card) return json({ error: `Unknown notification type: ${type}` }, 400)
 
   try {
-    const res = await fetch(env.TEAMS_WEBHOOK_URL, {
+    const response = await fetch(env.TEAMS_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(card),
     })
-    if (!res.ok) {
-      console.error('[Notify] Teams webhook returned', res.status)
-      return json({ ok: false, error: `Teams returned ${res.status}` }, 502)
+    if (!response.ok) {
+      console.error('[Notify] Teams webhook returned', response.status)
+      return json({ ok: false, error: `Teams returned ${response.status}` }, 502)
     }
     return json({ ok: true })
-  } catch (err) {
-    console.error('[Notify] Fetch failed:', err)
-    return json({ ok: false, error: err.message }, 502)
+  } catch (error) {
+    console.error('[Notify] Fetch failed:', error)
+    return json({ ok: false, error: error.message }, 502)
   }
 }
