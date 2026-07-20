@@ -86,7 +86,7 @@ function getTabRows(pipeline, tab) {
 // ── Per-tab default sort ──────────────────────────────────────────────────
 const TAB_DEFAULT_SORT = {
   All:      { key: C.lastMod,  dir: 'desc' },
-  RFIs:     { key: C.lastMod,  dir: 'desc' },
+  RFIs:     { key: C.submDate, dir: 'desc' },
   Expiring: { key: C.endDate,  dir: 'asc'  },
   Tracked:  { key: C.lastMod,  dir: 'desc' },
   New:      { key: 'Response Date', dir: 'asc'  },
@@ -162,6 +162,14 @@ export default function Opportunities({ toast }) {
   const requestedTab = searchParams.get('tab')
   const activeTab = TABS.includes(requestedTab) ? requestedTab : 'All'
   const search    = searchParams.get('search') || ''
+  const rfiFollowUpIds = useMemo(() => {
+    try {
+      const values = JSON.parse(searchParams.get('rfiFollowUps') || '[]')
+      return new Set(Array.isArray(values) ? values.map((value) => String(value).trim()).filter(Boolean) : [])
+    } catch {
+      return new Set()
+    }
+  }, [searchParams])
 
   const filters = useMemo(() => ({
     outlook:        searchParams.get('outlook') || '',
@@ -227,7 +235,7 @@ export default function Opportunities({ toast }) {
   // ── Advanced filter panel UI state (not persisted — just whether it's open) ──
   const [showFilter, setShowFilter] = useState(false)
   const activeFilterCount = Object.entries(filters)
-    .filter(([k, v]) => k === 'agency' ? v.size > 0 : Boolean(v)).length
+    .filter(([k, v]) => k === 'agency' ? v.size > 0 : Boolean(v)).length + (rfiFollowUpIds.size ? 1 : 0)
   const [agencyFilterOpen, setAgencyFilterOpen] = useState(false)
   const agencyFilterRef = useRef(null)
 
@@ -317,6 +325,10 @@ export default function Opportunities({ toast }) {
 
     let rows = getTabRows(pipeline, activeTab)
 
+    if (rfiFollowUpIds.size > 0) {
+      rows = rows.filter((o) => rfiFollowUpIds.has(String(o[C.contractNum] || '').trim()))
+    }
+
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       rows = rows.filter((o) =>
@@ -353,7 +365,7 @@ export default function Opportunities({ toast }) {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, activeTab, search, filters, sortKey, sortDir])
+  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, sortKey, sortDir])
 
   // ── Tab switch — filters are scoped to the tab that applied them. Search
   // remains because it is a separate, deliberate cross-tab lookup.
@@ -361,7 +373,7 @@ export default function Opportunities({ toast }) {
     updateParams({
       tab,
       outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '',
+      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', rfiFollowUps: '',
     })
     setShowFilter(false)
     setAgencyFilterOpen(false)
@@ -1424,6 +1436,11 @@ export default function Opportunities({ toast }) {
         {/* Active filter chips */}
         {activeFilterCount > 0 && activeTab !== 'New' && (
           <div className="filter-chips" style={{ marginBottom: 8 }}>
+            {rfiFollowUpIds.size > 0 && (
+              <button className="filter-chip active" onClick={() => updateParams({ rfiFollowUps: '' })}>
+                RFI follow-ups ✕
+              </button>
+            )}
             {Object.entries(filters).filter(([k, v]) => k === 'agency' ? false : v).map(([key, val]) => (
               <button key={key}
                 className="filter-chip active"
