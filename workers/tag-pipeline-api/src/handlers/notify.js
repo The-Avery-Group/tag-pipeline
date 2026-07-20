@@ -206,9 +206,9 @@ function cardForType(type, payload, env) {
         color: 'accent',
         recipients: [payload.assignee],
         body: [
+          ...(payload.assignee?.name ? [textBlock(`A new task has been assigned to ${mentionToken(payload.assignee)}.`)] : []),
           textBlock(cardText(payload.title)),
           ...(opportunity ? [detail('Opportunity', opportunity)] : []),
-          ...(payload.assignee?.name ? [detail('Assignee', mentionToken(payload.assignee))] : []),
           detail('Due date', formatDate(payload.dueDate)),
           detail('Priority', payload.priority),
         ],
@@ -224,7 +224,7 @@ function cardForType(type, payload, env) {
         color: 'attention',
         recipients: payload.people?.map((person) => person.recipient) || [],
         body: (payload.people || []).map((person) => textBlock(
-          `${mentionToken(person.recipient)}, you have ${person.count} overdue task${person.count === 1 ? '' : 's'}`,
+          `${mentionToken(person.recipient)}, you have ${person.count} overdue task${person.count === 1 ? '' : 's'}. Please review and complete them.`,
         )),
         actions: [action('View and complete tasks', `${base}/tag-pipeline/tasks`)],
       })
@@ -237,7 +237,7 @@ function cardForType(type, payload, env) {
         color: 'warning',
         recipients: payload.people?.map((person) => person.recipient) || [],
         body: (payload.people || []).map((person) => textBlock(
-          `${mentionToken(person.recipient)}, you have ${person.count} task${person.count === 1 ? '' : 's'} due tomorrow`,
+          `${mentionToken(person.recipient)}, you have ${person.count} task${person.count === 1 ? '' : 's'} due tomorrow. Please review them today.`,
         )),
         actions: [action('View tasks', `${base}/tag-pipeline/tasks`)],
       })
@@ -251,7 +251,7 @@ function cardForType(type, payload, env) {
         color: 'warning',
         recipients: payload.recipients || [],
         body: [
-          ...(recipientText ? [textBlock(`Hey ${recipientText}, it has been 21 days since we submitted the RFIs below.`)] : []),
+          ...(recipientText ? [textBlock(`Hello ${recipientText}, it has been 21 days since the RFIs below were submitted. Please follow up as appropriate.`)] : []),
           ...rfiRows(payload.items || []),
           ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
         ],
@@ -263,6 +263,7 @@ function cardForType(type, payload, env) {
       const isTomorrow = Number(payload.daysUntil) <= 1
       const actions = [action('View in Pipeline', opportunityUrl(base, payload.contractNumber))]
       const samUrl = firstUrl(payload.samUrl)
+      const recipientText = (payload.recipients || []).map(mentionToken).filter(Boolean).join(' ')
       if (samUrl) actions.push(action('View on SAM.gov', samUrl))
       return buildCard({
         title: isTomorrow ? 'RFI response due tomorrow' : 'RFI response due in two days',
@@ -272,6 +273,7 @@ function cardForType(type, payload, env) {
         noWrapTitle: true,
         recipients: payload.recipients || [],
         body: [
+          ...(recipientText ? [textBlock(`Hello ${recipientText}, please note that this RFI response is due ${isTomorrow ? 'tomorrow' : 'in two days'}.`)] : []),
           textBlock(cardText(payload.title)),
           detail('Agency', payload.agency),
           detail('Response date', formatDate(payload.responseDate)),
