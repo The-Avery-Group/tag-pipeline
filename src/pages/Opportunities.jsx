@@ -250,6 +250,8 @@ export default function Opportunities({ toast }) {
   const bulkDismissAction = useAsyncAction()   // New-tab bulk dismiss
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [saving, setSaving] = useState(false)
+  const creatingOpportunityRef = useRef(false)
+  const addingPipelineRowsRef = useRef(new Set())
   const [confirmRfiActivity, setConfirmRfiActivity] = useState(false)
   const [form, setForm] = useState({
     [C.contractNum]: '',
@@ -381,6 +383,8 @@ export default function Opportunities({ toast }) {
 
   // ── CRUD handlers ─────────────────────────────────────────────────────
   const submitOpp = async ({ setSubmittedRfi = false } = {}) => {
+    if (creatingOpportunityRef.current) return
+    creatingOpportunityRef.current = true
     const payload = setSubmittedRfi ? { ...form, [C.activityPhase]: 'Submitted RFI' } : form
     setSaving(true)
     try {
@@ -396,6 +400,7 @@ export default function Opportunities({ toast }) {
     } catch (err) {
       toast?.error(`Failed to add: ${err.message}`)
     } finally {
+      creatingOpportunityRef.current = false
       setSaving(false)
     }
   }
@@ -541,7 +546,8 @@ export default function Opportunities({ toast }) {
   }), [samOpps, showDismissed, deptFilter])
 
   const handleAddToPipeline = async (row, outlook) => {
-    if (actioningRow === row._rowIndex) return
+    if (actioningRow === row._rowIndex || addingPipelineRowsRef.current.has(row._rowIndex)) return
+    addingPipelineRowsRef.current.add(row._rowIndex)
     setActioningRow(row._rowIndex)
     try {
       await addToPipeline(row, outlook)
@@ -549,6 +555,7 @@ export default function Opportunities({ toast }) {
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
+      addingPipelineRowsRef.current.delete(row._rowIndex)
       setActioningRow(null)
     }
   }
@@ -1465,11 +1472,11 @@ export default function Opportunities({ toast }) {
       {showAdd && (
         <Modal
           title="New opportunity"
-          onClose={() => setShowAdd(false)}
+          onClose={() => !saving && setShowAdd(false)}
           footer={
             <>
-              <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={requestAdd} disabled={saving}>
+              <button className="btn" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</button>
+              <button className="btn btn-primary" onClick={requestAdd} disabled={saving} aria-busy={saving}>
                 {saving ? 'Saving…' : 'Add opportunity'}
               </button>
             </>
