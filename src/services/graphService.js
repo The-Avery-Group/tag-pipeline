@@ -33,6 +33,7 @@ export function invalidateAll() {
   cache.clear()
   _resolvedBase = null  // also re-resolve drive path in case file moved
   notificationRecipientsUnavailable = false
+  rfiNotificationsUnavailable = false
 }
 
 async function getTableHeaders(tableName) {
@@ -559,6 +560,7 @@ export async function getContacts() {
 // separate from the Teams UPN or Entra object ID required for a real mention.
 // Missing setup is non-fatal: notification cards still show the assignee name.
 const NOTIFICATION_RECIPIENTS_TABLE = 'NotificationRecipientsTable'
+const RFI_NOTIFICATIONS_TABLE = 'RFINotificationsTable'
 export const NOTIFICATION_RECIPIENT_HEADERS = [
   'Pipeline Assignee',
   'Teams Display Name',
@@ -566,6 +568,7 @@ export const NOTIFICATION_RECIPIENT_HEADERS = [
   'Mention Enabled',
 ]
 let notificationRecipientsUnavailable = false
+let rfiNotificationsUnavailable = false
 
 export async function getNotificationRecipients() {
   if (notificationRecipientsUnavailable) return []
@@ -574,6 +577,21 @@ export async function getNotificationRecipients() {
   } catch (error) {
     notificationRecipientsUnavailable = true
     console.info('[Notifications] NotificationRecipientsTable is not configured; sending names without Teams mentions.')
+    return []
+  }
+}
+
+// RFI follow-up reminders are intentionally addressed to the shared RFI
+// notification list, rather than to each opportunity's current assignee.
+// The table is maintained in the workbook so recipients can change without a
+// code deployment. Its columns are resolved by the notification service.
+export async function getRFINotificationRecipients() {
+  if (rfiNotificationsUnavailable) return []
+  try {
+    return await getSheetRows(RFI_NOTIFICATIONS_TABLE)
+  } catch (error) {
+    rfiNotificationsUnavailable = true
+    console.info('[Notifications] RFINotificationsTable is not configured; skipping RFI follow-up notification recipients.')
     return []
   }
 }
