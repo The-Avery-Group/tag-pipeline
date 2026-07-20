@@ -73,20 +73,34 @@ function valueFromMatchingHeader(row, pattern) {
 
 async function resolveRFIFollowupRecipients() {
   const rows = await getRFINotificationRecipients()
+  const directory = await recipientDirectory()
+  const directoryByIdentity = new Map(
+    [...directory.values()]
+      .filter((recipient) => recipient.id)
+      .map((recipient) => [recipient.id.toLowerCase(), recipient])
+  )
   const seen = new Set()
 
-  return rows
+  const recipients = rows
     .flatMap((row) => {
       const id = valueFromMatchingHeader(row, /(?:email|upn|entra\s*(?:object\s*)?id)/i)
-      const name = valueFromMatchingHeader(row, /(?:display\s*)?(?:name|assignee|recipient|user)/i)
+      const configuredRecipient = directoryByIdentity.get(id.toLowerCase())
+      const name = configuredRecipient?.name
+        || valueFromMatchingHeader(row, /(?:display\s*)?(?:name|assignee|recipient|user)/i)
         || (id ? id.split('@')[0] : '')
-      if (id) return [{ name, id }]
+      if (id) return [{ name, id: configuredRecipient?.id || id }]
 
       // Also support a compact one-row table where the headers are people's
       // names and each value is their work email address.
       return Object.entries(row || {})
         .filter(([, value]) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value)))
-        .map(([header, value]) => ({ name: text(header), id: text(value) }))
+        .map(([header, value]) => {
+          const configuredRecipient = directoryByIdentity.get(text(value).toLowerCase())
+          return {
+            name: configuredRecipient?.name || text(header),
+            id: configuredRecipient?.id || text(value),
+          }
+        })
     })
     .filter((recipient) => {
       const key = recipient.id.toLowerCase()
@@ -94,6 +108,11 @@ async function resolveRFIFollowupRecipients() {
       seen.add(key)
       return true
     })
+
+  if (!recipients.length) {
+    console.warn('[Notify] RFINotificationsTable has no usable Teams UPN or Entra object ID; skipping this RFI notification.')
+  }
+  return recipients
 }
 
 function groupTasksByAssignee(tasks) {
