@@ -33,6 +33,13 @@ function opportunityUrl(base, contractNumber) {
     : `${base}/tag-pipeline/opportunities`
 }
 
+function rfiFollowUpUrl(base, identifiers) {
+  const ids = (identifiers || []).map(text).filter(Boolean)
+  const params = new URLSearchParams({ tab: 'RFIs' })
+  if (ids.length) params.set('rfiFollowUps', JSON.stringify(ids))
+  return `${base}/tag-pipeline/opportunities?${params.toString()}`
+}
+
 function mentionToken(recipient) {
   const name = text(recipient?.name)
   if (!name) return ''
@@ -248,7 +255,7 @@ function cardForType(type, payload, env) {
           ...rfiRows(payload.items || []),
           ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
         ],
-        actions: [action('View in Pipeline', `${base}/tag-pipeline/opportunities?tab=RFIs`)],
+        actions: [action('View in Pipeline', rfiFollowUpUrl(base, payload.filterIds))],
       })
     }
 
