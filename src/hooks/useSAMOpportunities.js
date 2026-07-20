@@ -6,6 +6,7 @@ import {
   getToken,
 } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { notifyNewOpportunity } from '@/services/notifyService'
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -303,7 +304,7 @@ export function useSAMOpportunities() {
     const poc = parsePOC(row['Point of Contact'])
     const contactName = await resolveContact(poc, row['Agency'], row['Department'])
 
-    await addOpportunity({
+    const opportunity = {
       'TAG Opportunity Phase':                   'Identified',
       'Opportunity Outlook':                     outlook,
       'Contract Number / Notice ID':             row['Solicitation Number'] || row['Notice ID'] || '',
@@ -317,7 +318,10 @@ export function useSAMOpportunities() {
       'Contracting Officer / Specialist (POC)*': contactName                || '',
       'Submission Date (Response Date)*':        row['Response Date']        || '',
       'Other Links*':                            row['SAM.gov URL']          || '',
-    })
+    }
+
+    await addOpportunity(opportunity)
+    notifyNewOpportunity(opportunity).catch(() => {})
 
     await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
   }, [resolveContact, updateStatus])
