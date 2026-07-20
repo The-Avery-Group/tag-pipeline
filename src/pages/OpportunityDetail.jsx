@@ -713,9 +713,11 @@ export default function OpportunityDetail({ toast }) {
   const [deleting,        setDeleting]        = useState(false)
   const [newNote,         setNewNote]         = useState('')
   const [addingNote,      setAddingNote]      = useState(false)
+  const addingNoteRef = useRef(false)
   const [deletingNoteId,  setDeletingNoteId]  = useState(null)
   const [showAddTask,     setShowAddTask]     = useState(false)
   const [savingTask,      setSavingTask]      = useState(false)
+  const creatingTaskRef = useRef(false)
   const [updatingTaskId,  setUpdatingTaskId]  = useState(null)
   const [taskForm,        setTaskForm]        = useState({
     Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
@@ -1032,7 +1034,8 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const handleAddNote = async () => {
-    if (!newNote.trim()) return
+    if (addingNoteRef.current || !newNote.trim()) return
+    addingNoteRef.current = true
     setAddingNote(true)
     try {
       await addNote(user.firstName, newNote.trim())
@@ -1041,6 +1044,7 @@ export default function OpportunityDetail({ toast }) {
     } catch (err) {
       toast?.error(`Failed to add note: ${err.message}`)
     } finally {
+      addingNoteRef.current = false
       setAddingNote(false)
     }
   }
@@ -1169,6 +1173,13 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const submitTask = async () => {
+    if (creatingTaskRef.current) return
+    if (!taskForm.Title.trim()) {
+      toast?.error('Enter a task title')
+      return
+    }
+
+    creatingTaskRef.current = true
     setSavingTask(true)
     try {
       await addTask({
@@ -1183,6 +1194,7 @@ export default function OpportunityDetail({ toast }) {
     } catch (err) {
       toast?.error(`Failed to add task: ${err.message}`)
     } finally {
+      creatingTaskRef.current = false
       setSavingTask(false)
     }
   }
@@ -1720,7 +1732,7 @@ export default function OpportunityDetail({ toast }) {
           footer={
             <>
               <button className="btn" onClick={() => setShowAddTask(false)} disabled={savingTask}>Cancel</button>
-              <button className="btn btn-primary" onClick={submitTask} disabled={savingTask}>
+              <button className="btn btn-primary" onClick={submitTask} disabled={savingTask} aria-busy={savingTask}>
                 {savingTask ? 'Adding…' : 'Add task'}
               </button>
             </>
