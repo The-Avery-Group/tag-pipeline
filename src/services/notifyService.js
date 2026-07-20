@@ -1,113 +1,153 @@
 /**
- * notifyService.js
- * Sends notifications via the Cloudflare Worker proxy.
- * The Worker holds the Teams webhook URL as a secret — it never touches the frontend.
- *
- * All functions send a { type, payload } body to POST /notify on the Worker.
+ * Sends compact Teams notification payloads through the Worker proxy.
+ * The Worker owns the card layout and webhook secret. This module only adds
+ * workbook context, including optional Teams mention identities.
  */
+
+import { getNotificationRecipients } from '@/services/graphService'
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
+const text = (value) => String(value ?? '').trim()
+
 async function sendNotification(type, payload) {
   if (!WORKER_URL) {
-    console.warn('[Notify] VITE_API_BASE_URL not set — skipping notification')
-    return
+    console.warn('[Notify] VITE_API_BASE_URL not set, skipping notification')
+    return false
   }
+
   try {
-    await fetch(`${WORKER_URL}/notify`, {
+    const response = await fetch(`${WORKER_URL}/notify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, payload }),
     })
-  } catch (err) {
-    console.error('[Notify] Failed to send notification:', err)
+    if (!response.ok) throw new Error(`Notification proxy returned ${response.status}`)
+    return true
+  } catch (error) {
+    console.error('[Notify] Failed to send notification:', error)
+    return false
   }
+}
+
+function isMentionEnabled(value) {
+  return ['yes', 'true', 'enabled', '1'].includes(text(value).toLowerCase())
+}
+
+async function recipientDirectory() {
+  const rows = await getNotificationRecipients()
+  return new Map(rows
+    .map((row) => {
+      const assignee = text(row['Pipeline Assignee'])
+      if (!assignee) return null
+      return [assignee.toLowerCase(), {
+        name: text(row['Teams Display Name']) || assignee,
+        id: isMentionEnabled(row['Mention Enabled'])
+          ? text(row['Teams UPN / Entra Object ID'])
+          : '',
+      }]
+    })
+    .filter(Boolean))
+}
+
+async function resolveRecipients(assignees) {
+  const directory = await recipientDirectory()
+  const seen = new Set()
+
+  return assignees
+    .map((assignee) => text(assignee))
+    .filter(Boolean)
+    .map((assignee) => directory.get(assignee.toLowerCase()) || { name: assignee, id: '' })
+    .filter((recipient) => {
+      const key = `${recipient.name.toLowerCase()}|${recipient.id.toLowerCase()}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function groupTasksByAssignee(tasks) {
+  const groups = new Map()
+  tasks.forEach((task) => {
+    const assignee = text(task.AssignedTo) || 'Unassigned'
+    groups.set(assignee, (groups.get(assignee) || 0) + 1)
+  })
+  return [...groups.entries()].map(([assignee, count]) => ({ assignee, count }))
 }
 
 export function notifyNewOpportunity(opportunity) {
   return sendNotification('new_opportunity', {
-    title:          opportunity['Project Title / Description*'] || '',
-    contractNumber: opportunity['Contract Number / Notice ID']  || '',
-    agency:         opportunity['Agency*']                      || '',
-    phase:          opportunity['TAG Opportunity Phase']        || '',
-    value:          opportunity['Total Contract Value ($)*']    || '',
-    assignedTo:     opportunity['Assigned To*']                 || '',
+    title: text(opportunity['Project Title / Description*']),
+    contractNumber: text(opportunity['Contract Number / Notice ID']),
+    agency: text(opportunity['Agency*']),
   })
 }
 
-export function notifyPhaseChange(opportunity, fromPhase, toPhase) {
+export async function notifyPhaseChange(opportunity, fromPhase, toPhase) {
   return sendNotification('phase_change', {
-    title:          opportunity['Project Title / Description*'] || '',
-    contractNumber: opportunity['Contract Number / Notice ID']  || '',
-    assignedTo:     opportunity['Assigned To*']                 || '',
-    fromPhase,
-    toPhase,
+    title: text(opportunity['Project Title / Description*']),
+    contractNumber: text(opportunity['Contract Number / Notice ID']),
+    fromPhase: text(fromPhase),
+    toPhase: text(toPhase),
   })
 }
 
-export function notifyTaskCreated(task) {
+export async function notifyTaskCreated(task) {
+  const [assignee] = await resolveRecipients([task.AssignedTo])
   return sendNotification('task_created', {
-    title:          task.Title          || '',
-    contractNumber: task.ContractNumber || '',
-    contractTitle:  task.ContractTitle  || '',
-    assignedTo:     task.AssignedTo     || '',
-    dueDate:        task.DueDate        || '',
-    priority:       task.Priority       || '',
+    title: text(task.Title),
+    contractNumber: text(task.ContractNumber),
+    contractTitle: text(task.ContractTitle),
+    assignee: assignee || null,
+    dueDate: text(task.DueDate),
+    priority: text(task.Priority),
+  })
+}
+
+async function notifyTaskSummary(type, tasks) {
+  if (!tasks.length) return false
+  const groups = groupTasksByAssignee(tasks)
+  const directory = await recipientDirectory()
+
+  return sendNotification(type, {
+    people: groups.map((group) => ({
+      ...group,
+      recipient: directory.get(group.assignee.toLowerCase()) || { name: group.assignee, id: '' },
+    })),
   })
 }
 
 export function notifyOverdueSummary(tasks) {
-  if (!tasks.length) return Promise.resolve()
-  const shown = tasks.slice(0, 5)
-  return sendNotification('overdue_summary', {
-    count: tasks.length,
-    items: shown.map((t) => ({
-      title:         t.Title          || '',
-      contractNumber:t.ContractNumber || '',
-      contractTitle: t.ContractTitle  || '',
-      assignedTo:    t.AssignedTo     || '',
-      dueDate:       t.DueDate        || '',
-    })),
-  })
+  return notifyTaskSummary('overdue_summary', tasks)
 }
 
 export function notifyDueSoonSummary(tasks) {
-  if (!tasks.length) return Promise.resolve()
-  const shown = tasks.slice(0, 5)
-  return sendNotification('due_soon_summary', {
-    count: tasks.length,
-    items: shown.map((t) => ({
-      title:         t.Title          || '',
-      contractNumber:t.ContractNumber || '',
-      contractTitle: t.ContractTitle  || '',
-      assignedTo:    t.AssignedTo     || '',
-      dueDate:       t.DueDate        || '',
-    })),
-  })
+  return notifyTaskSummary('due_soon_summary', tasks)
 }
 
-export function notifyRFIFollowUp(opportunities) {
-  if (!opportunities.length) return Promise.resolve()
-  const shown = opportunities.slice(0, 5)
+export async function notifyRFIFollowUp(opportunities) {
+  if (!opportunities.length) return false
+  const recipients = await resolveRecipients(opportunities.map((opportunity) => opportunity['Assigned To*']))
   return sendNotification('rfi_followup', {
-    count: opportunities.length,
-    items: shown.map((o) => ({
-      title:          o['Project Title / Description*'] || '',
-      contractNumber: o['Contract Number / Notice ID']  || '',
-      agency:         o['Agency*']                      || '',
+    recipients,
+    items: opportunities.slice(0, 5).map((opportunity) => ({
+      title: text(opportunity['Project Title / Description*']),
+      contractNumber: text(opportunity['Contract Number / Notice ID']),
+      submissionDate: text(opportunity['Submission Date (Response Date)*']),
     })),
+    remainingCount: Math.max(0, opportunities.length - 5),
   })
 }
 
-export function notifyStaleOpportunities(opportunities) {
-  if (!opportunities.length) return Promise.resolve()
-  const shown = opportunities.slice(0, 5)
-  return sendNotification('stale_opportunities', {
-    count: opportunities.length,
-    items: shown.map((o) => ({
-      title:          o['Project Title / Description*'] || '',
-      contractNumber: o['Contract Number / Notice ID']  || '',
-      phase:          o['TAG Opportunity Phase']        || '',
-    })),
+export async function notifyRFIResponseReminder(opportunity, daysUntil) {
+  const recipients = await resolveRecipients([opportunity['Assigned To*']])
+  return sendNotification('rfi_response_due', {
+    title: text(opportunity['Project Title / Description*']),
+    contractNumber: text(opportunity['Contract Number / Notice ID']),
+    agency: text(opportunity['Agency*']),
+    responseDate: text(opportunity['Submission Date (Response Date)*']),
+    samUrl: text(opportunity['Other Links*']),
+    daysUntil,
+    recipients,
   })
 }
