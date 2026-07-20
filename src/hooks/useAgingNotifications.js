@@ -8,10 +8,13 @@ import {
   notifyOverdueSummary,
   notifyDueSoonSummary,
   notifyRFIFollowUp,
-  notifyStaleOpportunities,
+  notifyRFIResponseReminder,
 } from '@/services/notifyService'
 
-const TODAY = () => new Date().toISOString().split('T')[0]
+const TODAY = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
 const LS_KEY = (type) => `tag_notif_${type}`
 
 function localAlreadySentToday(type) {
@@ -49,32 +52,38 @@ function daysAgo(dateStr) {
   return Math.floor((today - d) / (1000 * 60 * 60 * 24))
 }
 
-const EARLY_PHASES = new Set(['Identified', 'Research'])
-const STALE_OPPORTUNITY_DAYS = 21
+function daysUntil(dateStr) {
+  if (!dateStr) return Infinity
+  const due = new Date(dateStr + 'T00:00:00')
+  if (isNaN(due.getTime())) return Infinity
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((due - today) / (1000 * 60 * 60 * 24))
+}
+
+function responseReminderLogKey(opportunity, days) {
+  const identifier = String(opportunity['Contract Number / Notice ID'] || opportunity._rowIndex || '').trim()
+  return `rfi_response_${days}_${encodeURIComponent(identifier)}`
+}
 
 /**
  * Called once in AppShell after authentication.
  * Two-gate system: localStorage (instant, per-browser) then workbook NotifLog (shared).
  * RFI follow-up is per-opportunity (one-time), tracked via RFI Notified column.
- * Stale opportunity auto-updates Last Modified* silently after notifying.
  */
 export function useAgingNotifications() {
-  const ran = useRef(false)
+  const checking = useRef(false)
 
   useEffect(() => {
-    if (ran.current) return
-    ran.current = true
+    let nextDayTimer
 
-    const overdueLocal  = localAlreadySentToday('overdue')
-    const dueSoonLocal  = localAlreadySentToday('duesoon')
-    const staleLocal    = localAlreadySentToday('opp_stale')
-
-    // Skip entirely if all daily types already sent in this browser today
-    const needsDailyCheck = !overdueLocal || !dueSoonLocal || !staleLocal
-
-    const timer = setTimeout(async () => {
+    const runChecks = async () => {
+      if (checking.current) return
+      checking.current = true
       try {
         const today = TODAY()
+        const overdueLocal = localAlreadySentToday('overdue')
+        const dueSoonLocal = localAlreadySentToday('duesoon')
         const [allTasks, allOpps, log] = await Promise.all([
           getTasks(),
           getPipeline(),
@@ -89,9 +98,11 @@ export function useAgingNotifications() {
             const overdue = allTasks.filter(
               (t) => t.Status !== 'Done' && isPastDue(t.DueDate)
             )
-            if (overdue.length > 0) await notifyOverdueSummary(overdue)
-            await setNotifLog('overdue', today)
-            markLocalSentToday('overdue')
+            const sent = overdue.length === 0 || await notifyOverdueSummary(overdue)
+            if (sent) {
+              await setNotifLog('overdue', today)
+              markLocalSentToday('overdue')
+            }
           }
         }
 
@@ -103,35 +114,11 @@ export function useAgingNotifications() {
             const dueSoon = allTasks.filter(
               (t) => t.Status !== 'Done' && isTomorrow(t.DueDate)
             )
-            if (dueSoon.length > 0) await notifyDueSoonSummary(dueSoon)
-            await setNotifLog('duesoon', today)
-            markLocalSentToday('duesoon')
-          }
-        }
-
-        // ── Stale opportunities (early phases, no activity ≥3 weeks) ──
-        if (!staleLocal) {
-          if (log['opp_stale'] === today) {
-            markLocalSentToday('opp_stale')
-          } else {
-            const stale = allOpps.filter((o) => {
-              if (!EARLY_PHASES.has(o['TAG Opportunity Phase'])) return false
-              return daysAgo(o['Last Modified*']) >= STALE_OPPORTUNITY_DAYS
-            })
-
-            if (stale.length > 0) {
-              await notifyStaleOpportunities(stale)
-              // Silently write today to Last Modified* for each stale opp
-              // so the clock resets — fire all in parallel, catch per item
-              await Promise.all(
-                stale.map((o) =>
-                  updateOpportunity(o._rowIndex, { 'Last Modified*': today })
-                    .catch((err) => console.warn('[AgingNotif] Last Modified update failed:', err.message))
-                )
-              )
+            const sent = dueSoon.length === 0 || await notifyDueSoonSummary(dueSoon)
+            if (sent) {
+              await setNotifLog('duesoon', today)
+              markLocalSentToday('duesoon')
             }
-            await setNotifLog('opp_stale', today)
-            markLocalSentToday('opp_stale')
           }
         }
 
@@ -144,22 +131,60 @@ export function useAgingNotifications() {
         })
 
         if (rfiDue.length > 0) {
-          await notifyRFIFollowUp(rfiDue)
-          // Write notification date to RFI Notified column for each opp
-          // Use Promise.all — fast, Graph API handles small team volume
-          await Promise.all(
-            rfiDue.map((o) =>
-              updateOpportunity(o._rowIndex, { 'RFI Notified': today })
-                .catch((err) => console.warn('[AgingNotif] RFI Notified update failed:', err.message))
+          const sent = await notifyRFIFollowUp(rfiDue)
+          if (sent) {
+            // Write the notification date only after Teams accepted the card.
+            await Promise.all(
+              rfiDue.map((o) =>
+                updateOpportunity(o._rowIndex, { 'RFI Notified': today })
+                  .catch((err) => console.warn('[AgingNotif] RFI Notified update failed:', err.message))
+              )
             )
-          )
+          }
+        }
+
+        // ── Upcoming RFI responses (two days and one day) ─────────────
+        // RFIs are the same records shown in the Opportunities RFIs tab.
+        // Their response date is copied into Submission Date when they are
+        // added from the New Opportunities list.
+        const responseReminders = allOpps.filter((o) => {
+          const isRFI = o['TAG Opportunity Phase'] === 'Identified' && o['Opportunity Outlook'] === 'New'
+          const remaining = daysUntil(o['Submission Date (Response Date)*'])
+          return isRFI && (remaining === 1 || remaining === 2)
+        })
+
+        for (const opportunity of responseReminders) {
+          const remaining = daysUntil(opportunity['Submission Date (Response Date)*'])
+          const key = responseReminderLogKey(opportunity, remaining)
+          if (log[key]) continue
+          const sent = await notifyRFIResponseReminder(opportunity, remaining)
+          if (!sent) continue
+          await setNotifLog(key, today)
+          log[key] = today
         }
 
       } catch (err) {
         console.warn('[AgingNotif] Check failed:', err.message)
+      } finally {
+        checking.current = false
       }
-    }, 8000)
+    }
 
-    return () => clearTimeout(timer)
+    const scheduleNextDay = () => {
+      const next = new Date()
+      next.setHours(24, 0, 8, 0)
+      nextDayTimer = setTimeout(async () => {
+        await runChecks()
+        scheduleNextDay()
+      }, Math.max(1000, next.getTime() - Date.now()))
+    }
+
+    const initialTimer = setTimeout(runChecks, 8000)
+    scheduleNextDay()
+
+    return () => {
+      clearTimeout(initialTimer)
+      clearTimeout(nextDayTimer)
+    }
   }, [])
 }
