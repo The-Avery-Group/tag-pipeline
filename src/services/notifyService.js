@@ -4,7 +4,7 @@
  * workbook context, including optional Teams mention identities.
  */
 
-import { getNotificationRecipients } from '@/services/graphService'
+import { getNotificationRecipients, getRFINotificationRecipients } from '@/services/graphService'
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -60,6 +60,36 @@ async function resolveRecipients(assignees) {
     .map((assignee) => directory.get(assignee.toLowerCase()) || { name: assignee, id: '' })
     .filter((recipient) => {
       const key = `${recipient.name.toLowerCase()}|${recipient.id.toLowerCase()}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function valueFromMatchingHeader(row, pattern) {
+  const match = Object.entries(row || {}).find(([header, value]) => pattern.test(header) && text(value))
+  return match ? text(match[1]) : ''
+}
+
+async function resolveRFIFollowupRecipients() {
+  const rows = await getRFINotificationRecipients()
+  const seen = new Set()
+
+  return rows
+    .flatMap((row) => {
+      const id = valueFromMatchingHeader(row, /(?:email|upn|entra\s*(?:object\s*)?id)/i)
+      const name = valueFromMatchingHeader(row, /(?:display\s*)?(?:name|assignee|recipient|user)/i)
+        || (id ? id.split('@')[0] : '')
+      if (id) return [{ name, id }]
+
+      // Also support a compact one-row table where the headers are people's
+      // names and each value is their work email address.
+      return Object.entries(row || {})
+        .filter(([, value]) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value)))
+        .map(([header, value]) => ({ name: text(header), id: text(value) }))
+    })
+    .filter((recipient) => {
+      const key = recipient.id.toLowerCase()
       if (seen.has(key)) return false
       seen.add(key)
       return true
@@ -127,9 +157,12 @@ export function notifyDueSoonSummary(tasks) {
 
 export async function notifyRFIFollowUp(opportunities) {
   if (!opportunities.length) return false
-  const recipients = await resolveRecipients(opportunities.map((opportunity) => opportunity['Assigned To*']))
+  const recipients = await resolveRFIFollowupRecipients()
   return sendNotification('rfi_followup', {
     recipients,
+    filterIds: opportunities
+      .map((opportunity) => text(opportunity['Contract Number / Notice ID']))
+      .filter(Boolean),
     items: opportunities.slice(0, 5).map((opportunity) => ({
       title: text(opportunity['Project Title / Description*']),
       contractNumber: text(opportunity['Contract Number / Notice ID']),
@@ -140,7 +173,7 @@ export async function notifyRFIFollowUp(opportunities) {
 }
 
 export async function notifyRFIResponseReminder(opportunity, daysUntil) {
-  const recipients = await resolveRecipients([opportunity['Assigned To*']])
+  const recipients = await resolveRFIFollowupRecipients()
   return sendNotification('rfi_response_due', {
     title: text(opportunity['Project Title / Description*']),
     contractNumber: text(opportunity['Contract Number / Notice ID']),
