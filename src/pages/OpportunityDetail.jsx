@@ -142,6 +142,64 @@ function addPOCName(currentPOC, contactName) {
   return names.includes(contactName) ? names.join(', ') : [...names, contactName].join(', ')
 }
 
+function normalizeContactMatchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\bdept\b/g, 'department')
+    .replace(/\bprog\b/g, 'program')
+    .replace(/\bops\b/g, 'operations')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function officeValues(value) {
+  return String(value || '')
+    .split(',')
+    .map((office) => office.trim())
+    .filter(Boolean)
+}
+
+const GENERIC_OFFICE_WORDS = new Set([
+  'and', 'the', 'of', 'for', 'in', 'at', 'office', 'department', 'agency', 'division', 'bureau', 'services',
+])
+
+function meaningfulOfficeTokens(value) {
+  return normalizeContactMatchText(value)
+    .split(' ')
+    .filter((word) => word.length > 2 && !GENERIC_OFFICE_WORDS.has(word))
+}
+
+/**
+ * Intentionally conservative: an exact normalized match always qualifies;
+ * otherwise offices need a clear containment relationship or at least two
+ * meaningful words in common. Agency matching is handled by the caller.
+ */
+function officeMatch(left, right) {
+  const normalizedLeft = normalizeContactMatchText(left)
+  const normalizedRight = normalizeContactMatchText(right)
+  if (!normalizedLeft || !normalizedRight) return false
+  if (normalizedLeft === normalizedRight) return true
+
+  const leftTokens = meaningfulOfficeTokens(left)
+  const rightTokens = meaningfulOfficeTokens(right)
+  if (!leftTokens.length || !rightTokens.length) return false
+
+  const leftMeaningful = leftTokens.join(' ')
+  const rightMeaningful = rightTokens.join(' ')
+  if (leftMeaningful.length >= 5 && rightMeaningful.length >= 5 &&
+      (leftMeaningful.includes(rightMeaningful) || rightMeaningful.includes(leftMeaningful))) return true
+
+  const rightSet = new Set(rightTokens)
+  const overlap = leftTokens.filter((token) => rightSet.has(token))
+  return overlap.length >= 2
+}
+
+function contactKey(contact) {
+  return String(contact?.ContactID || contact?._rowIndex || contact?.Email || contact?.Name || '')
+}
+
 function formatFieldValue(val) {
   if (val === null || val === undefined || val === '') return '—'
   if (val instanceof Date) return formatDate(val)
@@ -723,7 +781,8 @@ export default function OpportunityDetail({ toast }) {
     Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
   })
   const [contactSearch,   setContactSearch]   = useState('')
-  const [linkingContact,  setLinkingContact]  = useState(false)
+  const [linkingContactId, setLinkingContactId] = useState(null)
+  const linkingContactIdsRef = useRef(new Set())
   const [showNewContact,  setShowNewContact]  = useState(false)
   const [savingContact,   setSavingContact]   = useState(false)
   const [newContactForm,  setNewContactForm]  = useState({
@@ -781,18 +840,52 @@ export default function OpportunityDetail({ toast }) {
     return names.map((name) => contacts.find((c) => c.Name === name)).filter(Boolean)
   }, [opp, contacts])
 
-  const relatedOfficeContacts = useMemo(() => {
-    if (!opp) return []
-    const normalize = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
-    const agency = normalize(opp[C.agency])
-    const office = normalize(opp[C.office])
-    if (!agency || !office) return []
-    const linkedIds = new Set(linkedContacts.map((contact) => contact.ContactID))
-    return contacts.filter((contact) =>
-      normalize(contact.Agency) === agency &&
-      String(contact.Offices || '').split(',').map(normalize).includes(office) &&
-      !linkedIds.has(contact.ContactID)
-    )
+  const relatedContactGroups = useMemo(() => {
+    if (!opp) return { opportunityOffice: [], linkedContactOffice: [] }
+
+    const opportunityAgency = normalizeContactMatchText(opp[C.agency])
+    const opportunityOffice = String(opp[C.office] || '').trim()
+    const linkedKeys = new Set(linkedContacts.map(contactKey))
+    const linkedNames = new Set(linkedContacts.map((contact) => normalizeContactMatchText(contact.Name)))
+    const isAlreadyLinked = (contact) => linkedKeys.has(contactKey(contact)) || linkedNames.has(normalizeContactMatchText(contact.Name))
+    const sameAgency = (contact, agency) =>
+      Boolean(agency) && normalizeContactMatchText(contact.Agency) === agency
+
+    const opportunityOfficeMatches = opportunityAgency && opportunityOffice
+      ? contacts.flatMap((contact) => {
+          if (isAlreadyLinked(contact) || !sameAgency(contact, opportunityAgency)) return []
+          const matchingOffice = officeValues(contact.Offices).find((office) => officeMatch(office, opportunityOffice))
+          return matchingOffice ? [{ contact, matchedOffice: matchingOffice, reason: `Matches this opportunity's office: ${matchingOffice}` }] : []
+        })
+      : []
+
+    const opportunityMatchKeys = new Set(opportunityOfficeMatches.map(({ contact }) => contactKey(contact)))
+    const linkedContactOfficeMatches = contacts.flatMap((candidate) => {
+      if (isAlreadyLinked(candidate) || opportunityMatchKeys.has(contactKey(candidate))) return []
+      const candidateAgency = normalizeContactMatchText(candidate.Agency)
+      if (!candidateAgency) return []
+
+      for (const linkedContact of linkedContacts) {
+        const linkedAgency = normalizeContactMatchText(linkedContact.Agency)
+        if (!linkedAgency || linkedAgency !== candidateAgency) continue
+        for (const linkedOffice of officeValues(linkedContact.Offices)) {
+          const matchingOffice = officeValues(candidate.Offices).find((office) => officeMatch(office, linkedOffice))
+          if (matchingOffice) {
+            return [{
+              contact: candidate,
+              matchedOffice,
+              reason: `Similar office to linked contact ${linkedContact.Name}: ${matchingOffice}`,
+            }]
+          }
+        }
+      }
+      return []
+    })
+
+    return {
+      opportunityOffice: opportunityOfficeMatches,
+      linkedContactOffice: linkedContactOfficeMatches,
+    }
   }, [opp, contacts, linkedContacts])
 
   const unlinkedContacts = useMemo(() => {
@@ -1087,21 +1180,21 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const handleLinkContact = async (c) => {
-    if (linkingContact) return
-    setLinkingContact(true)
+    const key = contactKey(c)
+    if (!key || linkingContactIdsRef.current.has(key)) return
+    linkingContactIdsRef.current.add(key)
+    setLinkingContactId(key)
     setContactSearch('')
-    // Optimistic: add contact to linked list immediately
-    // The actual POC field updates come through cache refresh
     try {
       const nextPOC = addPOCName(opp[C.poc], c.Name)
       await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} linked`)
     } catch (err) {
-      // Silent fail — will resolve on next cache refresh, no visual rollback
-      toast?.error(`Failed to link ${c.Name}`)
+      toast?.error(`Failed to link ${c.Name}: ${err.message}`)
     } finally {
-      setLinkingContact(false)
+      linkingContactIdsRef.current.delete(key)
+      setLinkingContactId((current) => current === key ? null : current)
     }
   }
 
@@ -1426,18 +1519,57 @@ export default function OpportunityDetail({ toast }) {
             : <p className="text-sm text-muted" style={{ marginBottom: 8 }}>No contacts linked.</p>
           }
 
-          {relatedOfficeContacts.length > 0 && (
+          {relatedContactGroups.opportunityOffice.length > 0 && (
             <div className={styles.relatedContacts}>
-              <div className={styles.relatedContactsTitle}>Related contacts in this agency and office</div>
-              {relatedOfficeContacts.map((c) => (
-                <div key={c.ContactID} className={styles.contactCard}>
-                  <div className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
-                  <div className={styles.contactInfo}>
-                    <div className={styles.contactName}>{c.Name}</div>
-                    <div className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</div>
+              <div className={styles.relatedContactsTitle}>Related contacts for this opportunity</div>
+              <div className={styles.relatedContactsHint}>Same agency and a matching office</div>
+              {relatedContactGroups.opportunityOffice.map(({ contact: c, reason }) => {
+                const key = contactKey(c)
+                const isLinking = linkingContactId === key
+                return (
+                  <div key={key} className={styles.contactCard}>
+                    <div className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
+                    <div className={styles.contactInfo}>
+                      <div className={styles.contactName}>{c.Name}</div>
+                      <div className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</div>
+                      <div className={styles.relatedContactReason}>{reason}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary text-sm"
+                      disabled={Boolean(linkingContactId)}
+                      onClick={() => handleLinkContact(c)}
+                    >{isLinking ? 'Linking…' : 'Link'}</button>
                   </div>
-                </div>
-              ))}
+                )
+              })}
+            </div>
+          )}
+
+          {relatedContactGroups.linkedContactOffice.length > 0 && (
+            <div className={styles.relatedContacts}>
+              <div className={styles.relatedContactsTitle}>Related to linked contacts</div>
+              <div className={styles.relatedContactsHint}>Same agency and a similar office to a contact already linked here</div>
+              {relatedContactGroups.linkedContactOffice.map(({ contact: c, reason }) => {
+                const key = contactKey(c)
+                const isLinking = linkingContactId === key
+                return (
+                  <div key={key} className={styles.contactCard}>
+                    <div className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
+                    <div className={styles.contactInfo}>
+                      <div className={styles.contactName}>{c.Name}</div>
+                      <div className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</div>
+                      <div className={styles.relatedContactReason}>{reason}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary text-sm"
+                      disabled={Boolean(linkingContactId)}
+                      onClick={() => handleLinkContact(c)}
+                    >{isLinking ? 'Linking…' : 'Link'}</button>
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -1468,7 +1600,7 @@ export default function OpportunityDetail({ toast }) {
                       <div
                         key={c.ContactID || c.Name}
                         className={styles.contactDropdownRow}
-                        onClick={() => !linkingContact && handleLinkContact(c)}
+                        onClick={() => !linkingContactId && handleLinkContact(c)}
                       >
                         <div className={styles.contactDropdownName}>{c.Name || '—'}</div>
                         <div className={styles.contactDropdownSub}>{c.Agency || c.Email || '—'}</div>
