@@ -176,11 +176,13 @@ export async function notifyStaleContacts(contacts) {
   const recipients = await resolveAllAssigneeRecipients()
   return sendNotification('contact_followup', {
     recipients,
+    // Contact follow-up cards intentionally handle a maximum of five people
+    // per run. Do not send or reserve the remainder of the stale-contact set.
     items: contacts.slice(0, 5).map((contact) => ({
+      contactId: text(contact.ContactID),
       name: text(contact.Name),
       agency: text(contact.Agency),
       lastInteraction: text(contact.lastInteraction),
     })),
-    remainingCount: Math.max(0, contacts.length - 5),
   })
 }
