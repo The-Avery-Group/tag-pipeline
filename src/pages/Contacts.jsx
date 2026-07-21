@@ -10,6 +10,7 @@ import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
 import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
 import { formatDate } from '@/utils/kpiHelpers'
+import { recordMatches } from '@/utils/searchHelpers'
 import { useAuth } from '@/auth/AuthContext'
 import styles from './Contacts.module.css'
 
@@ -55,6 +56,7 @@ export default function Contacts({ toast }) {
   const [showInteractionForm, setShowInteractionForm] = useState(false)
   const [interactionForm, setInteractionForm] = useState(BLANK_INTERACTION)
   const [interactionError, setInteractionError] = useState('')
+  const [focusedInteractionId, setFocusedInteractionId] = useState(null)
   // Consistent in-progress feedback + re-entrancy guarding for actions that
   // previously had none (delete, unlink) or used an ad hoc boolean (link).
   const deleteAction = useAsyncAction()
@@ -75,8 +77,7 @@ export default function Contacts({ toast }) {
 
   const filtered = useMemo(
     () => contacts.filter(
-      (c) => !search || [c.Name, c.Agency, c.Organization, c.Offices, c.Title, c.Email, c.Type]
-        .some((v) => v?.toLowerCase().includes(search.toLowerCase()))
+      (contact) => recordMatches(contact, search)
     ),
     [contacts, search]
   )
@@ -93,6 +94,24 @@ export default function Contacts({ toast }) {
       .filter((row) => row.ContactID === selected.ContactID)
       .sort((a, b) => String(b['Interaction Date'] || '').localeCompare(String(a['Interaction Date'] || '')))
   }, [selected, engagement.interactions])
+
+  useEffect(() => {
+    const interactionId = searchParams.get('interactionId')
+    if (!interactionId || !selected || engagement.loading) return undefined
+    const interaction = selectedInteractions.find((row) =>
+      String(row.InteractionID || row._rowIndex) === interactionId
+    )
+    if (!interaction) return undefined
+    setFocusedInteractionId(interactionId)
+    requestAnimationFrame(() => document.getElementById(`contact-interaction-${interactionId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      next.delete('interactionId')
+      return next
+    }, { replace: true })
+    const timeout = setTimeout(() => setFocusedInteractionId(null), 3000)
+    return () => clearTimeout(timeout)
+  }, [searchParams, selected, selectedInteractions, engagement.loading, setSearchParams])
 
   // Opportunities NOT yet linked to selected contact (for search/add)
   const unlinkableOpps = useMemo(() => {
@@ -218,8 +237,8 @@ export default function Contacts({ toast }) {
       setInteractionError('Choose a valid interaction date and interaction type before saving.')
       return
     }
-    if (interactionType === 'Other' && !interactionForm.Notes.trim()) {
-      setInteractionError('Add notes to describe an interaction marked as Other.')
+    if (['Other', 'Event'].includes(interactionType) && !interactionForm.Notes.trim()) {
+      setInteractionError(`Add notes to describe an interaction marked as ${interactionType}.`)
       return
     }
     setInteractionError('')
@@ -411,11 +430,11 @@ export default function Contacts({ toast }) {
                             {showInteractionForm ? (
                               <div className={styles.interactionForm}>
                                 <div className={styles.interactionFormTitle}>New interaction</div>
-                                <p className={styles.interactionHint}>Date and type are required. Notes are required only for Other. Leave follow-up blank to schedule it 31 days after this interaction.</p>
+                                <p className={styles.interactionHint}>Date and type are required. Notes are required for Event or Other. Leave follow-up blank to schedule it 31 days after this interaction.</p>
                                 <div className={styles.formGrid}>
                                   <div className="form-field"><label className="form-label">Date *</label><input className="form-input" type="date" required value={interactionForm['Interaction Date']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Date': e.target.value })); if (interactionError) setInteractionError('') }} /></div>
                                   <div className="form-field"><label className="form-label">Type *</label><select className="form-input" required value={interactionForm['Interaction Type']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value })); if (interactionError) setInteractionError('') }}><option value="" disabled>Select type</option><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
-                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes{interactionForm['Interaction Type'] === 'Other' ? ' *' : ''}</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, Notes: e.target.value })); if (interactionError) setInteractionError('') }} /></div>
+                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes{['Other', 'Event'].includes(interactionForm['Interaction Type']) ? ' *' : ''}</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, Notes: e.target.value })); if (interactionError) setInteractionError('') }} /></div>
                                   <div className="form-field"><label className="form-label">Follow-up date</label><input className="form-input" type="date" value={interactionForm['Follow-up Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Follow-up Date': e.target.value }))} /></div>
                                 </div>
                                 {interactionError && <p className={styles.interactionError} role="alert">{interactionError}</p>}
@@ -425,7 +444,7 @@ export default function Contacts({ toast }) {
                             {selectedInteractions.length === 0
                               ? <p className="text-sm text-muted">No interactions logged.</p>
                               : selectedInteractions.map((row) => (
-                                <div key={row.InteractionID || row._rowIndex} className={styles.interactionRow}>
+                                <div id={`contact-interaction-${row.InteractionID || row._rowIndex}`} key={row.InteractionID || row._rowIndex} className={`${styles.interactionRow} ${String(row.InteractionID || row._rowIndex) === focusedInteractionId ? styles.interactionFocused : ''}`}>
                                   <div><strong>{row['Interaction Type'] || 'Interaction'}</strong><span>{formatDate(row['Interaction Date'])}{row['Logged By'] ? ` · ${row['Logged By']}` : ''}</span></div>
                                   <p>{row.Notes}</p>
                                   {row['Follow-up Date'] && <small>Follow up {formatDate(row['Follow-up Date'])}</small>}
