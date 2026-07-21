@@ -5,7 +5,7 @@ import {
 } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
-export function useContactEngagement() {
+export function useContactEngagement(enabled = false) {
   const [interactions, setInteractions] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -18,8 +18,18 @@ export function useContactEngagement() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
-  useEffect(() => onCacheRefresh(load), [load])
+  useEffect(() => {
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
+    load()
+  }, [enabled, load])
+
+  useEffect(() => {
+    if (!enabled) return undefined
+    return onCacheRefresh(load)
+  }, [enabled, load])
 
   const addInteraction = useCallback(async (data) => {
     await addContactInteraction(data)
