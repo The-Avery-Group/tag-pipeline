@@ -12,6 +12,39 @@ function json(data, status = 200) {
 
 const text = (value) => String(value ?? '').trim()
 
+function overdueSummaryDedupeKey(type, payload) {
+  if (type !== 'overdue_summary') return ''
+  const date = text(payload?.summaryDate)
+  // The browser provides its local calendar day so the card follows the
+  // same day boundary as the signed-in users who trigger the check.
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? `teams_notification:overdue:${date}` : ''
+}
+
+async function reserveDedupeKey(env, key) {
+  if (!key || !env.CACHE) return true
+  try {
+    if (await env.CACHE.get(key)) return false
+    // One small shared write, retained long enough to cover delayed browser
+    // sessions. All later sign-ins only read this key and do not post a card.
+    await env.CACHE.put(key, 'sent', { expirationTtl: 172800 })
+    return true
+  } catch (error) {
+    // Notification delivery should remain available if KV has a transient
+    // problem. The existing workbook log remains a second, client-side gate.
+    console.warn('[Notify] Could not reserve summary notification:', error.message)
+    return true
+  }
+}
+
+async function releaseDedupeKey(env, key) {
+  if (!key || !env.CACHE) return
+  try {
+    await env.CACHE.delete(key)
+  } catch (error) {
+    console.warn('[Notify] Could not release summary notification:', error.message)
+  }
+}
+
 function cardText(value, fallback = 'Not provided') {
   return text(value) || fallback
 }
@@ -115,6 +148,13 @@ function rfiRows(items) {
     ],
   }))
   return [header, ...rows]
+}
+
+function contactRows(items) {
+  return items.map((item) => textBlock(
+    `**${cardText(item.name)}**${item.agency ? ` · ${cardText(item.agency)}` : ''}\nLast interaction: ${formatDate(item.lastInteraction)}`,
+    { size: 'Small' },
+  ))
 }
 
 function buildCard({ title, subtitle, icon, color = 'accent', body = [], actions = [], recipients = [], noWrapTitle = false }) {
@@ -282,6 +322,23 @@ function cardForType(type, payload, env) {
       })
     }
 
+    case 'contact_followup': {
+      const recipientText = (payload.recipients || []).map(mentionToken).filter(Boolean).join(' ')
+      return buildCard({
+        title: 'Contact follow-up due',
+        subtitle: 'No interaction logged in 30 days',
+        icon: '◷',
+        color: 'warning',
+        recipients: payload.recipients || [],
+        body: [
+          ...(recipientText ? [textBlock(`Hello ${recipientText}, please review these contacts.`)] : []),
+          ...contactRows(payload.items || []),
+          ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
+        ],
+        actions: [action('View contacts', `${base}/tag-pipeline/contacts`)],
+      })
+    }
+
     default:
       return null
   }
@@ -306,6 +363,11 @@ export async function handleNotify(req, env) {
   const card = cardForType(type, payload, env)
   if (!card) return json({ error: `Unknown notification type: ${type}` }, 400)
 
+  const dedupeKey = overdueSummaryDedupeKey(type, payload)
+  if (!(await reserveDedupeKey(env, dedupeKey))) {
+    return json({ ok: true, deduplicated: true })
+  }
+
   try {
     const response = await fetch(env.TEAMS_WEBHOOK_URL, {
       method: 'POST',
@@ -314,11 +376,13 @@ export async function handleNotify(req, env) {
     })
     if (!response.ok) {
       console.error('[Notify] Teams webhook returned', response.status)
+      await releaseDedupeKey(env, dedupeKey)
       return json({ ok: false, error: `Teams returned ${response.status}` }, 502)
     }
     return json({ ok: true })
   } catch (error) {
     console.error('[Notify] Fetch failed:', error)
+    await releaseDedupeKey(env, dedupeKey)
     return json({ ok: false, error: error.message }, 502)
   }
 }
