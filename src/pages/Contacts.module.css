@@ -224,6 +224,7 @@
 .interactionHint { margin: 3px 0 10px; font-size: 11px; color: var(--gray-500); }
 .interactionError { margin: 8px 0 0; color: var(--red-600); font-size: 12px; }
 .interactionRow > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; }
+.interactionFocused { background: var(--blue-50); border-color: var(--blue-200); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue-200) 35%, transparent); }
 .interactionRow span, .interactionRow small { color: var(--gray-500); }
 .interactionRow p { margin: 5px 0 0; font-size: 12px; white-space: pre-wrap; }
 .inlineActions { display: flex; gap: 6px; margin-top: 8px; }
