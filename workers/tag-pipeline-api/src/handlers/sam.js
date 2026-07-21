@@ -181,18 +181,49 @@ function workbookBase(env) {
 }
 
 async function graphFetch(env, token, path, options = {}) {
-  const res = await fetch(`${workbookBase(env)}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  })
-  if (res.status === 204) return null
-  const data = await res.json()
-  if (!res.ok) throw new Error(data?.error?.message || `Graph error: ${res.status}`)
-  return data
+  const method = String(options.method || 'GET').toUpperCase()
+  const retryableRead = method === 'GET'
+  const maxRetries = retryableRead ? 2 : 0
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const res = await fetch(`${workbookBase(env)}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    })
+
+    if (res.status === 204) return null
+
+    // Excel occasionally returns a plain-text 502/503/504 response instead of
+    // Graph JSON. Retry only reads: retrying a row-add after an ambiguous
+    // gateway failure could create a duplicate opportunity.
+    if (retryableRead && [429, 502, 503, 504].includes(res.status) && attempt < maxRetries) {
+      const retryAfter = Number(res.headers.get('Retry-After'))
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 350 * Math.pow(2, attempt)
+      await sleep(delay)
+      continue
+    }
+
+    const raw = await res.text()
+    let data = null
+    if (raw) {
+      try {
+        data = JSON.parse(raw)
+      } catch {
+        if (!res.ok) throw new Error(`Graph error ${res.status}: ${raw.slice(0, 180)}`)
+        throw new Error(`Graph returned an invalid JSON response (${res.status})`)
+      }
+    }
+    if (!res.ok) throw new Error(data?.error?.message || `Graph error: ${res.status}`)
+    return data
+  }
+
+  throw new Error('Graph read retry loop ended unexpectedly')
 }
 
 async function getTableRows(env, token, tableName) {
