@@ -4,7 +4,10 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useContacts } from '@/hooks/useContacts'
 import { useTasks } from '@/hooks/useTasks'
 import { useNotes } from '@/hooks/useNotes'
+import { useContactEngagement } from '@/hooks/useContactEngagement'
+import { getSAMOpportunities } from '@/services/graphService'
 import { formatDate } from '@/utils/kpiHelpers'
+import { searchableValues } from '@/utils/searchHelpers'
 import styles from './SearchModal.module.css'
 
 const MAX_PER_CATEGORY = 5
@@ -34,11 +37,21 @@ export default function SearchModal({ onClose }) {
   const navigate            = useNavigate()
   const [activeIndex, setActiveIndex] = useState(0)
   const [expandedCategories, setExpandedCategories] = useState({})
+  const [samOpportunities, setSamOpportunities] = useState([])
 
   const { pipeline }  = usePipeline()
   const { contacts }  = useContacts()
   const { tasks }     = useTasks()
   const { notes }     = useNotes()
+  const contactEngagement = useContactEngagement(true)
+
+  useEffect(() => {
+    let active = true
+    getSAMOpportunities()
+      .then((rows) => { if (active) setSamOpportunities(rows) })
+      .catch((error) => console.warn('[Search] Could not load New Opportunities:', error.message))
+    return () => { active = false }
+  }, [])
 
   // Focus input on mount
   useEffect(() => {
@@ -76,20 +89,29 @@ export default function SearchModal({ onClose }) {
     [pipeline]
   )
 
+  const contactsById = useMemo(
+    () => new Map(contacts.map((contact) => [String(contact.ContactID || ''), contact])),
+    [contacts]
+  )
+
   const results = useMemo(() => {
-    if (!q) return { opportunities: [], contacts: [], tasks: [], notes: [], counts: {} }
+    if (!q) return { opportunities: [], samOpportunities: [], contacts: [], tasks: [], interactions: [], notes: [], counts: {} }
 
-    const allOpportunities = rankMatches(pipeline, (o) => [
-      o['Project Title / Description*'], o['Contract Number / Notice ID'], o['Department*'], o['Agency*'],
-    ], q)
+    const allOpportunities = rankMatches(pipeline, searchableValues, q)
+    const allSAMOpportunities = rankMatches(samOpportunities, searchableValues, q)
 
-    const allContacts = rankMatches(contacts, (c) => [c.Name, c.Email, c.Agency, c.Notes], q)
+    const allContacts = rankMatches(contacts, searchableValues, q)
 
-    const allTasks = rankMatches(tasks, (t) => [
-      t.Title, t.ContractTitle, t.ContractNumber, t.Description, t.OpportunityNotes,
-    ], q)
+    const allTasks = rankMatches(tasks, searchableValues, q)
 
-    const allNotes = rankMatches(notes, (n) => [n.NoteText, n.Author, n.ContractNumber], q)
+    const allInteractions = rankMatches(contactEngagement.interactions, searchableValues, q)
+      .map((interaction) => ({
+        ...interaction,
+        contact: contactsById.get(String(interaction.ContactID || '')),
+      }))
+      .filter((interaction) => interaction.contact)
+
+    const allNotes = rankMatches(notes, searchableValues, q)
       .map((n) => ({
         ...n,
         opportunity: opportunitiesByContract.get(n.ContractNumber),
@@ -99,19 +121,23 @@ export default function SearchModal({ onClose }) {
 
     return {
       opportunities: show('opportunities', allOpportunities),
+      samOpportunities: show('samOpportunities', allSAMOpportunities),
       contacts: show('contacts', allContacts),
       tasks: show('tasks', allTasks),
+      interactions: show('interactions', allInteractions),
       notes: show('notes', allNotes),
       counts: {
         opportunities: allOpportunities.length,
+        samOpportunities: allSAMOpportunities.length,
         contacts: allContacts.length,
         tasks: allTasks.length,
+        interactions: allInteractions.length,
         notes: allNotes.length,
       },
     }
-  }, [q, pipeline, contacts, tasks, notes, opportunitiesByContract, expandedCategories])
+  }, [q, pipeline, samOpportunities, contacts, tasks, notes, contactEngagement.interactions, opportunitiesByContract, contactsById, expandedCategories])
 
-  const total = results.opportunities.length + results.contacts.length + results.tasks.length + results.notes.length
+  const total = results.opportunities.length + results.samOpportunities.length + results.contacts.length + results.tasks.length + results.interactions.length + results.notes.length
   const hasResults = total > 0
 
   const go = (path) => {
@@ -121,8 +147,14 @@ export default function SearchModal({ onClose }) {
 
   const selectableResults = useMemo(() => [
     ...results.opportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}` })),
+    ...results.samOpportunities.map((opportunity) => ({
+      path: `/opportunities?tab=New&search=${encodeURIComponent(opportunity['Notice ID'] || opportunity['Solicitation Number'] || opportunity.Title || '')}`,
+    })),
     ...results.contacts.map((c) => ({ path: `/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}` })),
     ...results.tasks.map((t) => ({ path: `/tasks?taskId=${encodeURIComponent(t.TaskID)}` })),
+    ...results.interactions.map((interaction) => ({
+      path: `/contacts?contactId=${encodeURIComponent(interaction.contact.ContactID || interaction.contact._rowIndex)}&interactionId=${encodeURIComponent(interaction.InteractionID || interaction._rowIndex)}`,
+    })),
     ...results.notes.map((n) => ({
       path: n.opportunity ? `/opportunities/${encodeURIComponent(n.opportunity['Contract Number / Notice ID'])}?row=${n.opportunity._rowIndex}` : null,
     })),
@@ -167,7 +199,7 @@ export default function SearchModal({ onClose }) {
           <input
             ref={inputRef}
             className={styles.input}
-            placeholder="Search opportunities, contacts, tasks, notes…"
+            placeholder="Search all pipeline, SAM, contact, task, note, and interaction fields…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
@@ -182,7 +214,7 @@ export default function SearchModal({ onClose }) {
         <div className={styles.results}>
           {!q && (
             <div className={styles.hint}>
-              Start typing to search across opportunities, contacts, tasks and notes.
+              Start typing to search every field across pipeline, SAM, contacts, tasks, notes, and interactions.
             </div>
           )}
 
@@ -211,11 +243,36 @@ export default function SearchModal({ onClose }) {
             </div>
           )}
 
+          {results.samOpportunities.length > 0 && (
+            <div className={styles.group}>
+              <div className={styles.groupLabel}>New SAM opportunities</div>
+              {results.samOpportunities.map((opportunity, i) => {
+                const index = results.opportunities.length + i
+                const identifier = opportunity['Notice ID'] || opportunity['Solicitation Number'] || ''
+                return (
+                  <button key={(opportunity._rowIndex ?? identifier) || opportunity.Title || i}
+                    className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => go(`/opportunities?tab=New&search=${encodeURIComponent(identifier || opportunity.Title || '')}`)}>
+                    <div className={styles.resultTitle}>{opportunity.Title || 'Untitled opportunity'}</div>
+                    <div className={styles.resultMeta}>{identifier || 'No Notice ID'}</div>
+                    <div className={styles.resultMeta}>{opportunity.Department || opportunity.Agency || '—'}</div>
+                  </button>
+                )
+              })}
+              {results.counts.samOpportunities > MAX_PER_CATEGORY && (
+                <button className={styles.viewAll} onClick={() => toggleCategory('samOpportunities')}>
+                  {expandedCategories.samOpportunities ? 'Show fewer' : `View all ${results.counts.samOpportunities}`}
+                </button>
+              )}
+            </div>
+          )}
+
           {results.contacts.length > 0 && (
             <div className={styles.group}>
               <div className={styles.groupLabel}>Contacts</div>
               {results.contacts.map((c, i) => {
-                const index = results.opportunities.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + i
                 return (
                 <button key={c.ContactID || c.Name}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -239,7 +296,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Tasks</div>
               {results.tasks.map((t, i) => {
-                const index = results.opportunities.length + results.contacts.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + results.contacts.length + i
                 return (
                 <button key={t.TaskID || t.Title}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -261,12 +318,37 @@ export default function SearchModal({ onClose }) {
             </div>
           )}
 
+          {results.interactions.length > 0 && (
+            <div className={styles.group}>
+              <div className={styles.groupLabel}>Contact interactions</div>
+              {results.interactions.map((interaction, i) => {
+                const index = results.opportunities.length + results.samOpportunities.length + results.contacts.length + results.tasks.length + i
+                const preview = String(interaction.Notes || '').replace(/\s+/g, ' ').slice(0, 120)
+                return (
+                  <button key={interaction.InteractionID || interaction._rowIndex}
+                    className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => go(`/contacts?contactId=${encodeURIComponent(interaction.contact.ContactID || interaction.contact._rowIndex)}&interactionId=${encodeURIComponent(interaction.InteractionID || interaction._rowIndex)}`)}>
+                    <div className={styles.resultTitle}>{interaction.contact.Name}</div>
+                    <div className={styles.resultMeta}>{interaction['Interaction Type'] || 'Interaction'}{interaction['Interaction Date'] ? ` · ${formatDate(interaction['Interaction Date'])}` : ''}</div>
+                    <div className={styles.resultMeta}>{preview || 'No notes'}</div>
+                  </button>
+                )
+              })}
+              {results.counts.interactions > MAX_PER_CATEGORY && (
+                <button className={styles.viewAll} onClick={() => toggleCategory('interactions')}>
+                  {expandedCategories.interactions ? 'Show fewer' : `View all ${results.counts.interactions}`}
+                </button>
+              )}
+            </div>
+          )}
+
           {results.notes.length > 0 && (
             <div className={styles.group}>
               <div className={styles.groupLabel}>Opportunity notes</div>
               {results.notes.map((n, i) => {
                 const target = n.opportunity
-                const index = results.opportunities.length + results.contacts.length + results.tasks.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + results.contacts.length + results.tasks.length + results.interactions.length + i
                 const title = target?.['Project Title / Description*'] || n.ContractNumber || 'Unlinked opportunity'
                 const preview = String(n.NoteText || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
