@@ -4,11 +4,15 @@
  * workbook context, including optional Teams mention identities.
  */
 
-import { getNotificationRecipients, getRFINotificationRecipients } from '@/services/graphService'
+import { ASSIGNEE_VALUES, getNotificationRecipients, getValidationLists } from '@/services/graphService'
 
 const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
 const text = (value) => String(value ?? '').trim()
+const localCalendarDay = () => {
+  const date = new Date()
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 
 async function sendNotification(type, payload) {
   if (!WORKER_URL) {
@@ -66,53 +70,15 @@ async function resolveRecipients(assignees) {
     })
 }
 
-function valueFromMatchingHeader(row, pattern) {
-  const match = Object.entries(row || {}).find(([header, value]) => pattern.test(header) && text(value))
-  return match ? text(match[1]) : ''
-}
-
-async function resolveRFIFollowupRecipients() {
-  const rows = await getRFINotificationRecipients()
-  const directory = await recipientDirectory()
-  const directoryByIdentity = new Map(
-    [...directory.values()]
-      .filter((recipient) => recipient.id)
-      .map((recipient) => [recipient.id.toLowerCase(), recipient])
-  )
-  const seen = new Set()
-
-  const recipients = rows
-    .flatMap((row) => {
-      const id = valueFromMatchingHeader(row, /(?:email|upn|entra\s*(?:object\s*)?id)/i)
-      const configuredRecipient = directoryByIdentity.get(id.toLowerCase())
-      const name = configuredRecipient?.name
-        || valueFromMatchingHeader(row, /(?:display\s*)?(?:name|assignee|recipient|user)/i)
-        || (id ? id.split('@')[0] : '')
-      if (id) return [{ name, id: configuredRecipient?.id || id }]
-
-      // Also support a compact one-row table where the headers are people's
-      // names and each value is their work email address.
-      return Object.entries(row || {})
-        .filter(([, value]) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value)))
-        .map(([header, value]) => {
-          const configuredRecipient = directoryByIdentity.get(text(value).toLowerCase())
-          return {
-            name: configuredRecipient?.name || text(header),
-            id: configuredRecipient?.id || text(value),
-          }
-        })
-    })
-    .filter((recipient) => {
-      const key = recipient.id.toLowerCase()
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-
-  if (!recipients.length) {
-    console.warn('[Notify] RFINotificationsTable has no usable Teams UPN or Entra object ID; skipping this RFI notification.')
+async function resolveAllAssigneeRecipients() {
+  try {
+    const lists = await getValidationLists()
+    const assignees = lists.Assignee?.length ? lists.Assignee : ASSIGNEE_VALUES
+    return resolveRecipients(assignees)
+  } catch (error) {
+    console.warn('[Notify] Could not read the Assignee dropdown; using the default RFI notification recipients.', error.message)
+    return resolveRecipients(ASSIGNEE_VALUES)
   }
-  return recipients
 }
 
 function groupTasksByAssignee(tasks) {
@@ -159,6 +125,7 @@ async function notifyTaskSummary(type, tasks) {
   const directory = await recipientDirectory()
 
   return sendNotification(type, {
+    ...(type === 'overdue_summary' ? { summaryDate: localCalendarDay() } : {}),
     people: groups.map((group) => ({
       ...group,
       recipient: directory.get(group.assignee.toLowerCase()) || { name: group.assignee, id: '' },
@@ -176,7 +143,7 @@ export function notifyDueSoonSummary(tasks) {
 
 export async function notifyRFIFollowUp(opportunities) {
   if (!opportunities.length) return false
-  const recipients = await resolveRFIFollowupRecipients()
+  const recipients = await resolveAllAssigneeRecipients()
   return sendNotification('rfi_followup', {
     recipients,
     filterIds: opportunities
@@ -192,7 +159,7 @@ export async function notifyRFIFollowUp(opportunities) {
 }
 
 export async function notifyRFIResponseReminder(opportunity, daysUntil) {
-  const recipients = await resolveRFIFollowupRecipients()
+  const recipients = await resolveAllAssigneeRecipients()
   return sendNotification('rfi_response_due', {
     title: text(opportunity['Project Title / Description*']),
     contractNumber: text(opportunity['Contract Number / Notice ID']),
@@ -201,5 +168,19 @@ export async function notifyRFIResponseReminder(opportunity, daysUntil) {
     samUrl: text(opportunity['Other Links*']),
     daysUntil,
     recipients,
+  })
+}
+
+export async function notifyStaleContacts(contacts) {
+  if (!contacts.length) return false
+  const recipients = await resolveAllAssigneeRecipients()
+  return sendNotification('contact_followup', {
+    recipients,
+    items: contacts.slice(0, 5).map((contact) => ({
+      name: text(contact.Name),
+      agency: text(contact.Agency),
+      lastInteraction: text(contact.lastInteraction),
+    })),
+    remainingCount: Math.max(0, contacts.length - 5),
   })
 }
