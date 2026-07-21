@@ -727,7 +727,7 @@ export default function OpportunityDetail({ toast }) {
   const [showNewContact,  setShowNewContact]  = useState(false)
   const [savingContact,   setSavingContact]   = useState(false)
   const [newContactForm,  setNewContactForm]  = useState({
-    Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government',
+    Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Type: 'Government',
   })
   const [hideDoneTasks, setHideDoneTasks] = useState(true)
   const [pendingRfiSave, setPendingRfiSave] = useState(null)
@@ -780,6 +780,20 @@ export default function OpportunityDetail({ toast }) {
     const names = parsePOCNames(opp[C.poc])
     return names.map((name) => contacts.find((c) => c.Name === name)).filter(Boolean)
   }, [opp, contacts])
+
+  const relatedOfficeContacts = useMemo(() => {
+    if (!opp) return []
+    const normalize = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+    const agency = normalize(opp[C.agency])
+    const office = normalize(opp[C.office])
+    if (!agency || !office) return []
+    const linkedIds = new Set(linkedContacts.map((contact) => contact.ContactID))
+    return contacts.filter((contact) =>
+      normalize(contact.Agency) === agency &&
+      String(contact.Offices || '').split(',').map(normalize).includes(office) &&
+      !linkedIds.has(contact.ContactID)
+    )
+  }, [opp, contacts, linkedContacts])
 
   const unlinkedContacts = useMemo(() => {
     const linked = new Set(linkedContacts.map((c) => c.Name))
@@ -1113,7 +1127,7 @@ export default function OpportunityDetail({ toast }) {
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${name} added and linked`)
       setShowNewContact(false)
-      setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Type: 'Government' })
+      setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Type: 'Government' })
     } catch (err) {
       toast?.error(`Failed to add contact: ${err.message}`)
     } finally {
@@ -1412,6 +1426,21 @@ export default function OpportunityDetail({ toast }) {
             : <p className="text-sm text-muted" style={{ marginBottom: 8 }}>No contacts linked.</p>
           }
 
+          {relatedOfficeContacts.length > 0 && (
+            <div className={styles.relatedContacts}>
+              <div className={styles.relatedContactsTitle}>Related contacts in this agency and office</div>
+              {relatedOfficeContacts.map((c) => (
+                <div key={c.ContactID} className={styles.contactCard}>
+                  <div className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
+                  <div className={styles.contactInfo}>
+                    <div className={styles.contactName}>{c.Name}</div>
+                    <div className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Contact search — always visible */}
           <div style={{ position: 'relative', marginTop: linkedContacts.length > 0 ? 10 : 0 }}>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -1473,6 +1502,11 @@ export default function OpportunityDetail({ toast }) {
                   <label className="form-label">Organization</label>
                   <input className="form-input" value={newContactForm.Organization}
                     onChange={(e) => setNewContactForm((f) => ({ ...f, Organization: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Offices (comma-separated)</label>
+                  <input className="form-input" value={newContactForm.Offices}
+                    onChange={(e) => setNewContactForm((f) => ({ ...f, Offices: e.target.value }))} />
                 </div>
                 <div className="form-field">
                   <label className="form-label">Email</label>
