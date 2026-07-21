@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import {
-  getTasks, getPipeline,
+  getTasks, getPipeline, getContacts, getContactInteractions,
   getNotifLog, setNotifLog,
   updateOpportunity,
 } from '@/services/graphService'
@@ -9,6 +9,7 @@ import {
   notifyDueSoonSummary,
   notifyRFIFollowUp,
   notifyRFIResponseReminder,
+  notifyStaleContacts,
 } from '@/services/notifyService'
 
 const TODAY = () => {
@@ -66,6 +67,10 @@ function responseReminderLogKey(opportunity, days) {
   return `rfi_response_${days}_${encodeURIComponent(identifier)}`
 }
 
+function contactStaleLogKey(contact) {
+  return `contact_stale_${encodeURIComponent(String(contact.ContactID || contact.Email || contact.Name || contact._rowIndex || '').trim())}`
+}
+
 /**
  * Called once in AppShell after authentication.
  * Two-gate system: localStorage (instant, per-browser) then workbook NotifLog (shared).
@@ -84,9 +89,11 @@ export function useAgingNotifications() {
         const today = TODAY()
         const overdueLocal = localAlreadySentToday('overdue')
         const dueSoonLocal = localAlreadySentToday('duesoon')
-        const [allTasks, allOpps, log] = await Promise.all([
+        const [allTasks, allOpps, allContacts, interactions, log] = await Promise.all([
           getTasks(),
           getPipeline(),
+          getContacts(),
+          getContactInteractions(),
           getNotifLog(),
         ])
 
@@ -161,6 +168,42 @@ export function useAgingNotifications() {
           if (!sent) continue
           await setNotifLog(key, today)
           log[key] = today
+        }
+
+        // ── Contact follow-up ─────────────────────────────────────────
+        // A contact becomes stale 30 days after their latest logged
+        // interaction. Contacts with no interaction are excluded, because
+        // the CRM has no reliable historical date to measure from. Reminders
+        // repeat no more than every 14 days while the contact remains stale.
+        if (Array.isArray(interactions)) {
+          const lastInteractionByContact = new Map()
+          interactions.forEach((interaction) => {
+            const contactId = String(interaction.ContactID || '').trim()
+            const date = String(interaction['Interaction Date'] || '').trim()
+            if (!contactId || !date) return
+            if (!lastInteractionByContact.has(contactId) || date > lastInteractionByContact.get(contactId)) {
+              lastInteractionByContact.set(contactId, date)
+            }
+          })
+
+          const staleContacts = allContacts
+            .map((contact) => ({ ...contact, lastInteraction: lastInteractionByContact.get(String(contact.ContactID || '').trim()) || '' }))
+            .filter((contact) => {
+              if (daysAgo(contact.lastInteraction) < 30) return false
+              const lastSent = log[contactStaleLogKey(contact)]
+              return !lastSent || daysAgo(lastSent) >= 14
+            })
+
+          if (staleContacts.length > 0) {
+            const sent = await notifyStaleContacts(staleContacts)
+            if (sent) {
+              await Promise.all(staleContacts.map(async (contact) => {
+                const key = contactStaleLogKey(contact)
+                await setNotifLog(key, today)
+                log[key] = today
+              }))
+            }
+          }
         }
 
       } catch (err) {
