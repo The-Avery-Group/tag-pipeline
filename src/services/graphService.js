@@ -57,18 +57,19 @@ export async function getToken() {
 }
 
 async function graphFetch(path, options = {}) {
+  const { retryReads = false, ...requestOptions } = options
   const token = await getToken()
   const base = await resolveWorkbookBase()
-  const method = String(options.method || 'GET').toUpperCase()
-  const retryableRead = method === 'GET'
+  const method = String(requestOptions.method || 'GET').toUpperCase()
+  const retryableRead = retryReads && method === 'GET'
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${base}${path}`, {
-      ...options,
+      ...requestOptions,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        ...(options.headers || {}),
+        ...(requestOptions.headers || {}),
       },
     })
     if (res.ok) {
@@ -173,8 +174,22 @@ export async function getSheetRows(tableName) {
   if (pendingSheetReads.has(tableName)) return pendingSheetReads.get(tableName)
 
   const request = (async () => {
+    const getRows = async () => {
+      // Contacts can grow independently of the rest of the workbook. Microsoft
+      // Graph recommends paging table rows to avoid timeouts on large tables.
+      if (tableName !== 'ContactsTable') return graphFetch(`/tables/${tableName}/rows`)
+
+      const pageSize = 250
+      const allRows = []
+      for (let skip = 0; ; skip += pageSize) {
+        const page = await graphFetch(`/tables/${tableName}/rows?$top=${pageSize}&$skip=${skip}`, { retryReads: true })
+        const pageRows = page.value || []
+        allRows.push(...pageRows)
+        if (pageRows.length < pageSize) return { ...page, value: allRows }
+      }
+    }
     const [data, headers] = await Promise.all([
-      graphFetch(`/tables/${tableName}/rows`),
+      getRows(),
       getTableHeaders(tableName),
     ])
     const rows = (data.value || []).map((row) => {
