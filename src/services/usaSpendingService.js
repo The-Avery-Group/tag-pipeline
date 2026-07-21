@@ -7,7 +7,7 @@
  */
 
 const BASE = 'https://api.usaspending.gov/api/v2'
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const CONTRACT_CODES = ['A', 'B', 'C', 'D']
 const PAGE_SIZE = 100
 const MAX_AWARD_PAGES = 20
