@@ -9,6 +9,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
+import { recordMatches } from '@/utils/searchHelpers'
 import styles from './Tasks.module.css'
 
 const STATUSES  = ['All', 'Overdue', 'To Do', 'In Progress', 'Done']
@@ -323,6 +324,7 @@ export default function Tasks({ toast }) {
   })
   const [priorityFilter, setPriorityFilter] = useState('All')
   const [hideDone, setHideDone]             = useState(true)
+  const [search, setSearch]                 = useState('')
   const [groupBy, setGroupBy]           = useState('None')
   const [sortBy, setSortBy]             = useState(() => localStorage.getItem('tasks_sort_by') || 'Due Date')
   const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
@@ -366,6 +368,7 @@ export default function Tasks({ toast }) {
         : tasks.filter((t) => t.Status === statusFilter)
     if (priorityFilter !== 'All') rows = rows.filter((t) => t.Priority === priorityFilter)
     if (hideDone) rows = rows.filter((t) => t.Status !== 'Done')
+    if (search.trim()) rows = rows.filter((task) => recordMatches(task, search))
     return [...rows].sort((a, b) => {
       let cmp = 0
       if (sortBy === 'Due Date') {
@@ -384,7 +387,7 @@ export default function Tasks({ toast }) {
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [tasks, statusFilter, priorityFilter, hideDone, sortBy, sortDir])
+  }, [tasks, statusFilter, priorityFilter, hideDone, search, sortBy, sortDir])
 
   const grouped = useMemo(() => {
     if (groupBy === 'None') return { '': filtered }
@@ -449,6 +452,16 @@ export default function Tasks({ toast }) {
       <div className={styles.layout}>
         {/* Left: list */}
         <div ref={listPaneRef} className={styles.listPane}>
+          <div className={styles.taskSearch}>
+            <input
+              className="form-input"
+              placeholder="Search all task fields…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="Search all task fields"
+            />
+            {search && <button type="button" className="btn btn-ghost btn-icon" onClick={() => setSearch('')} aria-label="Clear task search">✕</button>}
+          </div>
           {/* Filter + group bar */}
           <div className={styles.controls}>
             <div className={styles.controlsRow}>
