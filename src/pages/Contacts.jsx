@@ -25,7 +25,6 @@ const BLANK_INTERACTION = () => ({ 'Interaction Date': todayISO(), 'Interaction 
 export default function Contacts({ toast }) {
   const { contacts, loading, error, refresh, add, update, remove } = useContacts()
   const { user } = useAuth()
-  const engagement = useContactEngagement()
   const { pipeline, update: updateOpp } = usePipeline()
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
@@ -34,6 +33,7 @@ export default function Contacts({ toast }) {
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(null)   // contact shown in panel
+  const engagement = useContactEngagement(Boolean(selected))
   const [editing, setEditing] = useState(false)    // panel edit mode
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
