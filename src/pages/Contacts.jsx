@@ -41,12 +41,12 @@ export default function Contacts({ toast }) {
   const [oppSearch, setOppSearch] = useState('')
   const [showInteractionForm, setShowInteractionForm] = useState(false)
   const [interactionForm, setInteractionForm] = useState(BLANK_INTERACTION)
-  const [savingInteraction, setSavingInteraction] = useState(false)
   // Consistent in-progress feedback + re-entrancy guarding for actions that
   // previously had none (delete, unlink) or used an ad hoc boolean (link).
   const deleteAction = useAsyncAction()
   const linkAction   = useAsyncAction()
   const unlinkAction = useAsyncActionKeyed()   // keyed by contract number — several linked-opp rows can each have their own unlink button
+  const interactionAction = useAsyncAction()
 
   const setField = useCallback((field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -197,21 +197,22 @@ export default function Contacts({ toast }) {
   }
 
   const handleAddInteraction = async () => {
-    if (!interactionForm.Notes.trim() || savingInteraction) return
-    setSavingInteraction(true)
+    if (!interactionForm.Notes.trim()) return
     try {
-      await engagement.addInteraction({
-        ContactID: selected.ContactID,
-        ...interactionForm,
-        'Logged By': user?.displayName || user?.email || 'Unknown user',
+      await interactionAction.run(async () => {
+        await engagement.addInteraction({
+          ContactID: selected.ContactID,
+          ...interactionForm,
+          'Logged By': user?.displayName || user?.email || 'Unknown user',
+        })
+        setInteractionForm(BLANK_INTERACTION())
+        setShowInteractionForm(false)
+        toast?.success('Interaction logged')
+      }, {
+        onError: (err) => toast?.error(`Failed: ${err.message}`),
       })
-      setInteractionForm(BLANK_INTERACTION())
-      setShowInteractionForm(false)
-      toast?.success('Interaction logged')
-    } catch (err) {
-      toast?.error(`Failed: ${err.message}`)
-    } finally {
-      setSavingInteraction(false)
+    } catch {
+      // The action wrapper has already shown the error.
     }
   }
 
@@ -369,8 +370,12 @@ export default function Contacts({ toast }) {
 
                     <div className={styles.panelSection}>
                       <div className={styles.panelSectionTitle}>Interactions</div>
-                      {!engagement.interactionsConfigured
-                        ? <p className="text-sm text-muted">Interaction logging is not configured yet.</p>
+                      {engagement.loading
+                        ? <p className="text-sm text-muted">Loading interaction history…</p>
+                        : engagement.error
+                          ? <div className="text-sm text-muted">Could not load interaction history: {engagement.error} <button type="button" className="btn btn-ghost text-sm" onClick={engagement.refresh}>Retry</button></div>
+                          : !engagement.interactionsConfigured
+                            ? <p className="text-sm text-muted">Interaction logging is not configured yet.</p>
                         : <>
                             {showInteractionForm ? (
                               <div className={styles.interactionForm}>
@@ -380,9 +385,9 @@ export default function Contacts({ toast }) {
                                   <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => setInteractionForm((prev) => ({ ...prev, Notes: e.target.value }))} /></div>
                                   <div className="form-field"><label className="form-label">Follow-up date</label><input className="form-input" type="date" value={interactionForm['Follow-up Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Follow-up Date': e.target.value }))} /></div>
                                 </div>
-                                <div className={styles.inlineActions}><button className="btn btn-primary" onClick={handleAddInteraction} disabled={savingInteraction || !interactionForm.Notes.trim()}>{savingInteraction ? 'Logging…' : 'Log interaction'}</button><button className="btn" onClick={() => setShowInteractionForm(false)} disabled={savingInteraction}>Cancel</button></div>
+                                <div className={styles.inlineActions}><button type="button" className="btn btn-primary" onClick={handleAddInteraction} disabled={interactionAction.isLoading || !interactionForm.Notes.trim()} aria-busy={interactionAction.isLoading}>{interactionAction.isLoading ? 'Logging…' : 'Log interaction'}</button><button type="button" className="btn" onClick={() => setShowInteractionForm(false)} disabled={interactionAction.isLoading}>Cancel</button></div>
                               </div>
-                            ) : <button className="btn" onClick={() => setShowInteractionForm(true)}>Log interaction</button>}
+                            ) : <button type="button" className="btn" onClick={() => { setInteractionForm(BLANK_INTERACTION()); setShowInteractionForm(true) }}>Log interaction</button>}
                             {selectedInteractions.length === 0
                               ? <p className="text-sm text-muted">No interactions logged.</p>
                               : selectedInteractions.map((row) => (
