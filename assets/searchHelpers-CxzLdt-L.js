@@ -1,0 +1,1 @@
+function s(e){return Object.entries(e||{}).filter(([r])=>!String(r).startsWith("_")).map(([,r])=>String(r??""))}function i(e,r){const t=String(r||"").trim().toLowerCase();return t?s(e).some(n=>n.toLowerCase().includes(t)):!0}export{i as r,s};
