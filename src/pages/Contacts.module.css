@@ -219,7 +219,10 @@
   padding: 8px 10px;
 }
 
-.interactionForm { border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); padding: 10px; }
+.interactionForm { border: 0.5px solid var(--blue-200); border-radius: var(--radius-md); padding: 10px; background: var(--blue-50); }
+.interactionFormTitle { font-size: 13px; font-weight: 600; color: var(--gray-900); }
+.interactionHint { margin: 3px 0 10px; font-size: 11px; color: var(--gray-500); }
+.interactionError { margin: 8px 0 0; color: var(--red-600); font-size: 12px; }
 .interactionRow > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; }
 .interactionRow span, .interactionRow small { color: var(--gray-500); }
 .interactionRow p { margin: 5px 0 0; font-size: 12px; white-space: pre-wrap; }
