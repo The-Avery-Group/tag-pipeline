@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useContacts } from '@/hooks/useContacts'
+import { useContactEngagement } from '@/hooks/useContactEngagement'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction, useAsyncActionKeyed } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
@@ -9,17 +10,22 @@ import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
 import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
 import { formatDate } from '@/utils/kpiHelpers'
+import { useAuth } from '@/auth/AuthContext'
 import styles from './Contacts.module.css'
 
-const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Email: '', Phone: '', Notes: '', Type: '' }
+const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Notes: '', Type: '' }
 
 const C_CN    = 'Contract Number / Notice ID'
 const C_TITLE = 'Project Title / Description*'
 const C_PHASE = 'TAG Opportunity Phase'
 const C_POC   = 'Contracting Officer / Specialist (POC)*'
+const todayISO = () => new Date().toISOString().slice(0, 10)
+const BLANK_INTERACTION = () => ({ 'Interaction Date': todayISO(), 'Interaction Type': 'Email', Notes: '', 'Follow-up Date': '' })
 
 export default function Contacts({ toast }) {
   const { contacts, loading, add, update, remove } = useContacts()
+  const { user } = useAuth()
+  const engagement = useContactEngagement()
   const { pipeline, update: updateOpp } = usePipeline()
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
@@ -33,6 +39,9 @@ export default function Contacts({ toast }) {
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [oppSearch, setOppSearch] = useState('')
+  const [showInteractionForm, setShowInteractionForm] = useState(false)
+  const [interactionForm, setInteractionForm] = useState(BLANK_INTERACTION)
+  const [savingInteraction, setSavingInteraction] = useState(false)
   // Consistent in-progress feedback + re-entrancy guarding for actions that
   // previously had none (delete, unlink) or used an ad hoc boolean (link).
   const deleteAction = useAsyncAction()
@@ -52,7 +61,7 @@ export default function Contacts({ toast }) {
 
   const filtered = useMemo(
     () => contacts.filter(
-      (c) => !search || [c.Name, c.Agency, c.Organization, c.Title, c.Email, c.Type]
+      (c) => !search || [c.Name, c.Agency, c.Organization, c.Offices, c.Title, c.Email, c.Type]
         .some((v) => v?.toLowerCase().includes(search.toLowerCase()))
     ),
     [contacts, search]
@@ -63,6 +72,13 @@ export default function Contacts({ toast }) {
     if (!selected) return []
     return pipeline.filter((o) => parsePOCNames(o[C_POC]).includes(selected.Name))
   }, [selected, pipeline])
+
+  const selectedInteractions = useMemo(() => {
+    if (!selected) return []
+    return engagement.interactions
+      .filter((row) => row.ContactID === selected.ContactID)
+      .sort((a, b) => String(b['Interaction Date'] || '').localeCompare(String(a['Interaction Date'] || '')))
+  }, [selected, engagement.interactions])
 
   // Opportunities NOT yet linked to selected contact (for search/add)
   const unlinkableOpps = useMemo(() => {
@@ -80,6 +96,8 @@ export default function Contacts({ toast }) {
     setSelected(c)
     setEditing(false)
     setOppSearch('')
+    setShowInteractionForm(false)
+    setInteractionForm(BLANK_INTERACTION())
   }
 
   // Search results can deep-link directly into the same detail panel opened
@@ -178,6 +196,25 @@ export default function Contacts({ toast }) {
     }
   }
 
+  const handleAddInteraction = async () => {
+    if (!interactionForm.Notes.trim() || savingInteraction) return
+    setSavingInteraction(true)
+    try {
+      await engagement.addInteraction({
+        ContactID: selected.ContactID,
+        ...interactionForm,
+        'Logged By': user?.displayName || user?.email || 'Unknown user',
+      })
+      setInteractionForm(BLANK_INTERACTION())
+      setShowInteractionForm(false)
+      toast?.success('Interaction logged')
+    } catch (err) {
+      toast?.error(`Failed: ${err.message}`)
+    } finally {
+      setSavingInteraction(false)
+    }
+  }
+
   const contactFormFields = () => (
     <div className={styles.formGrid}>
       {[
@@ -185,6 +222,7 @@ export default function Contacts({ toast }) {
         ['Agency',       'Agency / Company (Account)', false],
         ['Title',        'Title',                    false],
         ['Organization', 'Department / Organization', false],
+        ['Offices',      'Offices (comma-separated)', false],
         ['Email',        'Email',                    false],
         ['Phone',        'Phone',                    false],
       ].map(([field, label, required]) => (
@@ -309,6 +347,7 @@ export default function Contacts({ toast }) {
                         ['Phone',        selected.Phone],
                         ['Agency',       selected.Agency],
                         ['Organization', selected.Organization],
+                        ['Offices',      selected.Offices],
                         ['Type',         selected.Type],
                         ['Notes',        selected.Notes],
                       ].filter(([, v]) => v).map(([label, value]) => (
@@ -321,6 +360,35 @@ export default function Contacts({ toast }) {
                           </span>
                         </div>
                       ))}
+                    </div>
+
+                    <div className={styles.panelSection}>
+                      <div className={styles.panelSectionTitle}>Interactions</div>
+                      {!engagement.interactionsConfigured
+                        ? <p className="text-sm text-muted">Interaction logging is not configured yet.</p>
+                        : <>
+                            {showInteractionForm ? (
+                              <div className={styles.interactionForm}>
+                                <div className={styles.formGrid}>
+                                  <div className="form-field"><label className="form-label">Date</label><input className="form-input" type="date" value={interactionForm['Interaction Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Interaction Date': e.target.value }))} /></div>
+                                  <div className="form-field"><label className="form-label">Type</label><select className="form-input" value={interactionForm['Interaction Type']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value }))}><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
+                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => setInteractionForm((prev) => ({ ...prev, Notes: e.target.value }))} /></div>
+                                  <div className="form-field"><label className="form-label">Follow-up date</label><input className="form-input" type="date" value={interactionForm['Follow-up Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Follow-up Date': e.target.value }))} /></div>
+                                </div>
+                                <div className={styles.inlineActions}><button className="btn btn-primary" onClick={handleAddInteraction} disabled={savingInteraction || !interactionForm.Notes.trim()}>{savingInteraction ? 'Logging…' : 'Log interaction'}</button><button className="btn" onClick={() => setShowInteractionForm(false)} disabled={savingInteraction}>Cancel</button></div>
+                              </div>
+                            ) : <button className="btn" onClick={() => setShowInteractionForm(true)}>Log interaction</button>}
+                            {selectedInteractions.length === 0
+                              ? <p className="text-sm text-muted">No interactions logged.</p>
+                              : selectedInteractions.map((row) => (
+                                <div key={row.InteractionID || row._rowIndex} className={styles.interactionRow}>
+                                  <div><strong>{row['Interaction Type'] || 'Interaction'}</strong><span>{formatDate(row['Interaction Date'])}{row['Logged By'] ? ` · ${row['Logged By']}` : ''}</span></div>
+                                  <p>{row.Notes}</p>
+                                  {row['Follow-up Date'] && <small>Follow up {formatDate(row['Follow-up Date'])}</small>}
+                                </div>
+                              ))}
+                          </>
+                      }
                     </div>
 
                     {/* Linked opportunities */}
