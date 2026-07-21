@@ -20,6 +20,7 @@ async function resolveWorkbookBase() {
 
 // ── In-memory cache ────────────────────────────────────────────────────────
 const cache = new Map()
+const pendingSheetReads = new Map()
 // Table schemas change far less often than table rows. Keep headers across
 // routine data refreshes so polling does not double every Graph request.
 const headerCache = new Map()
@@ -58,21 +59,38 @@ export async function getToken() {
 async function graphFetch(path, options = {}) {
   const token = await getToken()
   const base = await resolveWorkbookBase()
-  const res = await fetch(`${base}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  })
-  if (!res.ok) {
+  const method = String(options.method || 'GET').toUpperCase()
+  const retryableRead = method === 'GET'
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${base}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    })
+    if (res.ok) {
+      // 204 No Content
+      if (res.status === 204) return null
+      return res.json()
+    }
+
+    const shouldRetry = retryableRead && [429, 502, 503, 504].includes(res.status) && attempt < 2
+    if (shouldRetry) {
+      // Consume the response before retrying so the browser can release it.
+      await res.text().catch(() => '')
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)))
+      continue
+    }
+
     const err = await res.json().catch(() => ({}))
-    throw new Error(err?.error?.message || `Graph API error: ${res.status}`)
+    const fallback = [502, 503, 504].includes(res.status)
+      ? `Microsoft Graph is temporarily unavailable (${res.status}). Please retry.`
+      : `Graph API error: ${res.status}`
+    throw new Error(err?.error?.message || fallback)
   }
-  // 204 No Content
-  if (res.status === 204) return null
-  return res.json()
 }
 
 // ── Generic sheet helpers ──────────────────────────────────────────────────
@@ -152,21 +170,31 @@ export async function getSheetRows(tableName) {
     cache.set(tableName, fixed)
     return fixed
   }
-  const [data, headers] = await Promise.all([
-    graphFetch(`/tables/${tableName}/rows`),
-    getTableHeaders(tableName),
-  ])
-  const rows = (data.value || []).map((row) => {
-    const obj = {}
-    headers.forEach((h, i) => {
-      const raw = row.values[0][i]
-      obj[h] = DATE_COLUMNS.has(h) ? excelDateToISO(raw) : raw
+  if (pendingSheetReads.has(tableName)) return pendingSheetReads.get(tableName)
+
+  const request = (async () => {
+    const [data, headers] = await Promise.all([
+      graphFetch(`/tables/${tableName}/rows`),
+      getTableHeaders(tableName),
+    ])
+    const rows = (data.value || []).map((row) => {
+      const obj = {}
+      headers.forEach((h, i) => {
+        const raw = row.values[0][i]
+        obj[h] = DATE_COLUMNS.has(h) ? excelDateToISO(raw) : raw
+      })
+      obj._rowIndex = row.index
+      return obj
     })
-    obj._rowIndex = row.index
-    return obj
-  })
-  cache.set(tableName, rows)
-  return rows
+    cache.set(tableName, rows)
+    return rows
+  })()
+  pendingSheetReads.set(tableName, request)
+  try {
+    return await request
+  } finally {
+    pendingSheetReads.delete(tableName)
+  }
 }
 
 /**
