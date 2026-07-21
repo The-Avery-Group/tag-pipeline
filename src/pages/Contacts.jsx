@@ -23,7 +23,7 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
 const BLANK_INTERACTION = () => ({ 'Interaction Date': todayISO(), 'Interaction Type': 'Email', Notes: '', 'Follow-up Date': '' })
 
 export default function Contacts({ toast }) {
-  const { contacts, loading, add, update, remove } = useContacts()
+  const { contacts, loading, error, refresh, add, update, remove } = useContacts()
   const { user } = useAuth()
   const engagement = useContactEngagement()
   const { pipeline, update: updateOpp } = usePipeline()
@@ -273,6 +273,11 @@ export default function Contacts({ toast }) {
 
           {loading
             ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
+            : error
+              ? <div style={{ padding: 24, textAlign: 'center', color: 'var(--gray-500)', fontSize: 13 }}>
+                  <p style={{ margin: '0 0 10px' }}>Could not load contacts: {error}</p>
+                  <button className="btn" onClick={refresh}>Retry</button>
+                </div>
             : filtered.length === 0
               ? <div style={{ padding: 24, textAlign: 'center', color: 'var(--gray-400)', fontSize: 13 }}>
                   {search ? 'No contacts match your search.' : 'No contacts yet. Add your first contact.'}
