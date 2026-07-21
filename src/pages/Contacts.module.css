@@ -194,6 +194,7 @@
   min-width: 0;
 }
 .linkedOppRow:hover { background: var(--gray-100); }
+.linkedOppRow > div:first-child { flex: 1; min-width: 0; }
 
 .linkedOppTitle {
   font-size: 12px;
@@ -210,6 +211,19 @@
   color: var(--gray-400);
   margin-top: 2px;
 }
+
+.interactionRow {
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+  padding: 8px 10px;
+}
+
+.interactionForm { border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); padding: 10px; }
+.interactionRow > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; }
+.interactionRow span, .interactionRow small { color: var(--gray-500); }
+.interactionRow p { margin: 5px 0 0; font-size: 12px; white-space: pre-wrap; }
+.inlineActions { display: flex; gap: 6px; margin-top: 8px; }
 
 /* ── Opp search dropdown ── */
 .oppDropdown {
@@ -243,4 +257,8 @@
   padding-top: 4px;
   border-top: 0.5px solid var(--gray-200);
   margin-top: auto;
+}
+
+@media (max-width: 520px) {
+  .panel { width: min(420px, 100vw); }
 }
