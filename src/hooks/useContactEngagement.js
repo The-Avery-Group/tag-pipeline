@@ -37,8 +37,12 @@ export function useContactEngagement(enabled = false) {
   }, [enabled, load])
 
   const addInteraction = useCallback(async (data) => {
-    await addContactInteraction(data)
+    const saved = await addContactInteraction(data)
+    // Show the newly logged interaction immediately. The background refresh
+    // below reconciles this optimistic entry with the workbook afterwards.
+    setInteractions((current) => [...(current || []), saved])
     await invalidateCache()
+    return saved
   }, [])
 
   return {
