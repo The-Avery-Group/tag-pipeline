@@ -613,9 +613,13 @@ export async function getContactInteractions() {
   try {
     return await getSheetRows(CONTACT_INTERACTIONS_TABLE)
   } catch (error) {
-    contactInteractionsUnavailable = true
-    console.info('[Contacts] ContactInteractionsTable is not configured.')
-    return null
+    const message = String(error?.message || '').toLowerCase()
+    if (message.includes('404') || message.includes('not found')) {
+      contactInteractionsUnavailable = true
+      console.info('[Contacts] ContactInteractionsTable is not configured.')
+      return null
+    }
+    throw error
   }
 }
 
