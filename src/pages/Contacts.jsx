@@ -20,7 +20,20 @@ const C_TITLE = 'Project Title / Description*'
 const C_PHASE = 'TAG Opportunity Phase'
 const C_POC   = 'Contracting Officer / Specialist (POC)*'
 const todayISO = () => new Date().toISOString().slice(0, 10)
-const BLANK_INTERACTION = () => ({ 'Interaction Date': todayISO(), 'Interaction Type': 'Email', Notes: '', 'Follow-up Date': '' })
+const BLANK_INTERACTION = () => ({ 'Interaction Date': todayISO(), 'Interaction Type': '', Notes: '', 'Follow-up Date': '' })
+
+function isValidDateInput(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false
+  const date = new Date(`${value}T00:00:00`)
+  return !Number.isNaN(date.getTime())
+}
+
+function datePlusDays(dateValue, days) {
+  const [year, month, day] = String(dateValue).split('-').map(Number)
+  const date = new Date(year, month - 1, day)
+  date.setDate(date.getDate() + days)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 
 export default function Contacts({ toast }) {
   const { contacts, loading, error, refresh, add, update, remove } = useContacts()
@@ -41,6 +54,7 @@ export default function Contacts({ toast }) {
   const [oppSearch, setOppSearch] = useState('')
   const [showInteractionForm, setShowInteractionForm] = useState(false)
   const [interactionForm, setInteractionForm] = useState(BLANK_INTERACTION)
+  const [interactionError, setInteractionError] = useState('')
   // Consistent in-progress feedback + re-entrancy guarding for actions that
   // previously had none (delete, unlink) or used an ad hoc boolean (link).
   const deleteAction = useAsyncAction()
@@ -98,6 +112,7 @@ export default function Contacts({ toast }) {
     setOppSearch('')
     setShowInteractionForm(false)
     setInteractionForm(BLANK_INTERACTION())
+    setInteractionError('')
   }
 
   // Search results can deep-link directly into the same detail panel opened
@@ -197,19 +212,35 @@ export default function Contacts({ toast }) {
   }
 
   const handleAddInteraction = async () => {
-    if (!interactionForm.Notes.trim()) return
+    const interactionDate = String(interactionForm['Interaction Date'] || '').trim()
+    const interactionType = String(interactionForm['Interaction Type'] || '').trim()
+    if (!isValidDateInput(interactionDate) || !interactionType) {
+      setInteractionError('Choose a valid interaction date and interaction type before saving.')
+      return
+    }
+    if (interactionType === 'Other' && !interactionForm.Notes.trim()) {
+      setInteractionError('Add notes to describe an interaction marked as Other.')
+      return
+    }
+    setInteractionError('')
     try {
       await interactionAction.run(async () => {
         await engagement.addInteraction({
           ContactID: selected.ContactID,
           ...interactionForm,
+          'Interaction Date': interactionDate,
+          'Interaction Type': interactionType,
+          'Follow-up Date': String(interactionForm['Follow-up Date'] || '').trim() || datePlusDays(interactionDate, 31),
           'Logged By': user?.displayName || user?.email || 'Unknown user',
         })
         setInteractionForm(BLANK_INTERACTION())
         setShowInteractionForm(false)
         toast?.success('Interaction logged')
       }, {
-        onError: (err) => toast?.error(`Failed: ${err.message}`),
+        onError: (err) => {
+          setInteractionError(`Could not log interaction: ${err.message}`)
+          toast?.error(`Failed: ${err.message}`)
+        },
       })
     } catch {
       // The action wrapper has already shown the error.
@@ -379,15 +410,18 @@ export default function Contacts({ toast }) {
                         : <>
                             {showInteractionForm ? (
                               <div className={styles.interactionForm}>
+                                <div className={styles.interactionFormTitle}>New interaction</div>
+                                <p className={styles.interactionHint}>Date and type are required. Notes are required only for Other. Leave follow-up blank to schedule it 31 days after this interaction.</p>
                                 <div className={styles.formGrid}>
-                                  <div className="form-field"><label className="form-label">Date</label><input className="form-input" type="date" value={interactionForm['Interaction Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Interaction Date': e.target.value }))} /></div>
-                                  <div className="form-field"><label className="form-label">Type</label><select className="form-input" value={interactionForm['Interaction Type']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value }))}><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
-                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => setInteractionForm((prev) => ({ ...prev, Notes: e.target.value }))} /></div>
+                                  <div className="form-field"><label className="form-label">Date *</label><input className="form-input" type="date" required value={interactionForm['Interaction Date']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Date': e.target.value })); if (interactionError) setInteractionError('') }} /></div>
+                                  <div className="form-field"><label className="form-label">Type *</label><select className="form-input" required value={interactionForm['Interaction Type']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value })); if (interactionError) setInteractionError('') }}><option value="" disabled>Select type</option><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
+                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes{interactionForm['Interaction Type'] === 'Other' ? ' *' : ''}</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, Notes: e.target.value })); if (interactionError) setInteractionError('') }} /></div>
                                   <div className="form-field"><label className="form-label">Follow-up date</label><input className="form-input" type="date" value={interactionForm['Follow-up Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Follow-up Date': e.target.value }))} /></div>
                                 </div>
-                                <div className={styles.inlineActions}><button type="button" className="btn btn-primary" onClick={handleAddInteraction} disabled={interactionAction.isLoading || !interactionForm.Notes.trim()} aria-busy={interactionAction.isLoading}>{interactionAction.isLoading ? 'Logging…' : 'Log interaction'}</button><button type="button" className="btn" onClick={() => setShowInteractionForm(false)} disabled={interactionAction.isLoading}>Cancel</button></div>
+                                {interactionError && <p className={styles.interactionError} role="alert">{interactionError}</p>}
+                                <div className={styles.inlineActions}><button type="button" className="btn btn-primary" onClick={handleAddInteraction} disabled={interactionAction.isLoading} aria-busy={interactionAction.isLoading}>{interactionAction.isLoading ? 'Logging interaction…' : 'Save interaction'}</button><button type="button" className="btn" onClick={() => { setShowInteractionForm(false); setInteractionError('') }} disabled={interactionAction.isLoading}>Cancel</button></div>
                               </div>
-                            ) : <button type="button" className="btn" onClick={() => { setInteractionForm(BLANK_INTERACTION()); setShowInteractionForm(true) }}>Log interaction</button>}
+                            ) : <button type="button" className="btn btn-primary" onClick={() => { setInteractionForm(BLANK_INTERACTION()); setInteractionError(''); setShowInteractionForm(true) }}>{selectedInteractions.length ? 'Log another interaction' : 'Log interaction'}</button>}
                             {selectedInteractions.length === 0
                               ? <p className="text-sm text-muted">No interactions logged.</p>
                               : selectedInteractions.map((row) => (
