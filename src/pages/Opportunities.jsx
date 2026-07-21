@@ -6,11 +6,13 @@ import { useSAMOpportunities, checkSAMKeyExpired, getSAMRunStatus } from '@/hook
 import { useSAMChangeMonitor } from '@/hooks/useSAMChangeMonitor'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
 import { useContacts } from '@/hooks/useContacts'
+import { useNotes } from '@/hooks/useNotes'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
+import { recordMatches } from '@/utils/searchHelpers'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 
@@ -127,6 +129,7 @@ export default function Opportunities({ toast }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { pipeline, loading, add, remove } = usePipeline()
   const { contacts } = useContacts()
+  const { notes } = useNotes()
   const { lists } = useValidationLists()
   useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
 
@@ -319,6 +322,14 @@ export default function Opportunities({ toast }) {
     return [...vals].sort()
   }, [pipeline, activeTab])
 
+  const noteContractsMatchingSearch = useMemo(() => {
+    if (!search.trim()) return new Set()
+    return new Set(notes
+      .filter((note) => recordMatches(note, search))
+      .map((note) => String(note.ContractNumber || '').trim())
+      .filter(Boolean))
+  }, [notes, search])
+
   // ── Filtered + sorted rows for the active tab ─────────────────────────
   const filtered = useMemo(() => {
     if (activeTab === 'New') return []
@@ -330,11 +341,8 @@ export default function Opportunities({ toast }) {
     }
 
     if (search.trim()) {
-      const q = search.trim().toLowerCase()
       rows = rows.filter((o) =>
-        [o[C.title], o[C.contractNum], o[C.agency], o[C.department],
-         o[C.assignedTo], o[C.solNum], o[C.naics], o[C.poc]]
-          .some((v) => v && String(v).toLowerCase().includes(q))
+        recordMatches(o, search) || noteContractsMatchingSearch.has(String(o[C.contractNum] || '').trim())
       )
     }
 
@@ -365,7 +373,7 @@ export default function Opportunities({ toast }) {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, sortKey, sortDir])
+  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, sortKey, sortDir])
 
   // ── Tab switch — filters are scoped to the tab that applied them. Search
   // remains because it is a separate, deliberate cross-tab lookup.
@@ -546,6 +554,7 @@ export default function Opportunities({ toast }) {
     const s = o.Status || 'new'
     if (s === 'dismissed') return showDismissed
     if (deptFilter.size > 0 && !deptFilter.has((o['Department'] || '').trim())) return false
+    if (search.trim() && !recordMatches(o, search)) return false
     return true
   }).sort((a, b) => {
     // Default: earliest response date first
@@ -555,7 +564,7 @@ export default function Opportunities({ toast }) {
     if (!da) return 1
     if (!db) return -1
     return da < db ? -1 : da > db ? 1 : 0
-  }), [samOpps, showDismissed, deptFilter])
+  }), [samOpps, showDismissed, deptFilter, search])
 
   const handleAddToPipeline = async (row, outlook) => {
     if (actioningRow === row._rowIndex || addingPipelineRowsRef.current.has(row._rowIndex)) return
@@ -1251,7 +1260,7 @@ export default function Opportunities({ toast }) {
     <>
       <Topbar
         title="Opportunities"
-        subtitle1={`${activeTab !== 'New' ? filtered.length : 0} shown`}
+        subtitle1={`${activeTab === 'New' ? visibleSAMOpps.length : filtered.length} shown`}
         showFilter={activeTab !== 'New'}
         showNew={true}
         newLabel="New opportunity"
@@ -1276,9 +1285,8 @@ export default function Opportunities({ toast }) {
           ))}
         </div>
 
-        {/* ── Search bar (hidden on New tab) ── */}
-        {activeTab !== 'New' && (
-          <div className={styles.searchBar}>
+        {/* ── Search bar ── */}
+        <div className={styles.searchBar}>
             <span className={styles.searchIcon} aria-hidden="true">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -1286,7 +1294,7 @@ export default function Opportunities({ toast }) {
             </span>
             <input
               className={styles.searchInput}
-              placeholder="Search by title, contract #, agency, NAICS, POC…"
+              placeholder={activeTab === 'New' ? 'Search all SAM opportunity fields…' : 'Search all opportunity fields and linked notes…'}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search opportunities"
@@ -1294,8 +1302,7 @@ export default function Opportunities({ toast }) {
             {search && (
               <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">✕</button>
             )}
-          </div>
-        )}
+        </div>
 
         {/* ── Advanced filter panel ── */}
         {showFilter && activeTab !== 'New' && (
