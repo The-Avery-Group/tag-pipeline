@@ -53,6 +53,12 @@ function daysAgo(dateStr) {
   return Math.floor((today - d) / (1000 * 60 * 60 * 24))
 }
 
+function hasValidInteractionDate(dateStr) {
+  if (!dateStr) return false
+  const date = new Date(`${dateStr}T00:00:00`)
+  return !Number.isNaN(date.getTime())
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return Infinity
   const due = new Date(dateStr + 'T00:00:00')
@@ -189,15 +195,20 @@ export function useAgingNotifications() {
           const staleContacts = allContacts
             .map((contact) => ({ ...contact, lastInteraction: lastInteractionByContact.get(String(contact.ContactID || '').trim()) || '' }))
             .filter((contact) => {
+              // A contact enters the follow-up cycle only after the team has
+              // logged at least one valid interaction. Imported and newly
+              // created contacts therefore never become stale by default.
+              if (!hasValidInteractionDate(contact.lastInteraction)) return false
               if (daysAgo(contact.lastInteraction) < 30) return false
               const lastSent = log[contactStaleLogKey(contact)]
               return !lastSent || daysAgo(lastSent) >= 14
             })
 
-          if (staleContacts.length > 0) {
-            const sent = await notifyStaleContacts(staleContacts)
+          const contactsForNotification = staleContacts.slice(0, 5)
+          if (contactsForNotification.length > 0) {
+            const sent = await notifyStaleContacts(contactsForNotification)
             if (sent) {
-              await Promise.all(staleContacts.map(async (contact) => {
+              await Promise.all(contactsForNotification.map(async (contact) => {
                 const key = contactStaleLogKey(contact)
                 await setNotifLog(key, today)
                 log[key] = today
