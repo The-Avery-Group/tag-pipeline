@@ -20,13 +20,13 @@ function overdueSummaryDedupeKey(type, payload) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) ? `teams_notification:overdue:${date}` : ''
 }
 
-async function reserveDedupeKey(env, key) {
+async function reserveDedupeKey(env, key, expirationTtl = 172800) {
   if (!key || !env.CACHE) return true
   try {
     if (await env.CACHE.get(key)) return false
     // One small shared write, retained long enough to cover delayed browser
     // sessions. All later sign-ins only read this key and do not post a card.
-    await env.CACHE.put(key, 'sent', { expirationTtl: 172800 })
+    await env.CACHE.put(key, 'sent', { expirationTtl })
     return true
   } catch (error) {
     // Notification delivery should remain available if KV has a transient
@@ -42,6 +42,33 @@ async function releaseDedupeKey(env, key) {
     await env.CACHE.delete(key)
   } catch (error) {
     console.warn('[Notify] Could not release summary notification:', error.message)
+  }
+}
+
+function contactFollowUpDedupeKey(contact) {
+  const id = text(contact?.contactId)
+  const lastInteraction = text(contact?.lastInteraction)
+  if (!id || !lastInteraction) return ''
+  return `teams_notification:contact_followup:${encodeURIComponent(id)}:${lastInteraction}`
+}
+
+async function reserveContactFollowUps(env, payload) {
+  const eligible = []
+  const reservedKeys = []
+  for (const contact of Array.isArray(payload?.items) ? payload.items : []) {
+    const key = contactFollowUpDedupeKey(contact)
+    if (!key || await reserveDedupeKey(env, key, 14 * 24 * 60 * 60)) {
+      eligible.push(contact)
+      if (key) reservedKeys.push(key)
+    }
+  }
+  return {
+    payload: {
+      ...payload,
+      items: eligible.slice(0, 5),
+      remainingCount: Math.max(0, eligible.length - 5),
+    },
+    reservedKeys,
   }
 }
 
@@ -357,15 +384,28 @@ export async function handleNotify(req, env) {
     return json({ error: 'Invalid JSON body' }, 400)
   }
 
-  const { type, payload } = body
+  const { type } = body
+  let { payload } = body
   if (!type || !payload) return json({ error: 'Missing type or payload' }, 400)
 
-  const card = cardForType(type, payload, env)
-  if (!card) return json({ error: `Unknown notification type: ${type}` }, 400)
-
+  const reservedKeys = []
   const dedupeKey = overdueSummaryDedupeKey(type, payload)
   if (!(await reserveDedupeKey(env, dedupeKey))) {
     return json({ ok: true, deduplicated: true })
+  }
+  if (dedupeKey) reservedKeys.push(dedupeKey)
+
+  if (type === 'contact_followup') {
+    const reservation = await reserveContactFollowUps(env, payload)
+    payload = reservation.payload
+    reservedKeys.push(...reservation.reservedKeys)
+    if (payload.items.length === 0) return json({ ok: true, deduplicated: true })
+  }
+
+  const card = cardForType(type, payload, env)
+  if (!card) {
+    await Promise.all(reservedKeys.map((key) => releaseDedupeKey(env, key)))
+    return json({ error: `Unknown notification type: ${type}` }, 400)
   }
 
   try {
@@ -376,13 +416,13 @@ export async function handleNotify(req, env) {
     })
     if (!response.ok) {
       console.error('[Notify] Teams webhook returned', response.status)
-      await releaseDedupeKey(env, dedupeKey)
+      await Promise.all(reservedKeys.map((key) => releaseDedupeKey(env, key)))
       return json({ ok: false, error: `Teams returned ${response.status}` }, 502)
     }
     return json({ ok: true })
   } catch (error) {
     console.error('[Notify] Fetch failed:', error)
-    await releaseDedupeKey(env, dedupeKey)
+    await Promise.all(reservedKeys.map((key) => releaseDedupeKey(env, key)))
     return json({ ok: false, error: error.message }, 502)
   }
 }
