@@ -12,6 +12,13 @@
   min-width: 0;
 }
 
+.taskSearch {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
 /* ── Controls bar ────────────────────────────────────────────────────────── */
 .controls {
   margin-bottom: 20px;
