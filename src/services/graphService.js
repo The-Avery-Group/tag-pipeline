@@ -33,7 +33,7 @@ export function invalidateAll() {
   cache.clear()
   _resolvedBase = null  // also re-resolve drive path in case file moved
   notificationRecipientsUnavailable = false
-  rfiNotificationsUnavailable = false
+  contactInteractionsUnavailable = false
 }
 
 async function getTableHeaders(tableName) {
@@ -88,6 +88,8 @@ const DATE_COLUMNS = new Set([
   'Questions Due',
   '8(a) Exit Date',
   'Last Modified*',
+  'Interaction Date',
+  'Follow-up Date',
   'Response Date',   // NewOpportunitiesTable
   'Posted Date',     // NewOpportunitiesTable
   'Date Added',      // NewOpportunitiesTable
@@ -268,7 +270,11 @@ export const TASKS_HEADERS = [
 ]
 
 export const CONTACTS_HEADERS = [
-  'ContactID', 'Name', 'Title', 'Agency', 'Organization', 'Email', 'Phone', 'Notes', 'Type',
+  'ContactID', 'Name', 'Title', 'Agency', 'Organization', 'Offices', 'Email', 'Phone', 'Notes', 'Type',
+]
+
+export const CONTACT_INTERACTION_HEADERS = [
+  'InteractionID', 'ContactID', 'Interaction Date', 'Interaction Type', 'Notes', 'Follow-up Date', 'Logged By',
 ]
 
 export const NOTES_HEADERS = [
@@ -556,11 +562,24 @@ export async function getContacts() {
   return getSheetRows('ContactsTable')
 }
 
+const CONTACT_INTERACTIONS_TABLE = 'ContactInteractionsTable'
+let contactInteractionsUnavailable = false
+
+export async function getContactInteractions() {
+  if (contactInteractionsUnavailable) return null
+  try {
+    return await getSheetRows(CONTACT_INTERACTIONS_TABLE)
+  } catch (error) {
+    contactInteractionsUnavailable = true
+    console.info('[Contacts] ContactInteractionsTable is not configured.')
+    return null
+  }
+}
+
 // Optional notification-recipient mapping. This keeps workbook assignee names
 // separate from the Teams UPN or Entra object ID required for a real mention.
 // Missing setup is non-fatal: notification cards still show the assignee name.
 const NOTIFICATION_RECIPIENTS_TABLE = 'NotificationRecipientsTable'
-const RFI_NOTIFICATIONS_TABLE = 'RFINotificationsTable'
 export const NOTIFICATION_RECIPIENT_HEADERS = [
   'Pipeline Assignee',
   'Teams Display Name',
@@ -568,7 +587,6 @@ export const NOTIFICATION_RECIPIENT_HEADERS = [
   'Mention Enabled',
 ]
 let notificationRecipientsUnavailable = false
-let rfiNotificationsUnavailable = false
 
 export async function getNotificationRecipients() {
   if (notificationRecipientsUnavailable) return []
@@ -577,21 +595,6 @@ export async function getNotificationRecipients() {
   } catch (error) {
     notificationRecipientsUnavailable = true
     console.info('[Notifications] NotificationRecipientsTable is not configured; sending names without Teams mentions.')
-    return []
-  }
-}
-
-// RFI follow-up reminders are intentionally addressed to the shared RFI
-// notification list, rather than to each opportunity's current assignee.
-// The table is maintained in the workbook so recipients can change without a
-// code deployment. Its columns are resolved by the notification service.
-export async function getRFINotificationRecipients() {
-  if (rfiNotificationsUnavailable) return []
-  try {
-    return await getSheetRows(RFI_NOTIFICATIONS_TABLE)
-  } catch (error) {
-    rfiNotificationsUnavailable = true
-    console.info('[Notifications] RFINotificationsTable is not configured; skipping RFI follow-up notification recipients.')
     return []
   }
 }
@@ -880,11 +883,30 @@ export async function deleteTask(rowIndex) {
 
 export async function addContact(data) {
   const id = `C-${Date.now()}`
-  return appendRow('ContactsTable', { ...data, ContactID: id }, CONTACTS_HEADERS)
+  // ContactsTable can gain the optional Offices column while the app is open.
+  // Refresh only this schema before a write so column order stays correct.
+  headerCache.delete('ContactsTable')
+  const headers = await getTableHeaders('ContactsTable')
+  if (String(data.Offices || '').trim() && !headers.includes('Offices')) {
+    throw new Error('Add an "Offices" column to ContactsTable before saving office assignments')
+  }
+  return appendRow('ContactsTable', { ...data, ContactID: id }, headers)
+}
+
+export async function addContactInteraction(data) {
+  const contactId = String(data.ContactID || '').trim()
+  if (!contactId) throw new Error('Contact ID is required')
+  const id = `CI-${Date.now()}`
+  return appendRow(CONTACT_INTERACTIONS_TABLE, { ...data, InteractionID: id }, CONTACT_INTERACTION_HEADERS)
 }
 
 export async function updateContact(rowIndex, patch) {
-  return updateRow('ContactsTable', rowIndex, patch, CONTACTS_HEADERS)
+  headerCache.delete('ContactsTable')
+  const headers = await getTableHeaders('ContactsTable')
+  if (String(patch.Offices || '').trim() && !headers.includes('Offices')) {
+    throw new Error('Add an "Offices" column to ContactsTable before saving office assignments')
+  }
+  return updateRow('ContactsTable', rowIndex, patch, headers)
 }
 
 export async function deleteContact(rowIndex) {
