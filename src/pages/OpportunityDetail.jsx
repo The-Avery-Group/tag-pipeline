@@ -873,7 +873,7 @@ export default function OpportunityDetail({ toast }) {
           if (matchingOffice) {
             return [{
               contact: candidate,
-              matchedOffice,
+              matchedOffice: matchingOffice,
               reason: `Similar office to linked contact ${linkedContact.Name}: ${matchingOffice}`,
             }]
           }
