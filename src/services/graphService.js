@@ -622,8 +622,24 @@ export async function getContacts() {
   return getSheetRows('ContactsTable')
 }
 
+function normalizeTableHeader(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 export async function getPartners() {
-  return getSheetRows('PartnersTable')
+  const rows = await getSheetRows('PartnersTable')
+  // Excel table headers can carry invisible trailing spaces or different
+  // capitalization after users edit a workbook. Map those harmless variants
+  // back to the canonical headers that the UI uses, without changing the
+  // underlying workbook or shifting any cell values.
+  return rows.map((row) => {
+    const normalizedKeys = new Map(Object.keys(row).map((key) => [normalizeTableHeader(key), key]))
+    const canonical = Object.fromEntries(PARTNER_HEADERS.map((header) => {
+      const sourceKey = normalizedKeys.get(normalizeTableHeader(header))
+      return [header, sourceKey ? row[sourceKey] : '']
+    }))
+    return { ...row, ...canonical }
+  })
 }
 
 async function partnerHeaders() {
