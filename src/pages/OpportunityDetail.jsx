@@ -5,6 +5,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
 import { useTasks } from '@/hooks/useTasks'
 import { useContacts } from '@/hooks/useContacts'
+import { usePartners } from '@/hooks/usePartners'
 import { useAuth } from '@/auth/AuthContext'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
@@ -200,6 +201,13 @@ function contactKey(contact) {
   return String(contact?.ContactID || contact?._rowIndex || contact?.Email || contact?.Name || '')
 }
 
+function findIncumbentPartner(incumbentUEI, partners) {
+  const uei = String(incumbentUEI || '').trim().toUpperCase()
+  if (!uei) return null
+  const partner = partners.find((record) => String(record['UEI Number'] || '').trim().toUpperCase() === uei)
+  return partner ? { partner, matchType: 'UEI' } : null
+}
+
 function formatFieldValue(val) {
   if (val === null || val === undefined || val === '') return '—'
   if (val instanceof Date) return formatDate(val)
@@ -278,6 +286,16 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
       <button type="button" className={styles.eightAAddNote} onClick={onAddNote} disabled={addingNote || noteAdded}>
         {noteAdded ? 'Added' : addingNote ? 'Adding…' : 'Add as note'}
       </button>
+    </div>
+  )
+}
+
+function IncumbentPartnerCallout({ match }) {
+  if (!match) return null
+  return (
+    <div className={styles.partnerCallout}>
+      <span><strong>Partner incumbent:</strong> {match.partner['Partner Name']}</span>
+      <span className={styles.partnerCalloutMeta}>Matched by {match.matchType}</span>
     </div>
   )
 }
@@ -751,6 +769,7 @@ export default function OpportunityDetail({ toast }) {
   const { notes, loading: notesLoading, add: addNote, remove: removeNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
+  const { partners } = usePartners()
   const { lists }     = useValidationLists()
   const awards = useAwardsLookup()
 
@@ -839,6 +858,11 @@ export default function OpportunityDetail({ toast }) {
     const names = parsePOCNames(opp[C.poc])
     return names.map((name) => contacts.find((c) => c.Name === name)).filter(Boolean)
   }, [opp, contacts])
+
+  const incumbentPartnerMatch = useMemo(
+    () => findIncumbentPartner(opp?.[C.incumbentUEI], partners),
+    [opp, partners]
+  )
 
   const relatedContactGroups = useMemo(() => {
     if (!opp) return { opportunityOffice: [], linkedContactOffice: [] }
@@ -1326,6 +1350,7 @@ export default function OpportunityDetail({ toast }) {
             {followUpStatus.badgeState === 'seen' ? 'Follow-ups seen' : `${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
+          {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Incumbent matches partner ${incumbentPartnerMatch.partner['Partner Name']} by ${incumbentPartnerMatch.matchType}`}>Partner incumbent</span>}
         </div>}
       />
 
@@ -1453,6 +1478,7 @@ export default function OpportunityDetail({ toast }) {
               addingNote={addingEightANote}
               noteAdded={eightANoteAdded}
             />
+            <IncumbentPartnerCallout match={incumbentPartnerMatch} />
             <IncumbentAwardHistoryCallout incumbentUEI={f(C.incumbentUEI)} />
           </div>
         </Section>
