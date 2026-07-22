@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { usePartners } from '@/hooks/usePartners'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
+import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { recordMatches } from '@/utils/searchHelpers'
 import styles from './Partners.module.css'
 
@@ -49,6 +49,8 @@ export default function Partners({ toast }) {
   const { pipeline } = usePipeline()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const listPanelRef = useRef(null)
+  useScrollRestoration(listPanelRef)
   const [search, setSearch] = useState(() => searchParams.get('search') || '')
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState(EMPTY)
@@ -58,13 +60,32 @@ export default function Partners({ toast }) {
   const deleteAction = useAsyncAction()
 
   const filtered = useMemo(() => partners.filter((partner) => recordMatches(partner, search)), [partners, search])
+  const requestedPartnerUEI = String(searchParams.get('partner') || '').trim().toUpperCase()
+  useEffect(() => {
+    if (!requestedPartnerUEI) return
+    const match = partners.find((partner) => String(partner['UEI Number'] || '').trim().toUpperCase() === requestedPartnerUEI)
+    if (match && match._rowIndex !== selected?._rowIndex) {
+      setSelected(match)
+      setEditing(false)
+    }
+  }, [partners, requestedPartnerUEI, selected?._rowIndex])
   const matchedOpportunities = useMemo(() => {
     const uei = String(selected?.['UEI Number'] || '').trim().toUpperCase()
     if (!uei) return []
     return pipeline.filter((opportunity) => String(opportunity[OPPORTUNITY_INCUMBENT_UEI] || '').trim().toUpperCase() === uei)
   }, [pipeline, selected])
-  const select = (partner) => { setSelected(partner); setEditing(false) }
-  const startAdd = () => { setSelected(null); setForm(EMPTY()); setEditing(true) }
+  const select = (partner) => {
+    setSelected(partner); setEditing(false)
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      next.set('partner', String(partner['UEI Number'] || '').trim().toUpperCase())
+      return next
+    }, { replace: true })
+  }
+  const startAdd = () => {
+    setSelected(null); setForm(EMPTY()); setEditing(true)
+    setSearchParams((current) => { const next = new URLSearchParams(current); next.delete('partner'); return next }, { replace: true })
+  }
   const startEdit = () => { setForm({ ...EMPTY(), ...selected }); setEditing(true) }
   const setSearchValue = (value) => {
     setSearch(value)
@@ -93,7 +114,10 @@ export default function Partners({ toast }) {
   const deletePartner = async () => {
     try {
       await deleteAction.run(() => remove(deleteTarget._rowIndex, deleteTarget), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
-      if (selected?._rowIndex === deleteTarget._rowIndex) setSelected(null)
+      if (selected?._rowIndex === deleteTarget._rowIndex) {
+        setSelected(null)
+        setSearchParams((current) => { const next = new URLSearchParams(current); next.delete('partner'); return next }, { replace: true })
+      }
       setDeleteTarget(null); toast?.success('Partner deleted')
     } catch {}
   }
@@ -112,7 +136,7 @@ export default function Partners({ toast }) {
     <Topbar title="Partners" subtitle1={`${partners.length} partners`} showFilter={false} showNew newLabel="New partner" onNew={startAdd} />
     <div className={`page-body ${styles.page}`}>
       <div className={`card ${styles.workspace}`}>
-        <aside className={styles.listPanel}>
+        <aside ref={listPanelRef} className={styles.listPanel}>
           <div className={styles.searchBar}><input className={styles.searchInput} placeholder="Search partners…" value={search} onChange={(event) => setSearchValue(event.target.value)} /><span>{filtered.length}</span></div>
           {loading ? <div className={styles.listMessage}>Loading partners…</div> : error ? <div className={styles.listMessage}>Could not load partners.<button className="btn btn-ghost text-sm" onClick={refresh}>Retry</button></div> : filtered.length === 0 ? <div className={styles.listMessage}>{search ? 'No matches.' : 'No partners yet.'}</div> : <div className={styles.partnerList}>{filtered.map((partner) => <button key={partner._rowIndex} className={`${styles.listItem} ${selected?._rowIndex === partner._rowIndex ? styles.listItemActive : ''}`} onClick={() => select(partner)}><strong>{partnerName(partner)}</strong><span>UEI: {partner['UEI Number']}</span>{partner.Capabilities && <small>{partner.Capabilities}</small>}</button>)}</div>}
         </aside>
