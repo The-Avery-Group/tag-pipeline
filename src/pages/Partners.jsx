@@ -29,6 +29,7 @@ const OPPORTUNITY_ID = 'Contract Number / Notice ID'
 const OPPORTUNITY_TITLE = 'Project Title / Description*'
 const OPPORTUNITY_PHASE = 'TAG Opportunity Phase'
 const OPPORTUNITY_INCUMBENT_UEI = 'Incumbent (Company UEI)'
+const OPPORTUNITY_PARTNER = 'Partner'
 
 function safeUrl(value) {
   const url = String(value || '').trim()
@@ -37,6 +38,16 @@ function safeUrl(value) {
 
 function partnerName(partner) {
   return String(partner?.['Partner Name'] || '').trim() || 'Partner name unavailable'
+}
+
+function normalizePartnerMatch(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function partnerFieldIncludes(value, name) {
+  const target = normalizePartnerMatch(name)
+  if (!target) return false
+  return String(value || '').split(/[;,|]/).some((item) => normalizePartnerMatch(item) === target)
 }
 
 function DetailField({ label, value, link }) {
@@ -71,8 +82,14 @@ export default function Partners({ toast }) {
   }, [partners, requestedPartnerUEI, selected?._rowIndex])
   const matchedOpportunities = useMemo(() => {
     const uei = String(selected?.['UEI Number'] || '').trim().toUpperCase()
-    if (!uei) return []
-    return pipeline.filter((opportunity) => String(opportunity[OPPORTUNITY_INCUMBENT_UEI] || '').trim().toUpperCase() === uei)
+    const name = selected?.['Partner Name'] || ''
+    if (!uei && !name) return []
+    return pipeline.flatMap((opportunity) => {
+      const incumbentMatch = Boolean(uei) && String(opportunity[OPPORTUNITY_INCUMBENT_UEI] || '').trim().toUpperCase() === uei
+      const partnerFieldMatch = partnerFieldIncludes(opportunity[OPPORTUNITY_PARTNER], name)
+      if (!incumbentMatch && !partnerFieldMatch) return []
+      return [{ opportunity, matchLabel: incumbentMatch && partnerFieldMatch ? 'Incumbent UEI and Partner field' : incumbentMatch ? 'Incumbent UEI' : 'Partner field' }]
+    })
   }, [pipeline, selected])
   const select = (partner) => {
     setSelected(partner); setEditing(false)
@@ -151,7 +168,7 @@ export default function Partners({ toast }) {
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
             <div className={styles.profileSection}><h3>Notes</h3><DetailField label="Notes" value={selected.Notes} /></div>
-            <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities have this incumbent UEI.</p> : matchedOpportunities.map((opportunity) => <button type="button" key={opportunity._rowIndex || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}?row=${opportunity._rowIndex}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
+            <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities match this partner’s UEI or name.</p> : matchedOpportunities.map(({ opportunity, matchLabel }) => <button type="button" key={opportunity._rowIndex || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}?row=${opportunity._rowIndex}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]} · {matchLabel}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
           </div> : <div className={styles.emptyProfile}><div>◇</div><strong>Select a partner</strong><span>Choose one from the list to view its profile, or add a new partner.</span><button className="btn btn-primary" onClick={startAdd}>Add partner</button></div>}
         </section>
       </div>
