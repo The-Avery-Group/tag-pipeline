@@ -41,13 +41,31 @@ function partnerName(partner) {
 }
 
 function normalizePartnerMatch(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+  // Partner names are entered manually in both tables. Compare the meaningful
+  // characters so harmless differences such as "TAG, LLC", "TAG LLC", or
+  // "TAG-LLC" still identify the same partner.
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
 }
 
 function partnerFieldIncludes(value, name) {
   const target = normalizePartnerMatch(name)
-  if (!target) return false
-  return String(value || '').split(/[;,|]/).some((item) => normalizePartnerMatch(item) === target)
+  const source = String(value || '').trim()
+  if (!target || !source) return false
+
+  // Check the entire value first. This preserves names that legitimately
+  // contain commas, such as "Example Company, LLC".
+  if (normalizePartnerMatch(source) === target) return true
+
+  // Multiple partners are normally separated with semicolons or pipes. Keep
+  // comma support for existing rows where commas are used as list separators.
+  return source
+    .split(/[;|]/)
+    .flatMap((item) => [item, ...item.split(',')])
+    .some((item) => normalizePartnerMatch(item) === target)
 }
 
 function DetailField({ label, value, link }) {
