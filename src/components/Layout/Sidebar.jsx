@@ -9,6 +9,7 @@ const NAV = [
   { to: '/lookup',         icon: '⌕', label: 'Lookup' },
   { to: '/tasks',          icon: '☑', label: 'Tasks' },
   { to: '/contacts',       icon: '◎', label: 'Contacts' },
+  { to: '/partners',       icon: '◇', label: 'Partners' },
   { to: '/ai-chat',        icon: '✦', label: 'AI Advisor' },
 ]
 
