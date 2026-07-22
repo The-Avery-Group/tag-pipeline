@@ -19,6 +19,7 @@ const OpportunityDetail = lazy(() => import('@/pages/OpportunityDetail'))
 const PipelineBoard     = lazy(() => import('@/pages/PipelineBoard'))
 const Tasks             = lazy(() => import('@/pages/Tasks'))
 const Contacts          = lazy(() => import('@/pages/Contacts'))
+const Partners          = lazy(() => import('@/pages/Partners'))
 const Settings          = lazy(() => import('@/pages/Settings'))
 const Lookup            = lazy(() => import('@/pages/Lookup'))
 const Login             = lazy(() => import('@/pages/Login'))
@@ -164,6 +165,7 @@ function AppShell() {
               <Route path="/ai-chat"                       element={<AIChat toast={toast} />} />
               <Route path="/tasks"                         element={<Tasks toast={toast} />} />
               <Route path="/contacts"                      element={<Contacts toast={toast} />} />
+              <Route path="/partners"                      element={<Partners toast={toast} />} />
               <Route path="/settings"                      element={<Settings toast={toast} />} />
               <Route path="/lookup"                         element={<Lookup toast={toast} />} />
               <Route path="*"                              element={<Navigate to="/" replace />} />
