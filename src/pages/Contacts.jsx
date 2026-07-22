@@ -47,9 +47,6 @@ export default function Contacts({ toast }) {
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(null)   // contact shown in panel
-  // Do not let a background workbook refresh reset the interaction form while
-  // someone is typing. Saving still refreshes and reconciles the interaction.
-  const engagement = useContactEngagement(Boolean(selected) && !showInteractionForm)
   const [editing, setEditing] = useState(false)    // panel edit mode
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
@@ -59,6 +56,9 @@ export default function Contacts({ toast }) {
   const [interactionForm, setInteractionForm] = useState(BLANK_INTERACTION)
   const [interactionError, setInteractionError] = useState('')
   const [focusedInteractionId, setFocusedInteractionId] = useState(null)
+  // Do not let a background workbook refresh reset the interaction form while
+  // someone is typing. Saving still refreshes and reconciles the interaction.
+  const engagement = useContactEngagement(Boolean(selected) && !showInteractionForm)
   // Consistent in-progress feedback + re-entrancy guarding for actions that
   // previously had none (delete, unlink) or used an ad hoc boolean (link).
   const deleteAction = useAsyncAction()
