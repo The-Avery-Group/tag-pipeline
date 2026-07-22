@@ -294,8 +294,8 @@ function IncumbentPartnerCallout({ match }) {
   if (!match) return null
   return (
     <div className={styles.partnerCallout}>
-      <span><strong>Partner incumbent:</strong> {match.partner['Partner Name']}</span>
-      <span className={styles.partnerCalloutMeta}>Matched by {match.matchType}</span>
+      <span><strong>Incumbent is a TAG partner:</strong> {match.partner['Partner Name']}</span>
+      <span className={styles.partnerCalloutMeta}>Matched by exact UEI</span>
     </div>
   )
 }
@@ -1350,7 +1350,7 @@ export default function OpportunityDetail({ toast }) {
             {followUpStatus.badgeState === 'seen' ? 'Follow-ups seen' : `${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
-          {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Incumbent matches partner ${incumbentPartnerMatch.partner['Partner Name']} by ${incumbentPartnerMatch.matchType}`}>Partner incumbent</span>}
+          {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Exact UEI match to TAG partner ${incumbentPartnerMatch.partner['Partner Name']}`}>Incumbent is a TAG partner</span>}
         </div>}
       />
 
