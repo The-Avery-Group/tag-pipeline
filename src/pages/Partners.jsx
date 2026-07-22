@@ -88,7 +88,12 @@ export default function Partners({ toast }) {
   const saveAction = useAsyncAction()
   const deleteAction = useAsyncAction()
 
-  const filtered = useMemo(() => partners.filter((partner) => recordMatches(partner, search)), [partners, search])
+  const filtered = useMemo(() => (
+    partners
+      .filter((partner) => recordMatches(partner, search))
+      .slice()
+      .sort((a, b) => partnerName(a).localeCompare(partnerName(b), undefined, { sensitivity: 'base' }))
+  ), [partners, search])
   const requestedPartnerUEI = String(searchParams.get('partner') || '').trim().toUpperCase()
   useEffect(() => {
     if (!requestedPartnerUEI) return
