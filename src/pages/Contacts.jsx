@@ -386,6 +386,7 @@ export default function Contacts({ toast }) {
               <div className={styles.panelHeader}>
                 <div className={styles.panelAvatar}>{avatar(selected.Name)}</div>
                 <div className={styles.panelHeaderInfo}>
+                  <div className={styles.panelEyebrow}>Contact profile</div>
                   <div className={styles.panelName}>{selected.Name}</div>
                   {selected.Title && (
                     <div className={styles.panelSub}>{selected.Title}{selected.Agency ? ` · ${selected.Agency}` : ''}</div>
@@ -400,6 +401,7 @@ export default function Contacts({ toast }) {
                   <>
                     {/* View mode */}
                     <div className={styles.panelSection}>
+                      <div className={styles.panelSectionTitle}>Contact details</div>
                       {[
                         ['Email',        selected.Email],
                         ['Phone',        selected.Phone],
