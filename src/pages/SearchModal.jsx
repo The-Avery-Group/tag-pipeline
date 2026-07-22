@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useContacts } from '@/hooks/useContacts'
+import { usePartners } from '@/hooks/usePartners'
 import { useTasks } from '@/hooks/useTasks'
 import { useNotes } from '@/hooks/useNotes'
 import { useContactEngagement } from '@/hooks/useContactEngagement'
@@ -41,6 +42,7 @@ export default function SearchModal({ onClose }) {
 
   const { pipeline }  = usePipeline()
   const { contacts }  = useContacts()
+  const { partners }  = usePartners()
   const { tasks }     = useTasks()
   const { notes }     = useNotes()
   const contactEngagement = useContactEngagement(true)
@@ -95,12 +97,13 @@ export default function SearchModal({ onClose }) {
   )
 
   const results = useMemo(() => {
-    if (!q) return { opportunities: [], samOpportunities: [], contacts: [], tasks: [], interactions: [], notes: [], counts: {} }
+    if (!q) return { opportunities: [], samOpportunities: [], partners: [], contacts: [], tasks: [], interactions: [], notes: [], counts: {} }
 
     const allOpportunities = rankMatches(pipeline, searchableValues, q)
     const allSAMOpportunities = rankMatches(samOpportunities, searchableValues, q)
 
     const allContacts = rankMatches(contacts, searchableValues, q)
+    const allPartners = rankMatches(partners, searchableValues, q)
 
     const allTasks = rankMatches(tasks, searchableValues, q)
 
@@ -122,6 +125,7 @@ export default function SearchModal({ onClose }) {
     return {
       opportunities: show('opportunities', allOpportunities),
       samOpportunities: show('samOpportunities', allSAMOpportunities),
+      partners: show('partners', allPartners),
       contacts: show('contacts', allContacts),
       tasks: show('tasks', allTasks),
       interactions: show('interactions', allInteractions),
@@ -129,15 +133,16 @@ export default function SearchModal({ onClose }) {
       counts: {
         opportunities: allOpportunities.length,
         samOpportunities: allSAMOpportunities.length,
+        partners: allPartners.length,
         contacts: allContacts.length,
         tasks: allTasks.length,
         interactions: allInteractions.length,
         notes: allNotes.length,
       },
     }
-  }, [q, pipeline, samOpportunities, contacts, tasks, notes, contactEngagement.interactions, opportunitiesByContract, contactsById, expandedCategories])
+  }, [q, pipeline, samOpportunities, partners, contacts, tasks, notes, contactEngagement.interactions, opportunitiesByContract, contactsById, expandedCategories])
 
-  const total = results.opportunities.length + results.samOpportunities.length + results.contacts.length + results.tasks.length + results.interactions.length + results.notes.length
+  const total = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + results.notes.length
   const hasResults = total > 0
 
   const go = (path) => {
@@ -150,6 +155,7 @@ export default function SearchModal({ onClose }) {
     ...results.samOpportunities.map((opportunity) => ({
       path: `/opportunities?tab=New&search=${encodeURIComponent(opportunity['Notice ID'] || opportunity['Solicitation Number'] || opportunity.Title || '')}`,
     })),
+    ...results.partners.map((partner) => ({ path: `/partners?search=${encodeURIComponent(partner['Partner Name'] || '')}` })),
     ...results.contacts.map((c) => ({ path: `/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}` })),
     ...results.tasks.map((t) => ({ path: `/tasks?taskId=${encodeURIComponent(t.TaskID)}` })),
     ...results.interactions.map((interaction) => ({
@@ -199,7 +205,7 @@ export default function SearchModal({ onClose }) {
           <input
             ref={inputRef}
             className={styles.input}
-            placeholder="Search all pipeline, SAM, contact, task, note, and interaction fields…"
+            placeholder="Search all pipeline, SAM, partner, contact, task, note, and interaction fields…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
@@ -214,7 +220,7 @@ export default function SearchModal({ onClose }) {
         <div className={styles.results}>
           {!q && (
             <div className={styles.hint}>
-              Start typing to search every field across pipeline, SAM, contacts, tasks, notes, and interactions.
+              Start typing to search every field across pipeline, SAM, partners, contacts, tasks, notes, and interactions.
             </div>
           )}
 
@@ -268,11 +274,35 @@ export default function SearchModal({ onClose }) {
             </div>
           )}
 
+          {results.partners.length > 0 && (
+            <div className={styles.group}>
+              <div className={styles.groupLabel}>Partners</div>
+              {results.partners.map((partner, i) => {
+                const index = results.opportunities.length + results.samOpportunities.length + i
+                return (
+                  <button key={partner._rowIndex || partner['Partner Name']}
+                    className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => go(`/partners?search=${encodeURIComponent(partner['Partner Name'] || '')}`)}>
+                    <div className={styles.resultTitle}>{partner['Partner Name']}</div>
+                    <div className={styles.resultMeta}>{partner['UEI Number'] ? `UEI: ${partner['UEI Number']}` : 'No UEI recorded'}</div>
+                    <div className={styles.resultMeta}>{partner.Capabilities || partner['Company Strengths'] || 'Partner record'}</div>
+                  </button>
+                )
+              })}
+              {results.counts.partners > MAX_PER_CATEGORY && (
+                <button className={styles.viewAll} onClick={() => toggleCategory('partners')}>
+                  {expandedCategories.partners ? 'Show fewer' : `View all ${results.counts.partners}`}
+                </button>
+              )}
+            </div>
+          )}
+
           {results.contacts.length > 0 && (
             <div className={styles.group}>
               <div className={styles.groupLabel}>Contacts</div>
               {results.contacts.map((c, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + i
                 return (
                 <button key={c.ContactID || c.Name}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -296,7 +326,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Tasks</div>
               {results.tasks.map((t, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + results.contacts.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + i
                 return (
                 <button key={t.TaskID || t.Title}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -322,7 +352,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Contact interactions</div>
               {results.interactions.map((interaction, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + results.contacts.length + results.tasks.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + i
                 const preview = String(interaction.Notes || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
                   <button key={interaction.InteractionID || interaction._rowIndex}
@@ -348,7 +378,7 @@ export default function SearchModal({ onClose }) {
               <div className={styles.groupLabel}>Opportunity notes</div>
               {results.notes.map((n, i) => {
                 const target = n.opportunity
-                const index = results.opportunities.length + results.samOpportunities.length + results.contacts.length + results.tasks.length + results.interactions.length + i
+                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + i
                 const title = target?.['Project Title / Description*'] || n.ContractNumber || 'Unlinked opportunity'
                 const preview = String(n.NoteText || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
