@@ -743,6 +743,10 @@ export async function addNote(contractNumber, author, text) {
   }, NOTES_HEADERS)
 }
 
+export async function updateNote(rowIndex, patch) {
+  return updateRow('NotesTable', rowIndex, patch, NOTES_HEADERS)
+}
+
 export async function deleteNote(rowIndex) {
   return deleteRow('NotesTable', rowIndex)
 }
