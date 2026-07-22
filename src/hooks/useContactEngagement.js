@@ -10,16 +10,18 @@ export function useContactEngagement(enabled = false) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       setInteractions(await getContactInteractions())
     } catch (err) {
       setInteractions(null)
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -33,7 +35,7 @@ export function useContactEngagement(enabled = false) {
 
   useEffect(() => {
     if (!enabled) return undefined
-    return onCacheRefresh(load)
+    return onCacheRefresh(() => load({ silent: true }))
   }, [enabled, load])
 
   const addInteraction = useCallback(async (data) => {
