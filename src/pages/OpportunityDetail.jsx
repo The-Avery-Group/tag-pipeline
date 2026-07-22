@@ -490,6 +490,7 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
   // state without needing a full re-lookup.
   const [updatedFields, setUpdatedFields] = useState({})
   const [updatingFields, setUpdatingFields] = useState({})
+  const [selectedModification, setSelectedModification] = useState({})
 
   const handleToggle = () => {
     const next = !open
@@ -563,20 +564,39 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
           {results.map((r) => {
             const piid = r.piid || r.raw?.contractId?.piid
             const isIDV = r.isIDV
+            const modifications = r.modifications || []
+            const activeModificationIndex = Math.min(selectedModification[piid] ?? 0, Math.max(modifications.length - 1, 0))
+            const activeModification = modifications[activeModificationIndex]
+            const activeFields = activeModification?.snapshotFields
+              ? activeModification.snapshotFields
+              : activeModification
+                ? { ...Object.fromEntries(Object.entries(r.fields || {}).filter(([, field]) => field.section !== 'Latest modification')), ...activeModification }
+                : r.fields
+            const viewingLatestModification = activeModificationIndex === 0
             return (
-              <AwardRecordCard
-                key={piid || Math.random()}
-                piid={piid}
-                isIDV={isIDV}
-                modificationCount={r.modificationCount}
-                originalSignedDate={r.originalSignedDate}
-                samLink={r.samLink}
-                cache={cache}
-                onRefresh={() => lookup({ piid: contractNumber, forceRefresh: true })}
-                refreshing={loading}
-                fields={r.fields}
-                contractLifecycleAlert={r.contractLifecycleAlert}
-                renderFieldAction={(fieldKey, field) => {
+              <div key={piid || Math.random()}>
+                {modifications.length > 0 && <>
+                  <div className={awardStyles.modificationTabs} role="tablist" aria-label="Recent modifications">
+                    {modifications.map((modification, index) => {
+                      const number = modification.modificationNumber?.value || (index === modifications.length - 1 ? 'Base award' : 'Modification')
+                      const label = index === 0 ? `Latest · ${number}` : number
+                      return <button key={`${number}-${modification.dateSigned?.value || index}`} type="button" role="tab" aria-selected={activeModificationIndex === index} className={`${awardStyles.modificationTab} ${activeModificationIndex === index ? awardStyles.modificationTabActive : ''}`} onClick={() => setSelectedModification((previous) => ({ ...previous, [piid]: index }))}>{label}</button>
+                    })}
+                  </div>
+                  <p className="text-xs text-muted" style={{ margin: '0 0 8px' }}>Each tab shows data reported by SAM for that modification.</p>
+                </>}
+                <AwardRecordCard
+                  piid={piid}
+                  isIDV={isIDV}
+                  modificationCount={r.modificationCount}
+                  originalSignedDate={r.originalSignedDate}
+                  samLink={r.samLink}
+                  cache={cache}
+                  onRefresh={() => lookup({ piid: contractNumber, forceRefresh: true })}
+                  refreshing={loading}
+                  fields={activeFields}
+                  contractLifecycleAlert={viewingLatestModification ? r.contractLifecycleAlert : null}
+                  renderFieldAction={(fieldKey, field) => {
                   const done = !!updatedFields[piid]?.[fieldKey]
                   const updating = !!updatingFields[piid]?.[fieldKey]
                   if (field.action === 'addOtherLink') {
@@ -600,8 +620,9 @@ function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
                       {done ? '✓ Updated' : updating ? 'Updating…' : 'Update pipeline'}
                     </button>
                   )
-                }}
-              />
+                  }}
+                />
+              </div>
             )
           })}
         </div>
