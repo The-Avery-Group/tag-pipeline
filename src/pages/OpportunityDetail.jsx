@@ -787,7 +787,7 @@ export default function OpportunityDetail({ toast }) {
   const { user }  = useAuth()
 
   const { pipeline, loading: pipelineLoading, add: addPipelineOpp, update: updateOpp, remove: removeOpp } = usePipeline()
-  const { notes, loading: notesLoading, add: addNote, remove: removeNote } = useNotes(decodedCN)
+  const { notes, loading: notesLoading, add: addNote, update: updateNote, remove: removeNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
   const { partners } = usePartners()
@@ -813,6 +813,9 @@ export default function OpportunityDetail({ toast }) {
   const [addingNote,      setAddingNote]      = useState(false)
   const addingNoteRef = useRef(false)
   const [deletingNoteId,  setDeletingNoteId]  = useState(null)
+  const [editingNoteId,   setEditingNoteId]   = useState(null)
+  const [noteDraft,       setNoteDraft]       = useState('')
+  const [savingNoteId,    setSavingNoteId]    = useState(null)
   const [showAddTask,     setShowAddTask]     = useState(false)
   const [savingTask,      setSavingTask]      = useState(false)
   const creatingTaskRef = useRef(false)
@@ -1210,6 +1213,28 @@ export default function OpportunityDetail({ toast }) {
       toast?.error(`Failed to delete note: ${err.message}`)
     } finally {
       setDeletingNoteId(null)
+    }
+  }
+
+  const startEditNote = (note) => {
+    if (note._temp || note._rowIndex === undefined) return
+    setEditingNoteId(note._rowIndex)
+    setNoteDraft(note.NoteText || '')
+  }
+
+  const handleSaveNote = async (note) => {
+    const text = noteDraft.trim()
+    if (!text || savingNoteId !== null) return
+    setSavingNoteId(note._rowIndex)
+    try {
+      await updateNote(note._rowIndex, { NoteText: text }, note)
+      setEditingNoteId(null)
+      setNoteDraft('')
+      toast?.success('Note updated')
+    } catch (err) {
+      toast?.error(`Failed to update note: ${err.message}`)
+    } finally {
+      setSavingNoteId(null)
     }
   }
 
@@ -1824,13 +1849,24 @@ export default function OpportunityDetail({ toast }) {
                   <div key={n.NoteID} className={styles.noteItem}>
                     <div className={styles.noteMeta} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span>{n.Date} · {n.Author}</span>
-                      {editing && (
+                      {!n._temp && editingNoteId !== n._rowIndex && (
                         <button
                           type="button"
                           className="btn btn-ghost btn-icon"
-                          style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--red-600)', marginLeft: 'auto' }}
+                          style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--blue-600)', marginLeft: 'auto' }}
+                          onClick={() => startEditNote(n)}
+                          disabled={savingNoteId !== null || deletingNoteId === n._rowIndex}
+                          aria-label="Edit note"
+                          title="Edit note"
+                        >✎</button>
+                      )}
+                      {!n._temp && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon"
+                          style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--red-600)' }}
                           onClick={() => handleDeleteNote(n)}
-                          disabled={deletingNoteId === n._rowIndex}
+                          disabled={deletingNoteId === n._rowIndex || savingNoteId !== null}
                           aria-label="Delete note"
                           title="Delete note"
                         >
@@ -1838,7 +1874,15 @@ export default function OpportunityDetail({ toast }) {
                         </button>
                       )}
                     </div>
-                    <div className={styles.noteText}>{linkifyText(n.NoteText)}</div>
+                    {editingNoteId === n._rowIndex
+                      ? <div className={styles.noteEditor}>
+                          <textarea className="form-input" rows={3} value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} disabled={savingNoteId === n._rowIndex} />
+                          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                            <button type="button" className="btn btn-primary text-sm" onClick={() => handleSaveNote(n)} disabled={savingNoteId === n._rowIndex || !noteDraft.trim()}>{savingNoteId === n._rowIndex ? 'Saving…' : 'Save note'}</button>
+                            <button type="button" className="btn text-sm" onClick={() => { setEditingNoteId(null); setNoteDraft('') }} disabled={savingNoteId === n._rowIndex}>Cancel</button>
+                          </div>
+                        </div>
+                      : <div className={styles.noteText}>{linkifyText(n.NoteText)}</div>}
                   </div>
                 ))
           }
