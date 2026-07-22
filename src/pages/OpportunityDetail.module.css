@@ -127,14 +127,21 @@
   border: 1px solid var(--green-600);
   border-radius: var(--radius-sm);
   color: var(--green-600);
+  cursor: pointer;
   display: flex;
+  font-family: var(--font);
   font-size: 11px;
   gap: 9px;
   grid-column: 1 / -1;
   min-height: 32px;
   padding: 6px 9px;
+  text-align: left;
+  transition: background .12s, border-color .12s, box-shadow .12s;
+  width: 100%;
 }
 
+.partnerCallout:hover { background: var(--green-100); border-color: var(--green-700); }
+.partnerCallout:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
 .partnerCalloutMeta { color: var(--gray-500); font-size: 10px; margin-left: auto; }
 
 /* ── Incumbent award history ── */
