@@ -300,6 +300,8 @@
   overflow-wrap: anywhere;
 }
 
+.noteEditor { margin-top: 4px; }
+
 .noteAdd {
   margin-top: 12px;
   display: flex;
