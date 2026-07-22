@@ -8,9 +8,11 @@ export function usePartners() {
   const [error, setError] = useState(null)
   const pendingPatches = useRef(new Map())
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const data = await getPartners()
       setPartners(data.map((partner) => {
@@ -21,14 +23,16 @@ export function usePartners() {
         return confirmed ? partner : { ...partner, ...patch }
       }))
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => onCacheRefresh(load), [load])
+  // The workbook's shared poll is still respected, but it must never turn a
+  // visible partner profile back into a loading state or interrupt editing.
+  useEffect(() => onCacheRefresh(() => load({ silent: true })), [load])
 
   const add = useCallback(async (data) => {
     await addPartner(data)
