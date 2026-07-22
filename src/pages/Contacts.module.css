@@ -111,6 +111,8 @@
   text-overflow: ellipsis;
 }
 
+.panelEyebrow { color: var(--gray-400); font-size: 9px; font-weight: 700; letter-spacing: .08em; margin-bottom: 3px; text-transform: uppercase; }
+
 .panelSub {
   font-size: 12px;
   color: var(--gray-400);
@@ -148,25 +150,38 @@
 }
 
 .panelSection {
+  background: var(--gray-50);
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 12px;
 }
 
 .panelSectionTitle {
+  align-items: center;
+  align-self: flex-start;
+  background: var(--blue-50);
+  border-left: 3px solid var(--blue-600);
+  color: var(--blue-800);
+  display: inline-flex;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--gray-400);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  padding: 4px 7px;
 }
 
 .panelField {
+  border-bottom: 0.5px solid var(--gray-200);
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 3px 0 8px;
 }
+.panelField:last-child { border-bottom: 0; padding-bottom: 0; }
 
 .panelLabel {
   font-size: 10px;
@@ -193,6 +208,7 @@
   transition: background 0.1s;
   min-width: 0;
 }
+.linkedOppRow { background: var(--surface-raised); }
 .linkedOppRow:hover { background: var(--gray-100); }
 .linkedOppRow > div:first-child { flex: 1; min-width: 0; }
 
@@ -219,7 +235,7 @@
   padding: 8px 10px;
 }
 
-.interactionForm { border: 0.5px solid var(--blue-200); border-radius: var(--radius-md); padding: 10px; background: var(--blue-50); }
+.interactionForm { border: 0.5px solid var(--blue-200); border-radius: var(--radius-md); padding: 10px; background: var(--surface-raised); box-shadow: inset 3px 0 var(--blue-600); }
 .interactionFormTitle { font-size: 13px; font-weight: 600; color: var(--gray-900); }
 .interactionHint { margin: 3px 0 10px; font-size: 11px; color: var(--gray-500); }
 .interactionError { margin: 8px 0 0; color: var(--red-600); font-size: 12px; }
