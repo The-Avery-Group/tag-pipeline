@@ -290,13 +290,18 @@ function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractE
   )
 }
 
-function IncumbentPartnerCallout({ match }) {
+function IncumbentPartnerCallout({ match, onOpenPartner }) {
   if (!match) return null
   return (
-    <div className={styles.partnerCallout}>
+    <button
+      type="button"
+      className={styles.partnerCallout}
+      onClick={onOpenPartner}
+      title={`Open ${match.partner['Partner Name']} in Partners`}
+    >
       <span><strong>Incumbent is a TAG partner:</strong> {match.partner['Partner Name']}</span>
-      <span className={styles.partnerCalloutMeta}>Matched by exact UEI</span>
-    </div>
+      <span className={styles.partnerCalloutMeta}>Matched by exact UEI · View partner</span>
+    </button>
   )
 }
 
@@ -1524,7 +1529,10 @@ export default function OpportunityDetail({ toast }) {
               addingNote={addingEightANote}
               noteAdded={eightANoteAdded}
             />
-            <IncumbentPartnerCallout match={incumbentPartnerMatch} />
+            <IncumbentPartnerCallout
+              match={incumbentPartnerMatch}
+              onOpenPartner={() => navigate(`/partners?partner=${encodeURIComponent(String(incumbentPartnerMatch.partner['UEI Number'] || '').trim())}`)}
+            />
             <IncumbentAwardHistoryCallout incumbentUEI={f(C.incumbentUEI)} />
           </div>
         </Section>
