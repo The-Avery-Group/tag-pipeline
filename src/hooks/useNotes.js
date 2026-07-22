@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getNotes, addNote, deleteNote } from '@/services/graphService'
+import { getNotes, addNote, updateNote, deleteNote } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 async function retryThrice(fn) {
@@ -20,6 +20,7 @@ export function useNotes(contractNumber) {
   // just-deleted note flicker back into view before the delete propagates
   // (same class of bug fixed in the other hooks' pendingPatches tracking).
   const pendingDeletes = useRef(new Set())
+  const pendingPatches = useRef(new Map())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -28,6 +29,13 @@ export function useNotes(contractNumber) {
       const all = await getNotes()
       const filtered = (contractNumber ? all.filter((n) => n.ContractNumber === contractNumber) : all)
         .filter((n) => !pendingDeletes.current.has(n._rowIndex))
+        .map((note) => {
+          const patch = pendingPatches.current.get(note._rowIndex)
+          if (!patch) return note
+          const confirmed = Object.keys(patch).every((key) => note[key] === patch[key])
+          if (confirmed) pendingPatches.current.delete(note._rowIndex)
+          return confirmed ? note : { ...note, ...patch }
+        })
       setNotes([...filtered].sort((a, b) => new Date(b.Date) - new Date(a.Date)))
     } catch (err) {
       setError(err.message)
@@ -81,5 +89,18 @@ export function useNotes(contractNumber) {
     }
   }, [load])
 
-  return { notes, loading, error, refresh: load, add, remove }
+  const update = useCallback(async (rowIndex, patch, original) => {
+    pendingPatches.current.set(rowIndex, patch)
+    setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? { ...note, ...patch } : note))
+    try {
+      await retryThrice(() => updateNote(rowIndex, patch))
+      await invalidateCache()
+    } catch (err) {
+      pendingPatches.current.delete(rowIndex)
+      setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? original : note))
+      throw err
+    }
+  }, [])
+
+  return { notes, loading, error, refresh: load, add, update, remove }
 }
