@@ -320,6 +320,23 @@ export const CONTACT_INTERACTION_HEADERS = [
   'InteractionID', 'ContactID', 'Interaction Date', 'Interaction Type', 'Notes', 'Follow-up Date', 'Logged By',
 ]
 
+// Keep this schema aligned with the PartnersTable headers in the workbook.
+// UEI Number is the unique partner identifier. Partner Name is display data.
+export const PARTNER_HEADERS = [
+  'Partner Name',
+  'UEI Number',
+  'Contact Information',
+  'NAICS Codes',
+  'Company Strengths',
+  'Capabilities',
+  'Agencies Worked with',
+  'Contracts Vehicles',
+  'Keywords',
+  'Link to website',
+  'Link to onedrive folder',
+  'Notes',
+]
+
 export const NOTES_HEADERS = [
   'NoteID', 'ContractNumber', 'Date', 'Author', 'NoteText',
 ]
@@ -603,6 +620,30 @@ export async function getNotes() {
 
 export async function getContacts() {
   return getSheetRows('ContactsTable')
+}
+
+export async function getPartners() {
+  return getSheetRows('PartnersTable')
+}
+
+async function partnerHeaders() {
+  headerCache.delete('PartnersTable')
+  const headers = await getTableHeaders('PartnersTable')
+  const missing = PARTNER_HEADERS.filter((header) => !headers.includes(header))
+  if (missing.length) throw new Error(`PartnersTable is missing: ${missing.join(', ')}`)
+  return headers
+}
+
+export async function addPartner(data) {
+  return appendRow('PartnersTable', data, await partnerHeaders())
+}
+
+export async function updatePartner(rowIndex, patch) {
+  return updateRow('PartnersTable', rowIndex, patch, await partnerHeaders())
+}
+
+export async function deletePartner(rowIndex) {
+  return deleteRow('PartnersTable', rowIndex)
 }
 
 const CONTACT_INTERACTIONS_TABLE = 'ContactInteractionsTable'
@@ -944,7 +985,17 @@ export async function addContactInteraction(data) {
   const contactId = String(data.ContactID || '').trim()
   if (!contactId) throw new Error('Contact ID is required')
   const id = `CI-${Date.now()}`
-  return appendRow(CONTACT_INTERACTIONS_TABLE, { ...data, InteractionID: id }, CONTACT_INTERACTION_HEADERS)
+  // This table is often created by hand. Read its live schema before writing
+  // so a harmless column reordering cannot make a log entry fail silently.
+  headerCache.delete(CONTACT_INTERACTIONS_TABLE)
+  const headers = await getTableHeaders(CONTACT_INTERACTIONS_TABLE)
+  const missing = CONTACT_INTERACTION_HEADERS.filter((header) => !headers.includes(header))
+  if (missing.length) {
+    throw new Error(`ContactInteractionsTable is missing: ${missing.join(', ')}`)
+  }
+  const interaction = { ...data, InteractionID: id }
+  await appendRow(CONTACT_INTERACTIONS_TABLE, interaction, headers)
+  return interaction
 }
 
 export async function updateContact(rowIndex, patch) {
