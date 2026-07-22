@@ -642,20 +642,31 @@ export async function getPartners() {
   })
 }
 
-async function partnerHeaders() {
+async function partnerSchema() {
   headerCache.delete('PartnersTable')
   const headers = await getTableHeaders('PartnersTable')
-  const missing = PARTNER_HEADERS.filter((header) => !headers.includes(header))
+  const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
+  const missing = PARTNER_HEADERS.filter((header) => !byNormalizedHeader.has(normalizeTableHeader(header)))
   if (missing.length) throw new Error(`PartnersTable is missing: ${missing.join(', ')}`)
-  return headers
+  return { headers, byNormalizedHeader }
+}
+
+function partnerValuesForWorkbook(values, schema) {
+  const canonicalValues = new Map(Object.entries(values || {}).map(([key, value]) => [normalizeTableHeader(key), value]))
+  return Object.fromEntries(schema.headers.map((header) => [
+    header,
+    canonicalValues.get(normalizeTableHeader(header)) ?? '',
+  ]))
 }
 
 export async function addPartner(data) {
-  return appendRow('PartnersTable', data, await partnerHeaders())
+  const schema = await partnerSchema()
+  return appendRow('PartnersTable', partnerValuesForWorkbook(data, schema), schema.headers)
 }
 
 export async function updatePartner(rowIndex, patch) {
-  return updateRow('PartnersTable', rowIndex, patch, await partnerHeaders())
+  const schema = await partnerSchema()
+  return updateRow('PartnersTable', rowIndex, partnerValuesForWorkbook(patch, schema), schema.headers)
 }
 
 export async function deletePartner(rowIndex) {
