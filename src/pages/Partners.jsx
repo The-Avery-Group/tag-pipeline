@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { usePartners } from '@/hooks/usePartners'
+import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { recordMatches } from '@/utils/searchHelpers'
 import styles from './Partners.module.css'
@@ -23,6 +25,10 @@ const FIELDS = [
 ]
 const EMPTY = () => Object.fromEntries(FIELDS.map(([key]) => [key, '']))
 const SECTIONS = [['identity', 'Identity'], ['contact', 'Contact and links'], ['market', 'Market profile'], ['capability', 'Capabilities and strengths'], ['notes', 'Notes']]
+const OPPORTUNITY_ID = 'Contract Number / Notice ID'
+const OPPORTUNITY_TITLE = 'Project Title / Description*'
+const OPPORTUNITY_PHASE = 'TAG Opportunity Phase'
+const OPPORTUNITY_INCUMBENT_UEI = 'Incumbent (Company UEI)'
 
 function safeUrl(value) {
   const url = String(value || '').trim()
@@ -40,6 +46,8 @@ function DetailField({ label, value, link }) {
 
 export default function Partners({ toast }) {
   const { partners, loading, error, refresh, add, update, remove } = usePartners()
+  const { pipeline } = usePipeline()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState(() => searchParams.get('search') || '')
   const [selected, setSelected] = useState(null)
@@ -50,6 +58,11 @@ export default function Partners({ toast }) {
   const deleteAction = useAsyncAction()
 
   const filtered = useMemo(() => partners.filter((partner) => recordMatches(partner, search)), [partners, search])
+  const matchedOpportunities = useMemo(() => {
+    const uei = String(selected?.['UEI Number'] || '').trim().toUpperCase()
+    if (!uei) return []
+    return pipeline.filter((opportunity) => String(opportunity[OPPORTUNITY_INCUMBENT_UEI] || '').trim().toUpperCase() === uei)
+  }, [pipeline, selected])
   const select = (partner) => { setSelected(partner); setEditing(false) }
   const startAdd = () => { setSelected(null); setForm(EMPTY()); setEditing(true) }
   const startEdit = () => { setForm({ ...EMPTY(), ...selected }); setEditing(true) }
@@ -114,6 +127,7 @@ export default function Partners({ toast }) {
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
             <div className={styles.profileSection}><h3>Notes</h3><DetailField label="Notes" value={selected.Notes} /></div>
+            <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities have this incumbent UEI.</p> : matchedOpportunities.map((opportunity) => <button type="button" key={opportunity._rowIndex || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}?row=${opportunity._rowIndex}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
           </div> : <div className={styles.emptyProfile}><div>◇</div><strong>Select a partner</strong><span>Choose one from the list to view its profile, or add a new partner.</span><button className="btn btn-primary" onClick={startAdd}>Add partner</button></div>}
         </section>
       </div>
