@@ -210,7 +210,19 @@
 }
 .linkedOppRow { background: var(--surface-raised); }
 .linkedOppRow:hover { background: var(--gray-100); }
-.linkedOppRow > div:first-child { flex: 1; min-width: 0; }
+.linkedOppOpen {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  flex: 1;
+  font-family: var(--font);
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+.linkedOppOpen:focus-visible { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
+.linkedOppOpen:hover .linkedOppTitle { color: var(--blue-700); text-decoration: underline; }
 
 .linkedOppTitle {
   font-size: 12px;
