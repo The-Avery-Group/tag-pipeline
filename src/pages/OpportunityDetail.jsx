@@ -1243,6 +1243,12 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
+  const openContactPanel = (contactRecord) => {
+    const contactId = String(contactRecord?.ContactID ?? contactRecord?._rowIndex ?? '').trim()
+    if (!contactId) return
+    navigate(`/contacts?contactId=${encodeURIComponent(contactId)}`)
+  }
+
   const handleTaskStatusChange = async (task, newStatus) => {
     setUpdatingTaskId(task.TaskID)
     try {
@@ -1578,18 +1584,17 @@ export default function OpportunityDetail({ toast }) {
           {linkedContacts.length > 0
             ? linkedContacts.map((c) => (
                 <div key={c.ContactID} className={styles.contactCard}>
-                  <div className={styles.contactAv}>
-                    {c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}
-                  </div>
-                  <div className={styles.contactInfo}>
-                    <div className={styles.contactName}>{c.Name}</div>
-                    <div className={styles.contactSub}>
-                      {c.Email
-                        ? <a href={`mailto:${c.Email}`} className="text-sm">{c.Email}</a>
-                        : c.Title || '—'}
-                    </div>
-                  </div>
+                  <button type="button" className={styles.contactOpen} onClick={() => openContactPanel(c)} title={`Open ${c.Name || 'contact'}`}>
+                    <span className={styles.contactAv}>
+                      {c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}
+                    </span>
+                    <span className={styles.contactInfo}>
+                      <span className={styles.contactName}>{c.Name}</span>
+                      <span className={styles.contactSub}>{c.Email || c.Title || '—'}</span>
+                    </span>
+                  </button>
                   <button
+                    type="button"
                     className="btn btn-ghost btn-icon"
                     title="Unlink contact"
                     onClick={() => handleUnlinkContact(c)}
@@ -1608,12 +1613,14 @@ export default function OpportunityDetail({ toast }) {
                 const isLinking = linkingContactId === key
                 return (
                   <div key={key} className={styles.contactCard}>
-                    <div className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
-                    <div className={styles.contactInfo}>
-                      <div className={styles.contactName}>{c.Name}</div>
-                      <div className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</div>
-                      <div className={styles.relatedContactReason}>{reason}</div>
-                    </div>
+                    <button type="button" className={styles.contactOpen} onClick={() => openContactPanel(c)} title={`Open ${c.Name || 'contact'}`}>
+                      <span className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>
+                      <span className={styles.contactInfo}>
+                        <span className={styles.contactName}>{c.Name}</span>
+                        <span className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</span>
+                        <span className={styles.relatedContactReason}>{reason}</span>
+                      </span>
+                    </button>
                     <button
                       type="button"
                       className="btn btn-primary text-sm"
@@ -1635,12 +1642,14 @@ export default function OpportunityDetail({ toast }) {
                 const isLinking = linkingContactId === key
                 return (
                   <div key={key} className={styles.contactCard}>
-                    <div className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</div>
-                    <div className={styles.contactInfo}>
-                      <div className={styles.contactName}>{c.Name}</div>
-                      <div className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</div>
-                      <div className={styles.relatedContactReason}>{reason}</div>
-                    </div>
+                    <button type="button" className={styles.contactOpen} onClick={() => openContactPanel(c)} title={`Open ${c.Name || 'contact'}`}>
+                      <span className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>
+                      <span className={styles.contactInfo}>
+                        <span className={styles.contactName}>{c.Name}</span>
+                        <span className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</span>
+                        <span className={styles.relatedContactReason}>{reason}</span>
+                      </span>
+                    </button>
                     <button
                       type="button"
                       className="btn btn-primary text-sm"
