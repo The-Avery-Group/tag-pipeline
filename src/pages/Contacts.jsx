@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useContacts } from '@/hooks/useContacts'
 import { useContactEngagement } from '@/hooks/useContactEngagement'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -43,6 +43,7 @@ export default function Contacts({ toast }) {
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
 
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
@@ -465,10 +466,15 @@ export default function Contacts({ toast }) {
                         ? <p className="text-sm text-muted">No linked opportunities.</p>
                         : linkedOpps.map((o) => (
                           <div key={o[C_CN]} className={styles.linkedOppRow}>
-                            <div>
+                            <button
+                              type="button"
+                              className={styles.linkedOppOpen}
+                              onClick={() => navigate(`/opportunities/${encodeURIComponent(o[C_CN])}`)}
+                              title={`Open ${o[C_TITLE] || o[C_CN]}`}
+                            >
                               <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
-                              <div className={styles.linkedOppMeta}>{o[C_CN]} · {o[C_PHASE]}</div>
-                            </div>
+                              <div className={styles.linkedOppMeta}>{o[C_CN]} · {o[C_PHASE]} · View opportunity</div>
+                            </button>
                           </div>
                         ))
                       }
@@ -492,11 +498,17 @@ export default function Contacts({ toast }) {
                       <div className={styles.panelSectionTitle}>Linked opportunities</div>
                       {linkedOpps.map((o) => (
                         <div key={o[C_CN]} className={styles.linkedOppRow}>
-                          <div style={{ flex: 1 }}>
+                          <button
+                            type="button"
+                            className={styles.linkedOppOpen}
+                            onClick={() => navigate(`/opportunities/${encodeURIComponent(o[C_CN])}`)}
+                            title={`Open ${o[C_TITLE] || o[C_CN]}`}
+                          >
                             <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
                             <div className={styles.linkedOppMeta}>{o[C_CN]}</div>
-                          </div>
+                          </button>
                           <button
+                            type="button"
                             className="btn btn-ghost btn-icon"
                             title="Unlink"
                             onClick={() => handleUnlinkOpp(o)}
