@@ -519,34 +519,24 @@ export async function setNotifLog(key, dateStr) {
   try {
     const headerData = await graphFetch(`/tables/${VALIDATION_TABLE}/columns`)
     const headers = headerData.value.map((c) => c.name)
-    const keyColIdx     = headers.indexOf('Key')
-    const lastSentColIdx = headers.indexOf('LastSent')
-    if (keyColIdx === -1 || lastSentColIdx === -1) return  // columns not set up yet
+    if (!headers.includes('Key') || !headers.includes('LastSent')) return false
 
     const rows = await getSheetRows(VALIDATION_TABLE)
-    const rowIdx = rows.findIndex((r) => String(r['Key'] || '').trim() === key)
-    if (rowIdx === -1) {
-      // Key row doesn't exist yet — find first blank Key cell and write there
-      const blankIdx = rows.findIndex((r) => !r['Key'] || String(r['Key']).trim() === '')
-      const targetRow = (blankIdx !== -1 ? blankIdx : rows.length) + 2  // +2: 1-based + header
-      const keyLetter      = colIndexToLetter(keyColIdx)
-      const lastSentLetter = colIndexToLetter(lastSentColIdx)
-      await graphFetch(
-        `/worksheets/${encodeURIComponent(VALIDATION_SHEET)}/range(address='${keyLetter}${targetRow}:${lastSentLetter}${targetRow}')`,
-        { method: 'PATCH', body: JSON.stringify({ values: [[key, dateStr]] }) }
-      )
+    const existing = rows.find((row) => String(row['Key'] || '').trim() === key)
+    if (existing) {
+      await updateRow(VALIDATION_TABLE, existing._rowIndex, { Key: key, LastSent: dateStr }, headers)
     } else {
-      // Update the existing LastSent cell for this key
-      const targetRow = rowIdx + 2
-      const lastSentLetter = colIndexToLetter(lastSentColIdx)
-      await graphFetch(
-        `/worksheets/${encodeURIComponent(VALIDATION_SHEET)}/range(address='${lastSentLetter}${targetRow}')`,
-        { method: 'PATCH', body: JSON.stringify({ values: [[dateStr]] }) }
-      )
+      // Reuse an empty table row if one exists. Otherwise append a row through
+      // the Table API so the log remains visible to future app sessions.
+      const blank = rows.find((row) => !String(row['Key'] || '').trim())
+      if (blank) await updateRow(VALIDATION_TABLE, blank._rowIndex, { Key: key, LastSent: dateStr }, headers)
+      else await appendRow(VALIDATION_TABLE, { Key: key, LastSent: dateStr }, headers)
     }
     invalidate(VALIDATION_TABLE)
+    return true
   } catch (err) {
     console.warn('[NotifLog] Failed to write:', err.message)
+    return false
   }
 }
 
