@@ -188,6 +188,23 @@
 }
 .contactCard:last-of-type { border-bottom: none; }
 
+.contactOpen {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font-family: var(--font);
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+.contactOpen:hover .contactName { color: var(--blue-700); text-decoration: underline; }
+.contactOpen:focus-visible { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
+
 .relatedContacts {
   border-top: 0.5px solid var(--gray-200);
   margin-top: 8px;
@@ -209,6 +226,7 @@
 
 .relatedContactReason {
   color: var(--blue-700);
+  display: block;
   font-size: 10px;
   line-height: 1.35;
   margin-top: 3px;
@@ -234,12 +252,14 @@
 }
 
 .contactName {
+  display: block;
   font-size: 13px;
   font-weight: 500;
   color: var(--gray-900);
 }
 
 .contactSub {
+  display: block;
   font-size: 11px;
   color: var(--gray-400);
   margin-top: 1px;
@@ -307,7 +327,8 @@
   overflow-wrap: anywhere;
 }
 
-.noteEditor { margin-top: 4px; }
+.noteEditor { margin-top: 4px; width: 100%; }
+.noteEditor textarea { box-sizing: border-box; display: block; width: 100%; }
 
 .noteAdd {
   margin-top: 12px;
