@@ -143,9 +143,10 @@ export function useAgingNotifications() {
           return daysAgo(o['Submission Date (Response Date)*']) >= 21
         })
 
-        if (rfiDue.length > 0) {
+        if (rfiDue.length > 0 && !localAlreadySentToday('rfi_followup')) {
           const sent = await notifyRFIFollowUp(rfiDue)
           if (sent) {
+            markLocalSentToday('rfi_followup')
             // Write the notification date only after Teams accepted the card.
             await Promise.all(
               rfiDue.map((o) =>
@@ -169,11 +170,12 @@ export function useAgingNotifications() {
         for (const opportunity of responseReminders) {
           const remaining = daysUntil(opportunity['Submission Date (Response Date)*'])
           const key = responseReminderLogKey(opportunity, remaining)
-          if (log[key]) continue
+          if (log[key] || localAlreadySentToday(key)) continue
           const sent = await notifyRFIResponseReminder(opportunity, remaining)
           if (!sent) continue
           await setNotifLog(key, today)
           log[key] = today
+          markLocalSentToday(key)
         }
 
         // ── Contact follow-up ─────────────────────────────────────────
@@ -201,7 +203,7 @@ export function useAgingNotifications() {
               if (!hasValidInteractionDate(contact.lastInteraction)) return false
               if (daysAgo(contact.lastInteraction) < 30) return false
               const lastSent = log[contactStaleLogKey(contact)]
-              return !lastSent || daysAgo(lastSent) >= 14
+              return !localAlreadySentToday(contactStaleLogKey(contact)) && (!lastSent || daysAgo(lastSent) >= 14)
             })
 
           const contactsForNotification = staleContacts.slice(0, 5)
@@ -212,6 +214,7 @@ export function useAgingNotifications() {
                 const key = contactStaleLogKey(contact)
                 await setNotifLog(key, today)
                 log[key] = today
+                markLocalSentToday(key)
               }))
             }
           }
