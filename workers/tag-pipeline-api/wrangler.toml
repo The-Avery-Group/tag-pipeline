@@ -15,7 +15,9 @@ compatibility_flags = ["nodejs_compat"]
 #   MS_TENANT_ID        — Azure AD tenant ID (already set)
 #   MS_CLIENT_ID        — App registration client ID (already set)
 #   MS_CLIENT_SECRET    — App registration client secret (already set)
-#   Note: DRIVE_ID is hardcoded in sam.js (matches frontend graphService.js constant)
+#   CAPABILITIES_FILE_ID — Optional Graph driveItem ID for the AI capabilities DOCX
+#   DRIVE_ID             — Optional only when that DOCX is in a different document library;
+#                          the workbook library is the default.
 
 # KV namespace for caching (AI conversation history + SAM key status)
 [[kv_namespaces]]
@@ -27,10 +29,13 @@ ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 
 [triggers]
-# SAM change checks run at 00:00 and 12:00 UTC. RFI follow-up batches run
-# hourly only on Monday, Wednesday, and Friday, allowing each RFI to be
-# checked three times per week without daily no-op KV writes.
-crons = ["0 0,12 * * *", "0 * * * 1,3,5"]
+# All cron schedules are UTC. 13:00 UTC is 2:00 PM Nigeria time (WAT).
+# - SAM change checks: 00:00 and 12:00 UTC every day
+# - Autonomous SAM opportunity pulls: weekdays at 2:00 PM WAT
+# - RFI follow-up monitor: Monday, Wednesday, Friday at 2:00 PM WAT
+# - Teams reminders: every day at 2:01 PM WAT, so weekend RFI response
+#   reminders remain active while the other reminder categories defer to Monday.
+crons = ["0 0,12 * * *", "0 13 * * *", "1 13 * * *"]
 
 [observability]
 enabled = true
