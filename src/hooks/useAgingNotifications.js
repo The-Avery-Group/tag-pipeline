@@ -10,6 +10,7 @@ import {
   notifyRFIFollowUp,
   notifyRFIResponseReminder,
   notifyStaleContacts,
+  scheduledNotificationsArePrimary,
 } from '@/services/notifyService'
 
 const TODAY = () => {
@@ -92,6 +93,11 @@ export function useAgingNotifications() {
       if (checking.current) return
       checking.current = true
       try {
+        // Once the Worker has the app-only SharePoint permission it owns the
+        // timed reminder cycle. Keeping this browser path as a fallback means
+        // users still receive reminders if that scheduled integration reports
+        // a failure, without duplicate cards while it is healthy.
+        if (await scheduledNotificationsArePrimary()) return
         const today = TODAY()
         const overdueLocal = localAlreadySentToday('overdue')
         const dueSoonLocal = localAlreadySentToday('duesoon')
