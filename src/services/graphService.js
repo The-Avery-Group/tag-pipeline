@@ -32,9 +32,18 @@ function invalidate(sheet) {
 /** Clear the entire cache — called by dataCache before a full re-fetch. */
 export function invalidateAll() {
   cache.clear()
-  _resolvedBase = null  // also re-resolve drive path in case file moved
   notificationRecipientsUnavailable = false
   contactInteractionsUnavailable = false
+}
+
+/** Invalidate only the tables changed by a successful workbook mutation. */
+export function invalidateTables(tableNames = []) {
+  tableNames.forEach((tableName) => invalidate(tableName))
+}
+
+/** Tables already loaded in this browser session. */
+export function getCachedTableNames() {
+  return [...cache.keys()]
 }
 
 async function getTableHeaders(tableName) {
@@ -92,6 +101,26 @@ async function graphFetch(path, options = {}) {
       : `Graph API error: ${res.status}`
     throw new Error(err?.error?.message || fallback)
   }
+}
+
+/**
+ * A lightweight workbook version probe. A change to the SharePoint drive item
+ * means at least one table may have changed, without downloading every table
+ * merely to discover that nothing changed.
+ */
+export async function getWorkbookVersion() {
+  if (!ITEM_ID) throw new Error('VITE_ONEDRIVE_FILE_ID not set')
+  const token = await getToken()
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${ITEM_ID}?$select=eTag,lastModifiedDateTime`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  )
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body?.error?.message || `Could not check workbook changes (${response.status})`)
+  }
+  const item = await response.json()
+  return { eTag: String(item.eTag || ''), lastModifiedDateTime: item.lastModifiedDateTime || '' }
 }
 
 // ── Generic sheet helpers ──────────────────────────────────────────────────
@@ -234,11 +263,32 @@ export async function appendRow(tableName, values, headers) {
  * patch: object with only the fields to update.
  */
 export async function updateRow(tableName, rowIndex, patch, headers) {
-  const existing = (await getSheetRows(tableName)).find(
-    (r) => r._rowIndex === rowIndex
-  )
-  if (!existing) throw new Error(`Row ${rowIndex} not found in ${tableName}`)
-  const merged = { ...existing, ...patch }
+  // Never rebuild an Excel row from a stale browser cache. A direct workbook
+  // edit can happen while this app is open; read the current row immediately
+  // before writing so unrelated changes are retained.
+  const cached = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+  const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${rowIndex})`, { retryReads: true })
+  const values = response?.values?.[0]
+  if (!values) throw new Error(`Row ${rowIndex} not found in ${tableName}`)
+  const current = { _rowIndex: rowIndex }
+  headers.forEach((header, index) => {
+    current[header] = DATE_COLUMNS.has(header) ? excelDateToISO(values[index]) : values[index]
+  })
+
+  // A table row index can move when someone edits the workbook directly.
+  // Refuse to write if the record at that index is no longer the record the
+  // user started editing, rather than silently changing a different record.
+  const identity = identityForTableRow(tableName, cached)
+  if (identity && identity !== identityForTableRow(tableName, current)) {
+    throw new Error('This record changed position in the workbook. Refresh and review it before saving.')
+  }
+
+  const conflictedFields = Object.keys(patch).filter((field) => cached && cached[field] !== current[field])
+  if (conflictedFields.length) {
+    throw new Error(`This record was changed in Excel (${conflictedFields.join(', ')}). Refresh and review it before saving.`)
+  }
+
+  const merged = { ...current, ...patch }
   const row = headers.map((h) => {
     const val = merged[h] ?? ''
     return DATE_COLUMNS.has(h) ? isoToExcelSerial(val) : val
@@ -248,6 +298,21 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
     body: JSON.stringify({ values: [row] }),
   })
   invalidate(tableName)
+}
+
+function identityForTableRow(tableName, row) {
+  if (!row) return ''
+  const identifiers = {
+    PipelineTable: 'Contract Number / Notice ID',
+    TasksTable: 'TaskID',
+    NotesTable: 'NoteID',
+    ContactsTable: 'ContactID',
+    PartnersTable: 'UEI Number',
+    ContactInteractionsTable: 'InteractionID',
+    NewOpportunitiesTable: 'Notice ID',
+  }
+  const key = identifiers[tableName]
+  return key ? String(row[key] || '').trim() : ''
 }
 
 /**
@@ -420,8 +485,7 @@ const VALIDATION_SHEET = 'Data Validation'
  */
 export async function getValidationLists() {
   const rows = await getSheetRows(VALIDATION_TABLE)
-  const headerData = await graphFetch(`/tables/${VALIDATION_TABLE}/columns`)
-  const headers = headerData.value.map((c) => c.name)
+  const headers = await getTableHeaders(VALIDATION_TABLE)
   const lists = {}
   headers.forEach((h) => {
     lists[h] = rows
