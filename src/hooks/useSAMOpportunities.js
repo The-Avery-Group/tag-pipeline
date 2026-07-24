@@ -3,12 +3,11 @@ import {
   getSAMOpportunities, updateSAMOpportunity,
   getContacts, addContact, addOpportunity,
   getSAMNAICS, getSAMSettings,
-  getToken,
 } from '@/services/graphService'
 import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
 import { notifyNewOpportunity } from '@/services/notifyService'
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
 // How often to poll /sam/run-status while a pull is actively running.
 const POLL_MS = 3000
@@ -84,7 +83,7 @@ async function refreshSharedPullProgress() {
     // succeeds or fails.
     if (status?.status === 'success' || status?.status === 'error') {
       stopSharedPullPolling()
-      await invalidateCache()
+      await invalidateCache(['NewOpportunitiesTable'])
     }
   } finally {
     _sharedPollInFlight = false
@@ -119,7 +118,7 @@ function parsePOC(pocStr) {
 export async function checkSAMKeyExpired() {
   if (!WORKER_URL) return false
   try {
-    const res = await fetch(`${WORKER_URL}/sam/key-status`)
+    const res = await workerFetch('/sam/key-status')
     if (!res.ok) return false
     return (await res.json()).expired === true
   } catch { return false }
@@ -128,7 +127,7 @@ export async function checkSAMKeyExpired() {
 export async function getSAMRunStatus() {
   if (!WORKER_URL) return null
   try {
-    const res = await fetch(`${WORKER_URL}/sam/run-status`)
+    const res = await workerFetch('/sam/run-status')
     if (!res.ok) return null
     return res.json()
   } catch { return null }
@@ -218,7 +217,9 @@ export function useSAMOpportunities() {
   }, [])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => onCacheRefresh(() => load({ keepVisible: true })), [load])
+  useEffect(() => onCacheRefresh((tables) => {
+    if (tables?.includes('NewOpportunitiesTable')) load({ keepVisible: true })
+  }), [load])
 
   // ── Contact lookup or create ─────────────────────────────────────────
   const resolveContact = useCallback(async (poc, agency, department) => {
@@ -263,7 +264,7 @@ export function useSAMOpportunities() {
   const debouncedInvalidate = useCallback(() => {
     if (invalidateRef.current) clearTimeout(invalidateRef.current)
     invalidateRef.current = setTimeout(() => {
-      invalidateCache().catch(() => {})
+      invalidateCache(['NewOpportunitiesTable']).catch(() => {})
       invalidateRef.current = null
     }, 800)
   }, [])
@@ -330,9 +331,6 @@ export function useSAMOpportunities() {
   // force=true bypasses the 12h throttle (used by Settings page force pull)
   const triggerPull = useCallback(async ({ force = false, resumeCursor = null, source = 'opportunities' } = {}) => {
     if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
-    const secret = import.meta.env.VITE_SAM_TRIGGER_SECRET
-    if (!secret) throw new Error('VITE_SAM_TRIGGER_SECRET not set')
-
     setSharedPullOrigin({
       source: resumeCursor ? 'recovery' : source,
       startedAt: Date.now(),
@@ -345,23 +343,16 @@ export function useSAMOpportunities() {
     })
 
     try {
-      // Get the user's current MSAL token.
-      const token = await getToken()
-
       // Read SAM config from the workbook. The user has delegated access.
       const [naicsCodes, settings] = await Promise.all([getSAMNAICS(), getSAMSettings()])
 
       if (!naicsCodes.length) throw new Error('No NAICS codes found in SAMNAICSTable')
       if (!resumeCursor) zeroWritePartialsRef.current.clear()
 
-      const res = await fetch(`${WORKER_URL}/sam/trigger`, {
+      const res = await workerFetch('/sam/trigger', {
         method: 'POST',
-        headers: {
-          'Content-Type':    'application/json',
-          'X-Trigger-Secret': secret,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token,
           config: {
             naicsCodes,
             skipDays:   settings.skipDays,
