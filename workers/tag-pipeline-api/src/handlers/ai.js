@@ -369,7 +369,7 @@ function splitLongCapabilityText(text, maximum = CAP_CHUNK_MAX_CHARS) {
   return chunks
 }
 
-function capabilityChunks(text) {
+export function capabilityChunks(text) {
   const paragraphs = String(text || '')
     .split(/\n\s*\n|\r?\n/)
     .map((paragraph) => paragraph.trim())
@@ -394,7 +394,7 @@ function capabilityChunks(text) {
   return chunks
 }
 
-function retrieveCapabilityExcerpts(text, query) {
+export function retrieveCapabilityExcerpts(text, query) {
   const chunks = capabilityChunks(text)
   const terms = retrievalTerms(query)
   if (!chunks.length || !terms.length) return []
