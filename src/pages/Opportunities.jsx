@@ -488,6 +488,7 @@ export default function Opportunities({ toast }) {
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
   const [pullMessage,   setPullMessage]   = useState(null)
+  const pullProgressPercentRef = useRef(0)
   const lastAutomaticSAMCheck = useRef('')
 
   const handleCheckSAMChanges = async () => {
@@ -688,9 +689,15 @@ export default function Opportunities({ toast }) {
       ? `Fetching from SAM.gov… (${naicsProcessed}/${naicsTotal} NAICS codes)`
       : 'Fetching from SAM.gov…'
   })()
-  const pullProgressPercent = pullProgress?.naicsTotal
+  const calculatedPullProgressPercent = pullProgress?.naicsTotal
     ? Math.min(100, Math.round(((pullProgress.naicsProcessed || 0) / pullProgress.naicsTotal) * 100))
     : pullProgress?.phase === 'writing' ? 82 : 18
+  // A bounded Worker pull may move from a completed batch into a short
+  // "preparing" state for the next batch. Keep the visible bar monotonic for
+  // the complete run instead of making it jump back to the initial position.
+  if (isPulling) pullProgressPercentRef.current = Math.max(pullProgressPercentRef.current, calculatedPullProgressPercent)
+  else pullProgressPercentRef.current = 0
+  const pullProgressPercent = pullProgressPercentRef.current
   const samCheckPercent = samCheckProgress?.total
     ? Math.min(100, Math.round(((samCheckProgress.checked || 0) / samCheckProgress.total) * 100))
     : 12
@@ -788,7 +795,7 @@ export default function Opportunities({ toast }) {
   // <NewTab /> gets a new component identity on every parent render and makes
   // React unmount the scroll container, sending users back to the top.
   const renderNewTab = () => (
-    <div>
+    <div className={styles.newTab}>
       {samKeyExpired && (
         <div style={{
           background: 'var(--amber-50)', border: '0.5px solid var(--amber-600)',
@@ -870,8 +877,8 @@ export default function Opportunities({ toast }) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }} onClick={() => setShowSyncDetails((value) => !value)}>
-              Sync details {showSyncDetails ? '⌃' : '⌄'}
+            <button className={`btn text-xs ${showSyncDetails ? styles.syncDetailsActive : styles.syncDetailsButton}`} style={{ padding: '3px 10px' }} onClick={() => setShowSyncDetails((value) => !value)}>
+              Sync details
             </button>
             <button className="btn text-xs" style={{ padding: '3px 10px' }} onClick={() => {
               setSelectionMode((value) => !value)
@@ -880,15 +887,7 @@ export default function Opportunities({ toast }) {
               {selectionMode ? 'Cancel' : 'Select'}
             </button>
           </div>
-          {isPulling && pullProgressText
-            ? (
-              <span className="text-xs" style={{ color: 'var(--blue-600)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className={styles.spinnerDot} aria-hidden="true" />
-                {pullProgressText}
-              </span>
-            )
-            : (
-              <span className="text-xs text-muted">
+          <span className="text-xs text-muted">
                 {samRunStatus?.success === true && (
                   <>
                     {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
@@ -914,10 +913,8 @@ export default function Opportunities({ toast }) {
                   </span>
                 )}
                 {samRunStatus?.success == null && 'Not yet pulled'}
-              </span>
-            )
-          }
-          {pullMessage && (
+          </span>
+          {pullMessage && !isPulling && (
             <span style={{ fontSize: 11, color: pullMessage.type === 'error' ? 'var(--red-600)' : pullMessage.type === 'success' ? 'var(--green-600)' : 'var(--gray-600)' }}>
               {pullMessage.text}
             </span>
@@ -943,7 +940,7 @@ export default function Opportunities({ toast }) {
           </div>
         </div>
       )}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         {samLoading
           ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
           : visibleSAMOpps.length === 0
@@ -964,7 +961,7 @@ export default function Opportunities({ toast }) {
               <div
                 ref={tableScrollRef}
                 onScroll={(event) => { savedScrollTop.current = event.currentTarget.scrollTop }}
-                style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - var(--topbar-height) - 100px)' }}
+                style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, minHeight: 0 }}
               >
                 <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
@@ -1308,7 +1305,7 @@ export default function Opportunities({ toast }) {
         onNew={() => setShowAdd(true)}
         onFilter={() => setShowFilter((v) => !v)}
       />
-      <div className="page-body">
+      <div className={`page-body ${activeTab === 'New' ? styles.newPageBody : ''}`}>
 
         {/* ── Tabs ── */}
         <div className={styles.tabRow}>
