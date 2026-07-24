@@ -9,7 +9,7 @@
  */
 
 import { handleNotify }             from './handlers/notify.js'
-import { getCapabilitiesStatus, handleAIChat } from './handlers/ai.js'
+import { getCapabilitiesStatus, handleAIChat, manuallyRefreshCapabilities, refreshCapabilitiesIfChanged } from './handlers/ai.js'
 import { handleSAM, runScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
@@ -85,6 +85,17 @@ export default {
           notifications: await getNotificationMonitorStatus(env),
         })
 
+      } else if (path === '/integrations/capabilities/refresh' && req.method === 'POST') {
+        const result = await manuallyRefreshCapabilities(env)
+        response = json({
+          ok: result.ok,
+          changed: Boolean(result.changed),
+          checked: Boolean(result.checked),
+          throttled: Boolean(result.throttled),
+          error: result.error || null,
+          capabilities: await getCapabilitiesStatus(env),
+        }, result.ok ? 200 : 502)
+
       } else if (path === '/sam/key-status' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
 
@@ -126,8 +137,8 @@ export default {
     return cors(env, req, response)
   },
 
-  // All scheduled times are UTC. Nigeria is UTC+1 year-round: 13:00 UTC is
-  // 2 PM WAT. SAM pulls run on weekdays; RFI follow-up checks remain three
+  // All scheduled times are UTC. Nigeria is UTC+1 year-round. SAM pulls run
+  // at 12:00 UTC (1 PM WAT) on weekdays; RFI follow-up checks remain three
   // times weekly; response-deadline reminders may still run on weekends.
   async scheduled(controller, env, ctx) {
     if (controller.cron === '0 0,12 * * *') {
@@ -136,14 +147,21 @@ export default {
         const cursor = run?.nextCursor ?? 0
         return runSAMMonitorCheck(env, cursor, { scheduled: true })
       })())
+
+      // The noon UTC SAM-change pass also starts the independent weekday
+      // pull/follow-up work, so the two jobs share one cron trigger.
+      if (new Date(controller.scheduledTime).getUTCHours() === 12) {
+        const weekday = new Date(controller.scheduledTime).getUTCDay()
+        if (weekday >= 1 && weekday <= 5) ctx.waitUntil(runScheduledSAMPull(env))
+        if ([1, 3, 5].includes(weekday)) ctx.waitUntil(runRFIFollowUpMonitor(env))
+      }
     }
-    if (controller.cron === '0 13 * * *') {
-      const weekday = new Date(controller.scheduledTime).getUTCDay()
-      if (weekday >= 1 && weekday <= 5) ctx.waitUntil(runScheduledSAMPull(env))
-      if ([1, 3, 5].includes(weekday)) ctx.waitUntil(runRFIFollowUpMonitor(env))
+    // One minute after the workload-heavy SAM pull, compare the capabilities
+    // document eTag. It downloads the DOCX only after a source change.
+    if (controller.cron === '1 12 * * *') {
+      ctx.waitUntil(refreshCapabilitiesIfChanged(env))
     }
-    // One minute after the workload-heavy SAM pull, invoke the independent
-    // notification job. This stays within the three-trigger free-plan limit.
+    // Teams reminders retain their dedicated 2:01 PM WAT run.
     if (controller.cron === '1 13 * * *') {
       ctx.waitUntil(runScheduledNotifications(env))
     }
