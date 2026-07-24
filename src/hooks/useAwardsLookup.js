@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
 /**
  * useAwardsLookup
@@ -56,7 +55,7 @@ export function useAwardsLookup({ piid: autoPiid, auto = false } = {}) {
       setError(null)
       try {
 
-        const res = await fetch(`${WORKER_URL}/awards/lookup?${params}`, { signal: controller.signal })
+        const res = await workerFetch(`/awards/lookup?${params}`, { signal: controller.signal })
         const data = await res.json()
 
         if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
