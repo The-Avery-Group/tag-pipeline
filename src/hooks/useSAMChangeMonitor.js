@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 const DAILY_MS = 24 * 60 * 60 * 1000
 
 function eligible(opportunity) {
@@ -34,7 +33,7 @@ export function useSAMChangeMonitor(opportunities) {
 
   const loadStatus = useCallback(async () => {
     if (!WORKER_URL) return null
-    const response = await fetch(`${WORKER_URL}/sam/changes/status`)
+    const response = await workerFetch('/sam/changes/status')
     if (!response.ok) throw new Error('Could not load SAM change status')
     const data = await response.json()
     const next = {}
@@ -46,7 +45,7 @@ export function useSAMChangeMonitor(opportunities) {
 
   const synchronize = useCallback(async () => {
     if (!WORKER_URL || monitored.length === 0) return
-    const response = await fetch(`${WORKER_URL}/sam/changes/sync`, {
+    const response = await workerFetch('/sam/changes/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ opportunities: monitored.map(payload) }),
     })
@@ -60,7 +59,7 @@ export function useSAMChangeMonitor(opportunities) {
       await synchronize()
       let cursor = 0
       do {
-        const response = await fetch(`${WORKER_URL}/sam/changes/check`, {
+        const response = await workerFetch('/sam/changes/check', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cursor }),
         })
         if (!response.ok) throw new Error('SAM change check failed')
@@ -83,7 +82,7 @@ export function useSAMChangeMonitor(opportunities) {
 
   const markReviewed = useCallback(async (opportunity) => {
     if (!WORKER_URL) return
-    const response = await fetch(`${WORKER_URL}/sam/changes/review`, {
+    const response = await workerFetch('/sam/changes/review', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(opportunity)),
     })
     if (!response.ok) throw new Error('Could not mark this SAM update as reviewed')
