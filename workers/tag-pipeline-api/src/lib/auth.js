@@ -24,8 +24,15 @@ function decodeSegment(segment) {
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
-function expectedIssuer(tenantId) {
-  return `https://login.microsoftonline.com/${tenantId}/v2.0`
+function validIssuer(issuer, tenantId) {
+  // Microsoft Graph can issue a v1-format access token even when MSAL uses
+  // the v2 authorization endpoint. Both forms are Microsoft issuers for the
+  // same tenant. The tenant claim remains the organization boundary.
+  return new Set([
+    `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    `https://login.microsoftonline.com/${tenantId}/`,
+    `https://sts.windows.net/${tenantId}/`,
+  ]).has(String(issuer || ''))
 }
 
 function readBearerToken(req) {
@@ -83,8 +90,11 @@ export async function verifyEntraRequest(req, env) {
   if (header.alg !== 'RS256' || !header.kid) throw new AuthError('Unsupported Microsoft sign-in token', 401, 'invalid_token')
 
   const now = Math.floor(Date.now() / 1000)
-  if (claims.tid !== env.MS_TENANT_ID || claims.iss !== expectedIssuer(env.MS_TENANT_ID)) {
+  if (claims.tid !== env.MS_TENANT_ID) {
     throw new AuthError('This sign-in token is not from the configured organization', 403, 'wrong_tenant')
+  }
+  if (!validIssuer(claims.iss, env.MS_TENANT_ID)) {
+    throw new AuthError('This sign-in token has an unrecognized Microsoft issuer', 403, 'wrong_issuer')
   }
   if (!validAudience(claims.aud)) throw new AuthError('This sign-in token is not valid for Microsoft Graph', 403, 'wrong_audience')
   if (!Number.isFinite(claims.exp) || claims.exp < now - CLOCK_SKEW_SECONDS || (claims.nbf && claims.nbf > now + CLOCK_SKEW_SECONDS)) {
