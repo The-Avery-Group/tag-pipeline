@@ -16,6 +16,7 @@ import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import RfiFollowUpPanel from '@/components/Opportunity/RfiFollowUpPanel'
 import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
 import OpportunityField from '@/components/Opportunity/OpportunityField'
+import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
@@ -1558,79 +1559,28 @@ export default function OpportunityDetail({ toast }) {
         </Modal>
       )}
 
-      {pendingRfiSave && (
-        <Modal
-          title="Update activity phase?"
-          onClose={() => setPendingRfiSave(null)}
-          footer={
-            <>
-              <button className="btn" onClick={() => {
-                const pending = pendingRfiSave
-                setPendingRfiSave(null)
-                prepareOpportunitySave(pending)
-              }}>
-                Not now
-              </button>
-              <button className="btn btn-primary" onClick={() => {
-                const pending = { ...pendingRfiSave, [C.actPhase]: 'Submitted RFI' }
-                setPendingRfiSave(null)
-                prepareOpportunitySave(pending)
-              }}>
-                Set to Submitted RFI
-              </button>
-            </>
-          }
-        >
-          <p className="text-sm">An RFI submission date was added. Update this opportunity's Activity Phase to Submitted RFI?</p>
-        </Modal>
-      )}
-
-      {pendingRenameSave && renamePreview && (
-        <Modal
-          title="Confirm title or identifier change"
-          onClose={() => {
-            if (saving) return
-            setPendingRenameSave(null)
-            setRenamePreview(null)
-          }}
-          footer={
-            <>
-              <button
-                className="btn"
-                disabled={saving}
-                onClick={() => {
-                  setPendingRenameSave(null)
-                  setRenamePreview(null)
-                }}
-              >
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={confirmRename} disabled={saving}>
-                {saving ? (renameProgress || 'Saving…') : 'Confirm and update linked records'}
-              </button>
-            </>
-          }
-        >
-          <p className="text-sm" style={{ marginTop: 0 }}>
-            This change updates the opportunity and its structured links across the pipeline.
-          </p>
-          <ul className="text-sm" style={{ margin: '10px 0', paddingLeft: 20, lineHeight: 1.7 }}>
-            {renamePreview.identifierChanged && (
-              <li>Identifier: <strong>{opp[C.contractNum]}</strong> to <strong>{pendingRenameSave[C.contractNum]}</strong></li>
-            )}
-            {renamePreview.titleChanged && (
-              <li>Title: <strong>{opp[C.title]}</strong> to <strong>{pendingRenameSave[C.title]}</strong></li>
-            )}
-            <li>{renamePreview.taskCount} linked task{renamePreview.taskCount === 1 ? '' : 's'} will be updated</li>
-            <li>{renamePreview.noteCount} linked note{renamePreview.noteCount === 1 ? '' : 's'} will be updated</li>
-            <li>{renamePreview.relationshipCount} related-opportunity link{renamePreview.relationshipCount === 1 ? '' : 's'} will be updated</li>
-          </ul>
-          <p className="text-sm text-muted" style={{ marginBottom: 0 }}>
-            Free-text task descriptions and notes, contacts, and Expiring Contract Number will not be changed. If a linked write fails, completed linked changes are rolled back where possible and you will be told to review the affected records.
-          </p>
-          {saving && renameProgress && <p className="text-sm" style={{ marginBottom: 0 }}>{renameProgress}</p>}
-        </Modal>
-      )}
+      <RfiActivityPhaseModal
+        pendingSave={pendingRfiSave}
+        activityPhaseColumn={C.actPhase}
+        onClose={() => setPendingRfiSave(null)}
+        onSave={(pending) => {
+          setPendingRfiSave(null)
+          prepareOpportunitySave(pending)
+        }}
+      />
+      <OpportunityRenameModal
+        pendingSave={pendingRenameSave}
+        preview={renamePreview}
+        opportunity={opp}
+        columns={{ contractNumber: C.contractNum, title: C.title }}
+        saving={saving}
+        progress={renameProgress}
+        onClose={() => {
+          setPendingRenameSave(null)
+          setRenamePreview(null)
+        }}
+        onConfirm={confirmRename}
+      />
 
       {/* ── Delete confirmation modal ── */}
       {confirmDelete && (
