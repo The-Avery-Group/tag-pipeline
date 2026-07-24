@@ -14,6 +14,7 @@ import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
 import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardHistory'
 import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import RfiFollowUpPanel from '@/components/Opportunity/RfiFollowUpPanel'
+import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { invalidateCache } from '@/services/dataCache'
@@ -1189,63 +1190,24 @@ export default function OpportunityDetail({ toast }) {
             : <p className="text-sm text-muted" style={{ marginBottom: 8 }}>No contacts linked.</p>
           }
 
-          {relatedContactGroups.opportunityOffice.length > 0 && (
-            <div className={styles.relatedContacts}>
-              <div className={styles.relatedContactsTitle}>Related contacts for this opportunity</div>
-              <div className={styles.relatedContactsHint}>Same agency and a matching office</div>
-              {relatedContactGroups.opportunityOffice.map(({ contact: c, reason }) => {
-                const key = contactKey(c)
-                const isLinking = linkingContactId === key
-                return (
-                  <div key={key} className={styles.contactCard}>
-                    <button type="button" className={styles.contactOpen} onClick={() => openContactPanel(c)} title={`Open ${c.Name || 'contact'}`}>
-                      <span className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>
-                      <span className={styles.contactInfo}>
-                        <span className={styles.contactName}>{c.Name}</span>
-                        <span className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</span>
-                        <span className={styles.relatedContactReason}>{reason}</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary text-sm"
-                      disabled={Boolean(linkingContactId)}
-                      onClick={() => handleLinkContact(c)}
-                    >{isLinking ? 'Linking…' : 'Link'}</button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {relatedContactGroups.linkedContactOffice.length > 0 && (
-            <div className={styles.relatedContacts}>
-              <div className={styles.relatedContactsTitle}>Related to linked contacts</div>
-              <div className={styles.relatedContactsHint}>Same agency and a similar office to a contact already linked here</div>
-              {relatedContactGroups.linkedContactOffice.map(({ contact: c, reason }) => {
-                const key = contactKey(c)
-                const isLinking = linkingContactId === key
-                return (
-                  <div key={key} className={styles.contactCard}>
-                    <button type="button" className={styles.contactOpen} onClick={() => openContactPanel(c)} title={`Open ${c.Name || 'contact'}`}>
-                      <span className={styles.contactAv}>{c.Name?.split(' ').map((n) => n[0]).slice(0, 2).join('')}</span>
-                      <span className={styles.contactInfo}>
-                        <span className={styles.contactName}>{c.Name}</span>
-                        <span className={styles.contactSub}>{[c.Title, c.Email].filter(Boolean).join(' · ') || 'Related contact'}</span>
-                        <span className={styles.relatedContactReason}>{reason}</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary text-sm"
-                      disabled={Boolean(linkingContactId)}
-                      onClick={() => handleLinkContact(c)}
-                    >{isLinking ? 'Linking…' : 'Link'}</button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          <RelatedContactsPanel
+            title="Related contacts for this opportunity"
+            hint="Same agency and a matching office"
+            matches={relatedContactGroups.opportunityOffice}
+            linkingContactId={linkingContactId}
+            getKey={contactKey}
+            onOpen={openContactPanel}
+            onLink={handleLinkContact}
+          />
+          <RelatedContactsPanel
+            title="Related to linked contacts"
+            hint="Same agency and a similar office to a contact already linked here"
+            matches={relatedContactGroups.linkedContactOffice}
+            linkingContactId={linkingContactId}
+            getKey={contactKey}
+            onOpen={openContactPanel}
+            onLink={handleLinkContact}
+          />
 
           {/* Contact search — always visible */}
           <div style={{ position: 'relative', marginTop: linkedContacts.length > 0 ? 10 : 0 }}>
