@@ -23,13 +23,15 @@ export function useValidationLists() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    const unsub = onCacheRefresh(load)
+    const unsub = onCacheRefresh((tables) => {
+      if (tables?.includes('DataValidationTable')) load()
+    })
     return unsub
   }, [load])
 
   const update = useCallback(async (header, values) => {
     await updateValidationColumn(header, values)
-    await invalidateCache()
+    await invalidateCache(['DataValidationTable'])
   }, [])
 
   return { lists, loading, error, refresh: load, update }
