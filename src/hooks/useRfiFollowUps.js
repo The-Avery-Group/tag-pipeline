@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
 /**
  * Looks for RFP/RFQ notices that follow a specific RFI/Sources-Sought record.
@@ -31,7 +31,7 @@ export function useRfiFollowUps(criteria, { enabled = true } = {}) {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${WORKER_URL}/sam/follow-ups?${params}`)
+      const res = await workerFetch(`/sam/follow-ups?${params}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Worker returned ${res.status}`)
       setMatches(data.matches || [])
