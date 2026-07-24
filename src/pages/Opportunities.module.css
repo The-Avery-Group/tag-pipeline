@@ -8,6 +8,44 @@
   animation: spinnerPulse 1s ease-in-out infinite;
   flex-shrink: 0;
 }
+
+.discoveryProgress,
+.bulkToolbar {
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.discoveryProgressHeader,
+.bulkToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--gray-700);
+}
+
+.bulkToolbar > div { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.discoveryProgressTrack {
+  height: 5px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--gray-100);
+}
+
+.discoveryProgressTrack > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue-600);
+  transition: width 180ms ease;
+}
 @keyframes spinnerPulse {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50%      { opacity: 1;    transform: scale(1); }
@@ -45,8 +83,14 @@
 .newActionTrack { background: var(--new-action-track); }
 .newActionDismiss { background: var(--new-action-dismiss); }
 
-.newAction:hover:not(:disabled),
-.newActionPipeline:hover:not(:disabled) { filter: brightness(1.1); }
+.newAction:hover:not(:disabled) { filter: brightness(1.1); }
+.newActionPipeline:hover:not(:disabled) {
+  /* Override the generic .btn:hover fill so View pipeline stays green. */
+  background: var(--new-action-pipeline) !important;
+  border-color: var(--new-action-pipeline) !important;
+  color: var(--new-action-text) !important;
+  filter: brightness(1.1);
+}
 .newAction:disabled,
 .newActionPipeline:disabled { cursor: default; opacity: 0.7; }
 
