@@ -22,6 +22,9 @@ const CAP_CACHE_KEY  = 'capabilities:tag_capabilities_docx:v2'
 const CAP_STATUS_KEY = 'capabilities:status'
 const CAP_TTL        = 60 * 60 * 24 * 30   // 30 days
 const CAP_STATUS_TTL = 60 * 60 * 24 * 35   // keep the status slightly longer than its cache
+const CAP_VERIFY_INTERVAL_MS = 24 * 60 * 60 * 1000
+const CAP_MANUAL_REFRESH_TTL = 5 * 60
+const CAP_MANUAL_REFRESH_KEY = 'capabilities:manual_refresh'
 const CONV_TTL       = 60 * 60 * 24 * 30   // 30 days
 const MAX_HISTORY    = 12                   // max messages kept per conversation
 const MAX_HISTORY_CHARS = 12000              // ~3k tokens, leaves room for tools and responses on free tier
@@ -323,62 +326,110 @@ async function getAppOnlyGraphToken(env) {
   return accessToken
 }
 
-async function getCapabilities(env) {
-  const cached = await kvGet(env, CAP_CACHE_KEY)
-  // Migrate the previous string cache format safely. New cache records include
-  // source metadata for the integration-status card.
-  if (typeof cached === 'string') return cached
-  if (cached?.text) return cached.text
+function cacheRecord(value) {
+  return value && typeof value === 'object' && typeof value.text === 'string' ? value : null
+}
 
+function verificationIsDue(cached, now = Date.now()) {
+  const lastChecked = Date.parse(cached?.lastCheckedAt || cached?.fetchedAt || 0)
+  return !Number.isFinite(lastChecked) || now - lastChecked >= CAP_VERIFY_INTERVAL_MS
+}
+
+async function fetchCapabilitiesItem(env, config, headers) {
+  const itemUrl = `https://graph.microsoft.com/v1.0/drives/${config.driveId}/items/${env.CAPABILITIES_FILE_ID}?$select=id,name,size,lastModifiedDateTime,eTag,file`
+  const response = await fetch(itemUrl, { headers })
+  if (!response.ok) throw new Error(`Capabilities document metadata could not be read (${response.status})`)
+  const item = await response.json()
+  if (!item.file) throw new Error('Configured capabilities item is not a file')
+  if (Number(item.size || 0) > CAP_FILE_MAX_BYTES) throw new Error('Capabilities document is larger than the 5 MB extraction limit')
+  return item
+}
+
+async function downloadCapabilitiesText(env, config, headers) {
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${config.driveId}/items/${env.CAPABILITIES_FILE_ID}/content`,
+    { headers }
+  )
+  if (!response.ok) throw new Error(`Capabilities document could not be downloaded (${response.status})`)
+  const contentLength = Number(response.headers.get('content-length') || 0)
+  if (contentLength > CAP_FILE_MAX_BYTES) throw new Error('Capabilities document is larger than the 5 MB extraction limit')
+  return extractDocxText(new Uint8Array(await response.arrayBuffer()))
+}
+
+// Uses Graph's eTag as the document version fingerprint. This is more
+// efficient than a custom hash: the Worker can detect a new file version
+// from metadata and downloads the DOCX only when the eTag changes.
+export async function refreshCapabilitiesIfChanged(env, { forceCheck = false } = {}) {
   const config = capabilitiesConfig(env)
-  if (!config.configured) return null
+  if (!config.configured) return { ok: false, status: 'not_configured' }
+
+  const current = cacheRecord(await kvGet(env, CAP_CACHE_KEY))
+  if (current && !forceCheck && !verificationIsDue(current)) {
+    return { ok: true, status: 'ready', changed: false, checked: false, cached: current }
+  }
 
   try {
     const accessToken = await getAppOnlyGraphToken(env)
     const headers = { Authorization: `Bearer ${accessToken}` }
-    const itemUrl = `https://graph.microsoft.com/v1.0/drives/${config.driveId}/items/${env.CAPABILITIES_FILE_ID}?$select=id,name,size,lastModifiedDateTime,eTag,file`
-    const itemRes = await fetch(itemUrl, { headers })
-    if (!itemRes.ok) throw new Error(`Capabilities document metadata could not be read (${itemRes.status})`)
-    const item = await itemRes.json()
-    if (!item.file) throw new Error('Configured capabilities item is not a file')
-    if (Number(item.size || 0) > CAP_FILE_MAX_BYTES) {
-      throw new Error('Capabilities document is larger than the 5 MB extraction limit')
+    const item = await fetchCapabilitiesItem(env, config, headers)
+    const checkedAt = new Date().toISOString()
+    const changed = !current || current.eTag !== item.eTag
+
+    if (!changed) {
+      const verified = { ...current, lastCheckedAt: checkedAt, modifiedAt: item.lastModifiedDateTime || current.modifiedAt }
+      // One small daily write refreshes the TTL and records verification;
+      // unchanged document text is never downloaded or re-extracted.
+      await kvSet(env, CAP_CACHE_KEY, verified, CAP_TTL)
+      console.log(JSON.stringify({ event: 'ai_capabilities', status: 'unchanged', checkedAt, fileName: verified.fileName }))
+      return { ok: true, status: 'ready', changed: false, checked: true, cached: verified }
     }
 
-    const fileRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${config.driveId}/items/${env.CAPABILITIES_FILE_ID}/content`,
-      { headers }
-    )
-    if (!fileRes.ok) throw new Error(`Capabilities document could not be downloaded (${fileRes.status})`)
-    const contentLength = Number(fileRes.headers.get('content-length') || 0)
-    if (contentLength > CAP_FILE_MAX_BYTES) throw new Error('Capabilities document is larger than the 5 MB extraction limit')
-
-    const text = extractDocxText(new Uint8Array(await fileRes.arrayBuffer()))
-    const fetchedAt = new Date().toISOString()
-    const cachedValue = {
+    const text = await downloadCapabilitiesText(env, config, headers)
+    const cached = {
       text,
       fileName: item.name || 'Capabilities document',
       modifiedAt: item.lastModifiedDateTime || null,
       eTag: item.eTag || null,
-      fetchedAt,
+      fetchedAt: checkedAt,
+      lastCheckedAt: checkedAt,
     }
-    await kvSet(env, CAP_CACHE_KEY, cachedValue, CAP_TTL)
+    await kvSet(env, CAP_CACHE_KEY, cached, CAP_TTL)
     await setCapabilitiesStatus(env, {
       status: 'ready',
-      message: 'Capabilities document retrieved successfully',
-      fileName: cachedValue.fileName,
-      modifiedAt: cachedValue.modifiedAt,
-      eTag: cachedValue.eTag,
-      fetchedAt,
+      message: current ? 'Capabilities document refreshed after a source update' : 'Capabilities document retrieved successfully',
+      fileName: cached.fileName,
+      modifiedAt: cached.modifiedAt,
+      eTag: cached.eTag,
+      fetchedAt: cached.fetchedAt,
     })
-    console.log(JSON.stringify({ event: 'ai_capabilities', status: 'ready', fileName: cachedValue.fileName, fetchedAt }))
-    return text
+    console.log(JSON.stringify({ event: 'ai_capabilities', status: current ? 'refreshed' : 'ready', fileName: cached.fileName, checkedAt }))
+    return { ok: true, status: 'ready', changed: true, checked: true, cached }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown capabilities retrieval error'
     console.error(JSON.stringify({ event: 'ai_capabilities', status: 'error', message }))
     await setCapabilitiesStatus(env, { status: 'error', message, checkedAt: new Date().toISOString() })
-    return null
+    return { ok: false, status: 'error', error: message }
   }
+}
+
+async function getCapabilities(env) {
+  const cached = cacheRecord(await kvGet(env, CAP_CACHE_KEY))
+  if (cached && !verificationIsDue(cached)) return cached.text
+  const refreshed = await refreshCapabilitiesIfChanged(env)
+  return refreshed.cached?.text || cached?.text || null
+}
+
+export async function manuallyRefreshCapabilities(env) {
+  if (!env.CACHE) return refreshCapabilitiesIfChanged(env, { forceCheck: true })
+  if (await env.CACHE.get(CAP_MANUAL_REFRESH_KEY)) {
+    const cached = cacheRecord(await kvGet(env, CAP_CACHE_KEY))
+    return { ok: true, status: 'ready', changed: false, checked: false, throttled: true, cached }
+  }
+  await env.CACHE.put(CAP_MANUAL_REFRESH_KEY, '1', { expirationTtl: CAP_MANUAL_REFRESH_TTL })
+  // KV has no atomic create-if-absent. This short, shared throttle is still
+  // enough to prevent accidental repeated clicks from repeatedly downloading
+  // the file while keeping the endpoint safe to use from Settings.
+  return refreshCapabilitiesIfChanged(env, { forceCheck: true })
 }
 
 export async function getCapabilitiesStatus(env) {
@@ -390,17 +441,28 @@ export async function getCapabilitiesStatus(env) {
       configured: false,
     }
   }
-  const cached = await kvGet(env, CAP_CACHE_KEY)
+  const cached = cacheRecord(await kvGet(env, CAP_CACHE_KEY))
   const status = await kvGet(env, CAP_STATUS_KEY)
-  if (status?.status) return { ...status, configured: true, cached: Boolean(cached) }
+  if (status?.status) {
+    return {
+      ...status,
+      configured: true,
+      cached: Boolean(cached),
+      fileName: cached?.fileName || status.fileName,
+      modifiedAt: cached?.modifiedAt || status.modifiedAt,
+      fetchedAt: cached?.fetchedAt || status.fetchedAt,
+      lastCheckedAt: cached?.lastCheckedAt || status.checkedAt || status.fetchedAt,
+    }
+  }
   return {
     status: cached ? 'ready' : 'pending',
     message: cached ? 'Capabilities document is available from cache' : 'Waiting for the first AI request to retrieve the document.',
     configured: true,
     cached: Boolean(cached),
-    fileName: typeof cached === 'object' ? cached.fileName : undefined,
-    modifiedAt: typeof cached === 'object' ? cached.modifiedAt : undefined,
-    fetchedAt: typeof cached === 'object' ? cached.fetchedAt : undefined,
+    fileName: cached?.fileName,
+    modifiedAt: cached?.modifiedAt,
+    fetchedAt: cached?.fetchedAt,
+    lastCheckedAt: cached?.lastCheckedAt,
   }
 }
 
