@@ -7,6 +7,7 @@
  */
 
 import { sendTeamsNotification } from './notify.js'
+import { getAppOnlyGraphToken as appOnlyToken } from '../lib/graph.js'
 
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const NOTIFICATION_LOG_TABLE = 'DataValidationTable'
@@ -65,21 +66,6 @@ function isMentionEnabled(value) {
 
 function workbookBase(env) {
   return `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${env.WORKBOOK_ID}/workbook`
-}
-
-async function appOnlyToken(env) {
-  const response = await fetch(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials', client_id: env.MS_CLIENT_ID,
-      client_secret: env.MS_CLIENT_SECRET, scope: 'https://graph.microsoft.com/.default',
-    }),
-  })
-  if (!response.ok) throw new Error(`Could not obtain app-only Graph token (${response.status})`)
-  const { access_token: token } = await response.json()
-  if (!token) throw new Error('Microsoft Graph returned no app-only access token')
-  return token
 }
 
 async function graph(env, token, path, options = {}) {
