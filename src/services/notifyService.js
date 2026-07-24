@@ -5,8 +5,7 @@
  */
 
 import { ASSIGNEE_VALUES, getNotificationRecipients, getValidationLists } from '@/services/graphService'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
 const text = (value) => String(value ?? '').trim()
 const localCalendarDay = () => {
@@ -21,7 +20,7 @@ async function sendNotification(type, payload) {
   }
 
   try {
-    const response = await fetch(`${WORKER_URL}/notify`, {
+    const response = await workerFetch('/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, payload }),
@@ -40,7 +39,7 @@ async function sendNotification(type, payload) {
 export async function scheduledNotificationsArePrimary() {
   if (!WORKER_URL) return false
   try {
-    const response = await fetch(`${WORKER_URL}/integrations/status`, { cache: 'no-store' })
+    const response = await workerFetch('/integrations/status', { cache: 'no-store' })
     if (!response.ok) return false
     const payload = await response.json()
     const state = payload?.notifications
