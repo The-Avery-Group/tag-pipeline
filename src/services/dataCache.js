@@ -1,122 +1,164 @@
 /**
- * dataCache.js
- * Preloads the workbook datasets into memory and keeps them fresh
- * by polling for changes every POLL_INTERVAL_MS.
+ * Session cache coordinator for workbook data.
  *
- * How it works:
- *  - warmCache()     → called once after login, loads all four tables in parallel
- *  - startPolling()  → called after warmCache, silently re-fetches in background
- *  - stopPolling()   → called on logout to clean up
- *  - invalidate()    → called by hooks after a write, forces immediate re-fetch
- *
- * The graphService cache Map is cleared before each re-fetch so fresh
- * data comes from the API rather than the stale in-memory copy.
+ * The previous approach downloaded every commonly-used table every 30 seconds.
+ * This version checks the workbook drive item's eTag once a minute and only
+ * reloads tables that are already in use when the workbook actually changed.
+ * Writes invalidate only their affected tables.
  */
-
 import {
-  getPipeline, getTasks, getNotes, getContacts, getValidationLists,
+  getPipeline,
+  getTasks,
+  getNotes,
+  getContacts,
+  getValidationLists,
   getSAMOpportunities,
-  invalidateAll,
+  getPartners,
+  getContactInteractions,
+  getWorkbookVersion,
+  getCachedTableNames,
+  invalidateTables,
 } from '@/services/graphService'
 
-// Refresh active tabs often enough for collaborative work without repeatedly
-// competing with users' own Graph writes. Hidden tabs do not poll at all.
-const POLL_INTERVAL_MS = 30 * 1000
+const POLL_INTERVAL_MS = 60 * 1000
+const CORE_TABLES = ['PipelineTable', 'TasksTable', 'DataValidationTable']
+const SECONDARY_TABLES = [
+  'NotesTable',
+  'ContactsTable',
+  'NewOpportunitiesTable',
+  'PartnersTable',
+  'ContactInteractionsTable',
+]
 
-let _warmed    = false
-let _warming   = false
-let _pollTimer = null
-let _pollInFlight = false
-let _visibilityHandler = null
-
-// Listeners notified when cache refreshes so hooks can re-render
-const _listeners = new Set()
-
-export function onCacheRefresh(fn) {
-  _listeners.add(fn)
-  return () => _listeners.delete(fn)   // returns unsubscribe function
+const loaders = {
+  PipelineTable: getPipeline,
+  TasksTable: getTasks,
+  NotesTable: getNotes,
+  ContactsTable: getContacts,
+  DataValidationTable: getValidationLists,
+  NewOpportunitiesTable: getSAMOpportunities,
+  PartnersTable: getPartners,
+  ContactInteractionsTable: getContactInteractions,
 }
 
-function _notify() {
-  _listeners.forEach((fn) => fn())
+let warmed = false
+let warming = false
+let pollTimer = null
+let pollInFlight = false
+let visibilityHandler = null
+let knownWorkbookVersion = ''
+const listeners = new Set()
+
+export function onCacheRefresh(listener) {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+function notify(tableNames) {
+  listeners.forEach((listener) => listener(tableNames))
 }
 
 export function isCacheWarmed() {
-  return _warmed
+  return warmed
 }
 
-async function _fetchAll() {
-  // Clear the graphService in-memory cache so we actually hit the API
-  invalidateAll()
-  await Promise.all([
-    getPipeline(),
-    getTasks(),
-    getNotes(),
-    getContacts(),
-    getValidationLists(),
-    getSAMOpportunities(),
-  ])
+async function loadTables(tableNames, { invalidate = false } = {}) {
+  const unique = [...new Set(tableNames)].filter((tableName) => loaders[tableName])
+  if (!unique.length) return []
+  if (invalidate) invalidateTables(unique)
+  await Promise.all(unique.map((tableName) => loaders[tableName]()))
+  return unique
 }
 
-async function _refreshInBackground() {
-  if (_pollInFlight || document.hidden) return
-  _pollInFlight = true
+async function recordWorkbookVersion() {
+  const version = await getWorkbookVersion()
+  knownWorkbookVersion = version.eTag || version.lastModifiedDateTime || knownWorkbookVersion
+  return knownWorkbookVersion
+}
+
+async function warmSecondaryTables() {
   try {
-    await _fetchAll()
-    _notify()
-  } catch {
-    // Preserve the current cache if a background refresh fails.
-  } finally {
-    _pollInFlight = false
+    await loadTables(SECONDARY_TABLES)
+    notify(SECONDARY_TABLES)
+  } catch (error) {
+    // Secondary datasets should never delay the workspace becoming usable.
+    console.warn('[Cache] Secondary preload failed:', error.message)
   }
 }
 
 export async function warmCache() {
-  if (_warming || _warmed) return
-  _warming = true
+  if (warming || warmed) return
+  warming = true
   try {
-    await _fetchAll()
-    _warmed = true
-    _notify()
-  } catch (err) {
-    console.warn('[Cache] Preload failed, hooks will fetch on demand:', err.message)
+    await loadTables(CORE_TABLES)
+    await recordWorkbookVersion().catch(() => '')
+    warmed = true
+    notify(CORE_TABLES)
+    // Continue warming the search/contact datasets without blocking the app.
+    void warmSecondaryTables()
+  } catch (error) {
+    console.warn('[Cache] Core preload failed, pages will fetch on demand:', error.message)
   } finally {
-    _warming = false
+    warming = false
   }
 }
 
 /**
- * Force an immediate refresh — called by hooks after any write
- * so the in-memory data reflects the change right away.
+ * Refresh data immediately after a successful write. Pass affected workbook
+ * tables whenever known. With no table list, only the tables already cached
+ * in this browser session are refreshed, never the whole workbook blindly.
  */
-export async function invalidateCache() {
+export async function invalidateCache(tableNames = []) {
+  const targets = tableNames.length ? tableNames : getCachedTableNames()
   try {
-    await _fetchAll()
-    _notify()
-  } catch (err) {
-    console.warn('[Cache] Refresh failed:', err.message)
+    const refreshed = await loadTables(targets, { invalidate: true })
+    await recordWorkbookVersion().catch(() => '')
+    notify(refreshed)
+  } catch (error) {
+    console.warn('[Cache] Refresh failed:', error.message)
+  }
+}
+
+async function refreshIfWorkbookChanged() {
+  if (pollInFlight || document.hidden) return
+  pollInFlight = true
+  try {
+    const version = await getWorkbookVersion()
+    const next = version.eTag || version.lastModifiedDateTime || ''
+    if (!next) return
+    if (!knownWorkbookVersion) {
+      knownWorkbookVersion = next
+      return
+    }
+    if (next === knownWorkbookVersion) return
+
+    knownWorkbookVersion = next
+    const refreshed = await loadTables(getCachedTableNames(), { invalidate: true })
+    notify(refreshed)
+  } catch (error) {
+    // A transient Graph failure should preserve the visible workspace.
+    console.warn('[Cache] Background version check failed:', error.message)
+  } finally {
+    pollInFlight = false
   }
 }
 
 export function startPolling() {
-  if (_pollTimer) return   // already polling
-  _pollTimer = setInterval(_refreshInBackground, POLL_INTERVAL_MS)
-  _visibilityHandler = () => {
-    if (!document.hidden) _refreshInBackground()
+  if (pollTimer) return
+  pollTimer = setInterval(refreshIfWorkbookChanged, POLL_INTERVAL_MS)
+  visibilityHandler = () => {
+    if (!document.hidden) void refreshIfWorkbookChanged()
   }
-  document.addEventListener('visibilitychange', _visibilityHandler)
+  document.addEventListener('visibilitychange', visibilityHandler)
 }
 
 export function stopPolling() {
-  if (_pollTimer) {
-    clearInterval(_pollTimer)
-    _pollTimer = null
-  }
-  if (_visibilityHandler) {
-    document.removeEventListener('visibilitychange', _visibilityHandler)
-    _visibilityHandler = null
-  }
-  _pollInFlight = false
-  _warmed  = false
-  _warming = false
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+  if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler)
+  visibilityHandler = null
+  pollInFlight = false
+  warmed = false
+  warming = false
+  knownWorkbookVersion = ''
 }
