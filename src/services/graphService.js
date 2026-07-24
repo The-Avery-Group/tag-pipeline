@@ -1,4 +1,5 @@
 import { msalInstance, loginRequest } from '@/auth/msalConfig'
+import { externallyChangedPatchedFields, recordIdentity } from '@/utils/recordConflict'
 
 // VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook,
 // e.g. 01FVYRIFDLMKLW3D4HKVE34O5ZGVXE4Y6H
@@ -278,12 +279,12 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   // A table row index can move when someone edits the workbook directly.
   // Refuse to write if the record at that index is no longer the record the
   // user started editing, rather than silently changing a different record.
-  const identity = identityForTableRow(tableName, cached)
-  if (identity && identity !== identityForTableRow(tableName, current)) {
+  const identity = recordIdentity(tableName, cached)
+  if (identity && identity !== recordIdentity(tableName, current)) {
     throw new Error('This record changed position in the workbook. Refresh and review it before saving.')
   }
 
-  const conflictedFields = Object.keys(patch).filter((field) => cached && cached[field] !== current[field])
+  const conflictedFields = externallyChangedPatchedFields(cached, current, patch)
   if (conflictedFields.length) {
     throw new Error(`This record was changed in Excel (${conflictedFields.join(', ')}). Refresh and review it before saving.`)
   }
@@ -298,21 +299,6 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
     body: JSON.stringify({ values: [row] }),
   })
   invalidate(tableName)
-}
-
-function identityForTableRow(tableName, row) {
-  if (!row) return ''
-  const identifiers = {
-    PipelineTable: 'Contract Number / Notice ID',
-    TasksTable: 'TaskID',
-    NotesTable: 'NoteID',
-    ContactsTable: 'ContactID',
-    PartnersTable: 'UEI Number',
-    ContactInteractionsTable: 'InteractionID',
-    NewOpportunitiesTable: 'Notice ID',
-  }
-  const key = identifiers[tableName]
-  return key ? String(row[key] || '').trim() : ''
 }
 
 /**
