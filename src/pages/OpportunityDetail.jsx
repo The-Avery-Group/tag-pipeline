@@ -11,9 +11,8 @@ import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { effectiveRfiFollowUpCriteria, useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
-import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardHistory'
-import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
+import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { invalidateCache } from '@/services/dataCache'
@@ -334,163 +333,6 @@ function Section({ title, children }) {
     <div className={styles.section}>
       <div className={styles.sectionHeader}>{title}</div>
       <div className={`card ${styles.sectionCard}`}>{children}</div>
-    </div>
-  )
-}
-
-// ── Individual read/edit field ────────────────────────────────────────────
-// Collapsible SAM.gov Award Lookup panel. It lazily fires the lookup the
-// first time it's expanded (not on page load, to avoid spending the shared
-// 1,000/day SAM API quota on panels nobody opens). Each returned field gets
-// a hover-revealed "Update pipeline" button so the user can selectively
-// pull in just the fields that changed, rather than an all-or-nothing sync.
-// The PIID itself is intentionally display-only here: an award lookup can
-// never overwrite the pipeline identifier.
-function AwardLookupPanel({ opp, contractNumber, updateOpp, toast, awards }) {
-  const [open, setOpen] = useState(false)
-  const { results, loading, error, searched, cache, lookup } = awards
-  // Tracks which specific fields have been applied this session, keyed by
-  // PIID then field key, so the button can flip to a "✓ Updated" confirmed
-  // state without needing a full re-lookup.
-  const [updatedFields, setUpdatedFields] = useState({})
-  const [updatingFields, setUpdatingFields] = useState({})
-  const [selectedModification, setSelectedModification] = useState({})
-
-  const handleToggle = () => {
-    const next = !open
-    setOpen(next)
-    if (next && !searched && !loading) {
-      lookup({ piid: contractNumber })
-    }
-  }
-
-  const handleUpdateField = async (piid, fieldKey, field) => {
-    setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
-    try {
-      const value = field.column === C.endDate ? dateOnly(field.value) : field.value
-      await updateOpp(opp._rowIndex, { [field.column]: value }, opp)
-      setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
-      toast?.success(`${field.column.replace(/\*$/, '')} updated`)
-    } catch (err) {
-      toast?.error(`Failed to update: ${err.message}`)
-    } finally {
-      setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: false } }))
-    }
-  }
-
-  const handleAddAwardNoticeLink = async (piid, fieldKey, field) => {
-    const link = String(field.value || '').trim()
-    if (!link) return
-    const existing = cleanLinks(opp[C.otherLinks])
-    if (existing.some((value) => value.toLowerCase() === link.toLowerCase())) {
-      toast?.success('Award Notice link is already in Other Links')
-      setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
-      return
-    }
-    setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
-    try {
-      await updateOpp(opp._rowIndex, { [C.otherLinks]: joinLinks([...existing, link]) }, opp)
-      setUpdatedFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: true } }))
-      toast?.success('Award Notice link added to Other Links')
-    } catch (err) {
-      toast?.error(`Failed to add link: ${err.message}`)
-    } finally {
-      setUpdatingFields((prev) => ({ ...prev, [piid]: { ...prev[piid], [fieldKey]: false } }))
-    }
-  }
-
-  return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
-      <button
-        onClick={handleToggle}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-          padding: '12px 16px', background: 'var(--surface)', border: 'none', cursor: 'pointer',
-          textAlign: 'left', fontFamily: 'var(--font)',
-        }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', flex: 1 }}>
-          Award Lookup
-        </span>
-        {loading && <span className="text-xs text-muted">Looking up…</span>}
-        <span style={{
-          fontSize: 18, color: 'var(--gray-400)', lineHeight: 1,
-          transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s',
-        }}>›</span>
-      </button>
-      {open && (
-        <div style={{ borderTop: '0.5px solid var(--gray-200)', padding: '12px 16px' }}>
-          {loading && <p className="text-sm text-muted">Looking up award data for {contractNumber}…</p>}
-          {error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Lookup failed: {error}</p>}
-          {searched && !loading && !error && results.length === 0 && (
-            <p className="text-sm text-muted">No award data found for {contractNumber}.</p>
-          )}
-          {results.map((r) => {
-            const piid = r.piid || r.raw?.contractId?.piid
-            const isIDV = r.isIDV
-            const modifications = r.modifications || []
-            const activeModificationIndex = Math.min(selectedModification[piid] ?? 0, Math.max(modifications.length - 1, 0))
-            const activeModification = modifications[activeModificationIndex]
-            const activeFields = activeModification?.snapshotFields
-              ? activeModification.snapshotFields
-              : activeModification
-                ? { ...Object.fromEntries(Object.entries(r.fields || {}).filter(([, field]) => field.section !== 'Latest modification')), ...activeModification }
-                : r.fields
-            const viewingLatestModification = activeModificationIndex === 0
-            return (
-              <div key={piid || Math.random()}>
-                {modifications.length > 0 && <>
-                  <div className={awardStyles.modificationTabs} role="tablist" aria-label="Recent modifications">
-                    {modifications.map((modification, index) => {
-                      const number = modification.modificationNumber?.value || (index === modifications.length - 1 ? 'Base award' : 'Modification')
-                      const label = index === 0 ? `Latest · ${number}` : number
-                      return <button key={`${number}-${modification.dateSigned?.value || index}`} type="button" role="tab" aria-selected={activeModificationIndex === index} className={`${awardStyles.modificationTab} ${activeModificationIndex === index ? awardStyles.modificationTabActive : ''}`} onClick={() => setSelectedModification((previous) => ({ ...previous, [piid]: index }))}>{label}</button>
-                    })}
-                  </div>
-                  <p className="text-xs text-muted" style={{ margin: '0 0 8px' }}>Each tab shows data reported by SAM for that modification.</p>
-                </>}
-                <AwardRecordCard
-                  piid={piid}
-                  isIDV={isIDV}
-                  modificationCount={r.modificationCount}
-                  originalSignedDate={r.originalSignedDate}
-                  samLink={r.samLink}
-                  cache={cache}
-                  onRefresh={() => lookup({ piid: contractNumber, forceRefresh: true })}
-                  refreshing={loading}
-                  fields={activeFields}
-                  contractLifecycleAlert={viewingLatestModification ? r.contractLifecycleAlert : null}
-                  renderFieldAction={(fieldKey, field) => {
-                  const done = !!updatedFields[piid]?.[fieldKey]
-                  const updating = !!updatingFields[piid]?.[fieldKey]
-                  if (field.action === 'addOtherLink') {
-                    return (
-                      <button
-                        className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
-                        onClick={() => handleAddAwardNoticeLink(piid, fieldKey, field)}
-                        disabled={done || updating}
-                      >
-                        {done ? 'Added' : updating ? 'Adding…' : 'Add to Other Links'}
-                      </button>
-                    )
-                  }
-                  if (!field.column) return null   // display-only field, nowhere in the pipeline to write it
-                  return (
-                    <button
-                      className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`}
-                      onClick={() => handleUpdateField(piid, fieldKey, field)}
-                      disabled={done || updating}
-                    >
-                      {done ? '✓ Updated' : updating ? 'Updating…' : 'Update pipeline'}
-                    </button>
-                  )
-                  }}
-                />
-              </div>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }
@@ -1837,6 +1679,10 @@ export default function OpportunityDetail({ toast }) {
           updateOpp={updateOpp}
           toast={toast}
           awards={awards}
+          columns={C}
+          dateOnly={dateOnly}
+          cleanLinks={cleanLinks}
+          joinLinks={joinLinks}
         />
 
         {/* ── AI panels ── */}
