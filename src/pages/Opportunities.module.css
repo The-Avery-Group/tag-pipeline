@@ -46,6 +46,17 @@
   background: var(--blue-600);
   transition: width 180ms ease;
 }
+
+.syncDetailsButton {
+  color: var(--gray-700);
+  background: var(--surface);
+}
+
+.syncDetailsActive {
+  color: var(--blue-800) !important;
+  background: var(--blue-50) !important;
+  border-color: var(--blue-200) !important;
+}
 @keyframes spinnerPulse {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50%      { opacity: 1;    transform: scale(1); }
@@ -60,6 +71,24 @@
   text-align: center;
   color: var(--gray-400);
   font-size: 13px;
+}
+
+/* The discovery view is a fixed workspace: only its table scrolls. */
+.newPageBody {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.newPageBody > .tabRow,
+.newPageBody > .searchBar { flex-shrink: 0; }
+
+.newTab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
