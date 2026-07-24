@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getRFIFollowUpDecisions, getRFIFollowUpOverrides, getSAMSettings } from '@/services/graphService'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
 const C = {
   phase: 'TAG Opportunity Phase', outlook: 'Opportunity Outlook', contractNumber: 'Contract Number / Notice ID',
@@ -93,7 +92,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
 
   const loadStatus = useCallback(async () => {
     if (!WORKER_URL) return null
-    const response = await fetch(`${WORKER_URL}/sam/follow-up-monitor/status`)
+    const response = await workerFetch('/sam/follow-up-monitor/status')
     if (!response.ok) throw new Error('Could not load RFI follow-up status')
     const data = await response.json()
     const next = {}
@@ -106,7 +105,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     if (!WORKER_URL) return []
     const config = await refreshConfiguration()
     const watches = buildWatches(config.rules, config.overrides, config.decisions)
-    const response = await fetch(`${WORKER_URL}/sam/follow-up-monitor/sync`, {
+    const response = await workerFetch('/sam/follow-up-monitor/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ watches, replace: forceReplace }),
     })
     if (!response.ok) throw new Error('Could not synchronize RFI follow-up monitoring')
@@ -118,7 +117,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     setChecking(true); setError(null)
     try {
       await synchronize({ forceReplace: false })
-      const response = await fetch(`${WORKER_URL}/sam/follow-up-monitor/check-one`, {
+      const response = await workerFetch('/sam/follow-up-monitor/check-one', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId }),
       })
       const data = await response.json()
@@ -133,7 +132,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
 
   const markSeen = useCallback(async (opportunityId) => {
     if (!WORKER_URL) return
-    const response = await fetch(`${WORKER_URL}/sam/follow-up-monitor/seen`, {
+    const response = await workerFetch('/sam/follow-up-monitor/seen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId }),
     })
     const data = await response.json()
