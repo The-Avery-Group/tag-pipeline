@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { useMsal } from '@azure/msal-react'
 import { InteractionStatus } from '@azure/msal-browser'
 import { loginRequest, graphConfig } from './msalConfig'
-import { warmCache, startPolling, stopPolling } from '@/services/dataCache'
+import { stopPolling } from '@/services/dataCache'
 
 const AuthContext = createContext(null)
 
@@ -46,7 +46,6 @@ export function AuthProvider({ children }) {
           email:       me.mail || me.userPrincipalName,
           id:          me.id,
         })
-        warmCache().then(() => startPolling())
       })
       .catch((err) => {
         if (signingOutRef.current) return
@@ -57,7 +56,6 @@ export function AuthProvider({ children }) {
           email:       account.username,
           id:          account.localAccountId,
         })
-        warmCache().then(() => startPolling())
       })
       .finally(() => setAuthState('idle'))
   }, [accounts, instance])
