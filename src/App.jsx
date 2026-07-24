@@ -8,10 +8,10 @@ import { useAgingNotifications } from '@/hooks/useAgingNotifications'
 import { ThemeProvider } from '@/theme/ThemeContext'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
-import AIChat from '@/pages/AIChat'
 import { warmCache, startPolling, isCacheWarmed } from '@/services/dataCache'
 import '@/styles/global.css'
 const SearchModal = lazy(() => import('@/pages/SearchModal'))
+const AIChat = lazy(() => import('@/pages/AIChat').then((module) => ({ default: module.AIChat })))
 
 const Dashboard         = lazy(() => import('@/pages/Dashboard'))
 const Opportunities     = lazy(() => import('@/pages/Opportunities'))
