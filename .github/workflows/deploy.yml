@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
+      - name: Verify and build
         env:
           VITE_AZURE_CLIENT_ID: ${{ secrets.VITE_AZURE_CLIENT_ID }}
           VITE_AZURE_TENANT_ID: ${{ secrets.VITE_AZURE_TENANT_ID }}
@@ -33,12 +33,10 @@ jobs:
           VITE_APP_BASE_URL: ${{ secrets.VITE_APP_BASE_URL }}
           # Worker URL — all API calls (notifications, AI) go through this
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          # SAM.gov manual trigger secret — sent as X-Trigger-Secret header to POST /sam/trigger
-          VITE_SAM_TRIGGER_SECRET: ${{ secrets.VITE_SAM_TRIGGER_SECRET }}
           # NOTE: VITE_TEAMS_WEBHOOK_URL and VITE_GROQ_API_KEY have been moved
           # to Cloudflare Worker secrets. Remove them from GitHub secrets
           # once the Worker is deployed and confirmed working.
-        run: npm run build
+        run: npm run check
 
       - name: Check built env vars
         run: grep -r "the-avery-group" dist/ | head -20
