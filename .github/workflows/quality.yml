@@ -1,0 +1,34 @@
+name: Quality checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  worker:
+    name: Worker syntax and dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: workers/tag-pipeline-api/package-lock.json
+      - run: npm ci
+        working-directory: workers/tag-pipeline-api
+      - run: npm run check
+        working-directory: workers/tag-pipeline-api
