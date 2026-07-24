@@ -3,6 +3,7 @@ import Topbar from '@/components/Layout/Topbar'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
@@ -10,8 +11,6 @@ import {
   getSAMNAICS, updateSAMNAICS, getSAMSettings, updateSAMSettings,
 } from '@/services/graphService'
 import styles from './Settings.module.css'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
 // Fallback defaults used only if the Data Validation column is missing/empty
 const FALLBACKS = {
@@ -80,7 +79,7 @@ export default function Settings({ toast }) {
     }
     setLoadingIntegrations(true)
     try {
-      const response = await fetch(`${WORKER_URL}/integrations/status`, { cache: 'no-store' })
+      const response = await workerFetch('/integrations/status', { cache: 'no-store' })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || 'Could not load integration status')
       setIntegrationStatus(payload)
@@ -98,7 +97,7 @@ export default function Settings({ toast }) {
     }
     setRefreshingCapabilities(true)
     try {
-      const response = await fetch(`${WORKER_URL}/integrations/capabilities/refresh`, {
+      const response = await workerFetch('/integrations/capabilities/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
