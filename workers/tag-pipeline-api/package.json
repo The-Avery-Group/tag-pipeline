@@ -13,5 +13,8 @@
     "esbuild@0.17.19": true,
     "sharp@0.33.5": true,
     "workerd@1.20250718.0": true
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
   }
 }
