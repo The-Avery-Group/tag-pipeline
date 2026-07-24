@@ -51,7 +51,9 @@ export function useTasks(contractNumber = null) {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    const unsub = onCacheRefresh(load)
+    const unsub = onCacheRefresh((tables) => {
+      if (tables?.includes('TasksTable')) load()
+    })
     return unsub
   }, [load])
 
@@ -65,7 +67,7 @@ export function useTasks(contractNumber = null) {
     const taskData = { ...data, DueDate: dueDate, OpportunityNotes: notes }
     await addTask(taskData, createdBy)
     notifyTaskCreated({ ...taskData, CreatedBy: createdBy }).catch(() => {})
-    await invalidateCache()
+    await invalidateCache(['TasksTable'])
   }, [])
 
   const update = useCallback(async (rowIndex, patch) => {
@@ -80,25 +82,26 @@ export function useTasks(contractNumber = null) {
     )
     try {
       await retryThrice(() => updateTask(rowIndex, safePatch))
-      await invalidateCache()
+      await invalidateCache(['TasksTable'])
     } catch (err) {
-      // Silent fail — no rollback (existing design). The pending patch is
-      // intentionally left in place so it keeps reconciling to the
-      // optimistic value on future refreshes, rather than the UI silently
-      // reverting once a background poll happens to land.
+      // A conflicting Excel edit must not remain on screen as though it was
+      // saved. Reload the authoritative row and let the caller show the
+      // specific conflict message.
+      pendingPatches.current.delete(rowIndex)
+      await load()
       throw err
     }
-  }, [])
+  }, [load])
 
   const remove = useCallback(async (rowIndex) => {
     await deleteTask(rowIndex)
-    await invalidateCache()
+    await invalidateCache(['TasksTable'])
   }, [])
 
   const refreshContext = useCallback(async (task) => {
     const notes = await getNotesForContract(task.ContractNumber)
     await updateTask(task._rowIndex, { OpportunityNotes: notes })
-    await invalidateCache()
+    await invalidateCache(['TasksTable'])
   }, [])
 
   return { tasks, loading, error, refresh: load, add, update, remove, refreshContext }
