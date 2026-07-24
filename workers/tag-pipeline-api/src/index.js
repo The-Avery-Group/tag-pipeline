@@ -16,6 +16,7 @@ import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
+import { AuthError, verifyEntraRequest } from './lib/auth.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ function corsHeaders(env, req) {
   return {
     'Access-Control-Allow-Origin':  isAllowed ? origin : allowed,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Trigger-Secret',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age':       '86400',
   }
 }
@@ -67,6 +68,13 @@ export default {
     let response
 
     try {
+      // CORS only controls browser behavior. It does not prevent someone from
+      // calling the Worker directly, so every application route must prove it
+      // came from an authenticated user of this Entra application. Health is
+      // deliberately public for deployment monitoring; scheduled handlers do
+      // not pass through fetch() and are unaffected.
+      if (path !== '/health') await verifyEntraRequest(req, env)
+
       if (path === '/health' && req.method === 'GET') {
         response = json({ status: 'ok', timestamp: new Date().toISOString() })
 
@@ -131,7 +139,11 @@ export default {
       }
     } catch (err) {
       console.error('[Worker] Unhandled error:', err)
-      response = json({ error: 'Internal server error', message: err.message }, 500)
+      if (err instanceof AuthError) {
+        response = json({ error: err.message, code: err.code }, err.status)
+      } else {
+        response = json({ error: 'Internal server error', message: err.message }, 500)
+      }
     }
 
     return cors(env, req, response)
