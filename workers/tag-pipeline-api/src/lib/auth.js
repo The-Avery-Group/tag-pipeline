@@ -5,8 +5,8 @@ const GRAPH_AUDIENCES = new Set([
 ])
 
 const CLOCK_SKEW_SECONDS = 300
-const JWK_CACHE_MS = 6 * 60 * 60 * 1000
-const jwkCaches = new Map()
+const TOKEN_VALIDATION_CACHE_MS = 5 * 60 * 1000
+const tokenValidationCache = new Map()
 
 export class AuthError extends Error {
   constructor(message, status = 401, code = 'unauthorized') {
@@ -42,42 +42,35 @@ function readBearerToken(req) {
   return match[1]
 }
 
-function discoveryUrl(tenantId, tokenVersion) {
-  const suffix = tokenVersion === '1.0' ? '' : '/v2.0'
-  return `https://login.microsoftonline.com/${tenantId}${suffix}/.well-known/openid-configuration`
+async function tokenFingerprint(token) {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function signingKey(tenantId, tokenVersion, keyId) {
-  const now = Date.now()
-  const cacheKey = `${tenantId}:${tokenVersion === '1.0' ? 'v1' : 'v2'}`
-  let cache = jwkCaches.get(cacheKey)
-  if (!cache?.keys.has(keyId) || cache.expiresAt <= now) {
-    // Microsoft Graph can issue v1 access tokens. Microsoft requires the
-    // matching v1 OIDC metadata in that case; the v2 key document can select
-    // a different key set and make a valid signature appear invalid.
-    const metadataResponse = await fetch(discoveryUrl(tenantId, tokenVersion))
-    if (!metadataResponse.ok) throw new AuthError('Could not load Microsoft token metadata', 503, 'identity_unavailable')
-    const metadata = await metadataResponse.json()
-    const jwksUri = String(metadata.jwks_uri || '')
-    if (!jwksUri.startsWith('https://login.microsoftonline.com/')) {
-      throw new AuthError('Microsoft token metadata did not contain a trusted key endpoint', 503, 'identity_unavailable')
+async function validateWithMicrosoftGraph(token, claims) {
+  const fingerprint = await tokenFingerprint(token)
+  const cached = tokenValidationCache.get(fingerprint)
+  if (cached && cached.expiresAt > Date.now()) return cached.identity
+
+  // This is a Microsoft Graph access token. Let its intended resource verify
+  // its signature, key rollover, audience, and revocation state instead of
+  // reimplementing Entra's JWT validation inside the Worker.
+  const response = await fetch('https://graph.microsoft.com/v1.0/me?$select=id,displayName,userPrincipalName', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    if ([401, 403].includes(response.status)) {
+      throw new AuthError('Microsoft sign-in token is not valid', 401, 'invalid_token')
     }
-    const response = await fetch(jwksUri)
-    if (!response.ok) throw new AuthError('Could not verify the Microsoft sign-in token', 503, 'identity_unavailable')
-    const payload = await response.json()
-    const keys = new Map((payload.keys || []).map((key) => [key.kid, key]))
-    cache = { keys, expiresAt: now + JWK_CACHE_MS }
-    jwkCaches.set(cacheKey, cache)
+    throw new AuthError('Microsoft identity verification is temporarily unavailable', 503, 'identity_unavailable')
   }
-  const key = cache.keys.get(keyId)
-  if (!key) throw new AuthError('The Microsoft sign-in token uses an unknown signing key', 401, 'invalid_token')
-  return crypto.subtle.importKey(
-    'jwk',
-    key,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['verify'],
-  )
+  const identity = await response.json()
+  const tokenExpiry = Number(claims.exp || 0) * 1000
+  tokenValidationCache.set(fingerprint, {
+    identity,
+    expiresAt: Math.min(tokenExpiry, Date.now() + TOKEN_VALIDATION_CACHE_MS),
+  })
+  return identity
 }
 
 function validAudience(value) {
@@ -123,11 +116,11 @@ export async function verifyEntraRequest(req, env) {
   }
   if (!String(claims.scp || '').trim()) throw new AuthError('A delegated Microsoft sign-in token is required', 403, 'delegated_token_required')
 
-  const key = await signingKey(env.MS_TENANT_ID, claims.ver, header.kid)
-  const data = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`)
-  const signature = Uint8Array.from(atob(encodedSignature.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encodedSignature.length / 4) * 4, '=')), (char) => char.charCodeAt(0))
-  const verified = await crypto.subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, key, signature, data)
-  if (!verified) throw new AuthError('Microsoft sign-in token signature is invalid', 401, 'invalid_token')
+  const identity = await validateWithMicrosoftGraph(token, claims)
 
-  return { userId: claims.oid || claims.sub || '', name: claims.name || '', scopes: String(claims.scp || '').split(' ').filter(Boolean) }
+  return {
+    userId: identity.id || claims.oid || claims.sub || '',
+    name: identity.displayName || claims.name || '',
+    scopes: String(claims.scp || '').split(' ').filter(Boolean),
+  }
 }
