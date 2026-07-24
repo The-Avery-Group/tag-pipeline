@@ -1140,7 +1140,7 @@ export default function OpportunityDetail({ toast }) {
             : `Updating ${label} ${Math.min(completed + 1, total)} of ${total}…`)
         }
       )
-      await invalidateCache()
+      await invalidateCache(['PipelineTable', 'TasksTable', 'NotesTable', 'ContactsTable'])
       const newIdentifier = pendingRenameSave[C.contractNum]
       setPendingRenameSave(null)
       setRenamePreview(null)
@@ -1317,7 +1317,7 @@ export default function OpportunityDetail({ toast }) {
     const existing = pipeline.find((item) => item[C.contractNum] === contractNumber)
     if (existing) {
       await linkRelatedOpportunities(source, { contractNumber, title: existing[C.title] })
-      await invalidateCache()
+      await invalidateCache(['PipelineTable', 'ContactsTable'])
       toast?.success('Existing follow-on linked to this RFI')
       return
     }
@@ -1356,7 +1356,7 @@ export default function OpportunityDetail({ toast }) {
       [C.otherLinks]: candidate.samLink || '',
     })
     await linkRelatedOpportunities(source, { contractNumber, title: candidate.title || '' })
-    await invalidateCache()
+    await invalidateCache(['PipelineTable', 'ContactsTable'])
     toast?.success('Follow-on added and linked to this RFI')
   }
 
