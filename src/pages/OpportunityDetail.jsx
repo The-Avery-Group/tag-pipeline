@@ -19,6 +19,7 @@ import OpportunityField from '@/components/Opportunity/OpportunityField'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
+import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import { invalidateCache } from '@/services/dataCache'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
@@ -706,12 +707,12 @@ export default function OpportunityDetail({ toast }) {
 
   const handleSave = () => {
     const cleanedForm = { ...form, [C.otherLinks]: joinLinks(cleanLinks(form[C.otherLinks])) }
-    const needsActivityPrompt =
-      cleanedForm[C.phase] === 'Identified' &&
-      cleanedForm[C.outlook] === 'New' &&
-      !opp[C.submDate] &&
-      cleanedForm[C.submDate] &&
-      !cleanedForm[C.actPhase]
+    const needsActivityPrompt = needsRfiActivityPhasePrompt(opp, cleanedForm, {
+      phase: C.phase,
+      outlook: C.outlook,
+      submissionDate: C.submDate,
+      activityPhase: C.actPhase,
+    })
 
     if (needsActivityPrompt) {
       setPendingRfiSave(cleanedForm)
