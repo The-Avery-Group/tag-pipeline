@@ -9,12 +9,13 @@
  */
 
 import { handleNotify }             from './handlers/notify.js'
-import { handleAIChat }             from './handlers/ai.js'
-import { handleSAM } from './handlers/sam.js'
+import { getCapabilitiesStatus, handleAIChat } from './handlers/ai.js'
+import { handleSAM, runScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
+import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -78,6 +79,12 @@ export default {
       } else if (path === '/ai/history' && (req.method === 'GET' || req.method === 'DELETE')) {
         response = await handleAIChat(req, env)
 
+      } else if (path === '/integrations/status' && req.method === 'GET') {
+        response = json({
+          capabilities: await getCapabilitiesStatus(env),
+          notifications: await getNotificationMonitorStatus(env),
+        })
+
       } else if (path === '/sam/key-status' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
 
@@ -119,9 +126,9 @@ export default {
     return cors(env, req, response)
   },
 
-  // SAM changes run twice daily. RFI follow-up cycles run in bounded batches
-  // on Monday, Wednesday, and Friday. The separate cron expressions below
-  // make the cadence explicit without hourly KV status writes.
+  // All scheduled times are UTC. Nigeria is UTC+1 year-round: 13:00 UTC is
+  // 2 PM WAT. SAM pulls run on weekdays; RFI follow-up checks remain three
+  // times weekly; response-deadline reminders may still run on weekends.
   async scheduled(controller, env, ctx) {
     if (controller.cron === '0 0,12 * * *') {
       ctx.waitUntil((async () => {
@@ -130,8 +137,15 @@ export default {
         return runSAMMonitorCheck(env, cursor, { scheduled: true })
       })())
     }
-    if (controller.cron === '0 * * * 1,3,5') {
-      ctx.waitUntil(runRFIFollowUpMonitor(env))
+    if (controller.cron === '0 13 * * *') {
+      const weekday = new Date(controller.scheduledTime).getUTCDay()
+      if (weekday >= 1 && weekday <= 5) ctx.waitUntil(runScheduledSAMPull(env))
+      if ([1, 3, 5].includes(weekday)) ctx.waitUntil(runRFIFollowUpMonitor(env))
+    }
+    // One minute after the workload-heavy SAM pull, invoke the independent
+    // notification job. This stays within the three-trigger free-plan limit.
+    if (controller.cron === '1 13 * * *') {
+      ctx.waitUntil(runScheduledNotifications(env))
     }
   },
 }
