@@ -18,11 +18,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
 
       - name: Install Wrangler
         working-directory: workers/tag-pipeline-api
         run: npm ci
+
+      - name: Verify Worker
+        working-directory: workers/tag-pipeline-api
+        run: npm run check
 
       - name: Deploy Worker
         working-directory: workers/tag-pipeline-api
