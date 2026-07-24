@@ -15,6 +15,7 @@ import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardH
 import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import RfiFollowUpPanel from '@/components/Opportunity/RfiFollowUpPanel'
 import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
+import OpportunityField from '@/components/Opportunity/OpportunityField'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { invalidateCache } from '@/services/dataCache'
@@ -328,6 +329,7 @@ const PHASE_BADGE = {
 
 const STATUS_CYCLE = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
 const statusClass  = (s) => s === 'To Do' ? 'todo' : s === 'In Progress' ? 'progress' : 'done'
+const Field = (props) => <OpportunityField {...props} formatValue={formatFieldValue} />
 
 // ── Section wrapper ───────────────────────────────────────────────────────
 function Section({ title, children }) {
@@ -335,33 +337,6 @@ function Section({ title, children }) {
     <div className={styles.section}>
       <div className={styles.sectionHeader}>{title}</div>
       <div className={`card ${styles.sectionCard}`}>{children}</div>
-    </div>
-  )
-}
-
-function Field({ label, value, editing, onChange, type = 'text', options = null, raw = false, span = false }) {
-  return (
-    <div className={`form-field ${span ? styles.spanFull : ''}`}>
-      <label className="form-label">{label}</label>
-      {editing
-        ? options
-          ? (
-            <select className="form-input" value={value || ''}
-              onChange={(e) => onChange(e.target.value)}>
-              {options.map((o) => <option key={o}>{o}</option>)}
-            </select>
-          ) : (
-            <input className="form-input" type={type} value={value || ''}
-              onChange={(e) => onChange(e.target.value)} />
-          )
-        : (
-          <div className="form-input" style={{ background: 'var(--gray-50)', color: 'var(--gray-900)' }}>
-            {raw
-              ? (value === null || value === undefined || value === '' ? '—' : String(value))
-              : formatFieldValue(value)}
-          </div>
-        )
-      }
     </div>
   )
 }
