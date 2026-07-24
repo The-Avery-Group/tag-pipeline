@@ -11,6 +11,8 @@ import {
 } from '@/services/graphService'
 import styles from './Settings.module.css'
 
+const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+
 // Fallback defaults used only if the Data Validation column is missing/empty
 const FALLBACKS = {
   opportunityPhases: OPPORTUNITY_PHASES,
@@ -41,6 +43,8 @@ export default function Settings({ toast }) {
   const [drafts, setDrafts] = useState({})
   const [savingKey, setSavingKey] = useState(null)
   const [savedKey, setSavedKey] = useState(null)
+  const [integrationStatus, setIntegrationStatus] = useState(null)
+  const [loadingIntegrations, setLoadingIntegrations] = useState(false)
 
   // ── SAM config state ─────────────────────────────────────────────────
   const [naicsCodes,    setNaicsCodes]    = useState([])
@@ -68,6 +72,24 @@ export default function Settings({ toast }) {
   const toggleList = (key) => setOpenLists((prev) => ({ ...prev, [key]: !prev[key] }))
   const LONG_LIST_THRESHOLD = 6
 
+  const loadIntegrationStatus = async () => {
+    if (!WORKER_URL) {
+      setIntegrationStatus({ capabilities: { status: 'unavailable', message: 'Worker URL is not configured.' } })
+      return
+    }
+    setLoadingIntegrations(true)
+    try {
+      const response = await fetch(`${WORKER_URL}/integrations/status`, { cache: 'no-store' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || 'Could not load integration status')
+      setIntegrationStatus(payload)
+    } catch (err) {
+      setIntegrationStatus({ capabilities: { status: 'unavailable', message: err.message } })
+    } finally {
+      setLoadingIntegrations(false)
+    }
+  }
+
   useEffect(() => {
     Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
       setNaicsCodes(codes)
@@ -80,6 +102,8 @@ export default function Settings({ toast }) {
       setSamLoaded(true)
     })
   }, [])
+
+  useEffect(() => { loadIntegrationStatus() }, [])
 
   const handleSaveSAM = async () => {
     setSavingSAM(true)
@@ -192,6 +216,53 @@ export default function Settings({ toast }) {
               <option value="system">System ({resolvedTheme})</option>
             </select>
           </label>
+        </div>
+
+        <div className={styles.integrationCard}>
+          <div>
+            <div className={styles.themeTitle}>Integrations</div>
+            <div className={styles.integrationRow}>
+              {(() => {
+                const capabilities = integrationStatus?.capabilities
+                const status = capabilities?.status || 'checking'
+                const label = {
+                  ready: 'Ready',
+                  pending: 'Waiting for first AI retrieval',
+                  not_configured: 'Not configured',
+                  error: 'Needs attention',
+                  unavailable: 'Unavailable',
+                  checking: 'Checking',
+                }[status] || 'Checking'
+                return <span className={`${styles.integrationBadge} ${styles[`integration${status[0].toUpperCase()}${status.slice(1).replace(/_([a-z])/g, (_, c) => c.toUpperCase())}`] || ''}`}>{label}</span>
+              })()}
+              <span className="text-xs text-muted">AI capabilities document</span>
+            </div>
+            <p className="text-xs text-muted" style={{ marginTop: 5 }}>
+              {integrationStatus?.capabilities?.message || 'Checking the Worker configuration.'}
+              {integrationStatus?.capabilities?.fileName ? ` ${integrationStatus.capabilities.fileName}.` : ''}
+            </p>
+            {integrationStatus?.capabilities?.fetchedAt && (
+              <p className="text-xs text-muted" style={{ marginTop: 3 }}>
+                Retrieved {new Date(integrationStatus.capabilities.fetchedAt).toLocaleString()}.
+              </p>
+            )}
+            <div className={styles.integrationRow} style={{ marginTop: 10 }}>
+              <span className={`${styles.integrationBadge} ${integrationStatus?.notifications?.appOnlyAvailable ? styles.integrationReady : styles.integrationNotConfigured}`}>
+                {integrationStatus?.notifications?.appOnlyAvailable ? 'Scheduled' : 'Browser fallback'}
+              </span>
+              <span className="text-xs text-muted">Teams reminders</span>
+            </div>
+            <p className="text-xs text-muted" style={{ marginTop: 5 }}>
+              {integrationStatus?.notifications?.appOnlyAvailable
+                ? integrationStatus.notifications.lastRun?.ok === false
+                  ? `Last scheduled run needs attention: ${integrationStatus.notifications.lastRun.message || 'Unknown error'}`
+                  : 'Runs from the Worker at the configured schedule. The browser is retained as a fallback.'
+                : 'The browser sends scheduled reminders until app-only Worker access is available.'}
+            </p>
+          </div>
+          <button className="btn btn-ghost" type="button" onClick={loadIntegrationStatus} disabled={loadingIntegrations}>
+            {loadingIntegrations ? 'Checking…' : 'Refresh status'}
+          </button>
         </div>
 
         {/* ── Collapsible: Dropdown Options ── */}
