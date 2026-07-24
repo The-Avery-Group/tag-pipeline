@@ -18,6 +18,7 @@ import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
 import OpportunityField from '@/components/Opportunity/OpportunityField'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
+import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { invalidateCache } from '@/services/dataCache'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
@@ -214,28 +215,6 @@ function formatFieldValue(val) {
   if (val instanceof Date) return formatDate(val)
   if (typeof val === 'number') return val.toLocaleString()
   return String(val)
-}
-
-function dateOnly(value) {
-  const raw = String(value || '').trim()
-  const iso = raw.match(/^\d{4}-\d{2}-\d{2}/)
-  if (iso) return iso[0]
-  const parsed = new Date(raw)
-  if (Number.isNaN(parsed.getTime())) return raw
-  return [parsed.getFullYear(), String(parsed.getMonth() + 1).padStart(2, '0'), String(parsed.getDate()).padStart(2, '0')].join('-')
-}
-
-function localDate(value) {
-  const date = dateOnly(value)
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00`) : new Date(NaN)
-}
-
-function sbaProfileUrl(entityData, incumbentUEI) {
-  const uei = String(entityData?.uei || incumbentUEI || '').trim().toUpperCase()
-  const cageCode = String(entityData?.cageCode || '').trim().toUpperCase()
-  return /^[A-Z0-9]{12}$/.test(uei) && /^[A-Z0-9]{5}$/.test(cageCode)
-    ? `https://search.certifications.sba.gov/profile/${encodeURIComponent(uei)}/${encodeURIComponent(cageCode)}?page=1`
-    : 'https://search.certifications.sba.gov/'
 }
 
 function EightAExitCallout({ entityData, incumbentUEI, loading, error, contractEndDate, onAddNote, addingNote, noteAdded }) {
