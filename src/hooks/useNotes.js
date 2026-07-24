@@ -45,7 +45,9 @@ export function useNotes(contractNumber) {
   }, [contractNumber])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { return onCacheRefresh(load) }, [load])
+  useEffect(() => onCacheRefresh((tables) => {
+    if (tables?.includes('NotesTable')) load()
+  }), [load])
 
   const add = useCallback(async (author, text) => {
     if (!contractNumber) throw new Error('contractNumber required')
@@ -64,7 +66,7 @@ export function useNotes(contractNumber) {
     try {
       // Retry up to 3 times silently
       await retryThrice(() => addNote(contractNumber, author, text))
-      await invalidateCache()
+      await invalidateCache(['NotesTable'])
       // Cache refresh will replace the temp note with the real one
     } catch (err) {
       // Silent fail: remove temp note, will reappear on next sync
@@ -79,7 +81,7 @@ export function useNotes(contractNumber) {
     setNotes((prev) => prev.filter((n) => n._rowIndex !== rowIndex))
     try {
       await retryThrice(() => deleteNote(rowIndex))
-      await invalidateCache()
+      await invalidateCache(['NotesTable'])
     } catch (err) {
       // Delete didn't actually happen — stop hiding it so the note
       // reappears (via reload) rather than staying hidden forever
@@ -94,7 +96,7 @@ export function useNotes(contractNumber) {
     setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? { ...note, ...patch } : note))
     try {
       await retryThrice(() => updateNote(rowIndex, patch))
-      await invalidateCache()
+      await invalidateCache(['NotesTable'])
     } catch (err) {
       pendingPatches.current.delete(rowIndex)
       setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? original : note))
