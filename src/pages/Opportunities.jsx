@@ -867,7 +867,7 @@ export default function Opportunities({ toast }) {
                   <>
                     {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
                     {samRunStatus.written > 0
-                      ? <> · {samRunStatus.written} new</>
+                      ? <> · {samRunStatus.written} new total</>
                       : <> · No new opportunities found</>}
                     {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
                     {samRunStatus.warnings?.length > 0 && (
@@ -877,7 +877,12 @@ export default function Opportunities({ toast }) {
                     )}
                   </>
                 )}
-                {samRunStatus?.success === false && (
+                {samRunStatus?.status === 'partial' && (
+                  <span style={{ color: 'var(--blue-600)' }}>
+                    Pull checkpoint saved · {samRunStatus.written || 0} new total · continues at the next scheduled pull
+                  </span>
+                )}
+                {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && (
                   <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
                     Last run failed: {samRunStatus.error || 'No error detail was recorded.'}
                   </span>
