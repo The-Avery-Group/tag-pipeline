@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
 export function useEntityEightA(uei) {
   const [data, setData] = useState(null)
@@ -21,7 +20,7 @@ export function useEntityEightA(uei) {
       setLoading(true)
       setError(null)
       try {
-        const response = await fetch(`${WORKER_URL}/entities/8a?uei=${encodeURIComponent(normalizedUEI)}`, { signal: controller.signal })
+        const response = await workerFetch(`/entities/8a?uei=${encodeURIComponent(normalizedUEI)}`, { signal: controller.signal })
         const result = await response.json()
         if (!response.ok) throw new Error(result.error || `Worker returned ${response.status}`)
         setData(result)
