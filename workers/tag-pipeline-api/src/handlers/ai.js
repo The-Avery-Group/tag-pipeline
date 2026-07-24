@@ -13,13 +13,25 @@
  *   - Model fallback chain
  */
 
+import { strFromU8, unzipSync } from 'fflate'
+
 const GROQ_BASE  = 'https://api.groq.com/openai/v1'
-const CAP_CACHE_KEY  = 'capabilities:tag_capabilities_docx'
+// Versioned to bypass the legacy cache, which stored raw DOCX ZIP bytes as
+// text before proper WordprocessingML extraction was introduced.
+const CAP_CACHE_KEY  = 'capabilities:tag_capabilities_docx:v2'
+const CAP_STATUS_KEY = 'capabilities:status'
 const CAP_TTL        = 60 * 60 * 24 * 30   // 30 days
+const CAP_STATUS_TTL = 60 * 60 * 24 * 35   // keep the status slightly longer than its cache
 const CONV_TTL       = 60 * 60 * 24 * 30   // 30 days
 const MAX_HISTORY    = 12                   // max messages kept per conversation
 const MAX_HISTORY_CHARS = 12000              // ~3k tokens, leaves room for tools and responses on free tier
 const CAP_CONTEXT_MAX_CHARS = 2500
+const CAP_FILE_MAX_BYTES = 5 * 1024 * 1024
+
+// The workbook and the optional capabilities document live in the same
+// SharePoint document library by default. A drive identifies that library;
+// the item ID alone does not identify a file across a SharePoint site.
+const DEFAULT_SHAREPOINT_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
 const MODEL_PRIORITY = [
   'openai/gpt-oss-120b',
@@ -230,55 +242,165 @@ async function kvDelete(env, key) {
 
 // ── Capabilities document ──────────────────────────────────────────────────
 
-async function getCapabilities(env) {
-  // Try KV cache first
-  const cached = await kvGet(env, CAP_CACHE_KEY)
-  if (cached) return cached
+function capabilitiesConfig(env) {
+  const configured = Boolean(
+    env.MS_TENANT_ID && env.MS_CLIENT_ID && env.MS_CLIENT_SECRET && env.CAPABILITIES_FILE_ID
+  )
+  return {
+    configured,
+    driveId: env.DRIVE_ID || DEFAULT_SHAREPOINT_DRIVE_ID,
+  }
+}
 
-  // Need MS credentials + file ID to fetch from SharePoint
-  if (!env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET || !env.CAPABILITIES_FILE_ID || !env.DRIVE_ID) {
-    return null   // gracefully degrade — just won't have capabilities context
+function xmlDecode(value) {
+  return String(value || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+}
+
+function extractDocxText(bytes) {
+  let archive
+  try {
+    archive = unzipSync(bytes)
+  } catch {
+    throw new Error('The capabilities file is not a readable DOCX document')
   }
 
+  const documentXml = archive['word/document.xml']
+  if (!documentXml) throw new Error('The DOCX document has no readable body')
+
+  // DOCX is a ZIP archive. Read its WordprocessingML document body, preserve
+  // paragraphs/tabs, then remove the remaining XML markup.
+  const text = xmlDecode(strFromU8(documentXml)
+    .replace(/<w:tab\b[^>]*\/>/g, '\t')
+    .replace(/<w:br\b[^>]*\/>/g, '\n')
+    .replace(/<\/w:p>/g, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim())
+
+  if (!text) throw new Error('The DOCX document does not contain readable text')
+  return text.slice(0, CAP_CONTEXT_MAX_CHARS)
+}
+
+async function setCapabilitiesStatus(env, next) {
+  if (!env.CACHE) return
+  const previous = await kvGet(env, CAP_STATUS_KEY)
+  // Do not create redundant KV writes when the only change is a repeat of an
+  // already-known outcome. A new success/failure or source revision is kept.
+  const comparable = (value) => JSON.stringify({
+    status: value?.status,
+    message: value?.message,
+    fileName: value?.fileName,
+    modifiedAt: value?.modifiedAt,
+    eTag: value?.eTag,
+  })
+  if (comparable(previous) === comparable(next)) return
+  await kvSet(env, CAP_STATUS_KEY, next, CAP_STATUS_TTL)
+}
+
+async function getAppOnlyGraphToken(env) {
+  const tokenRes = await fetch(
+    `https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: env.MS_CLIENT_ID,
+        client_secret: env.MS_CLIENT_SECRET,
+        scope: 'https://graph.microsoft.com/.default',
+      }),
+    }
+  )
+  if (!tokenRes.ok) throw new Error(`Microsoft Graph authentication failed (${tokenRes.status})`)
+  const { access_token: accessToken } = await tokenRes.json()
+  if (!accessToken) throw new Error('Microsoft Graph authentication returned no access token')
+  return accessToken
+}
+
+async function getCapabilities(env) {
+  const cached = await kvGet(env, CAP_CACHE_KEY)
+  // Migrate the previous string cache format safely. New cache records include
+  // source metadata for the integration-status card.
+  if (typeof cached === 'string') return cached
+  if (cached?.text) return cached.text
+
+  const config = capabilitiesConfig(env)
+  if (!config.configured) return null
+
   try {
-    // Get app-only token via client credentials flow
-    const tokenRes = await fetch(
-      `https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type:    'client_credentials',
-          client_id:     env.MS_CLIENT_ID,
-          client_secret: env.MS_CLIENT_SECRET,
-          scope:         'https://graph.microsoft.com/.default',
-        }),
-      }
-    )
-    if (!tokenRes.ok) return null
-    const { access_token } = await tokenRes.json()
+    const accessToken = await getAppOnlyGraphToken(env)
+    const headers = { Authorization: `Bearer ${accessToken}` }
+    const itemUrl = `https://graph.microsoft.com/v1.0/drives/${config.driveId}/items/${env.CAPABILITIES_FILE_ID}?$select=id,name,size,lastModifiedDateTime,eTag,file`
+    const itemRes = await fetch(itemUrl, { headers })
+    if (!itemRes.ok) throw new Error(`Capabilities document metadata could not be read (${itemRes.status})`)
+    const item = await itemRes.json()
+    if (!item.file) throw new Error('Configured capabilities item is not a file')
+    if (Number(item.size || 0) > CAP_FILE_MAX_BYTES) {
+      throw new Error('Capabilities document is larger than the 5 MB extraction limit')
+    }
 
-    // Fetch the docx content as plain text via Graph
     const fileRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${env.DRIVE_ID}/items/${env.CAPABILITIES_FILE_ID}/content`,
-      { headers: { Authorization: `Bearer ${access_token}` } }
+      `https://graph.microsoft.com/v1.0/drives/${config.driveId}/items/${env.CAPABILITIES_FILE_ID}/content`,
+      { headers }
     )
-    if (!fileRes.ok) return null
+    if (!fileRes.ok) throw new Error(`Capabilities document could not be downloaded (${fileRes.status})`)
+    const contentLength = Number(fileRes.headers.get('content-length') || 0)
+    if (contentLength > CAP_FILE_MAX_BYTES) throw new Error('Capabilities document is larger than the 5 MB extraction limit')
 
-    // Graph returns the raw file bytes — extract text content
-    // For a .docx we get the raw XML; strip tags to get plain text
-    const raw = await fileRes.text()
-    const text = raw
-      .replace(/<[^>]+>/g, ' ')   // strip XML/HTML tags
-      .replace(/\s+/g, ' ')       // collapse whitespace
-      .trim()
-      .slice(0, CAP_CONTEXT_MAX_CHARS)
-
-    if (text) await kvSet(env, CAP_CACHE_KEY, text, CAP_TTL)
-    return text || null
+    const text = extractDocxText(new Uint8Array(await fileRes.arrayBuffer()))
+    const fetchedAt = new Date().toISOString()
+    const cachedValue = {
+      text,
+      fileName: item.name || 'Capabilities document',
+      modifiedAt: item.lastModifiedDateTime || null,
+      eTag: item.eTag || null,
+      fetchedAt,
+    }
+    await kvSet(env, CAP_CACHE_KEY, cachedValue, CAP_TTL)
+    await setCapabilitiesStatus(env, {
+      status: 'ready',
+      message: 'Capabilities document retrieved successfully',
+      fileName: cachedValue.fileName,
+      modifiedAt: cachedValue.modifiedAt,
+      eTag: cachedValue.eTag,
+      fetchedAt,
+    })
+    console.log(JSON.stringify({ event: 'ai_capabilities', status: 'ready', fileName: cachedValue.fileName, fetchedAt }))
+    return text
   } catch (err) {
-    console.error('[AI] Failed to fetch capabilities:', err)
+    const message = err instanceof Error ? err.message : 'Unknown capabilities retrieval error'
+    console.error(JSON.stringify({ event: 'ai_capabilities', status: 'error', message }))
+    await setCapabilitiesStatus(env, { status: 'error', message, checkedAt: new Date().toISOString() })
     return null
+  }
+}
+
+export async function getCapabilitiesStatus(env) {
+  const config = capabilitiesConfig(env)
+  if (!config.configured) {
+    return {
+      status: 'not_configured',
+      message: 'Add CAPABILITIES_FILE_ID to enable the optional capabilities reference.',
+      configured: false,
+    }
+  }
+  const cached = await kvGet(env, CAP_CACHE_KEY)
+  const status = await kvGet(env, CAP_STATUS_KEY)
+  if (status?.status) return { ...status, configured: true, cached: Boolean(cached) }
+  return {
+    status: cached ? 'ready' : 'pending',
+    message: cached ? 'Capabilities document is available from cache' : 'Waiting for the first AI request to retrieve the document.',
+    configured: true,
+    cached: Boolean(cached),
+    fileName: typeof cached === 'object' ? cached.fileName : undefined,
+    modifiedAt: typeof cached === 'object' ? cached.modifiedAt : undefined,
+    fetchedAt: typeof cached === 'object' ? cached.fetchedAt : undefined,
   }
 }
 
