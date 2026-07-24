@@ -2,13 +2,12 @@
  * sam.js — SAM.gov Get Opportunities integration
  *
  * Triggered on demand via POST /sam/trigger from the frontend.
- * The frontend supplies its own MSAL token (used for Graph API writes)
+ * The signed-in user's MSAL token is passed in the Authorization header
  * and the SAM config (NAICS codes, window settings) read from SAMConfig tables.
  * No app-only credentials needed — workbook access uses the user's delegated token.
  *
  * POST /sam/trigger body:
  *   {
- *     token:  string,           // MSAL access token from frontend
  *     config: {
  *       naicsCodes:  string[],  // from SAMNAICSTable
  *       skipDays:    number,    // from SAMSettingsTable
@@ -19,17 +18,16 @@
  *
  * GET  /sam/key-status   — { expired: bool }
  * GET  /sam/run-status   — last run log from KV
- * GET  /sam/debug        — step-by-step diagnostic (requires X-Trigger-Secret)
+ * GET  /sam/debug        — step-by-step diagnostic for authenticated users
  *
  * Secrets required:
  *   SAM_API_KEY         — SAM.gov public API key (expires every 90 days)
  *                         Rotate: wrangler secret put SAM_API_KEY
- *   SAM_TRIGGER_SECRET  — Any string; sent as X-Trigger-Secret header
- *                         Set: wrangler secret put SAM_TRIGGER_SECRET
  *   WORKBOOK_ID         — SharePoint workbook item ID (same as VITE_ONEDRIVE_FILE_ID)
  */
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
+import { getAppOnlyGraphToken } from '../lib/graph.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances the next unit while it remains open, which is reliable with the
 // current delegated Graph token and avoids depending on waitUntil().
@@ -944,26 +942,6 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
   return log
 }
 
-async function getAppOnlyGraphToken(env) {
-  if (!env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET) {
-    throw new Error('Microsoft Graph app credentials are not configured')
-  }
-  const response = await fetch(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: env.MS_CLIENT_ID,
-      client_secret: env.MS_CLIENT_SECRET,
-      scope: 'https://graph.microsoft.com/.default',
-    }),
-  })
-  if (!response.ok) throw new Error(`Could not obtain app-only Graph token (${response.status})`)
-  const { access_token: accessToken } = await response.json()
-  if (!accessToken) throw new Error('Microsoft Graph returned no app-only access token')
-  return accessToken
-}
-
 function scheduledSAMConfig(naicsRows, settingsRows) {
   const settings = Object.fromEntries(settingsRows.map((row) => [String(row.Setting || '').trim(), row.Value]))
   const num = (value, fallback, min, max) => {
@@ -1039,12 +1017,8 @@ export async function handleSAM(req, env, ctx) {
     return handleFollowUps(req, env)
   }
 
-  // GET /sam/debug — step-by-step diagnostic (requires X-Trigger-Secret)
+  // GET /sam/debug is protected by the Worker-wide Entra validation.
   if (url.pathname === '/sam/debug' && req.method === 'GET') {
-    if (!env.SAM_TRIGGER_SECRET) return json({ error: 'SAM_TRIGGER_SECRET not configured' }, 503)
-    const provided = req.headers.get('X-Trigger-Secret') || ''
-    if (provided !== env.SAM_TRIGGER_SECRET) return json({ error: 'Unauthorized' }, 401)
-
     const result = { steps: {} }
 
     // Test token + workbook using a token from the request if provided
@@ -1086,12 +1060,9 @@ export async function handleSAM(req, env, ctx) {
     return json(result)
   }
 
-  // POST /sam/trigger — on-demand pull using frontend-supplied token
+  // POST /sam/trigger uses the same verified delegated token as all browser
+  // routes. Do not accept a second token in the request body.
   if (url.pathname === '/sam/trigger' && req.method === 'POST') {
-    if (!env.SAM_TRIGGER_SECRET) return json({ error: 'SAM_TRIGGER_SECRET not configured' }, 503)
-    const provided = req.headers.get('X-Trigger-Secret') || ''
-    if (provided !== env.SAM_TRIGGER_SECRET) return json({ error: 'Unauthorized' }, 401)
-
     if (!env.SAM_API_KEY)  return json({ error: 'SAM_API_KEY not configured' }, 503)
     if (!env.WORKBOOK_ID)  return json({ error: 'WORKBOOK_ID not configured' }, 503)
 
@@ -1102,9 +1073,10 @@ export async function handleSAM(req, env, ctx) {
       return json({ error: 'Invalid JSON body' }, 400)
     }
 
-    const { token, config, force = false, resumeCursor = null, resumeFrom = 0 } = body
+    const { config, force = false, resumeCursor = null, resumeFrom = 0 } = body
+    const token = String(req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
 
-    if (!token) return json({ error: 'Missing token in request body' }, 400)
+    if (!token) return json({ error: 'Missing Authorization token' }, 401)
     if (!config?.naicsCodes?.length) return json({ error: 'Missing or empty config.naicsCodes' }, 400)
 
     // 12h throttle check (skipped when force=true, e.g. Settings page force pull)
