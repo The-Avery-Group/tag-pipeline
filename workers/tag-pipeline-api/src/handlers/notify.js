@@ -231,7 +231,7 @@ function firstUrl(value) {
   return match?.[0] || ''
 }
 
-function cardForType(type, payload, env) {
+export function cardForType(type, payload, env) {
   const base = APP_BASE(env)
 
   switch (type) {
@@ -371,12 +371,32 @@ function cardForType(type, payload, env) {
   }
 }
 
-export async function handleNotify(req, env) {
+export async function sendTeamsNotification(env, type, payload) {
   if (!env.TEAMS_WEBHOOK_URL) {
     console.warn('[Notify] TEAMS_WEBHOOK_URL secret not set')
-    return json({ ok: false, error: 'Webhook not configured' }, 503)
+    return { ok: false, error: 'Webhook not configured' }
   }
+  const card = cardForType(type, payload, env)
+  if (!card) return { ok: false, error: `Unknown notification type: ${type}` }
 
+  try {
+    const response = await fetch(env.TEAMS_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(card),
+    })
+    if (!response.ok) {
+      console.error('[Notify] Teams webhook returned', response.status)
+      return { ok: false, error: `Teams returned ${response.status}` }
+    }
+    return { ok: true }
+  } catch (error) {
+    console.error('[Notify] Fetch failed:', error)
+    return { ok: false, error: error.message }
+  }
+}
+
+export async function handleNotify(req, env) {
   let body
   try {
     body = await req.json()
@@ -390,9 +410,7 @@ export async function handleNotify(req, env) {
 
   const reservedKeys = []
   const dedupeKey = overdueSummaryDedupeKey(type, payload)
-  if (!(await reserveDedupeKey(env, dedupeKey))) {
-    return json({ ok: true, deduplicated: true })
-  }
+  if (!(await reserveDedupeKey(env, dedupeKey))) return json({ ok: true, deduplicated: true })
   if (dedupeKey) reservedKeys.push(dedupeKey)
 
   if (type === 'contact_followup') {
@@ -402,27 +420,10 @@ export async function handleNotify(req, env) {
     if (payload.items.length === 0) return json({ ok: true, deduplicated: true })
   }
 
-  const card = cardForType(type, payload, env)
-  if (!card) {
+  const result = await sendTeamsNotification(env, type, payload)
+  if (!result.ok) {
     await Promise.all(reservedKeys.map((key) => releaseDedupeKey(env, key)))
-    return json({ error: `Unknown notification type: ${type}` }, 400)
+    return json(result, result.error === 'Webhook not configured' ? 503 : 502)
   }
-
-  try {
-    const response = await fetch(env.TEAMS_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(card),
-    })
-    if (!response.ok) {
-      console.error('[Notify] Teams webhook returned', response.status)
-      await Promise.all(reservedKeys.map((key) => releaseDedupeKey(env, key)))
-      return json({ ok: false, error: `Teams returned ${response.status}` }, 502)
-    }
-    return json({ ok: true })
-  } catch (error) {
-    console.error('[Notify] Fetch failed:', error)
-    await Promise.all(reservedKeys.map((key) => releaseDedupeKey(env, key)))
-    return json({ ok: false, error: error.message }, 502)
-  }
+  return json(result)
 }
