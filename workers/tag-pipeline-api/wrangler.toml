@@ -29,13 +29,14 @@ ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 
 [triggers]
-# All cron schedules are UTC. 13:00 UTC is 2:00 PM Nigeria time (WAT).
+# All cron schedules are UTC. 12:00 UTC is 1:00 PM Nigeria time (WAT).
 # - SAM change checks: 00:00 and 12:00 UTC every day
-# - Autonomous SAM opportunity pulls: weekdays at 2:00 PM WAT
-# - RFI follow-up monitor: Monday, Wednesday, Friday at 2:00 PM WAT
+# - Autonomous SAM opportunity pulls: weekdays at 1:00 PM WAT
+# - RFI follow-up monitor: Monday, Wednesday, Friday at 1:00 PM WAT
+# - Capability document eTag checks: every day at 1:01 PM WAT
 # - Teams reminders: every day at 2:01 PM WAT, so weekend RFI response
 #   reminders remain active while the other reminder categories defer to Monday.
-crons = ["0 0,12 * * *", "0 13 * * *", "1 13 * * *"]
+crons = ["0 0,12 * * *", "1 12 * * *", "1 13 * * *"]
 
 [observability]
 enabled = true
