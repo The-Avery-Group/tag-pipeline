@@ -60,7 +60,6 @@ export function useScrollRestoration(containerRef) {
     }
     raf = requestAnimationFrame(tryRestore)
     return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
   // Save continuously while scrolling (not just on unmount) so navigating
@@ -71,6 +70,5 @@ export function useScrollRestoration(containerRef) {
     const onScroll = () => { scrollPositions.set(key, el.scrollTop) }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 }
