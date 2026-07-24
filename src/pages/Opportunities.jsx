@@ -258,7 +258,6 @@ export default function Opportunities({ toast }) {
   const [showAdd, setShowAdd] = useState(searchParams.get('new') === '1')
   // ── Shared in-progress feedback (consistent loading state across actions) ──
   const deleteAction      = useAsyncAction()   // pipeline opportunity delete (confirm modal)
-  const bulkDismissAction = useAsyncAction()   // New-tab bulk dismiss
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [saving, setSaving] = useState(false)
   const creatingOpportunityRef = useRef(false)
@@ -474,6 +473,9 @@ export default function Opportunities({ toast }) {
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
   const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState(null)
+  const [showSyncDetails, setShowSyncDetails] = useState(false)
   const [deptOpen,      setDeptOpen]      = useState(false)       // controlled dept filter
   const [deptFilter,    setDeptFilter]    = useState(() => {
     try {
@@ -594,24 +596,29 @@ export default function Opportunities({ toast }) {
     }
   }
 
-  const handleBulkDismiss = async () => {
-    if (selectedRows.size === 0) return
+  const handleBulkAction = async (kind) => {
+    if (selectedRows.size === 0 || bulkProgress) return
     saveScroll()
-    const rowIndices = [...selectedRows]
-    setSelectedRows(new Set())
+    const rows = visibleSAMOpps.filter((row) => selectedRows.has(row._rowIndex) && !['dismissed', 'added_to_pipeline', 'tracked'].includes(row.Status || 'new'))
+    if (!rows.length) return
+    setBulkProgress({ kind, completed: 0, total: rows.length })
     let failed = 0
-    await bulkDismissAction.run(async () => {
-      for (const rowIndex of rowIndices) {
-        try {
-          await dismiss(rowIndex)
-        } catch {
-          failed++
-        }
+    for (const [index, row] of rows.entries()) {
+      try {
+        if (kind === 'dismiss') await dismiss(row._rowIndex)
+        else await addToPipeline(row, kind === 'track' ? 'Tracking' : 'New')
+      } catch {
+        failed++
       }
-    })
-    const dismissed = rowIndices.length - failed
-    if (dismissed > 0) toast?.success(`${dismissed} opportunit${dismissed === 1 ? 'y' : 'ies'} dismissed`)
-    if (failed > 0) toast?.error(`${failed} could not be dismissed. Use Retry sync on the affected rows.`)
+      setBulkProgress({ kind, completed: index + 1, total: rows.length })
+    }
+    const completed = rows.length - failed
+    setSelectedRows(new Set())
+    setSelectionMode(false)
+    setBulkProgress(null)
+    const label = kind === 'dismiss' ? 'dismissed' : kind === 'track' ? 'added to Tracking' : 'added to pipeline'
+    if (completed > 0) toast?.success(`${completed} opportunit${completed === 1 ? 'y' : 'ies'} ${label}`)
+    if (failed > 0) toast?.error(`${failed} opportunit${failed === 1 ? 'y' : 'ies'} could not be ${kind === 'dismiss' ? 'dismissed' : 'added'}. Retry the affected rows individually.`)
   }
 
   const handleUndismiss = async (row) => {
@@ -681,6 +688,12 @@ export default function Opportunities({ toast }) {
       ? `Fetching from SAM.gov… (${naicsProcessed}/${naicsTotal} NAICS codes)`
       : 'Fetching from SAM.gov…'
   })()
+  const pullProgressPercent = pullProgress?.naicsTotal
+    ? Math.min(100, Math.round(((pullProgress.naicsProcessed || 0) / pullProgress.naicsTotal) * 100))
+    : pullProgress?.phase === 'writing' ? 82 : 18
+  const samCheckPercent = samCheckProgress?.total
+    ? Math.min(100, Math.round(((samCheckProgress.checked || 0) / samCheckProgress.total) * 100))
+    : 12
 
   // Once a polled run reaches a terminal state, treat it as the new
   // "last pulled" summary immediately rather than waiting for the next
@@ -801,7 +814,8 @@ export default function Opportunities({ toast }) {
                 onClick={() => { saveScroll(); setShowDismissed(false) }}>Hide dismissed</button></>
             )}
           </span>
-          <button className="btn text-xs" style={{ padding: '3px 10px' }}
+          {showSyncDetails && <>
+          <button className="btn btn-primary text-xs" style={{ padding: '3px 10px' }}
             onClick={() => handlePull()} disabled={isPulling}>
             {isPulling ? '⏳ Pulling…' : '↻ Refresh'}
           </button>
@@ -852,8 +866,20 @@ export default function Opportunities({ toast }) {
               )}
             </div>
           )}
+          </>}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }} onClick={() => setShowSyncDetails((value) => !value)}>
+              Sync details {showSyncDetails ? '⌃' : '⌄'}
+            </button>
+            <button className="btn text-xs" style={{ padding: '3px 10px' }} onClick={() => {
+              setSelectionMode((value) => !value)
+              setSelectedRows(new Set())
+            }} disabled={isPulling || checkingSAMChanges || Boolean(bulkProgress)}>
+              {selectionMode ? 'Cancel' : 'Select'}
+            </button>
+          </div>
           {isPulling && pullProgressText
             ? (
               <span className="text-xs" style={{ color: 'var(--blue-600)', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -898,6 +924,25 @@ export default function Opportunities({ toast }) {
           )}
         </div>
       </div>
+      {(isPulling || checkingSAMChanges || bulkProgress) && (
+        <div className={styles.discoveryProgress}>
+          <div className={styles.discoveryProgressHeader}>
+            <span>{bulkProgress ? `${bulkProgress.kind === 'dismiss' ? 'Dismissing' : bulkProgress.kind === 'track' ? 'Adding to Tracking' : 'Adding to pipeline'} opportunities` : checkingSAMChanges ? 'Checking SAM changes' : pullProgressText || 'Pulling new opportunities'}</span>
+            <span>{bulkProgress ? `${bulkProgress.completed} of ${bulkProgress.total}` : checkingSAMChanges && samCheckProgress?.total ? `${samCheckProgress.checked || 0} of ${samCheckProgress.total}` : pullProgress?.naicsTotal ? `${pullProgress.naicsProcessed || 0} of ${pullProgress.naicsTotal}` : ''}</span>
+          </div>
+          <div className={styles.discoveryProgressTrack}><span style={{ width: `${bulkProgress ? Math.round((bulkProgress.completed / bulkProgress.total) * 100) : checkingSAMChanges ? samCheckPercent : pullProgressPercent}%` }} /></div>
+        </div>
+      )}
+      {selectionMode && !bulkProgress && (
+        <div className={styles.bulkToolbar}>
+          <span><strong>{selectedRows.size}</strong> selected</span>
+          <div>
+            <button className="btn btn-primary text-xs" disabled={!selectedRows.size} onClick={() => handleBulkAction('pipeline')}>Add to pipeline</button>
+            <button className="btn text-xs" disabled={!selectedRows.size} onClick={() => handleBulkAction('track')}>Track</button>
+            <button className="btn text-xs" disabled={!selectedRows.size} onClick={() => handleBulkAction('dismiss')}>Dismiss</button>
+          </div>
+        </div>
+      )}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {samLoading
           ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
@@ -924,32 +969,23 @@ export default function Opportunities({ toast }) {
                 <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                     <tr>
-                      <th style={{ width: 28, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)', padding: '8px 4px' }}>
+                      {selectionMode && <th style={{ width: 28, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)', padding: '8px 4px' }}>
                         <input type="checkbox"
                           style={{ cursor: 'pointer' }}
-                          checked={selectedRows.size > 0 && visibleSAMOpps.filter(o => o.Status !== 'dismissed').every(o => selectedRows.has(o._rowIndex))}
+                          checked={selectedRows.size > 0 && visibleSAMOpps.filter(o => !['dismissed', 'added_to_pipeline', 'tracked'].includes(o.Status || 'new')).every(o => selectedRows.has(o._rowIndex))}
                           onChange={(e) => {
-                            const actionable = visibleSAMOpps.filter(o => o.Status !== 'dismissed').map(o => o._rowIndex)
+                            const actionable = visibleSAMOpps.filter(o => !['dismissed', 'added_to_pipeline', 'tracked'].includes(o.Status || 'new')).map(o => o._rowIndex)
                             setSelectedRows(e.target.checked ? new Set(actionable) : new Set())
                           }}
                           title="Select all"
                         />
-                      </th>
+                      </th>}
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Title</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Agency</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>NAICS</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Response Date</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
-                      <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
-                        {(selectedRows.size > 0 || bulkDismissAction.isLoading)
-                          ? <button style={{ fontSize: '10.5px', padding: '2px 8px', background: 'var(--red-600)', color: 'var(--text-on-brand)', border: 'none', borderRadius: 'var(--radius-md)', cursor: bulkDismissAction.isLoading ? 'default' : 'pointer', fontFamily: 'var(--font)', fontWeight: 500, opacity: bulkDismissAction.isLoading ? 0.7 : 1 }}
-                              disabled={bulkDismissAction.isLoading}
-                              onClick={handleBulkDismiss}>
-                              {bulkDismissAction.isLoading ? 'Dismissing…' : `Dismiss ${selectedRows.size} selected`}
-                            </button>
-                          : 'Actions'
-                        }
-                      </th>
+                      <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -967,13 +1003,13 @@ export default function Opportunities({ toast }) {
                       return (
                         <tr key={opp['Notice ID']}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
-                          <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
+                          {selectionMode && <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
                             <input type="checkbox"
-                              className={`${styles.rowCheckbox} ${selectedRows.has(opp._rowIndex) ? styles.rowCheckboxVisible : ''}`}
+                              className={`${styles.rowCheckbox} ${styles.rowCheckboxVisible}`}
                               style={{ cursor: 'pointer' }}
                               checked={selectedRows.has(opp._rowIndex)}
                               onChange={() => {
-                                if (isDismissed) return
+                                if (isDismissed || isActioned) return
                                 saveScroll()
                                 setSelectedRows((prev) => {
                                   const next = new Set(prev)
@@ -982,7 +1018,7 @@ export default function Opportunities({ toast }) {
                                 })
                               }}
                             />
-                          </td>
+                          </td>}
 						  <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
@@ -1014,8 +1050,8 @@ export default function Opportunities({ toast }) {
                                 </div>
                               )
                               : (
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-                                  {!isActioned && (
+                                <div style={{ display: 'grid', gridTemplateColumns: selectionMode ? '1fr' : '1fr 1fr', gap: 4 }}>
+                                  {!isActioned && !selectionMode && (
                                     <>
                                       {/* Row 1: + Pipeline (green) | Track (amber/white) */}
                                       <button className={`btn btn-primary ${styles.newActionPipeline}`} style={btnSm}
@@ -1033,13 +1069,13 @@ export default function Opportunities({ toast }) {
                                       </button>
                                     </>
                                   )}
-                                  {isActioned && linkedOpportunity && (
+                                  {isActioned && linkedOpportunity && !selectionMode && (
                                     <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
                                       onClick={() => openOpportunity(linkedOpportunity)}>
                                       View pipeline
                                     </button>
                                   )}
-                                  {syncFailure && (
+                                  {syncFailure && !selectionMode && (
                                     <button className={`btn ${styles.newActionSam}`} style={btnSm}
                                       title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
                                       {isActioning ? '…' : 'Retry sync'}
