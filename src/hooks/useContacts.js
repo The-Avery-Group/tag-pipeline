@@ -38,7 +38,9 @@ export function useContacts() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    const unsub = onCacheRefresh(load)
+    const unsub = onCacheRefresh((tables) => {
+      if (tables?.includes('ContactsTable')) load()
+    })
     return unsub
   }, [load])
 
@@ -50,7 +52,7 @@ export function useContacts() {
     setContacts((prev) => [...prev, optimistic])
     try {
       await addContact(data)
-      await invalidateCache()   // reconciles with the real server-assigned ID
+      await invalidateCache(['ContactsTable'])
     } catch (err) {
       // Roll back the optimistic row on failure
       setContacts((prev) => prev.filter((c) => c.ContactID !== tempId))
@@ -66,7 +68,7 @@ export function useContacts() {
     )
     try {
       await updateContact(rowIndex, patch)
-      await invalidateCache()
+      await invalidateCache(['ContactsTable'])
     } catch (err) {
       // Roll back by reloading from server
       pendingPatches.current.delete(rowIndex)
@@ -80,7 +82,7 @@ export function useContacts() {
     setContacts((prev) => prev.filter((c) => c._rowIndex !== rowIndex))
     try {
       await deleteContact(rowIndex)
-      await invalidateCache()
+      await invalidateCache(['ContactsTable'])
     } catch (err) {
       await load()
       throw err
