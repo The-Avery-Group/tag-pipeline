@@ -42,7 +42,9 @@ export function usePipeline() {
 
   // Re-load whenever the background poll brings in fresh data
   useEffect(() => {
-    const unsub = onCacheRefresh(load)
+    const unsub = onCacheRefresh((tables) => {
+      if (tables?.includes('PipelineTable')) load()
+    })
     return unsub
   }, [load])
 
@@ -52,7 +54,7 @@ export function usePipeline() {
       notifyLock.current = true
       notifyNewOpportunity(data).finally(() => { notifyLock.current = false })
     }
-    await invalidateCache()   // clears cache + re-fetches all tables
+    await invalidateCache(['PipelineTable'])
   }, [])
 
   const update = useCallback(async (rowIndex, patch, original) => {
@@ -79,7 +81,7 @@ export function usePipeline() {
 
     try {
       await updateOpportunity(rowIndex, patch)
-      await invalidateCache()
+      await invalidateCache(['PipelineTable'])
     } catch (err) {
       // Roll back optimistic update on failure
       pendingPatches.current.delete(rowIndex)
@@ -94,7 +96,7 @@ export function usePipeline() {
 
   const remove = useCallback(async (rowIndex) => {
     await deleteOpportunity(rowIndex)
-    await invalidateCache()
+    await invalidateCache(['PipelineTable'])
   }, [])
 
   return { pipeline, loading, error, refresh: load, add, update, remove }
