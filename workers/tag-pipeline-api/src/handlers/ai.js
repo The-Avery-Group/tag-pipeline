@@ -14,6 +14,7 @@
  */
 
 import { strFromU8, unzipSync } from 'fflate'
+import { getAppOnlyGraphToken } from '../lib/graph.js'
 
 const GROQ_BASE  = 'https://api.groq.com/openai/v1'
 // Versioned to bypass the legacy cache, which stored raw DOCX ZIP bytes as
@@ -345,26 +346,6 @@ async function setCapabilitiesStatus(env, next) {
   })
   if (comparable(previous) === comparable(next)) return
   await kvSet(env, CAP_STATUS_KEY, next, CAP_STATUS_TTL)
-}
-
-async function getAppOnlyGraphToken(env) {
-  const tokenRes = await fetch(
-    `https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: env.MS_CLIENT_ID,
-        client_secret: env.MS_CLIENT_SECRET,
-        scope: 'https://graph.microsoft.com/.default',
-      }),
-    }
-  )
-  if (!tokenRes.ok) throw new Error(`Microsoft Graph authentication failed (${tokenRes.status})`)
-  const { access_token: accessToken } = await tokenRes.json()
-  if (!accessToken) throw new Error('Microsoft Graph authentication returned no access token')
-  return accessToken
 }
 
 function cacheRecord(value) {
