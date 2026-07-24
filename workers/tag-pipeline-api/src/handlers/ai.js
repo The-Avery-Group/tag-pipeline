@@ -18,7 +18,10 @@ import { strFromU8, unzipSync } from 'fflate'
 const GROQ_BASE  = 'https://api.groq.com/openai/v1'
 // Versioned to bypass the legacy cache, which stored raw DOCX ZIP bytes as
 // text before proper WordprocessingML extraction was introduced.
-const CAP_CACHE_KEY  = 'capabilities:tag_capabilities_docx:v2'
+// v3 widens DOCX extraction beyond one exact WordprocessingML entry. Keeping
+// this versioned means a document that was previously cached with the narrower
+// parser is re-read once after deployment.
+const CAP_CACHE_KEY  = 'capabilities:tag_capabilities_docx:v3'
 const CAP_STATUS_KEY = 'capabilities:status'
 const CAP_TTL        = 60 * 60 * 24 * 30   // 30 days
 const CAP_STATUS_TTL = 60 * 60 * 24 * 35   // keep the status slightly longer than its cache
@@ -264,6 +267,42 @@ function xmlDecode(value) {
     .replace(/&apos;/g, "'")
 }
 
+function readableWordXmlEntries(archive) {
+  // A normal DOCX uses word/document.xml. Some files saved or transformed by
+  // Microsoft 365 place readable content in additional Word parts, however,
+  // such as headers, footers, comments, or a numbered document part. Do not
+  // indiscriminately read all XML entries: styles, settings, and theme files
+  // would add noise to the AI context.
+  const preferred = [
+    'word/document.xml',
+    'word/footnotes.xml',
+    'word/endnotes.xml',
+    'word/comments.xml',
+  ]
+  const keys = Object.keys(archive)
+  const selected = preferred.filter((key) => archive[key])
+  const supplemental = keys
+    .filter((key) => /^word\/(?:document\d+|header\d+|footer\d+)\.xml$/i.test(key))
+    .filter((key) => !selected.includes(key))
+    .sort((left, right) => left.localeCompare(right))
+
+  return [...selected, ...supplemental]
+}
+
+function wordXmlToText(xml) {
+  return xmlDecode(strFromU8(xml)
+    .replace(/<w:tab\b[^>]*\/?>(?:<\/w:tab>)?/g, '\t')
+    .replace(/<w:br\b[^>]*\/?>(?:<\/w:br>)?/g, '\n')
+    .replace(/<w:cr\b[^>]*\/?>(?:<\/w:cr>)?/g, '\n')
+    .replace(/<\/w:p>/g, '\n')
+    .replace(/<\/w:tr>/g, '\n')
+    .replace(/<\/w:tc>/g, '\t')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim())
+}
+
 function extractDocxText(bytes) {
   let archive
   try {
@@ -272,19 +311,21 @@ function extractDocxText(bytes) {
     throw new Error('The capabilities file is not a readable DOCX document')
   }
 
-  const documentXml = archive['word/document.xml']
-  if (!documentXml) throw new Error('The DOCX document has no readable body')
+  const wordParts = readableWordXmlEntries(archive)
+  if (!wordParts.length) {
+    const entries = Object.keys(archive).slice(0, 12).join(', ') || 'none'
+    console.warn(JSON.stringify({ event: 'ai_capabilities', status: 'unreadable_docx', entries }))
+    throw new Error('The selected file is not a standard DOCX document with readable Word content')
+  }
 
-  // DOCX is a ZIP archive. Read its WordprocessingML document body, preserve
-  // paragraphs/tabs, then remove the remaining XML markup.
-  const text = xmlDecode(strFromU8(documentXml)
-    .replace(/<w:tab\b[^>]*\/>/g, '\t')
-    .replace(/<w:br\b[^>]*\/>/g, '\n')
-    .replace(/<\/w:p>/g, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim())
+  // DOCX is a ZIP archive. Preserve paragraphs, tabs, and table-cell spacing
+  // before removing the remaining XML markup. The primary document stays
+  // first, so the 2,500-character context limit favors the actual body.
+  const text = wordParts
+    .map((key) => wordXmlToText(archive[key]))
+    .filter(Boolean)
+    .join('\n\n')
+    .trim()
 
   if (!text) throw new Error('The DOCX document does not contain readable text')
   return text.slice(0, CAP_CONTEXT_MAX_CHARS)
