@@ -1,6 +1,6 @@
 name = "tag-pipeline-api"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2026-07-24"
 compatibility_flags = ["nodejs_compat"]
 
 # Secrets (set via `wrangler secret put` or Cloudflare dashboard):
@@ -8,8 +8,6 @@ compatibility_flags = ["nodejs_compat"]
 #   GROQ_API_KEY        — Groq API key
 #   SAM_API_KEY         — SAM.gov public API key (expires every 90 days)
 #                         Rotate: wrangler secret put SAM_API_KEY
-#   SAM_TRIGGER_SECRET  — Any string you choose; sent as X-Trigger-Secret header to POST /sam/trigger
-#                         Set: wrangler secret put SAM_TRIGGER_SECRET
 #   WORKBOOK_ID         — SharePoint workbook item ID (same as VITE_ONEDRIVE_FILE_ID)
 #                         Add: wrangler secret put WORKBOOK_ID
 #   MS_TENANT_ID        — Azure AD tenant ID (already set)
@@ -47,8 +45,3 @@ enabled = true
 head_sampling_rate = 1
 persist = true
 invocation_logs = true
-
-[observability.traces]
-enabled = false
-persist = true
-head_sampling_rate = 1
