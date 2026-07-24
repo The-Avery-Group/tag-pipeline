@@ -3,7 +3,7 @@
  * All AI calls go through the Cloudflare Worker — no API keys in the browser.
  */
 
-const WORKER_URL = import.meta.env.VITE_API_BASE_URL
+import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
 export const AI_MODELS = [
   { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', description: 'Best strategy and reasoning' },
@@ -30,7 +30,7 @@ export async function sendAIMessage({
 } = {}) {
   if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
 
-  const res = await fetch(`${WORKER_URL}/ai/chat`, {
+  const res = await workerFetch('/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, promptType, context, conversationId, startFresh, toolResults, toolRound, preferredModel }),
@@ -55,7 +55,7 @@ export async function sendAIMessage({
  */
 export async function getConversationHistory(conversationId) {
   if (!WORKER_URL || !conversationId) return []
-  const res = await fetch(`${WORKER_URL}/ai/history?conversationId=${encodeURIComponent(conversationId)}`)
+  const res = await workerFetch(`/ai/history?conversationId=${encodeURIComponent(conversationId)}`)
   if (!res.ok) return []
   const data = await res.json()
   return data.messages || []
@@ -66,7 +66,7 @@ export async function getConversationHistory(conversationId) {
  */
 export async function clearConversation(conversationId) {
   if (!WORKER_URL || !conversationId) return
-  await fetch(`${WORKER_URL}/ai/history?conversationId=${encodeURIComponent(conversationId)}`, {
+  await workerFetch(`/ai/history?conversationId=${encodeURIComponent(conversationId)}`, {
     method: 'DELETE',
   })
 }
