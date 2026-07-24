@@ -32,11 +32,13 @@ export function usePartners() {
   useEffect(() => { load() }, [load])
   // The workbook's shared poll is still respected, but it must never turn a
   // visible partner profile back into a loading state or interrupt editing.
-  useEffect(() => onCacheRefresh(() => load({ silent: true })), [load])
+  useEffect(() => onCacheRefresh((tables) => {
+    if (tables?.includes('PartnersTable')) load({ silent: true })
+  }), [load])
 
   const add = useCallback(async (data) => {
     await addPartner(data)
-    await invalidateCache()
+    await invalidateCache(['PartnersTable'])
   }, [])
 
   const update = useCallback(async (rowIndex, patch, original) => {
@@ -46,7 +48,7 @@ export function usePartners() {
     ))
     try {
       await updatePartner(rowIndex, patch)
-      await invalidateCache()
+      await invalidateCache(['PartnersTable'])
     } catch (err) {
       pendingPatches.current.delete(rowIndex)
       setPartners((current) => current.map((partner) =>
@@ -60,7 +62,7 @@ export function usePartners() {
     setPartners((current) => current.filter((partner) => partner._rowIndex !== rowIndex))
     try {
       await deletePartner(rowIndex)
-      await invalidateCache()
+      await invalidateCache(['PartnersTable'])
     } catch (err) {
       setPartners((current) => [...current, original].sort((a, b) => a._rowIndex - b._rowIndex))
       throw err
