@@ -45,6 +45,7 @@ export default function Settings({ toast }) {
   const [savedKey, setSavedKey] = useState(null)
   const [integrationStatus, setIntegrationStatus] = useState(null)
   const [loadingIntegrations, setLoadingIntegrations] = useState(false)
+  const [refreshingCapabilities, setRefreshingCapabilities] = useState(false)
 
   // ── SAM config state ─────────────────────────────────────────────────
   const [naicsCodes,    setNaicsCodes]    = useState([])
@@ -87,6 +88,30 @@ export default function Settings({ toast }) {
       setIntegrationStatus({ capabilities: { status: 'unavailable', message: err.message } })
     } finally {
       setLoadingIntegrations(false)
+    }
+  }
+
+  const handleCapabilitiesRefresh = async () => {
+    if (!WORKER_URL) {
+      toast?.error('Worker URL is not configured')
+      return
+    }
+    setRefreshingCapabilities(true)
+    try {
+      const response = await fetch(`${WORKER_URL}/integrations/capabilities/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not check the capabilities document')
+      setIntegrationStatus((previous) => ({ ...previous, capabilities: payload.capabilities }))
+      if (payload.throttled) toast?.info('The document was checked recently. Please try again in a few minutes.')
+      else if (payload.changed) toast?.success('Capabilities document updated')
+      else toast?.success('Capabilities document is up to date')
+    } catch (err) {
+      toast?.error(err.message)
+    } finally {
+      setRefreshingCapabilities(false)
     }
   }
 
@@ -246,6 +271,11 @@ export default function Settings({ toast }) {
                 Retrieved {new Date(integrationStatus.capabilities.fetchedAt).toLocaleString()}.
               </p>
             )}
+            {integrationStatus?.capabilities?.lastCheckedAt && (
+              <p className="text-xs text-muted" style={{ marginTop: 3 }}>
+                Last checked {new Date(integrationStatus.capabilities.lastCheckedAt).toLocaleString()}.
+              </p>
+            )}
             <div className={styles.integrationRow} style={{ marginTop: 10 }}>
               <span className={`${styles.integrationBadge} ${integrationStatus?.notifications?.appOnlyAvailable ? styles.integrationReady : styles.integrationNotConfigured}`}>
                 {integrationStatus?.notifications?.appOnlyAvailable ? 'Scheduled' : 'Browser fallback'}
@@ -260,9 +290,14 @@ export default function Settings({ toast }) {
                 : 'The browser sends scheduled reminders until app-only Worker access is available.'}
             </p>
           </div>
-          <button className="btn btn-ghost" type="button" onClick={loadIntegrationStatus} disabled={loadingIntegrations}>
-            {loadingIntegrations ? 'Checking…' : 'Refresh status'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" type="button" onClick={handleCapabilitiesRefresh} disabled={refreshingCapabilities}>
+              {refreshingCapabilities ? 'Checking…' : 'Check document'}
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={loadIntegrationStatus} disabled={loadingIntegrations}>
+              {loadingIntegrations ? 'Checking…' : 'Refresh status'}
+            </button>
+          </div>
         </div>
 
         {/* ── Collapsible: Dropdown Options ── */}
