@@ -616,9 +616,37 @@ async function handleFollowUps(req, env) {
 
 // ── Core pull logic (shared by trigger) ──────────────────────────────────
 
+function sameCursor(a, b) {
+  return Number(a?.naicsIndex) === Number(b?.naicsIndex) && Number(a?.offset) === Number(b?.offset)
+}
+
+function pullRunContext(previousLog, resumeCursor, startedAt) {
+  // A resumed checkpoint belongs to the preceding partial/running pull only
+  // when it starts from the cursor the Worker previously published. This lets
+  // the status show one truthful total across all bounded batches, while a
+  // fresh manual pull always starts at zero.
+  const continuing = Boolean(
+    resumeCursor &&
+    previousLog &&
+    ['partial', 'running'].includes(previousLog.status) &&
+    sameCursor(previousLog.nextCursor, resumeCursor)
+  )
+
+  return {
+    runId: continuing ? previousLog.runId || crypto.randomUUID() : crypto.randomUUID(),
+    startedAt: continuing ? previousLog.startedAt || previousLog.timestamp || startedAt : startedAt,
+    totalFetched: continuing ? Number(previousLog.totalFetched ?? previousLog.fetched) || 0 : 0,
+    totalWritten: continuing ? Number(previousLog.totalWritten ?? previousLog.written) || 0 : 0,
+    totalDeduped: continuing ? Number(previousLog.totalDeduped ?? previousLog.deduped) || 0 : 0,
+    totalDeleted: continuing ? Number(previousLog.totalDeleted ?? previousLog.deleted) || 0 : 0,
+  }
+}
+
 async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeFrom = 0) {
   const runStart = new Date().toISOString()
   console.log('[SAM] Pull started:', runStart)
+  const previousLog = resumeCursor ? await getRunLog(env) : null
+  const run = pullRunContext(previousLog, resumeCursor, runStart)
 
   const { naicsCodes = [], skipDays = 3, windowDays = 90 } = config
   const startIndex = Math.max(
@@ -631,7 +659,7 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
 
   if (!naicsCodes.length) {
     const err = 'No NAICS codes provided'
-    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: err })
+    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, runId: run.runId, startedAt: run.startedAt, error: err })
     throw new Error(err)
   }
 
@@ -641,9 +669,11 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
   // of KV writes total for the whole run (not one per NAICS code), since
   // each KV put() also counts against the subrequest budget.
   await setRunLog(env, {
-    status: 'running', phase: 'fetching', timestamp: runStart, startedAt: runStart,
+    status: 'running', phase: 'fetching', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
     naicsTotal: naicsCodes.length, naicsProcessed: startIndex, nextNaicsIndex: startIndex,
     nextCursor: { naicsIndex: startIndex, offset: startOffset },
+    fetched: run.totalFetched, written: run.totalWritten, deduped: run.totalDeduped, deleted: run.totalDeleted,
+    totalFetched: run.totalFetched, totalWritten: run.totalWritten, totalDeduped: run.totalDeduped, totalDeleted: run.totalDeleted,
   })
 
   // Build date ranges
@@ -666,7 +696,12 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
     existingRows = await getTableRows(env, token, 'NewOpportunitiesTable')
   } catch (err) {
     const msg = `Failed to read NewOpportunitiesTable: ${err.message}`
-    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, error: msg })
+    await setRunLog(env, {
+      success: false, status: 'error', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
+      fetched: run.totalFetched, written: run.totalWritten, deduped: run.totalDeduped, deleted: run.totalDeleted,
+      totalFetched: run.totalFetched, totalWritten: run.totalWritten, totalDeduped: run.totalDeduped, totalDeleted: run.totalDeleted,
+      error: msg,
+    })
     throw new Error(msg)
   }
 
@@ -826,13 +861,16 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
   let totalWritten = 0
   if (!fatalError && toWrite.length > 0) {
     await setRunLog(env, {
-      status: 'running', phase: 'writing', timestamp: runStart, startedAt: runStart,
+      status: 'running', phase: 'writing', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
       // If this invocation is killed during Graph writes, resume from the
       // start of this chunk. Existing Notice IDs make that retry idempotent;
       // resuming at the next NAICS could otherwise lose rows not yet written.
       naicsTotal: naicsCodes.length, naicsProcessed, nextNaicsIndex: startIndex,
       nextCursor: { naicsIndex: startIndex, offset: startOffset },
-      toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: 0,
+      toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: run.totalWritten,
+      fetched: run.totalFetched + totalFetched, deduped: run.totalDeduped + dedupDeleteRowIndices.size, deleted: run.totalDeleted,
+      totalFetched: run.totalFetched + totalFetched, totalWritten: run.totalWritten,
+      totalDeduped: run.totalDeduped + dedupDeleteRowIndices.size, totalDeleted: run.totalDeleted,
     })
 
     for (const c of toWrite) {
@@ -862,31 +900,121 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
 
   if (fatalError) {
     const log = {
-      success: false, status: 'error', timestamp: runStart, error: fatalError,
-      warnings: naicsErrors.length > 0 ? naicsErrors : undefined, deleted,
+      success: false, status: 'error', timestamp: new Date().toISOString(), runId: run.runId, startedAt: run.startedAt,
+      error: fatalError, warnings: naicsErrors.length > 0 ? naicsErrors : undefined,
+      batchFetched: totalFetched, batchWritten: totalWritten, batchDeduped: dedupDeleteRowIndices.size, batchDeleted: deleted,
+      fetched: run.totalFetched + totalFetched, written: run.totalWritten + totalWritten,
+      deduped: run.totalDeduped + dedupDeleteRowIndices.size, deleted: run.totalDeleted + deleted,
+      totalFetched: run.totalFetched + totalFetched, totalWritten: run.totalWritten + totalWritten,
+      totalDeduped: run.totalDeduped + dedupDeleteRowIndices.size, totalDeleted: run.totalDeleted + deleted,
     }
     await setRunLog(env, log)
     throw new Error(fatalError)
   }
 
   const complete = !hasMoreWork && nextNaicsIndex >= naicsCodes.length
+  const completedAt = new Date().toISOString()
   const log = {
     success:   complete,
     status:    complete ? 'success' : 'partial',
-    timestamp: runStart,
+    timestamp: completedAt,
+    runId: run.runId,
+    startedAt: run.startedAt,
+    completedAt: complete ? completedAt : undefined,
     nextNaicsIndex,
     nextCursor,
     naicsTotal: naicsCodes.length,
     naicsProcessed,
-    fetched:   totalFetched,
-    written:   totalWritten,
-    deduped:   dedupDeleteRowIndices.size,
-    deleted,
+    batchFetched: totalFetched,
+    batchWritten: totalWritten,
+    batchDeduped: dedupDeleteRowIndices.size,
+    batchDeleted: deleted,
+    fetched:   run.totalFetched + totalFetched,
+    written:   run.totalWritten + totalWritten,
+    deduped:   run.totalDeduped + dedupDeleteRowIndices.size,
+    deleted:   run.totalDeleted + deleted,
+    totalFetched: run.totalFetched + totalFetched,
+    totalWritten: run.totalWritten + totalWritten,
+    totalDeduped: run.totalDeduped + dedupDeleteRowIndices.size,
+    totalDeleted: run.totalDeleted + deleted,
     warnings:  naicsErrors.length > 0 ? naicsErrors : undefined,
   }
   await setRunLog(env, log)
-  console.log(`[SAM] Done. Fetched: ${totalFetched} | Written: ${totalWritten} | Deduped: ${dedupDeleteRowIndices.size} | Deleted: ${deleted}`)
+  console.log(`[SAM] Done. Run ${run.runId} | Batch written: ${totalWritten} | Total written: ${log.totalWritten} | Complete: ${complete}`)
   return log
+}
+
+async function getAppOnlyGraphToken(env) {
+  if (!env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET) {
+    throw new Error('Microsoft Graph app credentials are not configured')
+  }
+  const response = await fetch(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: env.MS_CLIENT_ID,
+      client_secret: env.MS_CLIENT_SECRET,
+      scope: 'https://graph.microsoft.com/.default',
+    }),
+  })
+  if (!response.ok) throw new Error(`Could not obtain app-only Graph token (${response.status})`)
+  const { access_token: accessToken } = await response.json()
+  if (!accessToken) throw new Error('Microsoft Graph returned no app-only access token')
+  return accessToken
+}
+
+function scheduledSAMConfig(naicsRows, settingsRows) {
+  const settings = Object.fromEntries(settingsRows.map((row) => [String(row.Setting || '').trim(), row.Value]))
+  const num = (value, fallback, min, max) => {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback
+  }
+  return {
+    naicsCodes: naicsRows
+      .map((row) => String(row['NAICS Code'] || row.NAICS || row.Code || '').trim())
+      .filter(Boolean),
+    skipDays: num(settings['Skip Days'], 3, 0, 30),
+    windowDays: num(settings['Window Days'], 90, 7, 365),
+  }
+}
+
+// Scheduled pulls use Microsoft Graph application permissions. If that path
+// is not available, the existing browser-triggered pull remains the fallback.
+// A single bounded checkpoint is deliberate: it stays under Worker
+// subrequest limits and resumes from the stored cursor on the next run while
+// preserving one cumulative count for the complete pull.
+export async function runScheduledSAMPull(env) {
+  const startedAt = new Date().toISOString()
+  if (!env.SAM_API_KEY || !env.WORKBOOK_ID) {
+    const message = !env.SAM_API_KEY ? 'SAM_API_KEY is not configured' : 'WORKBOOK_ID is not configured'
+    console.error(JSON.stringify({ event: 'scheduled_sam_pull', status: 'skipped', message, startedAt }))
+    return { ok: false, skipped: true, message }
+  }
+
+  try {
+    const token = await getAppOnlyGraphToken(env)
+    const [naicsRows, settingsRows, previousRun] = await Promise.all([
+      getTableRows(env, token, 'SAMNAICSTable'),
+      getTableRows(env, token, 'SAMSettingsTable'),
+      getRunLog(env),
+    ])
+    const config = scheduledSAMConfig(naicsRows, settingsRows)
+    if (!config.naicsCodes.length) throw new Error('SAMNAICSTable does not contain any NAICS codes')
+
+    const resumeCursor = previousRun?.status === 'partial' ? previousRun.nextCursor || null : null
+    const result = await runSAMPull(env, token, config, resumeCursor)
+    console.log(JSON.stringify({
+      event: 'scheduled_sam_pull', status: result.status, source: 'app-only',
+      runId: result.runId, batchWritten: result.batchWritten, totalWritten: result.totalWritten,
+      startedAt, completedAt: new Date().toISOString(),
+    }))
+    return { ok: true, source: 'app-only', result }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown scheduled SAM pull error'
+    console.error(JSON.stringify({ event: 'scheduled_sam_pull', status: 'error', source: 'app-only', message, startedAt }))
+    return { ok: false, source: 'app-only', error: message }
+  }
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────────
