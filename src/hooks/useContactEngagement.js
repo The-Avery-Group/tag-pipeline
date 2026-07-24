@@ -35,7 +35,9 @@ export function useContactEngagement(enabled = false) {
 
   useEffect(() => {
     if (!enabled) return undefined
-    return onCacheRefresh(() => load({ silent: true }))
+    return onCacheRefresh((tables) => {
+      if (tables?.includes('ContactInteractionsTable')) load({ silent: true })
+    })
   }, [enabled, load])
 
   const addInteraction = useCallback(async (data) => {
@@ -43,7 +45,7 @@ export function useContactEngagement(enabled = false) {
     // Show the newly logged interaction immediately. The background refresh
     // below reconciles this optimistic entry with the workbook afterwards.
     setInteractions((current) => [...(current || []), saved])
-    await invalidateCache()
+    await invalidateCache(['ContactInteractionsTable'])
     return saved
   }, [])
 
