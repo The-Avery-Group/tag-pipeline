@@ -1,4 +1,5 @@
 import { findRFIFollowUps } from './sam.js'
+import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 
 const WATCH_PREFIX = 'rfi_followup_watch:'
 const RUN_KEY = 'rfi_followup_monitor_run'
@@ -185,21 +186,11 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
 
 async function appOnlyToken(env) {
   if (env.RFI_FOLLOW_UP_APP_ONLY !== 'true' || !env.MS_TENANT_ID || !env.MS_CLIENT_ID || !env.MS_CLIENT_SECRET || !env.WORKBOOK_ID) return null
-  const response = await fetch(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: env.MS_CLIENT_ID, client_secret: env.MS_CLIENT_SECRET, scope: 'https://graph.microsoft.com/.default' }),
-  })
-  if (!response.ok) throw new Error(`Could not obtain app-only Graph token (${response.status})`)
-  return (await response.json()).access_token
+  return getAppOnlyGraphToken(env)
 }
 
 async function graphRows(env, token, tableName) {
-  const base = `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${env.WORKBOOK_ID}/workbook`
-  const headers = await fetch(`${base}/tables/${tableName}/columns`, { headers: { Authorization: `Bearer ${token}` } })
-  const rows = await fetch(`${base}/tables/${tableName}/rows`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!headers.ok || !rows.ok) throw new Error(`Could not read ${tableName} with app-only Graph access`)
-  const columns = (await headers.json()).value.map((item) => item.name)
-  return (await rows.json()).value.map((row) => Object.fromEntries(columns.map((column, index) => [column, row.values[0][index]])))
+  return readWorkbookTable(env, DRIVE_ID, token, tableName)
 }
 
 function appSettings(rows) {
