@@ -8,6 +8,7 @@
 
 import { sendTeamsNotification } from './notify.js'
 import { getAppOnlyGraphToken as appOnlyToken } from '../lib/graph.js'
+import { putAutomationRun } from '../lib/automationHealth.js'
 
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const NOTIFICATION_LOG_TABLE = 'DataValidationTable'
@@ -308,13 +309,13 @@ export async function runScheduledNotifications(env) {
     }
 
     const result = { ok: true, status: 'success', source: 'app-only', startedAt, completedAt: new Date().toISOString(), weekday: isWeekday, sent }
-    await env.CACHE?.put(RUN_KEY, JSON.stringify(result), { expirationTtl: 60 * 60 * 24 * 14 })
+    await putAutomationRun(env, RUN_KEY, result, { expirationTtl: 60 * 60 * 24 * 14 })
     console.log(JSON.stringify({ event: 'scheduled_notifications', ...result }))
     return result
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown scheduled notification error'
     const result = { ok: false, status: 'error', source: 'app-only', message, startedAt, completedAt: new Date().toISOString() }
-    await env.CACHE?.put(RUN_KEY, JSON.stringify(result), { expirationTtl: 60 * 60 * 24 * 14 })
+    await putAutomationRun(env, RUN_KEY, result, { expirationTtl: 60 * 60 * 24 * 14 })
     console.error(JSON.stringify({ event: 'scheduled_notifications', ...result }))
     return result
   }
