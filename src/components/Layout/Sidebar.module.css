@@ -10,22 +10,52 @@
 }
 
 .logo {
-  padding: 16px 16px 12px;
+  min-height: 76px;
+  padding: 10px 10px 9px;
   border-bottom: 0.5px solid var(--gray-200);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
-.logoName {
+.logoImageWrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.logoImage {
+  display: block;
+  width: 136px;
+  max-width: 100%;
+  height: auto;
+}
+
+.logoImageLight {
+  display: block;
+}
+
+.logoImageDark {
+  display: none;
+}
+
+:global(html[data-theme='dark']) .logoImageLight {
+  display: none;
+}
+
+:global(html[data-theme='dark']) .logoImageDark {
+  display: block;
+}
+
+.logoProduct {
+  align-self: flex-end;
+  flex: 0 0 auto;
+  margin-bottom: 3px;
+  color: #abad34;
   font-size: 13px;
-  font-weight: 700;
-  color: var(--gray-900);
-  letter-spacing: -0.01em;
-}
-
-.logoSub {
-  font-size: 10px;
-  color: var(--gray-400);
-  margin-top: 1px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
 }
 
 .nav {
@@ -63,7 +93,12 @@
 .navItem:hover { background: var(--gray-100); color: var(--gray-900); }
 .active { background: var(--blue-50) !important; color: var(--blue-800) !important; font-weight: 500; }
 
-.navIcon { font-size: 14px; flex-shrink: 0; }
+.navIcon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+}
 .navBtn  { width: 100%; }
 
 /* Footer: user info stacked above sign-out */
@@ -151,6 +186,12 @@
 }
 .settingsBtn:hover { background: var(--gray-50); color: var(--gray-900); text-decoration: none; }
 .settingsBtnActive { background: var(--blue-50) !important; color: var(--blue-800) !important; border-color: var(--blue-200) !important; }
+.settingsBtn .navIcon,
+.signOutBtn .navIcon {
+  width: 15px;
+  height: 15px;
+  flex-basis: 15px;
+}
 /* ── Search trigger (Notion-style) ── */
 .searchTrigger {
   display: flex;
@@ -211,6 +252,11 @@
   color: var(--gray-600);
 }
 .searchTrigger span { flex: 1; }
+.searchTrigger .navIcon {
+  width: 13px;
+  height: 13px;
+  flex-basis: 13px;
+}
 
 .kbd {
   font-size: 10px;
