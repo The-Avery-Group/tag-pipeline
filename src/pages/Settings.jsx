@@ -35,6 +35,20 @@ const SECTIONS = [
   { key: 'contactTypes',      label: 'Contact Types' },
 ]
 
+const AUTOMATION_STATUS = {
+  success: { label: 'Healthy', className: 'integrationReady' },
+  partial: { label: 'Continuing', className: 'integrationPending' },
+  running: { label: 'Running', className: 'integrationPending' },
+  error: { label: 'Needs attention', className: 'integrationError' },
+  not_run: { label: 'Waiting for first run', className: 'integrationPending' },
+  not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
+}
+
+function formatHealthTime(value) {
+  const date = value ? new Date(value) : null
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : 'Not available yet'
+}
+
 export default function Settings({ toast }) {
   const { lists, loading, update } = useValidationLists()
   const { triggerPull } = useSAMOpportunities()
@@ -63,6 +77,7 @@ export default function Settings({ toast }) {
   // Collapsible sections — all collapsed on first load
   const [openSections,  setOpenSections]  = useState({
     dropdowns: false,
+    health:    false,
     sam:       false,
   })
   const toggleSection = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -297,6 +312,55 @@ export default function Settings({ toast }) {
               {loadingIntegrations ? 'Checking…' : 'Refresh status'}
             </button>
           </div>
+        </div>
+
+        <div className={styles.collapsible}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('health')}>
+            <span>
+              <span className={styles.collapsibleTitle}>Automation Health</span>
+              <span className={styles.collapsibleHint}>Scheduled Worker jobs and integration checks</span>
+            </span>
+            <span className={`${styles.chevron} ${openSections.health ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.health && (
+            <div className={styles.healthBody}>
+              {!integrationStatus?.automation?.length ? (
+                <p className="text-xs text-muted">Refresh status to load automation health.</p>
+              ) : (
+                <div className={styles.healthTableWrap}>
+                  <table className={styles.healthTable}>
+                    <thead>
+                      <tr>
+                        <th scope="col">Process</th>
+                        <th scope="col">Schedule</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Last successful</th>
+                        <th scope="col">Last issue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {integrationStatus.automation.map((job) => {
+                        const status = AUTOMATION_STATUS[job.status] || AUTOMATION_STATUS.not_run
+                        const issue = job.lastFailureMessage || job.message
+                        return (
+                          <tr key={job.id}>
+                            <td className={styles.healthProcess}>{job.label}</td>
+                            <td>{job.schedule}</td>
+                            <td><span className={`${styles.integrationBadge} ${styles[status.className]}`}>{status.label}</span></td>
+                            <td>{formatHealthTime(job.lastSuccessAt)}</td>
+                            <td className={issue ? styles.healthIssue : undefined}>
+                              {job.lastFailureAt ? <span>{formatHealthTime(job.lastFailureAt)}</span> : null}
+                              {issue ? <span className={styles.healthIssueMessage}>{issue}</span> : (!job.lastFailureAt && 'None recorded')}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── Collapsible: Dropdown Options ── */}
