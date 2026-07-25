@@ -17,12 +17,12 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 3px;
 }
 
 .logoImageWrap {
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -50,14 +50,15 @@
 }
 
 .logoProduct {
-  align-self: flex-end;
+  align-self: flex-start;
   flex: 0 0 auto;
-  margin-bottom: 3px;
+  margin-top: 20px;
+  margin-bottom: 0;
   color: #abad34;
   font-family: 'Montserrat Alternates', -apple-system, 'Inter', BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.09em;
 }
 
 .nav {
