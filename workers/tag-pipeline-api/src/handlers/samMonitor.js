@@ -1,3 +1,5 @@
+import { putAutomationRun } from '../lib/automationHealth.js'
+
 /**
  * Lightweight, checkpointed monitor for opportunities already saved in
  * NewOpportunitiesTable. It deliberately does not use Graph or the pull
@@ -291,7 +293,7 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
   const run = { status: completed ? 'success' : 'partial', checkedAt: new Date().toISOString(), total: watches.length, checked: nextCursor, nextCursor: completed ? null : nextCursor, errors }
   // Persist one completed status only when work was performed. The old
   // running/success pair was two writes every hour even with no useful work.
-  await env.CACHE.put(RUN_KEY, JSON.stringify(run))
+  await putAutomationRun(env, RUN_KEY, run)
   console.info(JSON.stringify({ event: 'sam_monitor_completed', status: run.status, checked: run.checked, total: run.total, errors: errors.length }))
   return { ok: true, ...run }
 }
