@@ -12,12 +12,13 @@ export const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 export async function workerFetch(path, options = {}) {
   if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
 
-  const token = await getToken()
-  const headers = new Headers(options.headers || {})
+  const { interactiveAuth = false, ...fetchOptions } = options
+  const token = await getToken({ interactive: interactiveAuth })
+  const headers = new Headers(fetchOptions.headers || {})
   headers.set('Authorization', `Bearer ${token}`)
 
   return fetch(`${WORKER_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers,
   })
 }
