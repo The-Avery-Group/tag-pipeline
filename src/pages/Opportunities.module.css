@@ -57,6 +57,48 @@
   background: var(--blue-50) !important;
   border-color: var(--blue-200) !important;
 }
+
+.newToolbarStatus {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.syncControlRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pullSummary {
+  margin-right: 4px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 780px) {
+  .newToolbarStatus {
+    width: 100%;
+    align-items: flex-start;
+  }
+
+  .syncControlRow {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .pullSummary {
+    width: 100%;
+    margin-right: 0;
+    text-align: left;
+    white-space: normal;
+  }
+}
 @keyframes spinnerPulse {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50%      { opacity: 1;    transform: scale(1); }
