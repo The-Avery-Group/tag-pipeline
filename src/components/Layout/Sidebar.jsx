@@ -46,7 +46,7 @@ export default function Sidebar({ onSearchOpen }) {
           <img className={`${styles.logoImage} ${styles.logoImageLight}`} src={`${assetBase}avery-group-logo.png`} alt="The Avery Group" />
           <img className={`${styles.logoImage} ${styles.logoImageDark}`} src={`${assetBase}avery-group-logo-dark.png`} alt="" aria-hidden="true" />
         </div>
-        <span className={styles.logoProduct}>CRM</span>
+        <span className={styles.logoProduct}>• CRM</span>
       </div>
 
       {/* Notion-style search trigger */}
