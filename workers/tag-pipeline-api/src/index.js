@@ -17,6 +17,7 @@ import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
 import { AuthError, verifyEntraRequest } from './lib/auth.js'
+import { getAutomationHealth } from './lib/automationHealth.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -88,10 +89,12 @@ export default {
         response = await handleAIChat(req, env)
 
       } else if (path === '/integrations/status' && req.method === 'GET') {
-        response = json({
-          capabilities: await getCapabilitiesStatus(env),
-          notifications: await getNotificationMonitorStatus(env),
-        })
+        const [capabilities, notifications, automation] = await Promise.all([
+          getCapabilitiesStatus(env),
+          getNotificationMonitorStatus(env),
+          getAutomationHealth(env),
+        ])
+        response = json({ capabilities, notifications, automation })
 
       } else if (path === '/integrations/capabilities/refresh' && req.method === 'POST') {
         const result = await manuallyRefreshCapabilities(env)
