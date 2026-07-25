@@ -1,5 +1,6 @@
 import { findRFIFollowUps } from './sam.js'
 import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
+import { putAutomationRun } from '../lib/automationHealth.js'
 
 const WATCH_PREFIX = 'rfi_followup_watch:'
 const RUN_KEY = 'rfi_followup_monitor_run'
@@ -260,7 +261,7 @@ export async function runRFIFollowUpMonitor(env) {
   const run = { status: 'success', checkedAt: new Date().toISOString(), source, total: watches.length, due: Math.max(0, due.length - batch.length), checked: batch.length }
   // One result write only when a real batch ran. Previously this wrote a
   // running and success record every hour, including no-op hours.
-  await env.CACHE.put(RUN_KEY, JSON.stringify(run))
+  await putAutomationRun(env, RUN_KEY, run)
   return { ok: true, ...run }
 }
 
