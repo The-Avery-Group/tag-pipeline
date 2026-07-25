@@ -171,21 +171,29 @@ function publicWatch(watch) {
 async function sync(req, env) {
   const body = await req.json()
   const items = Array.isArray(body?.opportunities) ? body.opportunities : []
+  const dismissedRowIndices = new Set((Array.isArray(body?.dismissedRowIndices) ? body.dismissedRowIndices : [])
+    .map((rowIndex) => Number(rowIndex)).filter(Number.isFinite))
   const eligible = items.filter((item) => ['new', 'tracked', 'added_to_pipeline'].includes(clean(item.Status ?? item.status).toLowerCase()))
   if (eligible.length > 200) return json({ error: 'Too many opportunities to monitor at once' }, 400)
 
   const currentWatches = await listWatches(env)
+  // A record can be added or tracked first and dismissed later. Explicitly
+  // delete its existing watch so it cannot be checked again by an autonomous
+  // Worker batch or retain an outdated SAM-updated badge.
+  const removed = currentWatches.filter((watch) => dismissedRowIndices.has(Number(watch.rowIndex)))
+  await Promise.all(removed.map((watch) => env.CACHE.delete(watch.key)))
+  const activeWatches = currentWatches.filter((watch) => !dismissedRowIndices.has(Number(watch.rowIndex)))
   let synchronized = 0
   let unchanged = 0
   for (const item of eligible) {
     const notice = normalized(item['Notice ID'] ?? item.noticeId)
     const sol = normalized(item['Solicitation Number'] ?? item.solicitationNumber)
     const family = solicitationFamily(sol)
-    let existing = currentWatches.find((watch) => normalized(watch.noticeId) === notice || (sol && normalized(watch.solicitationNumber) === sol))
+    let existing = activeWatches.find((watch) => normalized(watch.noticeId) === notice || (sol && normalized(watch.solicitationNumber) === sol))
     // A new amendment notice is only associated with an older watch when it
     // still has the same agency and a materially similar title.
     if (!existing && family) {
-      existing = currentWatches.find((watch) =>
+      existing = activeWatches.find((watch) =>
         solicitationFamily(watch.solicitationNumber) === family &&
         normalized(watch.agency) === normalized(item.Agency ?? item.agency) &&
         titleOverlap(watch.title, item.Title ?? item.title) >= 0.6
@@ -212,7 +220,7 @@ async function sync(req, env) {
       unchanged++
     }
   }
-  return json({ ok: true, synchronized, unchanged })
+  return json({ ok: true, synchronized, unchanged, removed: removed.length })
 }
 
 export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } = {}) {
