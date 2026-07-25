@@ -133,22 +133,32 @@ export default function Settings({ toast }) {
   const capabilityIntegrationStatus = capabilityIntegration(capabilities)
   const teamsIntegrationStatus = teamsIntegration(integrationStatus?.notifications)
 
-  const loadIntegrationStatus = async () => {
+  const loadIntegrationStatus = async ({ interactive = false, notify = false } = {}) => {
     if (!WORKER_URL) {
       setIntegrationStatus({ capabilities: { status: 'unavailable', message: 'Worker URL is not configured.' } })
       return
     }
     setLoadingIntegrations(true)
     try {
-      const response = await workerFetch('/integrations/status', { cache: 'no-store' })
+      const response = await workerFetch('/integrations/status', {
+        cache: 'no-store',
+        interactiveAuth: interactive,
+      })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || 'Could not load integration status')
       setIntegrationStatus(payload)
+      if (notify) toast?.success('Integration status updated')
     } catch (err) {
-      const capabilities = isInteractionRequiredError(err)
+      const requiresSignIn = isInteractionRequiredError(err)
+      const capabilities = requiresSignIn
         ? { status: 'auth_required', message: 'Sign in again to load Worker integration status.' }
         : { status: 'unavailable', message: err.message }
       setIntegrationStatus({ capabilities, automation: null })
+      if (notify) {
+        toast?.error(requiresSignIn
+          ? 'Microsoft sign-in is required to refresh integration status.'
+          : `Could not refresh integration status: ${err.message}`)
+      }
     } finally {
       setLoadingIntegrations(false)
     }
@@ -314,7 +324,7 @@ export default function Settings({ toast }) {
               <div className={styles.themeTitle}>Integrations</div>
               <p className="text-xs text-muted">Worker connections used for scheduled activity and AI context.</p>
             </div>
-            <button className="btn btn-ghost" type="button" onClick={loadIntegrationStatus} disabled={loadingIntegrations}>
+            <button className="btn btn-ghost" type="button" onClick={() => loadIntegrationStatus({ interactive: true, notify: true })} disabled={loadingIntegrations}>
               {loadingIntegrations ? 'Checking…' : 'Refresh status'}
             </button>
           </div>
