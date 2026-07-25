@@ -44,9 +44,20 @@ const AUTOMATION_STATUS = {
   not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
 }
 
+const CAPABILITIES_STATUS = {
+  ready: { label: 'Ready', className: 'integrationReady' },
+  pending: { label: 'Waiting for first retrieval', className: 'integrationPending' },
+  not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
+  error: { label: 'Needs attention', className: 'integrationError' },
+  unavailable: { label: 'Unavailable', className: 'integrationUnavailable' },
+  checking: { label: 'Checking', className: 'integrationPending' },
+}
+
 function formatHealthTime(value) {
   const date = value ? new Date(value) : null
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : 'Not available yet'
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', hour12: true })
+    : 'Not available yet'
 }
 
 export default function Settings({ toast }) {
@@ -258,59 +269,68 @@ export default function Settings({ toast }) {
         </div>
 
         <div className={styles.integrationCard}>
-          <div>
-            <div className={styles.themeTitle}>Integrations</div>
-            <div className={styles.integrationRow}>
-              {(() => {
-                const capabilities = integrationStatus?.capabilities
-                const status = capabilities?.status || 'checking'
-                const label = {
-                  ready: 'Ready',
-                  pending: 'Waiting for first AI retrieval',
-                  not_configured: 'Not configured',
-                  error: 'Needs attention',
-                  unavailable: 'Unavailable',
-                  checking: 'Checking',
-                }[status] || 'Checking'
-                return <span className={`${styles.integrationBadge} ${styles[`integration${status[0].toUpperCase()}${status.slice(1).replace(/_([a-z])/g, (_, c) => c.toUpperCase())}`] || ''}`}>{label}</span>
-              })()}
-              <span className="text-xs text-muted">AI capabilities document</span>
+          <div className={styles.integrationHeader}>
+            <div>
+              <div className={styles.themeTitle}>Integrations</div>
+              <p className="text-xs text-muted">Worker connections used for scheduled activity and AI context.</p>
             </div>
-            <p className="text-xs text-muted" style={{ marginTop: 5 }}>
-              {integrationStatus?.capabilities?.message || 'Checking the Worker configuration.'}
-              {integrationStatus?.capabilities?.fileName ? ` ${integrationStatus.capabilities.fileName}.` : ''}
-            </p>
-            {integrationStatus?.capabilities?.fetchedAt && (
-              <p className="text-xs text-muted" style={{ marginTop: 3 }}>
-                Retrieved {new Date(integrationStatus.capabilities.fetchedAt).toLocaleString()}.
-              </p>
-            )}
-            {integrationStatus?.capabilities?.lastCheckedAt && (
-              <p className="text-xs text-muted" style={{ marginTop: 3 }}>
-                Last checked {new Date(integrationStatus.capabilities.lastCheckedAt).toLocaleString()}.
-              </p>
-            )}
-            <div className={styles.integrationRow} style={{ marginTop: 10 }}>
-              <span className={`${styles.integrationBadge} ${integrationStatus?.notifications?.appOnlyAvailable ? styles.integrationReady : styles.integrationNotConfigured}`}>
-                {integrationStatus?.notifications?.appOnlyAvailable ? 'Scheduled' : 'Browser fallback'}
-              </span>
-              <span className="text-xs text-muted">Teams reminders</span>
-            </div>
-            <p className="text-xs text-muted" style={{ marginTop: 5 }}>
-              {integrationStatus?.notifications?.appOnlyAvailable
-                ? integrationStatus.notifications.lastRun?.ok === false
-                  ? `Last scheduled run needs attention: ${integrationStatus.notifications.lastRun.message || 'Unknown error'}`
-                  : 'Runs from the Worker at the configured schedule. The browser is retained as a fallback.'
-                : 'The browser sends scheduled reminders until app-only Worker access is available.'}
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" type="button" onClick={handleCapabilitiesRefresh} disabled={refreshingCapabilities}>
-              {refreshingCapabilities ? 'Checking…' : 'Check document'}
-            </button>
             <button className="btn btn-ghost" type="button" onClick={loadIntegrationStatus} disabled={loadingIntegrations}>
               {loadingIntegrations ? 'Checking…' : 'Refresh status'}
             </button>
+          </div>
+
+          <div className={styles.integrationList}>
+            {(() => {
+              const capabilities = integrationStatus?.capabilities
+              const status = CAPABILITIES_STATUS[capabilities?.status || 'checking'] || CAPABILITIES_STATUS.checking
+              const metadata = [
+                capabilities?.fileName,
+                capabilities?.lastCheckedAt ? `Checked ${formatHealthTime(capabilities.lastCheckedAt)}` : null,
+              ].filter(Boolean)
+              return (
+                <div className={styles.integrationItem}>
+                  <div className={styles.integrationContent}>
+                    <div className={styles.integrationNameRow}>
+                      <span className={styles.integrationName}>AI capabilities document</span>
+                      <span className={`${styles.integrationBadge} ${styles[status.className]}`}>{status.label}</span>
+                    </div>
+                    <p className={styles.integrationDescription}>{capabilities?.message || 'Checking the Worker configuration.'}</p>
+                    {metadata.length > 0 && <div className={styles.integrationMetadata}>{metadata.join(' · ')}</div>}
+                  </div>
+                  <button className="btn btn-primary" type="button" onClick={handleCapabilitiesRefresh} disabled={refreshingCapabilities}>
+                    {refreshingCapabilities ? 'Checking…' : 'Check document'}
+                  </button>
+                </div>
+              )
+            })()}
+
+            {(() => {
+              const scheduled = integrationStatus?.notifications?.appOnlyAvailable
+              const lastRun = integrationStatus?.notifications?.lastRun
+              const needsAttention = scheduled && lastRun?.ok === false
+              const status = needsAttention
+                ? { label: 'Needs attention', className: 'integrationError' }
+                : scheduled
+                  ? { label: 'Scheduled', className: 'integrationReady' }
+                  : { label: 'Browser fallback', className: 'integrationNotConfigured' }
+              const description = needsAttention
+                ? lastRun.message || 'The most recent scheduled reminder run did not complete.'
+                : scheduled
+                  ? 'Worker delivery is ready. Browser delivery remains available as a fallback.'
+                  : 'The browser sends reminders until Worker delivery is available.'
+              return (
+                <div className={styles.integrationItem}>
+                  <div className={styles.integrationContent}>
+                    <div className={styles.integrationNameRow}>
+                      <span className={styles.integrationName}>Teams reminders</span>
+                      <span className={`${styles.integrationBadge} ${styles[status.className]}`}>{status.label}</span>
+                    </div>
+                    <p className={styles.integrationDescription}>{description}</p>
+                    {lastRun?.timestamp && <div className={styles.integrationMetadata}>Last run {formatHealthTime(lastRun.timestamp)}</div>}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         </div>
 
