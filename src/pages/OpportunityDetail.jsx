@@ -506,7 +506,7 @@ export default function OpportunityDetail({ toast }) {
     () => notes.filter((n) => !parseRelatedOpportunityNote(n.NoteText)),
     [notes]
   )
-  const recentNotesStr = visibleNotes.slice(0, 3).map((n) => n.NoteText).join(' | ')
+  const recentNotesStr = visibleNotes.slice(-3).map((n) => n.NoteText).join(' | ')
 
   const saveFollowUpDecision = async (candidate, decision) => {
     await saveRFIFollowUpDecision({
