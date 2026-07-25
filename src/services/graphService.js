@@ -1,3 +1,4 @@
+import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { msalInstance, loginRequest } from '@/auth/msalConfig'
 import { externallyChangedPatchedFields, recordIdentity } from '@/utils/recordConflict'
 
@@ -56,14 +57,27 @@ async function getTableHeaders(tableName) {
 }
 
 // ── Token helper ───────────────────────────────────────────────────────────
-export async function getToken() {
+export function isInteractionRequiredError(error) {
+  return error instanceof InteractionRequiredAuthError ||
+    ['interaction_required', 'login_required', 'consent_required'].includes(error?.errorCode)
+}
+
+export async function getToken({ interactive = false } = {}) {
   const account = msalInstance.getAllAccounts()[0]
   if (!account) throw new Error('No authenticated account')
-  const response = await msalInstance.acquireTokenSilent({
-    ...loginRequest,
-    account,
-  })
-  return response.accessToken
+  try {
+    const response = await msalInstance.acquireTokenSilent({
+      ...loginRequest,
+      account,
+    })
+    return response.accessToken
+  } catch (error) {
+    // Background reads must not unexpectedly open a sign-in window. An
+    // explicit user action may request the same scopes interactively instead.
+    if (!interactive || !isInteractionRequiredError(error)) throw error
+    const response = await msalInstance.acquireTokenPopup({ ...loginRequest, account })
+    return response.accessToken
+  }
 }
 
 async function graphFetch(path, options = {}) {
