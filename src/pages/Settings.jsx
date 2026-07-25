@@ -9,6 +9,7 @@ import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
   SET_ASIDE_VALUES, CONTACT_TYPES,
   getSAMNAICS, updateSAMNAICS, getSAMSettings, updateSAMSettings,
+  isInteractionRequiredError,
 } from '@/services/graphService'
 import styles from './Settings.module.css'
 
@@ -50,6 +51,7 @@ const CAPABILITIES_STATUS = {
   not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
   error: { label: 'Needs attention', className: 'integrationError' },
   unavailable: { label: 'Unavailable', className: 'integrationUnavailable' },
+  auth_required: { label: 'Sign-in required', className: 'integrationPending' },
   checking: { label: 'Checking', className: 'integrationPending' },
 }
 
@@ -58,6 +60,36 @@ function formatHealthTime(value) {
   return date && !Number.isNaN(date.getTime())
     ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', hour12: true })
     : 'Not available yet'
+}
+
+function capabilityIntegration(capabilities) {
+  const status = CAPABILITIES_STATUS[capabilities?.status || 'checking'] || CAPABILITIES_STATUS.checking
+  const details = [
+    capabilities?.message || 'Checking the Worker configuration.',
+    capabilities?.fileName,
+    capabilities?.lastCheckedAt ? `Checked ${formatHealthTime(capabilities.lastCheckedAt)}` : null,
+  ].filter(Boolean).join(' · ')
+  return { status, details }
+}
+
+function teamsIntegration(notifications) {
+  const scheduled = notifications?.appOnlyAvailable
+  const lastRun = notifications?.lastRun
+  const needsAttention = scheduled && lastRun?.ok === false
+  const status = needsAttention
+    ? { label: 'Needs attention', className: 'integrationError' }
+    : scheduled
+      ? { label: 'Scheduled', className: 'integrationReady' }
+      : { label: 'Browser fallback', className: 'integrationNotConfigured' }
+  const details = needsAttention
+    ? lastRun.message || 'The most recent scheduled reminder run did not complete.'
+    : scheduled
+      ? 'Worker delivery is ready. Browser delivery remains available as a fallback.'
+      : 'The browser sends reminders until Worker delivery is available.'
+  return {
+    status,
+    details: lastRun?.timestamp ? `${details} · Last run ${formatHealthTime(lastRun.timestamp)}` : details,
+  }
 }
 
 export default function Settings({ toast }) {
@@ -97,6 +129,9 @@ export default function Settings({ toast }) {
   const [openLists, setOpenLists] = useState({})
   const toggleList = (key) => setOpenLists((prev) => ({ ...prev, [key]: !prev[key] }))
   const LONG_LIST_THRESHOLD = 6
+  const capabilities = integrationStatus?.capabilities
+  const capabilityIntegrationStatus = capabilityIntegration(capabilities)
+  const teamsIntegrationStatus = teamsIntegration(integrationStatus?.notifications)
 
   const loadIntegrationStatus = async () => {
     if (!WORKER_URL) {
@@ -110,7 +145,10 @@ export default function Settings({ toast }) {
       if (!response.ok) throw new Error(payload.error || 'Could not load integration status')
       setIntegrationStatus(payload)
     } catch (err) {
-      setIntegrationStatus({ capabilities: { status: 'unavailable', message: err.message } })
+      const capabilities = isInteractionRequiredError(err)
+        ? { status: 'auth_required', message: 'Sign in again to load Worker integration status.' }
+        : { status: 'unavailable', message: err.message }
+      setIntegrationStatus({ capabilities, automation: null })
     } finally {
       setLoadingIntegrations(false)
     }
@@ -126,10 +164,12 @@ export default function Settings({ toast }) {
       const response = await workerFetch('/integrations/capabilities/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        interactiveAuth: true,
       })
       const payload = await response.json()
       if (!response.ok || !payload.ok) throw new Error(payload.error || 'Could not check the capabilities document')
       setIntegrationStatus((previous) => ({ ...previous, capabilities: payload.capabilities }))
+      await loadIntegrationStatus()
       if (payload.throttled) toast?.info('The document was checked recently. Please try again in a few minutes.')
       else if (payload.changed) toast?.success('Capabilities document updated')
       else toast?.success('Capabilities document is up to date')
@@ -279,58 +319,35 @@ export default function Settings({ toast }) {
             </button>
           </div>
 
-          <div className={styles.integrationList}>
-            {(() => {
-              const capabilities = integrationStatus?.capabilities
-              const status = CAPABILITIES_STATUS[capabilities?.status || 'checking'] || CAPABILITIES_STATUS.checking
-              const metadata = [
-                capabilities?.fileName,
-                capabilities?.lastCheckedAt ? `Checked ${formatHealthTime(capabilities.lastCheckedAt)}` : null,
-              ].filter(Boolean)
-              return (
-                <div className={styles.integrationItem}>
-                  <div className={styles.integrationContent}>
-                    <div className={styles.integrationNameRow}>
-                      <span className={styles.integrationName}>AI capabilities document</span>
-                      <span className={`${styles.integrationBadge} ${styles[status.className]}`}>{status.label}</span>
-                    </div>
-                    <p className={styles.integrationDescription}>{capabilities?.message || 'Checking the Worker configuration.'}</p>
-                    {metadata.length > 0 && <div className={styles.integrationMetadata}>{metadata.join(' · ')}</div>}
-                  </div>
-                  <button className="btn btn-primary" type="button" onClick={handleCapabilitiesRefresh} disabled={refreshingCapabilities}>
-                    {refreshingCapabilities ? 'Checking…' : 'Check document'}
-                  </button>
-                </div>
-              )
-            })()}
-
-            {(() => {
-              const scheduled = integrationStatus?.notifications?.appOnlyAvailable
-              const lastRun = integrationStatus?.notifications?.lastRun
-              const needsAttention = scheduled && lastRun?.ok === false
-              const status = needsAttention
-                ? { label: 'Needs attention', className: 'integrationError' }
-                : scheduled
-                  ? { label: 'Scheduled', className: 'integrationReady' }
-                  : { label: 'Browser fallback', className: 'integrationNotConfigured' }
-              const description = needsAttention
-                ? lastRun.message || 'The most recent scheduled reminder run did not complete.'
-                : scheduled
-                  ? 'Worker delivery is ready. Browser delivery remains available as a fallback.'
-                  : 'The browser sends reminders until Worker delivery is available.'
-              return (
-                <div className={styles.integrationItem}>
-                  <div className={styles.integrationContent}>
-                    <div className={styles.integrationNameRow}>
-                      <span className={styles.integrationName}>Teams reminders</span>
-                      <span className={`${styles.integrationBadge} ${styles[status.className]}`}>{status.label}</span>
-                    </div>
-                    <p className={styles.integrationDescription}>{description}</p>
-                    {lastRun?.timestamp && <div className={styles.integrationMetadata}>Last run {formatHealthTime(lastRun.timestamp)}</div>}
-                  </div>
-                </div>
-              )
-            })()}
+          <div className={styles.integrationTableWrap}>
+            <table className={styles.integrationTable}>
+              <thead>
+                <tr>
+                  <th scope="col">Integration</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Details</th>
+                  <th scope="col" aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className={styles.integrationName}>AI capabilities document</td>
+                  <td><span className={`${styles.integrationBadge} ${styles[capabilityIntegrationStatus.status.className]}`}>{capabilityIntegrationStatus.status.label}</span></td>
+                  <td className={styles.integrationDetails}>{capabilityIntegrationStatus.details}</td>
+                  <td className={styles.integrationAction}>
+                    <button className="btn btn-primary" type="button" onClick={handleCapabilitiesRefresh} disabled={refreshingCapabilities}>
+                      {refreshingCapabilities ? 'Checking…' : 'Check document'}
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td className={styles.integrationName}>Teams reminders</td>
+                  <td><span className={`${styles.integrationBadge} ${styles[teamsIntegrationStatus.status.className]}`}>{teamsIntegrationStatus.status.label}</span></td>
+                  <td className={styles.integrationDetails}>{teamsIntegrationStatus.details}</td>
+                  <td className={styles.integrationAction}><span className="text-xs text-muted">No action</span></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -345,7 +362,11 @@ export default function Settings({ toast }) {
           {openSections.health && (
             <div className={styles.healthBody}>
               {!integrationStatus?.automation?.length ? (
-                <p className="text-xs text-muted">Refresh status to load automation health.</p>
+                <p className="text-xs text-muted" style={{ padding: '14px 18px' }}>
+                  {integrationStatus?.capabilities?.status === 'auth_required'
+                    ? 'Sign in again, then refresh status to load automation health.'
+                    : 'Refresh status to load automation health.'}
+                </p>
               ) : (
                 <div className={styles.healthTableWrap}>
                   <table className={styles.healthTable}>
