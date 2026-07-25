@@ -28,6 +28,7 @@
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
+import { putAutomationRun } from '../lib/automationHealth.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances the next unit while it remains open, which is reliable with the
 // current delegated Graph token and avoids depending on waitUntil().
@@ -545,8 +546,12 @@ async function getKeyExpired(env) {
   return val?.expired === true
 }
 
-async function setRunLog(env, log) {
+async function setRunLog(env, log, { completed = false } = {}) {
   if (!env.CACHE) return
+  if (completed) {
+    await putAutomationRun(env, 'sam_run_log', log)
+    return
+  }
   await env.CACHE.put('sam_run_log', JSON.stringify(log), {
     expirationTtl: 60 * 60 * 24 * 180,
   })
@@ -657,7 +662,7 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
 
   if (!naicsCodes.length) {
     const err = 'No NAICS codes provided'
-    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, runId: run.runId, startedAt: run.startedAt, error: err })
+    await setRunLog(env, { success: false, status: 'error', timestamp: runStart, runId: run.runId, startedAt: run.startedAt, error: err }, { completed: true })
     throw new Error(err)
   }
 
@@ -699,7 +704,7 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
       fetched: run.totalFetched, written: run.totalWritten, deduped: run.totalDeduped, deleted: run.totalDeleted,
       totalFetched: run.totalFetched, totalWritten: run.totalWritten, totalDeduped: run.totalDeduped, totalDeleted: run.totalDeleted,
       error: msg,
-    })
+    }, { completed: true })
     throw new Error(msg)
   }
 
@@ -906,7 +911,7 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
       totalFetched: run.totalFetched + totalFetched, totalWritten: run.totalWritten + totalWritten,
       totalDeduped: run.totalDeduped + dedupDeleteRowIndices.size, totalDeleted: run.totalDeleted + deleted,
     }
-    await setRunLog(env, log)
+    await setRunLog(env, log, { completed: true })
     throw new Error(fatalError)
   }
 
@@ -937,7 +942,7 @@ async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeF
     totalDeleted: run.totalDeleted + deleted,
     warnings:  naicsErrors.length > 0 ? naicsErrors : undefined,
   }
-  await setRunLog(env, log)
+  await setRunLog(env, log, { completed: true })
   console.log(`[SAM] Done. Run ${run.runId} | Batch written: ${totalWritten} | Total written: ${log.totalWritten} | Complete: ${complete}`)
   return log
 }
