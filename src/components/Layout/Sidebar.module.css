@@ -10,8 +10,9 @@
 }
 
 .logo {
-  min-height: 76px;
-  padding: 10px 10px 9px;
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  padding: 7px 10px;
   border-bottom: 0.5px solid var(--gray-200);
   flex-shrink: 0;
   display: flex;
@@ -27,7 +28,7 @@
 
 .logoImage {
   display: block;
-  width: 136px;
+  width: 102px;
   max-width: 100%;
   height: auto;
 }
@@ -53,6 +54,7 @@
   flex: 0 0 auto;
   margin-bottom: 3px;
   color: #abad34;
+  font-family: 'Montserrat Alternates', -apple-system, 'Inter', BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.12em;
