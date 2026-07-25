@@ -875,8 +875,35 @@ export default function Opportunities({ toast }) {
           )}
           </>}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className={styles.newToolbarStatus}>
+          <div className={styles.syncControlRow}>
+            <span className={`text-xs text-muted ${styles.pullSummary}`}>
+              {samRunStatus?.success === true && (
+                <>
+                  {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
+                  {samRunStatus.written > 0
+                    ? <> · {samRunStatus.written} new total</>
+                    : <> · No new opportunities found</>}
+                  {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
+                  {samRunStatus.warnings?.length > 0 && (
+                    <span style={{ color: 'var(--amber-600)' }} title={samRunStatus.warnings.join('\n')}>
+                      {' '}· ⚠ {samRunStatus.warnings.length} warning{samRunStatus.warnings.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </>
+              )}
+              {samRunStatus?.status === 'partial' && (
+                <span style={{ color: 'var(--blue-600)' }}>
+                  Pull checkpoint saved · {samRunStatus.written || 0} new total · continues at the next scheduled pull
+                </span>
+              )}
+              {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && (
+                <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
+                  Last run failed: {samRunStatus.error || 'No error detail was recorded.'}
+                </span>
+              )}
+              {samRunStatus?.success == null && 'Not yet pulled'}
+            </span>
             <button className={`btn text-xs ${showSyncDetails ? styles.syncDetailsActive : styles.syncDetailsButton}`} style={{ padding: '3px 10px' }} onClick={() => setShowSyncDetails((value) => !value)}>
               Sync details
             </button>
@@ -887,33 +914,6 @@ export default function Opportunities({ toast }) {
               {selectionMode ? 'Cancel' : 'Select'}
             </button>
           </div>
-          <span className="text-xs text-muted">
-                {samRunStatus?.success === true && (
-                  <>
-                    {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
-                    {samRunStatus.written > 0
-                      ? <> · {samRunStatus.written} new total</>
-                      : <> · No new opportunities found</>}
-                    {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
-                    {samRunStatus.warnings?.length > 0 && (
-                      <span style={{ color: 'var(--amber-600)' }} title={samRunStatus.warnings.join('\n')}>
-                        {' '}· ⚠ {samRunStatus.warnings.length} warning{samRunStatus.warnings.length === 1 ? '' : 's'}
-                      </span>
-                    )}
-                  </>
-                )}
-                {samRunStatus?.status === 'partial' && (
-                  <span style={{ color: 'var(--blue-600)' }}>
-                    Pull checkpoint saved · {samRunStatus.written || 0} new total · continues at the next scheduled pull
-                  </span>
-                )}
-                {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && (
-                  <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
-                    Last run failed: {samRunStatus.error || 'No error detail was recorded.'}
-                  </span>
-                )}
-                {samRunStatus?.success == null && 'Not yet pulled'}
-          </span>
           {pullMessage && !isPulling && (
             <span style={{ fontSize: 11, color: pullMessage.type === 'error' ? 'var(--red-600)' : pullMessage.type === 'success' ? 'var(--green-600)' : 'var(--gray-600)' }}>
               {pullMessage.text}
