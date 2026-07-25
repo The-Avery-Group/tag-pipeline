@@ -693,10 +693,11 @@ export default function Opportunities({ toast }) {
   const calculatedPullProgressPercent = pullProgress?.naicsTotal
     ? Math.min(100, Math.round(((pullProgress.naicsProcessed || 0) / pullProgress.naicsTotal) * 100))
     : pullProgress?.phase === 'writing' ? 82 : 18
-  // A bounded Worker pull may move from a completed batch into a short
-  // "preparing" state for the next batch. Keep the visible bar monotonic for
-  // the complete run instead of making it jump back to the initial position.
-  if (isPulling) pullProgressPercentRef.current = Math.max(pullProgressPercentRef.current, calculatedPullProgressPercent)
+  // A bounded Worker pull briefly returns to "preparing" before its next
+  // checkpoint. Hold the prior position through that pause, but reserve 100%
+  // for the terminal Worker success status so an active pull never looks done.
+  const activePullPercent = Math.min(95, calculatedPullProgressPercent)
+  if (isPulling) pullProgressPercentRef.current = Math.max(pullProgressPercentRef.current, activePullPercent)
   else pullProgressPercentRef.current = 0
   const pullProgressPercent = pullProgressPercentRef.current
   const samCheckPercent = samCheckProgress?.total
