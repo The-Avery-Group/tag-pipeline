@@ -30,6 +30,10 @@ export function useSAMChangeMonitor(opportunities) {
   const automaticallyChecked = useRef(false)
 
   const monitored = useMemo(() => (opportunities || []).filter(eligible), [opportunities])
+  const dismissedRowIndices = useMemo(() => (opportunities || [])
+    .filter((opportunity) => String(opportunity.Status || '').toLowerCase() === 'dismissed')
+    .map((opportunity) => opportunity._rowIndex)
+    .filter((rowIndex) => rowIndex !== null && rowIndex !== undefined), [opportunities])
 
   const loadStatus = useCallback(async () => {
     if (!WORKER_URL) return null
@@ -44,13 +48,13 @@ export function useSAMChangeMonitor(opportunities) {
   }, [])
 
   const synchronize = useCallback(async () => {
-    if (!WORKER_URL || monitored.length === 0) return
+    if (!WORKER_URL || (monitored.length === 0 && dismissedRowIndices.length === 0)) return
     const response = await workerFetch('/sam/changes/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ opportunities: monitored.map(payload) }),
+      body: JSON.stringify({ opportunities: monitored.map(payload), dismissedRowIndices }),
     })
     if (!response.ok) throw new Error('Could not synchronize SAM monitoring')
-  }, [monitored])
+  }, [dismissedRowIndices, monitored])
 
   const checkChanges = useCallback(async () => {
     if (!WORKER_URL || checking || monitored.length === 0) return
@@ -92,12 +96,12 @@ export function useSAMChangeMonitor(opportunities) {
   // Sync exactly when the monitored list changes. New rows are not marked as
   // changed until a later SAM response differs from their first baseline.
   useEffect(() => {
-    if (!WORKER_URL || monitored.length === 0) return
-    const fingerprint = monitored.map((item) => `${item._rowIndex}:${item.Status}:${item['Notice ID']}:${item['Solicitation Number']}`).join('|')
+    if (!WORKER_URL || (monitored.length === 0 && dismissedRowIndices.length === 0)) return
+    const fingerprint = `${monitored.map((item) => `${item._rowIndex}:${item.Status}:${item['Notice ID']}:${item['Solicitation Number']}`).join('|')}|dismissed:${dismissedRowIndices.join(',')}`
     if (fingerprint === lastSyncFingerprint.current) return
     lastSyncFingerprint.current = fingerprint
     synchronize().then(loadStatus).catch(() => {})
-  }, [loadStatus, monitored, synchronize])
+  }, [dismissedRowIndices, loadStatus, monitored, synchronize])
 
   // Daily while the application is in use. The on-demand button remains
   // available for immediate verification without triggering a discovery pull.
