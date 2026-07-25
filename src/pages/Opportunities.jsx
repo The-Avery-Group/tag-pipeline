@@ -490,6 +490,7 @@ export default function Opportunities({ toast }) {
   const [pullMessage,   setPullMessage]   = useState(null)
   const pullProgressPercentRef = useRef(0)
   const lastAutomaticSAMCheck = useRef('')
+  const pullWasActiveRef = useRef(false)
 
   const handleCheckSAMChanges = async () => {
     try {
@@ -715,11 +716,16 @@ export default function Opportunities({ toast }) {
     }
   }, [pullProgress])
 
-  // Refresh remains a discovery pull. Once it has actually completed, run a
-  // separate monitor pass for already-pulled opportunities. This is kept out
-  // of the pull Worker path so it cannot contribute to pull timeouts.
+  // Refresh remains a discovery pull. Run a separate monitor pass only when
+  // this mounted page observed an active pull complete. On a page reload the
+  // hook restores the last successful Worker status, which is historical
+  // information and must not be mistaken for a newly completed pull.
   useEffect(() => {
-    if (pullProgress?.status !== 'success' || !pullProgress.timestamp) return
+    const wasActive = pullWasActiveRef.current
+    const isActive = ['running', 'partial'].includes(pullProgress?.status)
+    pullWasActiveRef.current = isActive
+
+    if (!wasActive || pullProgress?.status !== 'success' || !pullProgress.timestamp) return
     if (lastAutomaticSAMCheck.current === pullProgress.timestamp) return
     lastAutomaticSAMCheck.current = pullProgress.timestamp
     checkSAMChanges().catch((error) => console.warn('[SAM monitor]', error.message))
