@@ -15,6 +15,7 @@
 
 import { strFromU8, unzipSync } from 'fflate'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
+import { enrichAutomationRun } from '../lib/automationHealth.js'
 
 const GROQ_BASE  = 'https://api.groq.com/openai/v1'
 // Versioned to bypass the legacy cache, which stored raw DOCX ZIP bytes as
@@ -453,7 +454,7 @@ async function setCapabilitiesStatus(env, next) {
     eTag: value?.eTag,
   })
   if (comparable(previous) === comparable(next)) return
-  await kvSet(env, CAP_STATUS_KEY, next, CAP_STATUS_TTL)
+  await kvSet(env, CAP_STATUS_KEY, enrichAutomationRun(previous, next), CAP_STATUS_TTL)
 }
 
 function cacheRecord(value) {
