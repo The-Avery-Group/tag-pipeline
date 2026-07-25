@@ -10,6 +10,26 @@ async function retryThrice(fn) {
   throw lastErr
 }
 
+// Notes are presented as a chronological conversation. The workbook stores a
+// date rather than a time, so use its physical row order to keep notes added
+// on the same day in their natural creation order.
+function compareNotesOldestFirst(a, b) {
+  const dateA = new Date(`${a.Date || ''}T00:00:00`).getTime()
+  const dateB = new Date(`${b.Date || ''}T00:00:00`).getTime()
+  const safeDateA = Number.isNaN(dateA) ? 0 : dateA
+  const safeDateB = Number.isNaN(dateB) ? 0 : dateB
+  if (safeDateA !== safeDateB) return safeDateA - safeDateB
+
+  const rowA = Number(a._rowIndex)
+  const rowB = Number(b._rowIndex)
+  const hasRowA = Number.isFinite(rowA)
+  const hasRowB = Number.isFinite(rowB)
+  if (hasRowA && hasRowB && rowA !== rowB) return rowA - rowB
+  if (hasRowA !== hasRowB) return hasRowA ? -1 : 1
+
+  return Number(a._createdAt || 0) - Number(b._createdAt || 0)
+}
+
 export function useNotes(contractNumber) {
   const [notes, setNotes]     = useState([])
   const [loading, setLoading] = useState(true)
@@ -36,7 +56,7 @@ export function useNotes(contractNumber) {
           if (confirmed) pendingPatches.current.delete(note._rowIndex)
           return confirmed ? note : { ...note, ...patch }
         })
-      setNotes([...filtered].sort((a, b) => new Date(b.Date) - new Date(a.Date)))
+      setNotes([...filtered].sort(compareNotesOldestFirst))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -52,16 +72,18 @@ export function useNotes(contractNumber) {
   const add = useCallback(async (author, text) => {
     if (!contractNumber) throw new Error('contractNumber required')
 
-    // Optimistic: prepend note immediately with temp id
+    // Optimistic: append note immediately so the composer and note stream
+    // retain their oldest-to-newest order.
     const tempNote = {
       NoteID:         `temp-${Date.now()}`,
       ContractNumber: contractNumber,
       Author:         author,
       NoteText:       text,
       Date:           new Date().toISOString().split('T')[0],
+      _createdAt:     Date.now(),
       _temp:          true,
     }
-    setNotes((prev) => [tempNote, ...prev])
+    setNotes((prev) => [...prev, tempNote])
 
     try {
       // Retry up to 3 times silently
