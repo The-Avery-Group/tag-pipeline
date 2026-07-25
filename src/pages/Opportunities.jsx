@@ -934,9 +934,9 @@ export default function Opportunities({ toast }) {
         <div className={styles.bulkToolbar}>
           <span><strong>{selectedRows.size}</strong> selected</span>
           <div>
-            <button className="btn btn-primary text-xs" disabled={!selectedRows.size} onClick={() => handleBulkAction('pipeline')}>Add to pipeline</button>
-            <button className="btn text-xs" disabled={!selectedRows.size} onClick={() => handleBulkAction('track')}>Track</button>
-            <button className="btn text-xs" disabled={!selectedRows.size} onClick={() => handleBulkAction('dismiss')}>Dismiss</button>
+            <button className={`btn text-xs ${styles.newActionPipeline}`} disabled={!selectedRows.size} onClick={() => handleBulkAction('pipeline')}>Add to pipeline</button>
+            <button className={`btn text-xs ${styles.newAction} ${styles.newActionTrack}`} disabled={!selectedRows.size} onClick={() => handleBulkAction('track')}>Track</button>
+            <button className={`btn text-xs ${styles.newAction} ${styles.newActionDismiss}`} disabled={!selectedRows.size} onClick={() => handleBulkAction('dismiss')}>Dismiss</button>
           </div>
         </div>
       )}
