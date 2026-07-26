@@ -341,25 +341,3 @@
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
-
-/* ── Entity award history ── */
-.entityControls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.entityControls input { width: 160px; }
-.entityControlGroup { display: inline-flex; border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); overflow: hidden; }
-.entityChoice { border: 0; border-right: 0.5px solid var(--gray-200); background: var(--surface); color: var(--gray-600); font: 500 11px var(--font); padding: 6px 8px; cursor: pointer; }
-.entityChoice:last-child { border-right: 0; }
-.entityChoice:hover { background: var(--gray-50); }
-.entityChoiceActive { background: var(--blue-50); color: var(--blue-800); }
-.entityKpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
-.entityKpis .kpiCard { padding: 10px 12px; }
-.entityKpis .kpiValue { font-size: 20px; }
-.entityGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-.entitySectionTitle { color: var(--gray-900); font-size: 12px; font-weight: 600; margin: 2px 0 6px; }
-.agencyDistribution { display: flex; align-items: center; min-width: 0; }
-.entityAgencyTable { flex: 1; min-width: 0; }
-.entityAgencyRow { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--gray-200); color: var(--gray-600); font-size: 11px; cursor: default; }
-.entityAgencyRow span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.entityAgencyRow strong { color: var(--blue-600); flex-shrink: 0; }
-.entitySkeleton { height: 260px; }
-@media (max-width: 800px) { .entityKpis, .entityGrid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 520px) { .entityKpis, .entityGrid { grid-template-columns: 1fr; } .entityControls input { width: 100%; } }
