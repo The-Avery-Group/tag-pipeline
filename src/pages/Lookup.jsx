@@ -7,7 +7,9 @@ import { OPPORTUNITY_OUTLOOK } from '@/services/graphService'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
+import EntityAwardHistory from '@/components/Lookup/EntityAwardHistory'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
+import styles from './Lookup.module.css'
 
 const C_CONTRACT_NUM = 'Contract Number / Notice ID'
 const C_VEHICLE_NUM = 'Contract Vehicle Number'
@@ -69,6 +71,7 @@ export default function Lookup({ toast }) {
   const [input, setInput] = useState('')
   const [awardeeUEI, setAwardeeUEI] = useState('')
   const [selectedModification, setSelectedModification] = useState({})
+  const [lookupView, setLookupView] = useState('awards')
 
   const matchedPipelineRecord = useMemo(() => {
     const identifier = input.trim().toUpperCase()
@@ -148,11 +151,17 @@ export default function Lookup({ toast }) {
     <>
       <Topbar
         title="Lookup"
-        subtitle1="Search SAM.gov award data by PIID"
+        subtitle1="Search award records and entity contract history"
         showFilter={false}
         showNew={false}
       />
       <div className="page-body">
+        <div className={styles.lookupTabs} role="tablist" aria-label="Lookup type">
+          <button type="button" role="tab" aria-selected={lookupView === 'awards'} className={lookupView === 'awards' ? styles.lookupTabActive : styles.lookupTab} onClick={() => setLookupView('awards')}>Award records</button>
+          <button type="button" role="tab" aria-selected={lookupView === 'entity'} className={lookupView === 'entity' ? styles.lookupTabActive : styles.lookupTab} onClick={() => setLookupView('entity')}>Entity award history</button>
+        </div>
+
+        {lookupView === 'entity' ? <EntityAwardHistory /> : <>
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -262,6 +271,7 @@ export default function Lookup({ toast }) {
             </div>
           )
         })}
+        </>}
       </div>
 
       {pendingResult && (
