@@ -1,0 +1,24 @@
+.lookupTabs {
+  display: inline-flex;
+  overflow: hidden;
+  margin-bottom: 14px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.lookupTab,
+.lookupTabActive {
+  padding: 7px 10px;
+  border: 0;
+  border-right: 0.5px solid var(--gray-200);
+  background: var(--surface);
+  color: var(--gray-600);
+  cursor: pointer;
+  font: 500 12px var(--font);
+}
+
+.lookupTab:last-child,
+.lookupTabActive:last-child { border-right: 0; }
+.lookupTab:hover { background: var(--gray-50); }
+.lookupTabActive { background: var(--blue-50); color: var(--blue-800); font-weight: 600; }
