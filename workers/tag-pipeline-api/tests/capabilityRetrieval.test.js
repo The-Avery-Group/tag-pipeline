@@ -120,6 +120,10 @@ test('requires schema-valid JSON from Groq for notes-based query generation', as
     assert.equal(response.status, 200)
     assert.equal(requestBody.response_format.type, 'json_schema')
     assert.equal(requestBody.response_format.json_schema.strict, true)
+    assert.match(requestBody.messages[0].content, /organization as a mandatory scope/i)
+    assert.match(requestBody.messages[0].content, /never connect the organization group to roles or context with OR/i)
+    assert.match(requestBody.messages[0].content, /do not quote acronyms, geographic regions/i)
+    assert.match(requestBody.messages[0].content, /preserving the complete mandatory organization group/i)
     const payload = await response.json()
     assert.match(payload.query, /^site:linkedin\.com\/in\//)
   } finally {
