@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   capabilityChunks,
+  matchingPeopleSearchAliases,
   normalizePeopleSearchQueries,
+  normalizePeopleSearchSuggestion,
   retrieveCapabilityExcerpts,
 } from '../src/handlers/ai.js'
 
@@ -43,4 +45,31 @@ test('normalizes and deduplicates public LinkedIn profile queries', () => {
 
   assert.equal(queries.length, 1)
   assert.equal(queries[0].query, 'site:linkedin.com/in/ "DoDEA Pacific" (manager OR director)')
+})
+
+test('normalizes one notes-based query and its controlled broader fallback', () => {
+  const suggestion = normalizePeopleSearchSuggestion({
+    query: '"DoDEA" ("Pacific Region" OR "Pacific Area Office") ("program manager" OR coordinator) esports',
+    broadenedQuery: '"DoDEA" ("Pacific Region" OR "Pacific Area Office") ("program manager" OR coordinator)',
+    summary: 'Find program personnel supporting Pacific esports work.',
+    concepts: {
+      organization: ['DoDEA'],
+      officeOrProgram: ['Pacific Region'],
+      roles: ['Program manager', 'Coordinator'],
+      keywords: ['Esports'],
+    },
+    aliasesUsed: ['DoDEA', 'DoWEA'],
+  }, [{
+    members: ['Department of Defense Education Activity', 'DoDEA', 'DoWEA'],
+  }])
+
+  assert.equal(suggestion.queries.length, 1)
+  assert.match(suggestion.query, /^site:linkedin\.com\/in\//)
+  assert.match(suggestion.broadenedQuery, /^site:linkedin\.com\/in\//)
+  assert.deepEqual(suggestion.aliasesUsed, ['DoDEA', 'DoWEA'])
+})
+
+test('offers approved DoDEA and DoWEA aliases only when notes establish that agency', () => {
+  assert.equal(matchingPeopleSearchAliases([{ text: 'Research points to the DoDEA Pacific office.' }]).length, 1)
+  assert.equal(matchingPeopleSearchAliases([{ text: 'Research points to a Pacific regional office.' }]).length, 0)
 })
