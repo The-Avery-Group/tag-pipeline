@@ -148,26 +148,61 @@ async function writeLog(env, token, data, key, value) {
   return true
 }
 
-function recipients(directory, assignees) {
+const recipientLookupKey = (value) => clean(value)
+  .normalize('NFKC')
+  .replace(/\s+/g, ' ')
+  .toLowerCase()
+
+function rowField(row, names) {
+  const entries = Object.entries(row || {})
+  for (const name of names) {
+    const exact = row?.[name]
+    if (exact !== undefined) return exact
+    const normalizedName = recipientLookupKey(name)
+    const matched = entries.find(([header]) => recipientLookupKey(header) === normalizedName)
+    if (matched) return matched[1]
+  }
+  return ''
+}
+
+export function resolveNotificationRecipients(directory, assignees) {
   const seen = new Set()
-  return assignees.map(clean).filter(Boolean).map((assignee) => directory.get(assignee.toLowerCase()) || { name: assignee, id: '' })
+  return assignees.map(clean).filter(Boolean).map((assignee) => directory.get(recipientLookupKey(assignee)) || { name: assignee, id: '' })
     .filter((recipient) => {
-      const key = `${clean(recipient.name).toLowerCase()}|${clean(recipient.id).toLowerCase()}`
+      // Teams requires one matching entity per <at> token. If aliases resolve
+      // to the same UPN/object ID, keep only one recipient so the card text and
+      // msteams.entities array cannot drift out of alignment.
+      const id = recipientLookupKey(recipient.id)
+      const key = id ? `id:${id}` : `name:${recipientLookupKey(recipient.name)}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
     })
 }
 
-function recipientDirectory(rows) {
-  return new Map(rows.map((row) => {
-    const assignee = clean(row['Pipeline Assignee'])
-    if (!assignee) return null
-    return [assignee.toLowerCase(), {
-      name: clean(row['Teams Display Name']) || assignee,
-      id: isMentionEnabled(row['Mention Enabled']) ? clean(row['Teams UPN / Entra Object ID']) : '',
-    }]
-  }).filter(Boolean))
+export function buildNotificationRecipientDirectory(rows) {
+  const directory = new Map()
+  rows.forEach((row) => {
+    const assignee = clean(rowField(row, ['Pipeline Assignee', 'Assignee']))
+    const displayName = clean(rowField(row, ['Teams Display Name', 'Display Name', 'Full Name'])) || assignee
+    const identity = clean(rowField(row, [
+      'Teams UPN / Entra Object ID',
+      'Teams UPN',
+      'Entra Object ID',
+      'UPN',
+      'Email',
+    ]))
+    const enabled = isMentionEnabled(rowField(row, ['Mention Enabled', 'Mentions Enabled']))
+    if (!assignee) return
+
+    const recipient = { name: displayName, id: enabled ? identity : '' }
+    directory.set(recipientLookupKey(assignee), recipient)
+    // Also accept the display name used by task and validation values. This
+    // makes the scheduled path resilient when one list uses the short name
+    // and another uses the person's full Teams display name.
+    if (displayName) directory.set(recipientLookupKey(displayName), recipient)
+  })
+  return directory
 }
 
 function allAssignees(validationRows) {
@@ -219,8 +254,26 @@ export async function runScheduledNotifications(env) {
     const log = logMap(validation.rows)
     const today = dateKey()
     const isWeekday = weekdayInNigeria()
-    const directory = recipientDirectory(recipientsData.rows)
-    const everyone = recipients(directory, allAssignees(validation.rows))
+    const directory = buildNotificationRecipientDirectory(recipientsData.rows)
+    const configuredAssignees = allAssignees(validation.rows)
+    const everyone = resolveNotificationRecipients(directory, configuredAssignees)
+    const recipientStatus = {
+      configuredRows: recipientsData.rows.length,
+      directoryEntries: directory.size,
+      scheduledRecipients: everyone.length,
+      mentionCapable: everyone.filter((recipient) => clean(recipient.id)).length,
+      missingMappings: everyone
+        .filter((recipient) => !clean(recipient.id))
+        .map((recipient) => clean(recipient.name))
+        .filter(Boolean),
+    }
+    if (recipientStatus.mentionCapable === 0 && recipientStatus.scheduledRecipients > 0) {
+      console.warn(JSON.stringify({
+        event: 'scheduled_notification_recipients',
+        status: 'no_mentions',
+        ...recipientStatus,
+      }))
+    }
     const sent = []
 
     const sendAndLog = async (type, payload, key) => {
@@ -261,7 +314,7 @@ export async function runScheduledNotifications(env) {
         if (remaining === 1) dueSoonGroups.set(assignee, (dueSoonGroups.get(assignee) || 0) + 1)
       })
       const groupPayload = (groups) => [...groups.entries()].map(([assignee, count]) => ({
-        assignee, count, recipient: recipients(directory, [assignee])[0] || { name: assignee, id: '' },
+        assignee, count, recipient: resolveNotificationRecipients(directory, [assignee])[0] || { name: assignee, id: '' },
       }))
       if (overdueGroups.size) await sendAndLog('overdue_summary', { people: groupPayload(overdueGroups), summaryDate: today }, 'overdue')
       if (dueSoonGroups.size) await sendAndLog('due_soon_summary', { people: groupPayload(dueSoonGroups) }, 'duesoon')
@@ -308,7 +361,16 @@ export async function runScheduledNotifications(env) {
       }
     }
 
-    const result = { ok: true, status: 'success', source: 'app-only', startedAt, completedAt: new Date().toISOString(), weekday: isWeekday, sent }
+    const result = {
+      ok: true,
+      status: 'success',
+      source: 'app-only',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      weekday: isWeekday,
+      recipients: recipientStatus,
+      sent,
+    }
     await putAutomationRun(env, RUN_KEY, result, { expirationTtl: 60 * 60 * 24 * 14 })
     console.log(JSON.stringify({ event: 'scheduled_notifications', ...result }))
     return result
