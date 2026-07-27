@@ -303,11 +303,12 @@ export async function appendRow(tableName, values, headers) {
     const val = values[h] ?? ''
     return DATE_COLUMNS.has(h) ? isoToExcelSerial(val) : val
   })
-  await graphFetch(`/tables/${tableName}/rows/add`, {
+  const response = await graphFetch(`/tables/${tableName}/rows/add`, {
     method: 'POST',
     body: JSON.stringify({ values: [row] }),
   })
   invalidate(tableName)
+  return response
 }
 
 /**
@@ -319,10 +320,11 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   // edit can happen while this app is open; read the current row immediately
   // before writing so unrelated changes are retained.
   const cached = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
-  const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${rowIndex})`, { retryReads: true })
+  let targetRowIndex = rowIndex
+  const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, { retryReads: true })
   const values = response?.values?.[0]
-  if (!values) throw new Error(`Row ${rowIndex} not found in ${tableName}`)
-  const current = { _rowIndex: rowIndex }
+  if (!values) throw new Error(`Row ${targetRowIndex} not found in ${tableName}`)
+  let current = { _rowIndex: targetRowIndex }
   headers.forEach((header, index) => {
     current[header] = DATE_COLUMNS.has(header) ? excelDateToISO(values[index]) : values[index]
   })
@@ -332,7 +334,17 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   // user started editing, rather than silently changing a different record.
   const identity = recordIdentity(tableName, cached)
   if (identity && identity !== recordIdentity(tableName, current)) {
-    throw new Error('This record changed position in the workbook. Refresh and review it before saving.')
+    // Row insertions and sorting can move a record without changing the
+    // record itself. Relocate it by its stable ID, then retain the same
+    // field-level conflict check below so external edits are still protected.
+    invalidate(tableName)
+    const freshRows = await getSheetRows(tableName)
+    const relocated = freshRows.find((row) => recordIdentity(tableName, row) === identity)
+    if (!relocated) {
+      throw new Error('This record changed position in the workbook and could not be located. Refresh and review it before saving.')
+    }
+    targetRowIndex = relocated._rowIndex
+    current = relocated
   }
 
   const conflictedFields = externallyChangedPatchedFields(cached, current, patch)
@@ -345,7 +357,7 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
     const val = merged[h] ?? ''
     return DATE_COLUMNS.has(h) ? isoToExcelSerial(val) : val
   })
-  await graphFetch(`/tables/${tableName}/rows/itemAt(index=${rowIndex})`, {
+  await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, {
     method: 'PATCH',
     body: JSON.stringify({ values: [row] }),
   })
@@ -1100,7 +1112,8 @@ export async function addContact(data) {
   if (String(data.Offices || '').trim() && !headers.includes('Offices')) {
     throw new Error('Add an "Offices" column to ContactsTable before saving office assignments')
   }
-  return appendRow('ContactsTable', { ...data, ContactID: id }, headers)
+  await appendRow('ContactsTable', { ...data, ContactID: id }, headers)
+  return { ...data, ContactID: id }
 }
 
 export async function addContactInteraction(data) {
