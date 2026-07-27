@@ -218,7 +218,8 @@ export function useSAMOpportunities() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => onCacheRefresh((tables) => {
-    if (tables?.includes('NewOpportunitiesTable')) load({ keepVisible: true })
+    if (tables?.includes('NewOpportunitiesTable')) return load({ keepVisible: true })
+    return undefined
   }), [load])
 
   // ── Contact lookup or create ─────────────────────────────────────────
