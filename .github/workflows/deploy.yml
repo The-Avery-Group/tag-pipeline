@@ -33,6 +33,8 @@ jobs:
           VITE_APP_BASE_URL: ${{ secrets.VITE_APP_BASE_URL }}
           # Worker URL — all API calls (notifications, AI) go through this
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          # Google Programmable Search Engine ID for public LinkedIn profile results
+          VITE_GOOGLE_SEARCH_ENGINE_ID: ${{ secrets.VITE_GOOGLE_SEARCH_ENGINE_ID }}
           # NOTE: VITE_TEAMS_WEBHOOK_URL and VITE_GROQ_API_KEY have been moved
           # to Cloudflare Worker secrets. Remove them from GitHub secrets
           # once the Worker is deployed and confirmed working.
