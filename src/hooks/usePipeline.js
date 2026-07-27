@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPipeline, addOpportunity, updateOpportunity, deleteOpportunity } from '@/services/graphService'
 import { notifyNewOpportunity, notifyPhaseChange } from '@/services/notifyService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function usePipeline() {
   const [pipeline, setPipeline] = useState([])
@@ -15,9 +15,11 @@ export function usePipeline() {
   // _rowIndex -> patch object.
   const pendingPatches = useRef(new Map())
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const data = await getPipeline()
       const reconciled = data.map((opp) => {
@@ -32,9 +34,9 @@ export function usePipeline() {
       })
       setPipeline(reconciled)
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -43,7 +45,8 @@ export function usePipeline() {
   // Re-load whenever the background poll brings in fresh data
   useEffect(() => {
     const unsub = onCacheRefresh((tables) => {
-      if (tables?.includes('PipelineTable')) load()
+      if (tables?.includes('PipelineTable')) return load({ silent: true })
+      return undefined
     })
     return unsub
   }, [load])
@@ -99,5 +102,10 @@ export function usePipeline() {
     await invalidateCache(['PipelineTable'])
   }, [])
 
-  return { pipeline, loading, error, refresh: load, add, update, remove }
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['PipelineTable']).catch(() => {})
+    await load()
+  }, [load])
+
+  return { pipeline, loading, error, refresh, add, update, remove }
 }
