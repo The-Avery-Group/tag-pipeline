@@ -99,6 +99,25 @@ function loadGoogleSearchElement() {
   return googleLoaderPromise
 }
 
+function waitForGoogleElement(name, timeoutMs = 8000) {
+  const startedAt = Date.now()
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const element = window.google?.search?.cse?.element?.getElement?.(name)
+      if (element?.execute) {
+        resolve(element)
+        return
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error('Google search could not finish loading. Please try again.'))
+        return
+      }
+      window.setTimeout(check, 100)
+    }
+    check()
+  })
+}
+
 function readDecisions(scopeKey) {
   try {
     const store = JSON.parse(localStorage.getItem(DECISIONS_KEY) || '{}')
@@ -167,6 +186,27 @@ export default function PeopleSearch({
   const visibleResults = results.filter((result) =>
     showExcluded || decisions[result.url] !== 'irrelevant'
   )
+
+  const prepareGoogleElement = useCallback(async () => {
+    await loadGoogleSearchElement()
+    const api = window.google?.search?.cse?.element
+    if (!api) throw new Error('Google search could not load')
+
+    if (!searchContainerRendered.current) {
+      api.render({
+        div: googleElementId,
+        tag: 'searchresults-only',
+        attributes: {
+          gname: googleElementName,
+          linkTarget: '_blank',
+          enableHistory: false,
+        },
+      })
+      searchContainerRendered.current = true
+    }
+
+    return waitForGoogleElement(googleElementName)
+  }, [googleElementId, googleElementName])
 
   const useQueries = useCallback((nextQueries) => {
     const usable = nextQueries?.length ? nextQueries : fallbackQueries
@@ -250,20 +290,7 @@ export default function PeopleSearch({
       setSearchNotice(nextResults.length ? '' : 'No public LinkedIn profiles matched this query.')
     })
 
-    loadGoogleSearchElement()
-      .then(() => {
-        if (cancelled || searchContainerRendered.current) return
-        window.google.search.cse.element.render({
-          div: googleElementId,
-          tag: 'searchresults-only',
-          attributes: {
-            gname: googleElementName,
-            linkTarget: '_blank',
-            enableHistory: false,
-          },
-        })
-        searchContainerRendered.current = true
-      })
+    prepareGoogleElement()
       .catch((error) => {
         if (!cancelled) setSearchNotice(error.message)
       })
@@ -272,7 +299,7 @@ export default function PeopleSearch({
       cancelled = true
       googleListeners.delete(googleElementName)
     }
-  }, [expanded, googleElementId, googleElementName])
+  }, [expanded, googleElementName, prepareGoogleElement])
 
   const selectQuery = (index) => {
     setActiveQueryIndex(index)
@@ -300,17 +327,7 @@ export default function PeopleSearch({
     }
 
     try {
-      await loadGoogleSearchElement()
-      if (!searchContainerRendered.current) {
-        window.google.search.cse.element.render({
-          div: googleElementId,
-          tag: 'searchresults-only',
-          attributes: { gname: googleElementName, linkTarget: '_blank', enableHistory: false },
-        })
-        searchContainerRendered.current = true
-      }
-      const element = window.google.search.cse.element.getElement(googleElementName)
-      if (!element) throw new Error('Google search is still preparing. Please try again.')
+      const element = await prepareGoogleElement()
       element.execute(query)
     } catch (error) {
       setSearching(false)
@@ -532,7 +549,7 @@ export default function PeopleSearch({
     <>
       {variant === 'opportunity'
         ? (
-          <div className={styles.opportunitySection}>
+          <div className={`card ${styles.opportunitySection}`}>
             <button
               type="button"
               className={styles.opportunityToggle}
@@ -540,12 +557,17 @@ export default function PeopleSearch({
               aria-expanded={expanded}
             >
               <span>
-                <strong>Find related people</strong>
+                <strong>Find Contacts</strong>
                 <small>Generate editable public-profile searches from opportunity fields, notes, and linked contacts.</small>
               </span>
-              <span aria-hidden="true">{expanded ? '⌃' : '⌄'}</span>
+              <span
+                className={`${styles.opportunityChevron} ${expanded ? styles.opportunityChevronOpen : ''}`}
+                aria-hidden="true"
+              >
+                ›
+              </span>
             </button>
-            {expanded && <div className={`card ${styles.opportunityBody}`}>{content}</div>}
+            <div className={styles.opportunityBody} hidden={!expanded}>{content}</div>
           </div>
         )
         : <div className={`card ${styles.contactsCard}`}>{content}</div>
