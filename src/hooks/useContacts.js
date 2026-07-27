@@ -11,6 +11,12 @@ export function useContacts() {
   // racing refresh (background poll, or any other hook's invalidateCache())
   // can't clobber an edit before the write has actually landed.
   const pendingPatches = useRef(new Map())
+  const pendingAdds = useRef(new Map())
+  const contactsRef = useRef([])
+
+  useEffect(() => {
+    contactsRef.current = contacts
+  }, [contacts])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -45,18 +51,58 @@ export function useContacts() {
   }, [load])
 
   const add = useCallback(async (data) => {
-    // Optimistic: add a placeholder row immediately so the UI reflects the
-    // new contact without waiting for the full round-trip + cache refresh.
-    const tempId = `C-temp-${Date.now()}`
-    const optimistic = { ...data, ContactID: tempId, _rowIndex: -1 }
-    setContacts((prev) => [...prev, optimistic])
+    const normalized = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+    const email = normalized(data?.Email)
+    const name = normalized(data?.Name)
+    const organization = normalized(data?.Agency || data?.Organization)
+    const fingerprint = email
+      ? `email:${email}`
+      : `name:${name}|organization:${organization}`
+    const matches = (contact) => {
+      const contactEmail = normalized(contact?.Email)
+      if (email && contactEmail) return email === contactEmail
+      return Boolean(name) &&
+        name === normalized(contact?.Name) &&
+        organization === normalized(contact?.Agency || contact?.Organization)
+    }
+
+    const existing = contactsRef.current.find(matches)
+    if (existing) return { contact: existing, added: false, existed: true }
+    if (pendingAdds.current.has(fingerprint)) return pendingAdds.current.get(fingerprint)
+
+    const operation = (async () => {
+      // Optimistic: add a placeholder row immediately so the UI reflects the
+      // new contact without waiting for the full round-trip + cache refresh.
+      const tempId = `C-temp-${Date.now()}`
+      const optimistic = { ...data, ContactID: tempId, _rowIndex: -1 }
+      setContacts((prev) => [...prev, optimistic])
+      try {
+        const saved = await addContact(data)
+        setContacts((prev) =>
+          prev.map((contact) => contact.ContactID === tempId ? { ...saved, _rowIndex: -1 } : contact)
+        )
+        await invalidateCache(['ContactsTable'])
+        return { contact: saved, added: true, existed: false }
+      } catch (err) {
+        // A request can fail after Excel accepted the append. Reconcile once
+        // before reporting failure so the UI never invites a duplicate retry.
+        await invalidateCache(['ContactsTable'])
+        const latest = await getContacts().catch(() => [])
+        const recovered = latest.find(matches)
+        if (recovered) {
+          setContacts(latest)
+          return { contact: recovered, added: true, existed: false, recovered: true }
+        }
+        setContacts((prev) => prev.filter((contact) => contact.ContactID !== tempId))
+        throw err
+      }
+    })()
+
+    pendingAdds.current.set(fingerprint, operation)
     try {
-      await addContact(data)
-      await invalidateCache(['ContactsTable'])
-    } catch (err) {
-      // Roll back the optimistic row on failure
-      setContacts((prev) => prev.filter((c) => c.ContactID !== tempId))
-      throw err
+      return await operation
+    } finally {
+      pendingAdds.current.delete(fingerprint)
     }
   }, [])
 
