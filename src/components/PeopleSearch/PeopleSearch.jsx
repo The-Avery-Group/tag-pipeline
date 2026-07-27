@@ -184,6 +184,7 @@ export default function PeopleSearch({
   initialValues = {},
   contactTypes = ['Government', 'Private'],
   onAddContact,
+  onAddAndLinkContact,
   onContinue,
   toast,
 }) {
@@ -233,6 +234,8 @@ export default function PeopleSearch({
   const [searchNotice, setSearchNotice] = useState('')
   const [contactDraft, setContactDraft] = useState(null)
   const [savingContact, setSavingContact] = useState(false)
+  const [contactSaveMode, setContactSaveMode] = useState('')
+  const savingContactRef = useRef(false)
   const searchContainerRendered = useRef(false)
   const suggestionAbortRef = useRef(null)
 
@@ -445,24 +448,45 @@ export default function PeopleSearch({
   }
 
   const beginAddContact = (result) => {
+    const suggestedType = contactDraftFromSearchResult(result, organization, scopeLabel).Type
+    const validType = contactTypes.find((type) =>
+      String(type).trim().toLowerCase() === String(suggestedType).trim().toLowerCase()
+    ) || contactTypes[0] || ''
     setContactDraft({
       ...EMPTY_CONTACT,
       ...contactDraftFromSearchResult(result, organization, scopeLabel),
+      Type: validType,
     })
   }
 
-  const saveContact = async () => {
-    if (!contactDraft?.Name.trim() || savingContact) return
+  const saveContact = async (mode = 'add') => {
+    if (!contactDraft?.Name.trim() || savingContactRef.current) return
+    savingContactRef.current = true
     setSavingContact(true)
+    setContactSaveMode(mode)
     try {
-      await onAddContact?.({ ...contactDraft, Name: contactDraft.Name.trim() }, selected)
+      const action = mode === 'add-link' ? onAddAndLinkContact : onAddContact
+      if (!action) throw new Error('Contact saving is not available')
+      const outcome = await action({ ...contactDraft, Name: contactDraft.Name.trim() }, selected)
       markResult(selected, 'added')
       setContactDraft(null)
-      toast?.success?.(`${contactDraft.Name.trim()} added to Contacts`)
+      if (mode === 'add-link' && outcome?.linked === false) {
+        toast?.success?.(`${contactDraft.Name.trim()} was added to Contacts`)
+        toast?.error?.(`The contact was added but could not be linked: ${outcome.linkError?.message || 'refresh the opportunity and try linking the existing contact'}`)
+        return
+      }
+      const existed = outcome?.existed
+      toast?.success?.(
+        mode === 'add-link'
+          ? `${contactDraft.Name.trim()} ${existed ? 'was already in Contacts and is now linked' : 'was added and linked'}`
+          : `${contactDraft.Name.trim()} ${existed ? 'is already in Contacts' : 'was added to Contacts'}`
+      )
     } catch (error) {
       toast?.error?.(`Could not add contact: ${error.message}`)
     } finally {
+      savingContactRef.current = false
       setSavingContact(false)
+      setContactSaveMode('')
     }
   }
 
@@ -734,8 +758,15 @@ export default function PeopleSearch({
           footer={(
             <>
               <button type="button" className="btn" onClick={() => setContactDraft(null)} disabled={savingContact}>Cancel</button>
-              <button type="button" className="btn btn-primary" onClick={saveContact} disabled={savingContact || !contactDraft.Name.trim()}>
-                {savingContact ? 'Adding…' : variant === 'opportunity' ? 'Add and link contact' : 'Add contact'}
+              {variant === 'opportunity' && (
+                <button type="button" className="btn" onClick={() => saveContact('add')} disabled={savingContact || !contactDraft.Name.trim()}>
+                  {savingContact && contactSaveMode === 'add' ? 'Adding…' : 'Add contact'}
+                </button>
+              )}
+              <button type="button" className="btn btn-primary" onClick={() => saveContact(variant === 'opportunity' ? 'add-link' : 'add')} disabled={savingContact || !contactDraft.Name.trim()}>
+                {savingContact
+                  ? contactSaveMode === 'add-link' ? 'Adding and linking…' : 'Adding…'
+                  : variant === 'opportunity' ? 'Add and link contact' : 'Add contact'}
               </button>
             </>
           )}
