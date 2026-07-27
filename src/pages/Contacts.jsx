@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useContacts } from '@/hooks/useContacts'
 import { useContactEngagement } from '@/hooks/useContactEngagement'
@@ -43,6 +43,7 @@ export default function Contacts({ toast }) {
   const { pipeline, update: updateOpp } = usePipeline()
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
+  const defaultContactType = contactTypeOptions[0] || ''
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -54,6 +55,7 @@ export default function Contacts({ toast }) {
   const [editing, setEditing] = useState(false)    // panel edit mode
   const [form, setForm] = useState(BLANK)
   const [saving, setSaving] = useState(false)
+  const savingContactRef = useRef(false)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [oppSearch, setOppSearch] = useState('')
   const [showInteractionForm, setShowInteractionForm] = useState(false)
@@ -185,15 +187,18 @@ export default function Contacts({ toast }) {
   }
 
   const submitAdd = async () => {
+    if (savingContactRef.current) return
+    savingContactRef.current = true
     setSaving(true)
     try {
-      await add(form)
-      toast?.success('Contact added')
+      const outcome = await add({ ...form, Type: form.Type || defaultContactType })
+      toast?.success(outcome?.existed ? 'This contact already exists' : 'Contact added')
       setShowAdd(false)
       setForm(BLANK)
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
+      savingContactRef.current = false
       setSaving(false)
     }
   }
@@ -322,7 +327,7 @@ export default function Contacts({ toast }) {
   }
 
   const addPeopleSearchContact = async (contact) => {
-    await add(contact)
+    return add(contact)
   }
 
   return (
@@ -333,7 +338,7 @@ export default function Contacts({ toast }) {
         showFilter={false}
         showNew={true}
         newLabel="New contact"
-        onNew={() => { setForm(BLANK); setShowAdd(true) }}
+        onNew={() => { setForm({ ...BLANK, Type: defaultContactType }); setShowAdd(true) }}
       />
       <div className="page-body" style={{ position: 'relative' }}>
         <div className={styles.pageTabs} role="tablist" aria-label="Contacts views">
