@@ -50,24 +50,26 @@ test('normalizes and deduplicates public LinkedIn profile queries', () => {
 
 test('normalizes one notes-based query and its controlled broader fallback', () => {
   const suggestion = normalizePeopleSearchSuggestion({
-    query: '"DoDEA" ("Pacific Region" OR "Pacific Area Office") ("program manager" OR coordinator) esports',
-    broadenedQuery: '"DoDEA" ("Pacific Region" OR "Pacific Area Office") ("program manager" OR coordinator)',
     summary: 'Find program personnel supporting Pacific esports work.',
     concepts: {
       organization: ['DoDEA'],
-      officeOrProgram: ['Pacific Region'],
-      roles: ['Program manager', 'Coordinator'],
+      officeOrProgram: ['Pacific Region', 'Pacific Area Office'],
+      roles: ['Program Manager', 'Program Director', 'Coordinator'],
       keywords: ['Esports'],
     },
-    aliasesUsed: ['DoDEA', 'DoWEA'],
   }, [{
     members: ['Department of Defense Education Activity', 'DoDEA', 'DoWEA'],
   }])
 
   assert.equal(suggestion.queries.length, 1)
   assert.match(suggestion.query, /^site:linkedin\.com\/in\//)
+  assert.match(suggestion.query, /\("Department of Defense Education Activity" OR DoDEA OR DoWEA\)/)
+  assert.match(suggestion.query, /\(Pacific Region OR Pacific Area Office\)/)
+  assert.match(suggestion.query, /\("Program Manager" OR "Program Director" OR Coordinator\)/)
+  assert.match(suggestion.query, /Esports$/)
   assert.match(suggestion.broadenedQuery, /^site:linkedin\.com\/in\//)
-  assert.deepEqual(suggestion.aliasesUsed, ['DoDEA', 'DoWEA'])
+  assert.doesNotMatch(suggestion.broadenedQuery, /Esports/)
+  assert.deepEqual(suggestion.aliasesUsed, ['Department of Defense Education Activity', 'DoDEA', 'DoWEA'])
 })
 
 test('offers approved DoDEA and DoWEA aliases only when notes establish that agency', () => {
@@ -85,8 +87,6 @@ test('requires schema-valid JSON from Groq for notes-based query generation', as
         finish_reason: 'stop',
         message: {
           content: JSON.stringify({
-            query: 'site:linkedin.com/in/ ("DoDEA" OR "DoWEA") ("Pacific Region") ("program manager" OR coordinator)',
-            broadenedQuery: 'site:linkedin.com/in/ ("DoDEA" OR "DoWEA") ("program manager" OR coordinator)',
             summary: 'Find program personnel connected to the Pacific region.',
             concepts: {
               organization: ['DoDEA'],
@@ -94,8 +94,6 @@ test('requires schema-valid JSON from Groq for notes-based query generation', as
               roles: ['Program manager', 'Coordinator'],
               keywords: [],
             },
-            aliasesUsed: ['DoDEA', 'DoWEA'],
-            insufficientReason: '',
           }),
         },
       }],
@@ -120,12 +118,72 @@ test('requires schema-valid JSON from Groq for notes-based query generation', as
     assert.equal(response.status, 200)
     assert.equal(requestBody.response_format.type, 'json_schema')
     assert.equal(requestBody.response_format.json_schema.strict, true)
-    assert.match(requestBody.messages[0].content, /organization as a mandatory scope/i)
-    assert.match(requestBody.messages[0].content, /never connect the organization group to roles or context with OR/i)
-    assert.match(requestBody.messages[0].content, /do not quote acronyms, geographic regions/i)
-    assert.match(requestBody.messages[0].content, /preserving the complete mandatory organization group/i)
+    assert.match(requestBody.messages[0].content, /organization must identify the agency/i)
+    assert.match(requestBody.messages[0].content, /function-specific, plausible title families/i)
+    assert.match(requestBody.messages[0].content, /application formats the final Google query/i)
     const payload = await response.json()
     assert.match(payload.query, /^site:linkedin\.com\/in\//)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('falls back to the next model when Groq rejects structured query generation', async () => {
+  const originalFetch = globalThis.fetch
+  const requestedModels = []
+  globalThis.fetch = async (_url, options) => {
+    const requestBody = JSON.parse(options.body)
+    requestedModels.push(requestBody.model)
+    if (requestedModels.length === 1) {
+      return new Response(JSON.stringify({
+        error: {
+          code: 'failed_generation',
+          message: 'Failed to generate JSON. Please adjust your prompt.',
+        },
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            summary: 'Find personnel supporting the Pacific esports program.',
+            concepts: {
+              organization: ['DoDEA'],
+              officeOrProgram: ['Pacific Region'],
+              roles: ['Program Manager', 'Program Coordinator'],
+              keywords: ['Esports'],
+            },
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  try {
+    const response = await handlePeopleSearchQueries(new Request('https://worker.test/ai/people-search-queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceMode: 'opportunity-notes',
+        context: {
+          notes: [{ text: 'DoDEA Pacific Region esports program research.' }],
+        },
+      }),
+    }), { GROQ_API_KEY: 'test-key' })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(requestedModels.slice(0, 2), ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b'])
+    const payload = await response.json()
+    assert.match(payload.query, /DoDEA/)
+    assert.match(payload.query, /Pacific Region/)
+    assert.match(payload.query, /"Program Manager"/)
   } finally {
     globalThis.fetch = originalFetch
   }
