@@ -332,11 +332,9 @@ export default function PeopleSearch({
       }
     } catch (error) {
       if (error.name === 'AbortError') return
-      useQueries(notesOnly ? [] : fallbackQueries)
       if (!queryDraft.trim()) useQueries(notesOnly ? [] : fallbackQueries)
       setSuggestedOnce(true)
       setSearchNotice(notesOnly
-        ? 'The notes-based query could not be generated. Your linked notes remain unchanged; please try again.'
         ? queryDraft.trim()
           ? 'The query could not be regenerated. Your existing editable query is still available.'
           : 'The notes-based query could not be generated. Your linked notes remain unchanged; please try again.'
@@ -345,7 +343,6 @@ export default function PeopleSearch({
     } finally {
       setSuggesting(false)
     }
-  }, [context, fallbackQueries, keywords, notesOnly, organization, program, suggesting, useQueries])
   }, [context, fallbackQueries, keywords, notesOnly, organization, program, queryDraft, suggesting, useQueries])
 
   useEffect(() => () => suggestionAbortRef.current?.abort(), [])
