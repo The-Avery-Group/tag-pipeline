@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPartners, addPartner, updatePartner, deletePartner } from '@/services/graphService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function usePartners() {
   const [partners, setPartners] = useState([])
@@ -33,7 +33,8 @@ export function usePartners() {
   // The workbook's shared poll is still respected, but it must never turn a
   // visible partner profile back into a loading state or interrupt editing.
   useEffect(() => onCacheRefresh((tables) => {
-    if (tables?.includes('PartnersTable')) load({ silent: true })
+    if (tables?.includes('PartnersTable')) return load({ silent: true })
+    return undefined
   }), [load])
 
   const add = useCallback(async (data) => {
@@ -69,5 +70,10 @@ export function usePartners() {
     }
   }, [])
 
-  return { partners, loading, error, refresh: load, add, update, remove }
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['PartnersTable']).catch(() => {})
+    await load()
+  }, [load])
+
+  return { partners, loading, error, refresh, add, update, remove }
 }
