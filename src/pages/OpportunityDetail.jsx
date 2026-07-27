@@ -512,30 +512,13 @@ export default function OpportunityDetail({ toast }) {
   const peopleSearchContext = useMemo(() => {
     if (!opp) return {}
     return {
-      opportunity: {
-        title: opp[C.title] || '',
-        contractNumber: opp[C.contractNum] || '',
-        solicitationNumber: opp[C.solNum] || '',
-        agency: opp[C.agency] || '',
-        department: opp[C.department] || '',
-        office: opp[C.office] || '',
-        incumbent: opp[C.incumbent] || '',
-        naics: opp[C.naics] || '',
-      },
-      notes: visibleNotes.slice(-10).map((note) => ({
+      notes: visibleNotes.map((note) => ({
         date: note.CreatedDate || note.Date || '',
         author: note.Author || '',
-        text: String(note.NoteText || '').slice(0, 800),
-      })),
-      linkedContacts: linkedContacts.slice(0, 10).map((linkedContact) => ({
-        name: linkedContact.Name || '',
-        title: linkedContact.Title || '',
-        agency: linkedContact.Agency || '',
-        organization: linkedContact.Organization || '',
-        offices: linkedContact.Offices || '',
+        text: String(note.NoteText || ''),
       })),
     }
-  }, [opp, visibleNotes, linkedContacts])
+  }, [opp, visibleNotes])
 
   const saveFollowUpDecision = async (candidate, decision) => {
     await saveRFIFollowUpDecision({
@@ -1543,6 +1526,7 @@ export default function OpportunityDetail({ toast }) {
 
         <PeopleSearch
           variant="opportunity"
+          sourceMode="opportunity-notes"
           scopeId={`opportunity:${opp[C.contractNum] || decodedCN}`}
           scopeLabel={`${opp[C.title] || 'Opportunity'} (${opp[C.contractNum] || decodedCN})`}
           context={peopleSearchContext}
