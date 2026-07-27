@@ -558,8 +558,8 @@ export default function PeopleSearch({
           <label className="form-label" htmlFor={`people-query-${generatedId}`}>Editable Google query</label>
           <span className={styles.queryGuide}>
             {notesOnly
-              ? 'Generated only from linked research notes. Quotes keep phrases together; OR searches supported alternatives.'
-              : 'LinkedIn profile filter → organization → office or program → roles and keywords. Quotes keep phrases together; OR searches alternatives.'}
+              ? 'Generated only from linked research notes. The organization is required; role and context groups narrow it using AND.'
+              : 'LinkedIn profile filter → required organization → roles → office, program, or keywords. OR stays inside each group.'}
           </span>
         </div>
         <textarea
