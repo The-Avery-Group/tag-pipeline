@@ -9,7 +9,13 @@
  */
 
 import { handleNotify }             from './handlers/notify.js'
-import { getCapabilitiesStatus, handleAIChat, manuallyRefreshCapabilities, refreshCapabilitiesIfChanged } from './handlers/ai.js'
+import {
+  getCapabilitiesStatus,
+  handleAIChat,
+  handlePeopleSearchQueries,
+  manuallyRefreshCapabilities,
+  refreshCapabilitiesIfChanged,
+} from './handlers/ai.js'
 import { handleSAM, runScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
@@ -84,6 +90,9 @@ export default {
 
       } else if (path === '/ai/chat' && req.method === 'POST') {
         response = await handleAIChat(req, env)
+
+      } else if (path === '/ai/people-search-queries' && req.method === 'POST') {
+        response = await handlePeopleSearchQueries(req, env)
 
       } else if (path === '/ai/history' && (req.method === 'GET' || req.method === 'DELETE')) {
         response = await handleAIChat(req, env)
