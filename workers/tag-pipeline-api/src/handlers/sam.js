@@ -30,8 +30,8 @@ const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
-// advances the next unit while it remains open, which is reliable with the
-// current delegated Graph token and avoids depending on waitUntil().
+// advances delegated pulls while it remains open. Autonomous pulls use a
+// Cloudflare Workflow so every unit gets its own retryable durable step.
 const PAGE_SIZE = 10
 const PAGE_DELAY = 250   // ms between paginated follow-up requests
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
@@ -645,10 +645,19 @@ function pullRunContext(previousLog, resumeCursor, startedAt) {
   }
 }
 
-async function runSAMPull(env, token, config, resumeCursor = null, legacyResumeFrom = 0) {
+async function runSAMPull(
+  env,
+  token,
+  config,
+  resumeCursor = null,
+  legacyResumeFrom = 0,
+  previousLogOverride = null,
+) {
   const runStart = new Date().toISOString()
   console.log('[SAM] Pull started:', runStart)
-  const previousLog = resumeCursor ? await getRunLog(env) : null
+  const previousLog = resumeCursor
+    ? previousLogOverride || await getRunLog(env)
+    : null
   const run = pullRunContext(previousLog, resumeCursor, runStart)
 
   const { naicsCodes = [], skipDays = 3, windowDays = 90 } = config
@@ -962,12 +971,11 @@ function scheduledSAMConfig(naicsRows, settingsRows) {
   }
 }
 
-// Scheduled pulls use Microsoft Graph application permissions. If that path
-// is not available, the existing browser-triggered pull remains the fallback.
-// A single bounded checkpoint is deliberate: it stays under Worker
-// subrequest limits and resumes from the stored cursor on the next run while
-// preserving one cumulative count for the complete pull.
-export async function runScheduledSAMPull(env) {
+// Execute one autonomous checkpoint with Microsoft Graph application
+// permissions. SAMPullWorkflow repeatedly calls this function until it
+// returns a terminal status. Keeping each checkpoint separate preserves the
+// free-plan subrequest headroom while removing the wait for another cron run.
+export async function runScheduledSAMPull(env, continuation = null) {
   const startedAt = new Date().toISOString()
   if (!env.SAM_API_KEY || !env.WORKBOOK_ID) {
     const message = !env.SAM_API_KEY ? 'SAM_API_KEY is not configured' : 'WORKBOOK_ID is not configured'
@@ -977,16 +985,17 @@ export async function runScheduledSAMPull(env) {
 
   try {
     const token = await getAppOnlyGraphToken(env)
-    const [naicsRows, settingsRows, previousRun] = await Promise.all([
+    const [naicsRows, settingsRows, storedRun] = await Promise.all([
       getTableRows(env, token, 'SAMNAICSTable'),
       getTableRows(env, token, 'SAMSettingsTable'),
-      getRunLog(env),
+      continuation ? Promise.resolve(null) : getRunLog(env),
     ])
     const config = scheduledSAMConfig(naicsRows, settingsRows)
     if (!config.naicsCodes.length) throw new Error('SAMNAICSTable does not contain any NAICS codes')
 
+    const previousRun = continuation || storedRun
     const resumeCursor = previousRun?.status === 'partial' ? previousRun.nextCursor || null : null
-    const result = await runSAMPull(env, token, config, resumeCursor)
+    const result = await runSAMPull(env, token, config, resumeCursor, 0, previousRun)
     console.log(JSON.stringify({
       event: 'scheduled_sam_pull', status: result.status, source: 'app-only',
       runId: result.runId, batchWritten: result.batchWritten, totalWritten: result.totalWritten,
@@ -997,6 +1006,42 @@ export async function runScheduledSAMPull(env) {
     const message = error instanceof Error ? error.message : 'Unknown scheduled SAM pull error'
     console.error(JSON.stringify({ event: 'scheduled_sam_pull', status: 'error', source: 'app-only', message, startedAt }))
     return { ok: false, source: 'app-only', error: message }
+  }
+}
+
+export async function startScheduledSAMPull(env, scheduledTime = Date.now()) {
+  // Keep the former one-checkpoint path as a safe fallback for local
+  // development or a deployment made before the Workflow binding exists.
+  if (!env.SAM_PULL_WORKFLOW?.createBatch) {
+    console.warn(JSON.stringify({
+      event: 'scheduled_sam_pull_workflow',
+      status: 'fallback',
+      message: 'SAM_PULL_WORKFLOW binding is unavailable; running one checkpoint',
+    }))
+    return runScheduledSAMPull(env)
+  }
+
+  const timestamp = new Date(Number(scheduledTime) || Date.now())
+  const day = timestamp.toISOString().slice(0, 10)
+  const instances = await env.SAM_PULL_WORKFLOW.createBatch([{
+    id: `sam-pull-${day}`,
+    params: { scheduledTime: timestamp.toISOString() },
+    retention: { successRetention: '1 day', errorRetention: '3 days' },
+  }])
+  const instance = instances[0] || null
+
+  console.log(JSON.stringify({
+    event: 'scheduled_sam_pull_workflow',
+    status: instance ? 'started' : 'already_started',
+    instanceId: instance?.id || `sam-pull-${day}`,
+    scheduledTime: timestamp.toISOString(),
+  }))
+
+  return {
+    ok: true,
+    source: 'workflow',
+    started: Boolean(instance),
+    instanceId: instance?.id || `sam-pull-${day}`,
   }
 }
 
