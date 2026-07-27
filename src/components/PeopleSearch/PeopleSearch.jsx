@@ -1,0 +1,614 @@
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import Modal from '@/components/Common/Modal'
+import {
+  buildDefaultPeopleQueries,
+  contactDraftFromSearchResult,
+  ensureLinkedInSiteFilter,
+  googleSearchUrl,
+  suggestPeopleSearchQueries,
+} from '@/services/peopleSearchService'
+import styles from './PeopleSearch.module.css'
+
+const GOOGLE_SEARCH_ENGINE_ID = import.meta.env.VITE_GOOGLE_SEARCH_ENGINE_ID || ''
+const DECISIONS_KEY = 'tag-people-search-decisions-v1'
+const EMPTY_CONTACT = {
+  Name: '', Title: '', Agency: '', Organization: '', Offices: '',
+  Email: '', Phone: '', Notes: '', Type: 'Private',
+}
+
+const googleListeners = new Map()
+let googleLoaderPromise = null
+
+function normalizeGoogleResult(result) {
+  return {
+    title: String(result?.titleNoFormatting || result?.title || '').trim(),
+    snippet: String(result?.contentNoFormatting || result?.content || '').trim(),
+    url: String(result?.url || '').trim(),
+    visibleUrl: String(result?.visibleUrl || '').trim(),
+  }
+}
+
+function isPublicLinkedInProfile(result) {
+  try {
+    const url = new URL(result.url)
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '')
+    return url.protocol === 'https:' && hostname === 'linkedin.com' && url.pathname.startsWith('/in/')
+  } catch {
+    return false
+  }
+}
+
+function configureGoogleCallbacks(resolve) {
+  const previous = window.__gcse || {}
+  const previousReady = previous.searchCallbacks?.web?.ready
+  window.__gcse = {
+    ...previous,
+    parsetags: 'explicit',
+    initializationCallback: () => {
+      previous.initializationCallback?.()
+      resolve()
+    },
+    searchCallbacks: {
+      ...(previous.searchCallbacks || {}),
+      web: {
+        ...(previous.searchCallbacks?.web || {}),
+        ready: (name, query, promotions, results, resultsDiv) => {
+          const listener = googleListeners.get(name)
+          if (listener) {
+            listener({
+              query,
+              results: [...(promotions || []), ...(results || [])]
+                .map(normalizeGoogleResult)
+                .filter(isPublicLinkedInProfile),
+            })
+            resultsDiv.replaceChildren()
+            return true
+          }
+          return typeof previousReady === 'function'
+            ? previousReady(name, query, promotions, results, resultsDiv)
+            : false
+        },
+      },
+    },
+  }
+}
+
+function loadGoogleSearchElement() {
+  if (!GOOGLE_SEARCH_ENGINE_ID) return Promise.reject(new Error('Google People Search is not configured'))
+  if (window.google?.search?.cse?.element) return Promise.resolve()
+  if (googleLoaderPromise) return googleLoaderPromise
+
+  googleLoaderPromise = new Promise((resolve, reject) => {
+    configureGoogleCallbacks(resolve)
+    const existing = document.getElementById('tag-google-people-search-script')
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true })
+      existing.addEventListener('error', () => reject(new Error('Google search could not load')), { once: true })
+      return
+    }
+    const script = document.createElement('script')
+    script.id = 'tag-google-people-search-script'
+    script.async = true
+    script.src = `https://cse.google.com/cse.js?cx=${encodeURIComponent(GOOGLE_SEARCH_ENGINE_ID)}`
+    script.addEventListener('error', () => {
+      googleLoaderPromise = null
+      reject(new Error('Google search could not load'))
+    }, { once: true })
+    document.head.appendChild(script)
+  })
+  return googleLoaderPromise
+}
+
+function readDecisions(scopeKey) {
+  try {
+    const store = JSON.parse(localStorage.getItem(DECISIONS_KEY) || '{}')
+    return store[scopeKey] || {}
+  } catch {
+    return {}
+  }
+}
+
+function writeDecision(scopeKey, url, decision) {
+  try {
+    const store = JSON.parse(localStorage.getItem(DECISIONS_KEY) || '{}')
+    store[scopeKey] = { ...(store[scopeKey] || {}), [url]: decision }
+    localStorage.setItem(DECISIONS_KEY, JSON.stringify(store))
+  } catch {
+    // Review state is a convenience. A storage restriction must not block search.
+  }
+}
+
+function queryScope(scopeId, query) {
+  return scopeId || `query:${String(query || '').trim().toLowerCase()}`
+}
+
+export default function PeopleSearch({
+  variant = 'contacts',
+  scopeId = '',
+  scopeLabel = '',
+  context = {},
+  initialValues = {},
+  contactTypes = ['Government', 'Private'],
+  onAddContact,
+  onContinue,
+  toast,
+}) {
+  const generatedId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  const googleElementId = `people-search-google-${generatedId}`
+  const googleElementName = `people-search-${generatedId}`
+  const [expanded, setExpanded] = useState(variant !== 'opportunity')
+  const [organization, setOrganization] = useState(initialValues.organization || '')
+  const [program, setProgram] = useState(initialValues.program || '')
+  const [keywords, setKeywords] = useState(initialValues.keywords || '')
+  const fallbackQueries = useMemo(
+    () => buildDefaultPeopleQueries({ organization, program, keywords, context }),
+    [organization, program, keywords, context],
+  )
+  const [queries, setQueries] = useState(fallbackQueries)
+  const [activeQueryIndex, setActiveQueryIndex] = useState(0)
+  const [queryDraft, setQueryDraft] = useState(fallbackQueries[0]?.query || 'site:linkedin.com/in/')
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestedOnce, setSuggestedOnce] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [results, setResults] = useState([])
+  const [selectedUrl, setSelectedUrl] = useState('')
+  const [decisions, setDecisions] = useState({})
+  const [showExcluded, setShowExcluded] = useState(false)
+  const [searchNotice, setSearchNotice] = useState('')
+  const [contactDraft, setContactDraft] = useState(null)
+  const [savingContact, setSavingContact] = useState(false)
+  const searchContainerRendered = useRef(false)
+  const suggestionAbortRef = useRef(null)
+
+  const currentScope = queryScope(scopeId, queryDraft)
+  const selected = results.find((result) => result.url === selectedUrl) || null
+  const excludedCount = results.filter((result) => decisions[result.url] === 'irrelevant').length
+  const visibleResults = results.filter((result) =>
+    showExcluded || decisions[result.url] !== 'irrelevant'
+  )
+
+  const useQueries = useCallback((nextQueries) => {
+    const usable = nextQueries?.length ? nextQueries : fallbackQueries
+    setQueries(usable)
+    setActiveQueryIndex(0)
+    setQueryDraft(usable[0]?.query || 'site:linkedin.com/in/')
+  }, [fallbackQueries])
+
+  const resetFromFields = useCallback((next) => {
+    const built = buildDefaultPeopleQueries({ ...next, context })
+    setQueries(built)
+    setActiveQueryIndex(0)
+    setQueryDraft(built[0]?.query || 'site:linkedin.com/in/')
+    setResults([])
+    setSelectedUrl('')
+    setSearched(false)
+    setSearchNotice('')
+  }, [context])
+
+  const updateField = (field, value) => {
+    const next = {
+      organization: field === 'organization' ? value : organization,
+      program: field === 'program' ? value : program,
+      keywords: field === 'keywords' ? value : keywords,
+    }
+    if (field === 'organization') setOrganization(value)
+    if (field === 'program') setProgram(value)
+    if (field === 'keywords') setKeywords(value)
+    resetFromFields(next)
+  }
+
+  const suggestQueries = useCallback(async () => {
+    if (suggesting) return
+    suggestionAbortRef.current?.abort()
+    const controller = new AbortController()
+    suggestionAbortRef.current = controller
+    setSuggesting(true)
+    setSearchNotice('')
+    try {
+      const response = await suggestPeopleSearchQueries({
+        organization,
+        program,
+        keywords,
+        context,
+      }, { signal: controller.signal })
+      useQueries(response.queries)
+      setSuggestedOnce(true)
+    } catch (error) {
+      if (error.name === 'AbortError') return
+      useQueries(fallbackQueries)
+      setSuggestedOnce(true)
+      setSearchNotice('AI suggestions are temporarily unavailable. The standard search queries are ready to use.')
+      console.warn('[People Search] Query suggestions failed:', error)
+    } finally {
+      setSuggesting(false)
+    }
+  }, [context, fallbackQueries, keywords, organization, program, suggesting, useQueries])
+
+  useEffect(() => () => suggestionAbortRef.current?.abort(), [])
+
+  useEffect(() => {
+    if (variant !== 'opportunity' || !expanded || suggestedOnce) return
+    void suggestQueries()
+  }, [expanded, suggestedOnce, suggestQueries, variant])
+
+  useEffect(() => {
+    setDecisions(readDecisions(currentScope))
+  }, [currentScope])
+
+  useEffect(() => {
+    if (!expanded || !GOOGLE_SEARCH_ENGINE_ID) return undefined
+    let cancelled = false
+    googleListeners.set(googleElementName, ({ results: nextResults }) => {
+      if (cancelled) return
+      setResults(nextResults)
+      setSelectedUrl((current) =>
+        nextResults.some((item) => item.url === current) ? current : (nextResults[0]?.url || '')
+      )
+      setSearched(true)
+      setSearching(false)
+      setSearchNotice(nextResults.length ? '' : 'No public LinkedIn profiles matched this query.')
+    })
+
+    loadGoogleSearchElement()
+      .then(() => {
+        if (cancelled || searchContainerRendered.current) return
+        window.google.search.cse.element.render({
+          div: googleElementId,
+          tag: 'searchresults-only',
+          attributes: {
+            gname: googleElementName,
+            linkTarget: '_blank',
+            enableHistory: false,
+          },
+        })
+        searchContainerRendered.current = true
+      })
+      .catch((error) => {
+        if (!cancelled) setSearchNotice(error.message)
+      })
+
+    return () => {
+      cancelled = true
+      googleListeners.delete(googleElementName)
+    }
+  }, [expanded, googleElementId, googleElementName])
+
+  const selectQuery = (index) => {
+    setActiveQueryIndex(index)
+    setQueryDraft(queries[index]?.query || '')
+    setResults([])
+    setSelectedUrl('')
+    setSearched(false)
+    setSearchNotice('')
+  }
+
+  const runSearch = async () => {
+    const query = ensureLinkedInSiteFilter(queryDraft)
+    setQueryDraft(query)
+    setSearching(true)
+    setSearchNotice('')
+    setResults([])
+    setSelectedUrl('')
+    setSearched(false)
+
+    if (!GOOGLE_SEARCH_ENGINE_ID) {
+      window.open(googleSearchUrl(query), '_blank', 'noopener,noreferrer')
+      setSearching(false)
+      setSearchNotice('Embedded results are not configured yet. This search was opened in Google.')
+      return
+    }
+
+    try {
+      await loadGoogleSearchElement()
+      if (!searchContainerRendered.current) {
+        window.google.search.cse.element.render({
+          div: googleElementId,
+          tag: 'searchresults-only',
+          attributes: { gname: googleElementName, linkTarget: '_blank', enableHistory: false },
+        })
+        searchContainerRendered.current = true
+      }
+      const element = window.google.search.cse.element.getElement(googleElementName)
+      if (!element) throw new Error('Google search is still preparing. Please try again.')
+      element.execute(query)
+    } catch (error) {
+      setSearching(false)
+      setSearchNotice(error.message || 'Google search could not run.')
+    }
+  }
+
+  const markResult = (result, decision) => {
+    const next = { ...decisions, [result.url]: decision }
+    setDecisions(next)
+    writeDecision(currentScope, result.url, decision)
+    if (decision === 'irrelevant') {
+      const nextVisible = results.find((item) =>
+        item.url !== result.url && next[item.url] !== 'irrelevant'
+      )
+      setSelectedUrl(nextVisible?.url || '')
+      toast?.success?.('Result excluded. Use Show excluded to restore it.')
+    }
+  }
+
+  const restoreResult = (result) => {
+    const next = { ...decisions }
+    delete next[result.url]
+    setDecisions(next)
+    writeDecision(currentScope, result.url, 'review')
+    setSelectedUrl(result.url)
+  }
+
+  const beginAddContact = (result) => {
+    setContactDraft({
+      ...EMPTY_CONTACT,
+      ...contactDraftFromSearchResult(result, organization, scopeLabel),
+    })
+  }
+
+  const saveContact = async () => {
+    if (!contactDraft?.Name.trim() || savingContact) return
+    setSavingContact(true)
+    try {
+      await onAddContact?.({ ...contactDraft, Name: contactDraft.Name.trim() }, selected)
+      markResult(selected, 'added')
+      setContactDraft(null)
+      toast?.success?.(`${contactDraft.Name.trim()} added to Contacts`)
+    } catch (error) {
+      toast?.error?.(`Could not add contact: ${error.message}`)
+    } finally {
+      setSavingContact(false)
+    }
+  }
+
+  const content = (
+    <div className={styles.content}>
+      {variant === 'contacts' && (
+        <div className={styles.fieldGrid}>
+          <div className="form-field">
+            <label className="form-label">Organization</label>
+            <input
+              className="form-input"
+              value={organization}
+              onChange={(event) => updateField('organization', event.target.value)}
+              placeholder="Company, agency, or organization"
+            />
+          </div>
+          <div className="form-field">
+            <label className="form-label">Office or program</label>
+            <input
+              className="form-input"
+              value={program}
+              onChange={(event) => updateField('program', event.target.value)}
+              placeholder="Supported office, program, or initiative"
+            />
+          </div>
+          <div className={`form-field ${styles.spanFull}`}>
+            <label className="form-label">Keywords or likely functions</label>
+            <input
+              className="form-input"
+              value={keywords}
+              onChange={(event) => updateField('keywords', event.target.value)}
+              placeholder="Comma-separated capabilities, roles, or topics"
+            />
+          </div>
+        </div>
+      )}
+
+      {queries.length > 1 && (
+        <div className={styles.queryChoices} aria-label="Suggested searches">
+          {queries.map((item, index) => (
+            <button
+              type="button"
+              key={`${item.label}-${index}`}
+              className={`btn ${activeQueryIndex === index ? 'btn-primary' : ''}`}
+              onClick={() => selectQuery(index)}
+              title={item.purpose}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="form-field">
+        <div className={styles.queryLabelRow}>
+          <label className="form-label" htmlFor={`people-query-${generatedId}`}>Editable Google query</label>
+          <span className={styles.queryGuide}>
+            LinkedIn profile filter → organization → office or program → roles and keywords. Quotes keep phrases together; OR searches alternatives.
+          </span>
+        </div>
+        <textarea
+          id={`people-query-${generatedId}`}
+          className={`form-input ${styles.queryEditor}`}
+          value={queryDraft}
+          onChange={(event) => setQueryDraft(event.target.value)}
+          rows={3}
+        />
+      </div>
+
+      <div className={styles.queryActions}>
+        <button type="button" className="btn" onClick={suggestQueries} disabled={suggesting}>
+          {suggesting ? 'Suggesting…' : suggestedOnce ? 'Regenerate queries' : 'Suggest queries'}
+        </button>
+        <button type="button" className="btn btn-primary" onClick={runSearch} disabled={searching || !queryDraft.trim()}>
+          {searching ? 'Searching…' : 'Search public profiles'}
+        </button>
+        {variant === 'opportunity' && onContinue && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => onContinue({ organization, program, keywords, query: queryDraft, queries })}
+          >
+            Continue in People Search
+          </button>
+        )}
+      </div>
+
+      {searchNotice && <p className={styles.notice} role="status">{searchNotice}</p>}
+
+      <div className={styles.divider} />
+
+      <div className={styles.resultsHeader}>
+        <div>
+          <h3>Public profile results</h3>
+          <p>Review each public result before saving anything to Contacts.</p>
+        </div>
+        <div className={styles.resultHeaderActions}>
+          {excludedCount > 0 && (
+            <button type="button" className="btn" onClick={() => setShowExcluded((value) => !value)}>
+              {showExcluded ? 'Hide excluded' : `Show excluded (${excludedCount})`}
+            </button>
+          )}
+          {searched && <span className="badge badge-tracking">{results.length} results</span>}
+        </div>
+      </div>
+
+      {!searched && !searching
+        ? <div className={styles.emptyState}>Run a search to review public LinkedIn profile results here.</div>
+        : searching
+          ? <div className={styles.loadingState}><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+          : visibleResults.length === 0
+            ? <div className={styles.emptyState}>{excludedCount ? 'All visible results have been excluded.' : 'No public profiles matched this query.'}</div>
+            : (
+              <div className={styles.resultsLayout}>
+                <div className={styles.resultList}>
+                  {visibleResults.map((result) => {
+                    const decision = decisions[result.url] || 'review'
+                    return (
+                      <div
+                        key={result.url}
+                        className={`${styles.resultRow} ${selectedUrl === result.url ? styles.resultRowActive : ''} ${decision === 'irrelevant' ? styles.resultRowExcluded : ''}`}
+                      >
+                        <button type="button" className={styles.resultOpen} onClick={() => setSelectedUrl(result.url)}>
+                          <strong>{result.title || 'Public LinkedIn profile'}</strong>
+                          <span>{result.snippet || result.visibleUrl}</span>
+                        </button>
+                        <span className={`btn ${styles.reviewStatus}`}>
+                          {decision === 'added' ? 'Added' : decision === 'relevant' ? 'Relevant' : decision === 'irrelevant' ? 'Excluded' : 'Review'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {selected && (
+                  <div className={styles.resultDetail}>
+                    <div className={styles.detailEyebrow}>Public LinkedIn result</div>
+                    <h3>{selected.title || 'Public profile'}</h3>
+                    <p>{selected.snippet || 'Google did not return a public profile description.'}</p>
+                    <dl>
+                      <dt>Public URL</dt>
+                      <dd>{selected.visibleUrl || selected.url}</dd>
+                      <dt>Found using</dt>
+                      <dd>{queries[activeQueryIndex]?.label || 'Edited Google query'}</dd>
+                    </dl>
+                    <div className={styles.detailActions}>
+                      <a className="btn" href={selected.url} target="_blank" rel="noreferrer">Open profile</a>
+                      {decisions[selected.url] === 'irrelevant'
+                        ? <button type="button" className="btn" onClick={() => restoreResult(selected)}>Restore</button>
+                        : <>
+                            <button type="button" className="btn" onClick={() => markResult(selected, 'relevant')}>Relevant</button>
+                            <button type="button" className="btn btn-ghost" onClick={() => markResult(selected, 'irrelevant')}>Not relevant</button>
+                          </>
+                      }
+                      {decisions[selected.url] === 'relevant' && (
+                        <button type="button" className="btn btn-primary" onClick={() => beginAddContact(selected)}>Add to Contacts</button>
+                      )}
+                      {decisions[selected.url] === 'added' && <span className="badge badge-done">Added to Contacts</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+      }
+
+      <div id={googleElementId} className={styles.googleProvider} aria-hidden="true" />
+      <div className={styles.googleAttribution}>Enhanced by Google · Public indexed results only</div>
+    </div>
+  )
+
+  return (
+    <>
+      {variant === 'opportunity'
+        ? (
+          <div className={styles.opportunitySection}>
+            <button
+              type="button"
+              className={styles.opportunityToggle}
+              onClick={() => setExpanded((value) => !value)}
+              aria-expanded={expanded}
+            >
+              <span>
+                <strong>Find related people</strong>
+                <small>Generate editable public-profile searches from opportunity fields, notes, and linked contacts.</small>
+              </span>
+              <span aria-hidden="true">{expanded ? '⌃' : '⌄'}</span>
+            </button>
+            {expanded && <div className={`card ${styles.opportunityBody}`}>{content}</div>}
+          </div>
+        )
+        : <div className={`card ${styles.contactsCard}`}>{content}</div>
+      }
+
+      {contactDraft && (
+        <Modal
+          title="Add public profile to Contacts"
+          onClose={() => !savingContact && setContactDraft(null)}
+          footer={(
+            <>
+              <button type="button" className="btn" onClick={() => setContactDraft(null)} disabled={savingContact}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={saveContact} disabled={savingContact || !contactDraft.Name.trim()}>
+                {savingContact ? 'Adding…' : variant === 'opportunity' ? 'Add and link contact' : 'Add contact'}
+              </button>
+            </>
+          )}
+        >
+          <p className={styles.contactReviewNote}>
+            Google profile information can be incomplete. Review these fields before saving.
+          </p>
+          <div className={styles.contactForm}>
+            {[
+              ['Name', 'Name', true],
+              ['Title', 'Title', false],
+              ['Agency', 'Agency / Company', false],
+              ['Organization', 'Department / Organization', false],
+              ['Offices', 'Offices', false],
+              ['Email', 'Email', false],
+              ['Phone', 'Phone', false],
+            ].map(([field, label, required]) => (
+              <div className="form-field" key={field}>
+                <label className="form-label">{label}{required ? ' *' : ''}</label>
+                <input
+                  className="form-input"
+                  type={field === 'Email' ? 'email' : 'text'}
+                  value={contactDraft[field] || ''}
+                  onChange={(event) => setContactDraft((current) => ({ ...current, [field]: event.target.value }))}
+                />
+              </div>
+            ))}
+            <div className="form-field">
+              <label className="form-label">Type</label>
+              <select
+                className="form-input"
+                value={contactDraft.Type}
+                onChange={(event) => setContactDraft((current) => ({ ...current, Type: event.target.value }))}
+              >
+                {[...new Set(contactTypes)].map((type) => <option key={type}>{type}</option>)}
+              </select>
+            </div>
+            <div className={`form-field ${styles.spanFull}`}>
+              <label className="form-label">Notes</label>
+              <textarea
+                className="form-input"
+                rows={3}
+                value={contactDraft.Notes || ''}
+                onChange={(event) => setContactDraft((current) => ({ ...current, Notes: event.target.value }))}
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  )
+}
