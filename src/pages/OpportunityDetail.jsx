@@ -844,20 +844,42 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const createAndLinkContact = async (contactData, { quiet = false } = {}) => {
+  const createContactOnly = async (contactData) => {
     const name = String(contactData?.Name || '').trim()
-    if (!name) { toast?.error('Name is required'); return }
+    if (!name) throw new Error('Name is required')
     if (creatingContactRef.current) throw new Error('A contact is already being added')
     creatingContactRef.current = true
     setSavingContact(true)
     try {
-      await addContactRecord({ ...contactData, Name: name })
+      return await addContactRecord({ ...contactData, Name: name })
+    } finally {
+      creatingContactRef.current = false
+      setSavingContact(false)
+    }
+  }
+
+  const createAndLinkContact = async (contactData, { quiet = false } = {}) => {
+    const name = String(contactData?.Name || '').trim()
+    if (!name) throw new Error('Name is required')
+    if (creatingContactRef.current) throw new Error('A contact is already being added')
+    creatingContactRef.current = true
+    setSavingContact(true)
+    let creation
+    try {
+      creation = await addContactRecord({ ...contactData, Name: name })
       const nextPOC = addPOCName(opp[C.poc], name)
       await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       if (!quiet) toast?.success(`${name} added and linked`)
-      return { name, nextPOC }
+      return { ...creation, name, nextPOC, linked: true }
     } catch (err) {
+      if (creation?.contact) {
+        if (!quiet) {
+          toast?.success(`${name} was added to Contacts`)
+          toast?.error(`The contact could not be linked: ${err.message}`)
+        }
+        return { ...creation, name, linked: false, linkError: err }
+      }
       if (!quiet) toast?.error(`Failed to add contact: ${err.message}`)
       throw err
     } finally {
@@ -868,9 +890,10 @@ export default function OpportunityDetail({ toast }) {
 
   const handleCreateAndLinkContact = async () => {
     try {
-      await createAndLinkContact(newContactForm)
+      const outcome = await createAndLinkContact(newContactForm)
       setShowNewContact(false)
       setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Notes: '', Type: 'Government' })
+      if (outcome?.linked === false) return
     } catch {
       // createAndLinkContact already surfaced a useful error.
     }
@@ -1536,7 +1559,8 @@ export default function OpportunityDetail({ toast }) {
             keywords: [opp[C.title], opp[C.naics]].filter(Boolean).join(', '),
           }}
           contactTypes={['Government', 'Private']}
-          onAddContact={(contactData) => createAndLinkContact(contactData, { quiet: true })}
+          onAddContact={createContactOnly}
+          onAddAndLinkContact={(contactData) => createAndLinkContact(contactData, { quiet: true })}
           onContinue={continuePeopleSearch}
           toast={toast}
         />
