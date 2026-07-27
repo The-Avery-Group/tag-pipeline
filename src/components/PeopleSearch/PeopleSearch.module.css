@@ -233,44 +233,65 @@
 }
 
 .opportunitySection {
+  overflow: hidden;
+  padding: 0;
   margin-bottom: 16px;
 }
 
 .opportunityToggle {
   align-items: center;
-  background: transparent;
+  background: var(--surface);
   border: 0;
   color: var(--gray-900);
   cursor: pointer;
   display: flex;
   font-family: var(--font);
   justify-content: space-between;
-  padding: 0 2px 6px;
+  padding: 12px 16px;
   text-align: left;
   width: 100%;
+}
+
+.opportunityToggle:hover {
+  background: var(--gray-50);
 }
 
 .opportunityToggle > span:first-child {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  min-width: 0;
 }
 
 .opportunityToggle strong {
-  color: var(--gray-500);
-  font-size: 11px;
+  color: var(--gray-900);
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
 }
 
 .opportunityToggle small {
-  color: var(--gray-400);
+  color: var(--gray-500);
   font-size: 11px;
+  line-height: 1.4;
 }
 
 .opportunityBody {
+  border-top: 0.5px solid var(--gray-200);
   padding: 16px 18px;
+}
+
+.opportunityChevron {
+  color: var(--gray-400);
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+  margin-left: 12px;
+  transform: rotate(0deg);
+  transition: transform .2s ease;
+}
+
+.opportunityChevronOpen {
+  transform: rotate(90deg);
 }
 
 .contactReviewNote {
