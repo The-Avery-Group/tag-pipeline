@@ -8,7 +8,14 @@ import { useAgingNotifications } from '@/hooks/useAgingNotifications'
 import { ThemeProvider } from '@/theme/ThemeContext'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
-import { warmCache, startPolling, isCacheWarmed } from '@/services/dataCache'
+import Modal from '@/components/Common/Modal'
+import { warmCache, startPolling, stopPolling, invalidateCache, isCacheWarmed } from '@/services/dataCache'
+import {
+  clearSessionRefreshRequired,
+  getToken,
+  isSessionRefreshRequired,
+  onSessionRefreshRequired,
+} from '@/services/graphService'
 import '@/styles/global.css'
 const SearchModal = lazy(() => import('@/pages/SearchModal'))
 const AIChat = lazy(() => import('@/pages/AIChat').then((module) => ({ default: module.AIChat })))
@@ -77,8 +84,8 @@ class RouteErrorBoundary extends Component {
 function AuthInitScreen() {
   return (
     <div style={{
-      height: '100vh', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', gap: 16,
+      height: '100vh', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
       background: 'var(--gray-100)',
     }}>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -89,10 +96,6 @@ function AuthInitScreen() {
             animation: `authDot 1.2s ease-in-out ${i * 0.2}s infinite`,
           }} />
         ))}
-      </div>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ color: 'var(--gray-900)', fontSize: 14, fontWeight: 600 }}>Signing you in</div>
-        <div style={{ color: 'var(--gray-500)', fontSize: 12, marginTop: 4 }}>Preparing your workspace…</div>
       </div>
       <style>{`
         @keyframes authDot {
@@ -110,7 +113,33 @@ function AppShell() {
   const { toasts, toast } = useToast()
   const [cacheReady,    setCacheReady]    = useState(isCacheWarmed)
   const [searchOpen,    setSearchOpen]    = useState(false)
+  const [sessionRefreshOpen, setSessionRefreshOpen] = useState(isSessionRefreshRequired)
+  const [refreshingSession, setRefreshingSession] = useState(false)
   useAgingNotifications()
+
+  useEffect(() => onSessionRefreshRequired(() => {
+    stopPolling()
+    setSessionRefreshOpen(true)
+  }), [])
+
+  const refreshSession = async () => {
+    if (refreshingSession) return
+    setRefreshingSession(true)
+    try {
+      // This renews access silently when possible and uses an Entra popup only
+      // if Microsoft genuinely requires the user to authenticate again.
+      await getToken({ interactive: true })
+      clearSessionRefreshRequired()
+      await invalidateCache()
+      startPolling()
+      setSessionRefreshOpen(false)
+    } catch (error) {
+      console.error('Could not refresh the workspace session:', error)
+      toast(error?.message || 'We could not refresh your session. Please try again.', 'error')
+    } finally {
+      setRefreshingSession(false)
+    }
+  }
 
   // Global Cmd/Ctrl+K to open search
   useEffect(() => {
@@ -179,6 +208,21 @@ function AppShell() {
           </Suspense>
         )}
       <ToastContainer toasts={toasts} />
+      {sessionRefreshOpen && (
+        <Modal
+          title="Your session has expired"
+          dismissible={false}
+          footer={(
+            <button className="btn btn-primary" onClick={refreshSession} disabled={refreshingSession}>
+              {refreshingSession ? 'Refreshing…' : 'Refresh session'}
+            </button>
+          )}
+        >
+          <p className="text-sm" style={{ margin: 0, color: 'var(--gray-600)', lineHeight: 1.6 }}>
+            Refresh to continue where you left off. Your current page and work will remain in place.
+          </p>
+        </Modal>
+      )}
     </div>
   )
 }
