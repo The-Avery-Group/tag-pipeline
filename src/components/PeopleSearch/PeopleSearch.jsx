@@ -147,6 +147,7 @@ function queryScope(scopeId, query) {
 
 export default function PeopleSearch({
   variant = 'contacts',
+  sourceMode = 'manual',
   scopeId = '',
   scopeLabel = '',
   context = {},
@@ -159,19 +160,40 @@ export default function PeopleSearch({
   const generatedId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const googleElementId = `people-search-google-${generatedId}`
   const googleElementName = `people-search-${generatedId}`
+  const notesOnly = sourceMode === 'opportunity-notes'
+    || initialValues.sourceMode === 'opportunity-notes'
   const [expanded, setExpanded] = useState(variant !== 'opportunity')
   const [organization, setOrganization] = useState(initialValues.organization || '')
   const [program, setProgram] = useState(initialValues.program || '')
   const [keywords, setKeywords] = useState(initialValues.keywords || '')
   const fallbackQueries = useMemo(
-    () => buildDefaultPeopleQueries({ organization, program, keywords, context }),
-    [organization, program, keywords, context],
+    () => notesOnly ? [] : buildDefaultPeopleQueries({ organization, program, keywords, context }),
+    [organization, program, keywords, context, notesOnly],
   )
-  const [queries, setQueries] = useState(fallbackQueries)
+  const [queries, setQueries] = useState(() => {
+    if (initialValues.query) {
+      return [{
+        label: 'Research notes',
+        purpose: initialValues.summary || '',
+        query: ensureLinkedInSiteFilter(initialValues.query),
+      }]
+    }
+    return fallbackQueries
+  })
   const [activeQueryIndex, setActiveQueryIndex] = useState(0)
-  const [queryDraft, setQueryDraft] = useState(fallbackQueries[0]?.query || 'site:linkedin.com/in/')
+  const [queryDraft, setQueryDraft] = useState(
+    initialValues.query
+      ? ensureLinkedInSiteFilter(initialValues.query)
+      : fallbackQueries[0]?.query || (notesOnly ? '' : 'site:linkedin.com/in/')
+  )
   const [suggesting, setSuggesting] = useState(false)
-  const [suggestedOnce, setSuggestedOnce] = useState(false)
+  const [suggestedOnce, setSuggestedOnce] = useState(Boolean(notesOnly && initialValues.query))
+  const [suggestionDetails, setSuggestionDetails] = useState({
+    summary: initialValues.summary || '',
+    concepts: initialValues.concepts || { organization: [], officeOrProgram: [], roles: [], keywords: [] },
+    aliasesUsed: initialValues.aliasesUsed || [],
+    broadenedQuery: initialValues.broadenedQuery || '',
+  })
   const [searching, setSearching] = useState(false)
   const [searched, setSearched] = useState(false)
   const [results, setResults] = useState([])
@@ -213,18 +235,30 @@ export default function PeopleSearch({
     return waitForGoogleElement(googleElementName)
   }, [googleElementId, googleElementName])
 
-  const useQueries = useCallback((nextQueries) => {
+  const useQueries = useCallback((nextQueries, details = {}) => {
     const usable = nextQueries?.length ? nextQueries : fallbackQueries
     setQueries(usable)
     setActiveQueryIndex(0)
-    setQueryDraft(usable[0]?.query || 'site:linkedin.com/in/')
-  }, [fallbackQueries])
+    setQueryDraft(usable[0]?.query || (notesOnly ? '' : 'site:linkedin.com/in/'))
+    setSuggestionDetails({
+      summary: details.summary || '',
+      concepts: details.concepts || { organization: [], officeOrProgram: [], roles: [], keywords: [] },
+      aliasesUsed: details.aliasesUsed || [],
+      broadenedQuery: details.broadenedQuery || '',
+    })
+  }, [fallbackQueries, notesOnly])
 
   const resetFromFields = useCallback((next) => {
     const built = buildDefaultPeopleQueries({ ...next, context })
     setQueries(built)
     setActiveQueryIndex(0)
     setQueryDraft(built[0]?.query || 'site:linkedin.com/in/')
+    setSuggestionDetails({
+      summary: '',
+      concepts: { organization: [], officeOrProgram: [], roles: [], keywords: [] },
+      aliasesUsed: [],
+      broadenedQuery: '',
+    })
     setResults([])
     setSelectedUrl('')
     setSearched(false)
@@ -252,23 +286,29 @@ export default function PeopleSearch({
     setSearchNotice('')
     try {
       const response = await suggestPeopleSearchQueries({
-        organization,
-        program,
-        keywords,
+        sourceMode: notesOnly ? 'opportunity-notes' : 'manual',
+        organization: notesOnly ? '' : organization,
+        program: notesOnly ? '' : program,
+        keywords: notesOnly ? '' : keywords,
         context,
       }, { signal: controller.signal })
-      useQueries(response.queries)
+      useQueries(response.queries, response)
       setSuggestedOnce(true)
+      if (!response.queries.length) {
+        setSearchNotice(response.insufficientReason || 'The linked notes do not contain enough research context to build a useful query.')
+      }
     } catch (error) {
       if (error.name === 'AbortError') return
-      useQueries(fallbackQueries)
+      useQueries(notesOnly ? [] : fallbackQueries)
       setSuggestedOnce(true)
-      setSearchNotice('AI suggestions are temporarily unavailable. The standard search queries are ready to use.')
+      setSearchNotice(notesOnly
+        ? 'The notes-based query could not be generated. Your linked notes remain unchanged; please try again.'
+        : 'AI suggestions are temporarily unavailable. The standard search query is ready to use.')
       console.warn('[People Search] Query suggestions failed:', error)
     } finally {
       setSuggesting(false)
     }
-  }, [context, fallbackQueries, keywords, organization, program, suggesting, useQueries])
+  }, [context, fallbackQueries, keywords, notesOnly, organization, program, suggesting, useQueries])
 
   useEffect(() => () => suggestionAbortRef.current?.abort(), [])
 
@@ -313,6 +353,15 @@ export default function PeopleSearch({
     setSelectedUrl('')
     setSearched(false)
     setSearchNotice('')
+  }
+
+  const broadenSearch = () => {
+    if (!suggestionDetails.broadenedQuery) return
+    setQueryDraft(suggestionDetails.broadenedQuery)
+    setResults([])
+    setSelectedUrl('')
+    setSearched(false)
+    setSearchNotice('The least essential search group was removed. Review the broader query, then search again.')
   }
 
   const runSearch = async () => {
@@ -383,9 +432,16 @@ export default function PeopleSearch({
     }
   }
 
+  const extractedConceptGroups = [
+    ['Organization', suggestionDetails.concepts.organization],
+    ['Office or program', suggestionDetails.concepts.officeOrProgram],
+    ['Likely roles', suggestionDetails.concepts.roles],
+    ['Mission keywords', suggestionDetails.concepts.keywords],
+  ].filter(([, values]) => values?.length)
+
   const content = (
     <div className={styles.content}>
-      {variant === 'contacts' && (
+      {variant === 'contacts' && !notesOnly && (
         <div className={styles.fieldGrid}>
           <div className="form-field">
             <label className="form-label">Organization</label>
@@ -433,11 +489,43 @@ export default function PeopleSearch({
         </div>
       )}
 
+      {notesOnly && (suggestionDetails.summary || extractedConceptGroups.length > 0) && (
+        <div className={styles.conceptPanel}>
+          <div className={styles.conceptPanelHeader}>
+            <div>
+              <strong>Built from linked notes</strong>
+              {suggestionDetails.summary && <p>{suggestionDetails.summary}</p>}
+            </div>
+            <span className="badge badge-tracking">Notes only</span>
+          </div>
+          {extractedConceptGroups.length > 0 && (
+            <div className={styles.conceptGrid}>
+              {extractedConceptGroups.map(([label, values]) => (
+                <div className={styles.conceptGroup} key={label}>
+                  <span>{label}</span>
+                  <div>
+                    {values.map((value) => <small key={value}>{value}</small>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {suggestionDetails.aliasesUsed.length > 0 && (
+            <div className={styles.aliasLine}>
+              <span>Approved name variations</span>
+              <strong>{suggestionDetails.aliasesUsed.join(', ')}</strong>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="form-field">
         <div className={styles.queryLabelRow}>
           <label className="form-label" htmlFor={`people-query-${generatedId}`}>Editable Google query</label>
           <span className={styles.queryGuide}>
-            LinkedIn profile filter → organization → office or program → roles and keywords. Quotes keep phrases together; OR searches alternatives.
+            {notesOnly
+              ? 'Generated only from linked research notes. Quotes keep phrases together; OR searches supported alternatives.'
+              : 'LinkedIn profile filter → organization → office or program → roles and keywords. Quotes keep phrases together; OR searches alternatives.'}
           </span>
         </div>
         <textarea
@@ -451,8 +539,17 @@ export default function PeopleSearch({
 
       <div className={styles.queryActions}>
         <button type="button" className="btn" onClick={suggestQueries} disabled={suggesting}>
-          {suggesting ? 'Suggesting…' : suggestedOnce ? 'Regenerate queries' : 'Suggest queries'}
+          {suggesting
+            ? 'Generating…'
+            : suggestedOnce
+              ? notesOnly ? 'Regenerate from notes' : 'Regenerate query'
+              : notesOnly ? 'Generate from notes' : 'Suggest query'}
         </button>
+        {suggestionDetails.broadenedQuery && suggestionDetails.broadenedQuery !== queryDraft && (
+          <button type="button" className="btn" onClick={broadenSearch}>
+            Broaden search
+          </button>
+        )}
         <button type="button" className="btn btn-primary" onClick={runSearch} disabled={searching || !queryDraft.trim()}>
           {searching ? 'Searching…' : 'Search public profiles'}
         </button>
@@ -460,7 +557,15 @@ export default function PeopleSearch({
           <button
             type="button"
             className="btn btn-ghost"
-            onClick={() => onContinue({ organization, program, keywords, query: queryDraft, queries })}
+            onClick={() => onContinue({
+              organization,
+              program,
+              keywords,
+              query: queryDraft,
+              queries,
+              sourceMode: notesOnly ? 'opportunity-notes' : 'manual',
+              ...suggestionDetails,
+            })}
           >
             Continue in People Search
           </button>
@@ -563,7 +668,7 @@ export default function PeopleSearch({
             >
               <span>
                 <strong>Find Contacts</strong>
-                <small>Generate editable public-profile searches from opportunity fields, notes, and linked contacts.</small>
+                <small>Generate one editable public-profile search from linked research notes.</small>
               </span>
               <span
                 className={`${styles.opportunityChevron} ${expanded ? styles.opportunityChevronOpen : ''}`}
