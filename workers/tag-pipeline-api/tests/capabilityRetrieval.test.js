@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   capabilityChunks,
+  handlePeopleSearchQueries,
   matchingPeopleSearchAliases,
   normalizePeopleSearchQueries,
   normalizePeopleSearchSuggestion,
@@ -72,4 +73,56 @@ test('normalizes one notes-based query and its controlled broader fallback', () 
 test('offers approved DoDEA and DoWEA aliases only when notes establish that agency', () => {
   assert.equal(matchingPeopleSearchAliases([{ text: 'Research points to the DoDEA Pacific office.' }]).length, 1)
   assert.equal(matchingPeopleSearchAliases([{ text: 'Research points to a Pacific regional office.' }]).length, 0)
+})
+
+test('requires schema-valid JSON from Groq for notes-based query generation', async () => {
+  const originalFetch = globalThis.fetch
+  let requestBody
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body)
+    return new Response(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            query: 'site:linkedin.com/in/ ("DoDEA" OR "DoWEA") ("Pacific Region") ("program manager" OR coordinator)',
+            broadenedQuery: 'site:linkedin.com/in/ ("DoDEA" OR "DoWEA") ("program manager" OR coordinator)',
+            summary: 'Find program personnel connected to the Pacific region.',
+            concepts: {
+              organization: ['DoDEA'],
+              officeOrProgram: ['Pacific Region'],
+              roles: ['Program manager', 'Coordinator'],
+              keywords: [],
+            },
+            aliasesUsed: ['DoDEA', 'DoWEA'],
+            insufficientReason: '',
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  try {
+    const response = await handlePeopleSearchQueries(new Request('https://worker.test/ai/people-search-queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceMode: 'opportunity-notes',
+        context: {
+          notes: [{ text: 'The research points to the DoDEA Pacific Region program office.' }],
+        },
+      }),
+    }), { GROQ_API_KEY: 'test-key' })
+
+    assert.equal(response.status, 200)
+    assert.equal(requestBody.response_format.type, 'json_schema')
+    assert.equal(requestBody.response_format.json_schema.strict, true)
+    const payload = await response.json()
+    assert.match(payload.query, /^site:linkedin\.com\/in\//)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
