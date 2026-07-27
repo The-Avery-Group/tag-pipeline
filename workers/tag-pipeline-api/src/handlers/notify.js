@@ -123,6 +123,44 @@ function mentionEntities(recipients = []) {
     }))
 }
 
+function uniqueRecipients(recipients = []) {
+  const seen = new Set()
+  return recipients.filter((recipient) => {
+    const id = text(recipient?.id).toLowerCase()
+    const name = text(recipient?.name).toLowerCase()
+    if (!name) return false
+    const key = id ? `id:${id}` : `name:${name}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function uniquePeople(people = []) {
+  const grouped = new Map()
+  people.forEach((person) => {
+    const recipient = person?.recipient || {}
+    const id = text(recipient.id).toLowerCase()
+    const name = text(recipient.name || person?.assignee).toLowerCase()
+    if (!name) return
+    const key = id ? `id:${id}` : `name:${name}`
+    const existing = grouped.get(key)
+    if (existing) {
+      existing.count += Number(person.count) || 0
+      return
+    }
+    grouped.set(key, {
+      ...person,
+      count: Number(person.count) || 0,
+      recipient: {
+        name: text(recipient.name || person?.assignee),
+        id: text(recipient.id),
+      },
+    })
+  })
+  return [...grouped.values()]
+}
+
 function textBlock(value, options = {}) {
   return {
     type: 'TextBlock',
@@ -283,40 +321,45 @@ export function cardForType(type, payload, env) {
       })
     }
 
-    case 'overdue_summary':
+    case 'overdue_summary': {
+      const people = uniquePeople(payload.people || [])
       return buildCard({
         title: 'Overdue tasks',
         subtitle: 'Action needed',
         icon: '!',
         color: 'attention',
-        recipients: payload.people?.map((person) => person.recipient) || [],
-        body: (payload.people || []).map((person) => textBlock(
+        recipients: people.map((person) => person.recipient),
+        body: people.map((person) => textBlock(
           `${mentionToken(person.recipient)}, you have ${person.count} overdue task${person.count === 1 ? '' : 's'}. Please review and complete them.`,
         )),
         actions: [action('View and complete tasks', `${base}/tag-pipeline/tasks`)],
       })
+    }
 
-    case 'due_soon_summary':
+    case 'due_soon_summary': {
+      const people = uniquePeople(payload.people || [])
       return buildCard({
         title: 'Tasks due tomorrow',
         subtitle: 'Action needed',
         icon: '!',
         color: 'warning',
-        recipients: payload.people?.map((person) => person.recipient) || [],
-        body: (payload.people || []).map((person) => textBlock(
+        recipients: people.map((person) => person.recipient),
+        body: people.map((person) => textBlock(
           `${mentionToken(person.recipient)}, you have ${person.count} task${person.count === 1 ? '' : 's'} due tomorrow. Please review them today.`,
         )),
         actions: [action('View tasks', `${base}/tag-pipeline/tasks`)],
       })
+    }
 
     case 'rfi_followup': {
-      const recipientText = (payload.recipients || []).map(mentionToken).filter(Boolean).join(' ')
+      const recipients = uniqueRecipients(payload.recipients || [])
+      const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
       return buildCard({
         title: 'RFI follow-up due',
         subtitle: '21 days since submission',
         icon: '↻',
         color: 'warning',
-        recipients: payload.recipients || [],
+        recipients,
         body: [
           ...(recipientText ? [textBlock(`Hello ${recipientText}, it has been 21 days since the RFIs below were submitted. Please follow up as appropriate.`)] : []),
           ...rfiRows(payload.items || []),
@@ -330,7 +373,8 @@ export function cardForType(type, payload, env) {
       const isTomorrow = Number(payload.daysUntil) <= 1
       const actions = [action('View in Pipeline', opportunityUrl(base, payload.contractNumber))]
       const samUrl = firstUrl(payload.samUrl)
-      const recipientText = (payload.recipients || []).map(mentionToken).filter(Boolean).join(' ')
+      const recipients = uniqueRecipients(payload.recipients || [])
+      const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
       if (samUrl) actions.push(action('View on SAM.gov', samUrl))
       return buildCard({
         title: isTomorrow ? 'RFI response due tomorrow' : 'RFI response due in two days',
@@ -338,7 +382,7 @@ export function cardForType(type, payload, env) {
         icon: '!',
         color: isTomorrow ? 'attention' : 'warning',
         noWrapTitle: true,
-        recipients: payload.recipients || [],
+        recipients,
         body: [
           ...(recipientText ? [textBlock(`Hello ${recipientText}, please note that this RFI response is due ${isTomorrow ? 'tomorrow' : 'in two days'}.`)] : []),
           textBlock(cardText(payload.title)),
@@ -350,13 +394,14 @@ export function cardForType(type, payload, env) {
     }
 
     case 'contact_followup': {
-      const recipientText = (payload.recipients || []).map(mentionToken).filter(Boolean).join(' ')
+      const recipients = uniqueRecipients(payload.recipients || [])
+      const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
       return buildCard({
         title: 'Contact follow-up due',
         subtitle: 'No interaction logged in 30 days',
         icon: '◷',
         color: 'warning',
-        recipients: payload.recipients || [],
+        recipients,
         body: [
           ...(recipientText ? [textBlock(`Hello ${recipientText}, please review these contacts.`)] : []),
           ...contactRows(payload.items || []),
