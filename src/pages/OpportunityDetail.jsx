@@ -13,6 +13,7 @@ import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
 import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardHistory'
 import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
+import PeopleSearch from '@/components/PeopleSearch/PeopleSearch'
 import RfiFollowUpPanel from '@/components/Opportunity/RfiFollowUpPanel'
 import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
 import OpportunityField from '@/components/Opportunity/OpportunityField'
@@ -375,8 +376,9 @@ export default function OpportunityDetail({ toast }) {
   const linkingContactIdsRef = useRef(new Set())
   const [showNewContact,  setShowNewContact]  = useState(false)
   const [savingContact,   setSavingContact]   = useState(false)
+  const creatingContactRef = useRef(false)
   const [newContactForm,  setNewContactForm]  = useState({
-    Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Type: 'Government',
+    Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Notes: '', Type: 'Government',
   })
   const [hideDoneTasks, setHideDoneTasks] = useState(true)
   const [pendingRfiSave, setPendingRfiSave] = useState(null)
@@ -507,6 +509,33 @@ export default function OpportunityDetail({ toast }) {
     [notes]
   )
   const recentNotesStr = visibleNotes.slice(-3).map((n) => n.NoteText).join(' | ')
+  const peopleSearchContext = useMemo(() => {
+    if (!opp) return {}
+    return {
+      opportunity: {
+        title: opp[C.title] || '',
+        contractNumber: opp[C.contractNum] || '',
+        solicitationNumber: opp[C.solNum] || '',
+        agency: opp[C.agency] || '',
+        department: opp[C.department] || '',
+        office: opp[C.office] || '',
+        incumbent: opp[C.incumbent] || '',
+        naics: opp[C.naics] || '',
+      },
+      notes: visibleNotes.slice(-10).map((note) => ({
+        date: note.CreatedDate || note.Date || '',
+        author: note.Author || '',
+        text: String(note.NoteText || '').slice(0, 800),
+      })),
+      linkedContacts: linkedContacts.slice(0, 10).map((linkedContact) => ({
+        name: linkedContact.Name || '',
+        title: linkedContact.Title || '',
+        agency: linkedContact.Agency || '',
+        organization: linkedContact.Organization || '',
+        offices: linkedContact.Offices || '',
+      })),
+    }
+  }, [opp, visibleNotes, linkedContacts])
 
   const saveFollowUpDecision = async (candidate, decision) => {
     await saveRFIFollowUpDecision({
@@ -832,23 +861,48 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const handleCreateAndLinkContact = async () => {
-    const name = newContactForm.Name.trim()
+  const createAndLinkContact = async (contactData, { quiet = false } = {}) => {
+    const name = String(contactData?.Name || '').trim()
     if (!name) { toast?.error('Name is required'); return }
+    if (creatingContactRef.current) throw new Error('A contact is already being added')
+    creatingContactRef.current = true
     setSavingContact(true)
     try {
-      await addContactRecord({ ...newContactForm, Name: name })
+      await addContactRecord({ ...contactData, Name: name })
       const nextPOC = addPOCName(opp[C.poc], name)
       await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
-      toast?.success(`${name} added and linked`)
-      setShowNewContact(false)
-      setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Type: 'Government' })
+      if (!quiet) toast?.success(`${name} added and linked`)
+      return { name, nextPOC }
     } catch (err) {
-      toast?.error(`Failed to add contact: ${err.message}`)
+      if (!quiet) toast?.error(`Failed to add contact: ${err.message}`)
+      throw err
     } finally {
+      creatingContactRef.current = false
       setSavingContact(false)
     }
+  }
+
+  const handleCreateAndLinkContact = async () => {
+    try {
+      await createAndLinkContact(newContactForm)
+      setShowNewContact(false)
+      setNewContactForm({ Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Notes: '', Type: 'Government' })
+    } catch {
+      // createAndLinkContact already surfaced a useful error.
+    }
+  }
+
+  const continuePeopleSearch = (searchState) => {
+    navigate('/contacts?view=people-search', {
+      state: {
+        peopleSearch: {
+          ...searchState,
+          scopeLabel: `${opp[C.title] || 'Opportunity'} (${opp[C.contractNum] || decodedCN})`,
+          context: peopleSearchContext,
+        },
+      },
+    })
   }
 
   const handleAddFollowOn = async (candidate) => {
@@ -1485,6 +1539,22 @@ export default function OpportunityDetail({ toast }) {
           dateOnly={dateOnly}
           cleanLinks={cleanLinks}
           joinLinks={joinLinks}
+        />
+
+        <PeopleSearch
+          variant="opportunity"
+          scopeId={`opportunity:${opp[C.contractNum] || decodedCN}`}
+          scopeLabel={`${opp[C.title] || 'Opportunity'} (${opp[C.contractNum] || decodedCN})`}
+          context={peopleSearchContext}
+          initialValues={{
+            organization: opp[C.incumbent] || opp[C.agency] || '',
+            program: opp[C.office] || opp[C.title] || '',
+            keywords: [opp[C.title], opp[C.naics]].filter(Boolean).join(', '),
+          }}
+          contactTypes={['Government', 'Private']}
+          onAddContact={(contactData) => createAndLinkContact(contactData, { quiet: true })}
+          onContinue={continuePeopleSearch}
+          toast={toast}
         />
 
         {/* ── AI panels ── */}
