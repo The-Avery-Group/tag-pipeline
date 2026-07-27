@@ -61,6 +61,8 @@ function configureGoogleCallbacks(resolve) {
                 .map(normalizeGoogleResult)
                 .filter(isPublicLinkedInProfile),
             })
+            resultsDiv.hidden = true
+            resultsDiv.setAttribute('aria-hidden', 'true')
             resultsDiv.replaceChildren()
             return true
           }
@@ -103,7 +105,9 @@ function waitForGoogleElement(name, timeoutMs = 8000) {
   const startedAt = Date.now()
   return new Promise((resolve, reject) => {
     const check = () => {
-      const element = window.google?.search?.cse?.element?.getElement?.(name)
+      const api = window.google?.search?.cse?.element
+      const allElements = api?.getAllElements?.() || {}
+      const element = api?.getElement?.(name) || allElements[name]
       if (element?.execute) {
         resolve(element)
         return
@@ -196,10 +200,11 @@ export default function PeopleSearch({
       api.render({
         div: googleElementId,
         tag: 'searchresults-only',
+        gname: googleElementName,
         attributes: {
-          gname: googleElementName,
           linkTarget: '_blank',
           enableHistory: false,
+          autoSearchOnLoad: false,
         },
       })
       searchContainerRendered.current = true
