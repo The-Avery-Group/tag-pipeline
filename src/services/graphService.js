@@ -164,7 +164,13 @@ export async function getWorkbookVersion() {
   const token = await getToken()
   const response = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${ITEM_ID}?$select=eTag,lastModifiedDateTime`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache',
+      },
+    },
   )
   if (!response.ok) {
     if (response.status === 401) requestSessionRefresh(new Error('Microsoft Graph session is no longer valid'))
