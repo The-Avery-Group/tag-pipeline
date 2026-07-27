@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getContacts, addContact, updateContact, deleteContact } from '@/services/graphService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function useContacts() {
   const [contacts, setContacts] = useState([])
@@ -18,9 +18,11 @@ export function useContacts() {
     contactsRef.current = contacts
   }, [contacts])
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const data = await getContacts()
       const reconciled = data.map((c) => {
@@ -35,9 +37,9 @@ export function useContacts() {
       })
       setContacts(reconciled)
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -45,7 +47,8 @@ export function useContacts() {
 
   useEffect(() => {
     const unsub = onCacheRefresh((tables) => {
-      if (tables?.includes('ContactsTable')) load()
+      if (tables?.includes('ContactsTable')) return load({ silent: true })
+      return undefined
     })
     return unsub
   }, [load])
@@ -135,5 +138,10 @@ export function useContacts() {
     }
   }, [load])
 
-  return { contacts, loading, error, refresh: load, add, update, remove }
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['ContactsTable']).catch(() => {})
+    await load()
+  }, [load])
+
+  return { contacts, loading, error, refresh, add, update, remove }
 }
