@@ -29,11 +29,20 @@ function terms(value, limit = 6) {
     .slice(0, limit)
 }
 
-function orGroup(values) {
+function orGroup(values, { quoteTerms = true } = {}) {
   const unique = [...new Set(values.map(cleanTerm).filter(Boolean))]
   if (!unique.length) return ''
-  if (unique.length === 1) return quoted(unique[0])
-  return `(${unique.map(quoted).join(' OR ')})`
+  const format = (value) => quoteTerms ? quoted(value) : value
+  if (unique.length === 1) return format(unique[0])
+  return `(${unique.map(format).join(' OR ')})`
+}
+
+function organizationGroup(values) {
+  const unique = [...new Set(values.map(cleanTerm).filter(Boolean))]
+  const format = (value) => /\s/.test(value) ? quoted(value) : value
+  if (!unique.length) return ''
+  if (unique.length === 1) return format(unique[0])
+  return `(${unique.map(format).join(' OR ')})`
 }
 
 function compactQuery(parts) {
@@ -85,9 +94,9 @@ export function buildDefaultPeopleQueries({
     opportunity.title,
   ].map(cleanTerm).filter(Boolean)
 
-  const primaryOrganization = orGroup(organizationTerms)
-  const primaryProgram = orGroup(officeTerms.slice(0, 2))
-  const capabilities = orGroup(keywordTerms)
+  const primaryOrganization = organizationGroup(organizationTerms)
+  const primaryProgram = orGroup(officeTerms.slice(0, 2), { quoteTerms: false })
+  const capabilities = orGroup(keywordTerms, { quoteTerms: false })
   const roleTerms = orGroup([
     'program manager',
     'program director',
@@ -109,7 +118,11 @@ export function buildDefaultPeopleQueries({
     {
       label: 'Agency and supported office',
       purpose: 'Find public personnel close to the government customer, office, or supported program.',
-      query: compactQuery([orGroup(agencyTerms), primaryProgram, orGroup(['manager', 'director', 'coordinator', 'specialist'])]),
+      query: compactQuery([
+        organizationGroup(agencyTerms),
+        primaryProgram,
+        orGroup(['manager', 'director', 'coordinator', 'specialist'], { quoteTerms: false }),
+      ]),
     },
   ]).filter((item) => item.query !== LINKEDIN_PROFILE_SITE_FILTER)
 }
