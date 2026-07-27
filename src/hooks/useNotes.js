@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getNotes, addNote, updateNote, deleteNote } from '@/services/graphService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 async function retryThrice(fn) {
   let lastErr
@@ -42,9 +42,11 @@ export function useNotes(contractNumber) {
   const pendingDeletes = useRef(new Set())
   const pendingPatches = useRef(new Map())
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const all = await getNotes()
       const filtered = (contractNumber ? all.filter((n) => n.ContractNumber === contractNumber) : all)
@@ -58,15 +60,16 @@ export function useNotes(contractNumber) {
         })
       setNotes([...filtered].sort(compareNotesOldestFirst))
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [contractNumber])
 
   useEffect(() => { load() }, [load])
   useEffect(() => onCacheRefresh((tables) => {
-    if (tables?.includes('NotesTable')) load()
+    if (tables?.includes('NotesTable')) return load({ silent: true })
+    return undefined
   }), [load])
 
   const add = useCallback(async (author, text) => {
@@ -126,5 +129,10 @@ export function useNotes(contractNumber) {
     }
   }, [])
 
-  return { notes, loading, error, refresh: load, add, update, remove }
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['NotesTable']).catch(() => {})
+    await load()
+  }, [load])
+
+  return { notes, loading, error, refresh, add, update, remove }
 }
