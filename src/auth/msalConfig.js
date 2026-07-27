@@ -1,6 +1,8 @@
 import { PublicClientApplication, LogLevel } from '@azure/msal-browser'
 
-const appUrl = import.meta.env.VITE_APP_BASE_URL || window.location.origin
+// Keep every Entra redirect on the deployed app URL. In particular, GitHub
+// Pages needs its repository path here rather than just window.location.origin.
+export const appUrl = import.meta.env.VITE_APP_BASE_URL || window.location.origin
 
 export const msalConfig = {
   auth: {
