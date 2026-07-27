@@ -3,7 +3,7 @@ import {
   addContactInteraction,
   getContactInteractions,
 } from '@/services/graphService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function useContactEngagement(enabled = false) {
   const [interactions, setInteractions] = useState(null)
@@ -36,7 +36,8 @@ export function useContactEngagement(enabled = false) {
   useEffect(() => {
     if (!enabled) return undefined
     return onCacheRefresh((tables) => {
-      if (tables?.includes('ContactInteractionsTable')) load({ silent: true })
+      if (tables?.includes('ContactInteractionsTable')) return load({ silent: true })
+      return undefined
     })
   }, [enabled, load])
 
@@ -49,12 +50,17 @@ export function useContactEngagement(enabled = false) {
     return saved
   }, [])
 
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['ContactInteractionsTable']).catch(() => {})
+    await load()
+  }, [load])
+
   return {
     interactions: interactions || [],
     interactionsConfigured: interactions !== null,
     loading,
     error,
-    refresh: load,
+    refresh,
     addInteraction,
   }
 }
