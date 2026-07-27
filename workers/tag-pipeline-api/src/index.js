@@ -16,7 +16,7 @@ import {
   manuallyRefreshCapabilities,
   refreshCapabilitiesIfChanged,
 } from './handlers/ai.js'
-import { handleSAM, runScheduledSAMPull } from './handlers/sam.js'
+import { handleSAM, startScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
@@ -176,7 +176,9 @@ export default {
       // pull/follow-up work, so the two jobs share one cron trigger.
       if (new Date(controller.scheduledTime).getUTCHours() === 12) {
         const weekday = new Date(controller.scheduledTime).getUTCDay()
-        if (weekday >= 1 && weekday <= 5) ctx.waitUntil(runScheduledSAMPull(env))
+        if (weekday >= 1 && weekday <= 5) {
+          ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
+        }
         if ([1, 3, 5].includes(weekday)) ctx.waitUntil(runRFIFollowUpMonitor(env))
       }
     }
@@ -191,3 +193,5 @@ export default {
     }
   },
 }
+
+export { SAMPullWorkflow } from './workflows/samPull.js'
