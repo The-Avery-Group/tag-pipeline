@@ -1,11 +1,12 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useContacts } from '@/hooks/useContacts'
 import { useContactEngagement } from '@/hooks/useContactEngagement'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction, useAsyncActionKeyed } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import PeopleSearch from '@/components/PeopleSearch/PeopleSearch'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
 import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
@@ -43,7 +44,9 @@ export default function Contacts({ toast }) {
   const { lists } = useValidationLists()
   const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const navigate = useNavigate()
+  const activeView = searchParams.get('view') === 'people-search' ? 'people-search' : 'contacts'
 
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
@@ -305,6 +308,23 @@ export default function Contacts({ toast }) {
 
   const avatar = (name) => name?.split(' ').map((n) => n[0]).slice(0, 2).join('') || '?'
 
+  const changeView = (view) => {
+    setSelected(null)
+    setEditing(false)
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      if (view === 'people-search') next.set('view', 'people-search')
+      else next.delete('view')
+      next.delete('contactId')
+      next.delete('interactionId')
+      return next
+    }, { replace: true })
+  }
+
+  const addPeopleSearchContact = async (contact) => {
+    await add(contact)
+  }
+
   return (
     <>
       <Topbar
@@ -316,6 +336,40 @@ export default function Contacts({ toast }) {
         onNew={() => { setForm(BLANK); setShowAdd(true) }}
       />
       <div className="page-body" style={{ position: 'relative' }}>
+        <div className={styles.pageTabs} role="tablist" aria-label="Contacts views">
+          <button
+            type="button"
+            className={`${styles.pageTab} ${activeView === 'contacts' ? styles.pageTabActive : ''}`}
+            onClick={() => changeView('contacts')}
+            role="tab"
+            aria-selected={activeView === 'contacts'}
+          >
+            Contacts
+          </button>
+          <button
+            type="button"
+            className={`${styles.pageTab} ${activeView === 'people-search' ? styles.pageTabActive : ''}`}
+            onClick={() => changeView('people-search')}
+            role="tab"
+            aria-selected={activeView === 'people-search'}
+          >
+            People Search
+          </button>
+        </div>
+
+        {activeView === 'people-search'
+          ? (
+            <PeopleSearch
+              variant="contacts"
+              scopeLabel={location.state?.peopleSearch?.scopeLabel || 'general contact research'}
+              context={location.state?.peopleSearch?.context || {}}
+              initialValues={location.state?.peopleSearch || {}}
+              contactTypes={contactTypeOptions}
+              onAddContact={addPeopleSearchContact}
+              toast={toast}
+            />
+          )
+          : <>
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div className={styles.searchBar}>
             <input className={styles.searchInput}
@@ -555,6 +609,8 @@ export default function Contacts({ toast }) {
             </div>
           </>
         )}
+          </>
+        }
       </div>
 
       {/* Add contact modal */}
