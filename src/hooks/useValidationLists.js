@@ -1,22 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getValidationLists, updateValidationColumn } from '@/services/graphService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 export function useValidationLists() {
   const [lists, setLists]   = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const data = await getValidationLists()
       setLists(data)
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -24,7 +26,8 @@ export function useValidationLists() {
 
   useEffect(() => {
     const unsub = onCacheRefresh((tables) => {
-      if (tables?.includes('DataValidationTable')) load()
+      if (tables?.includes('DataValidationTable')) return load({ silent: true })
+      return undefined
     })
     return unsub
   }, [load])
@@ -34,7 +37,12 @@ export function useValidationLists() {
     await invalidateCache(['DataValidationTable'])
   }, [])
 
-  return { lists, loading, error, refresh: load, update }
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['DataValidationTable']).catch(() => {})
+    await load()
+  }, [load])
+
+  return { lists, loading, error, refresh, update }
 }
 
 /**
