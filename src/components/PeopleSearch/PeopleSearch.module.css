@@ -219,11 +219,22 @@
 }
 
 .googleProvider {
-  position: absolute;
-  width: 1px;
+  contain: strict;
   height: 1px;
+  left: -10000px;
+  opacity: 0;
   overflow: hidden;
-  clip-path: inset(50%);
+  pointer-events: none;
+  position: fixed;
+  top: -10000px;
+  width: 1px;
+  z-index: -1;
+}
+
+.googleProvider :global(.gsc-control-cse),
+.googleProvider :global(.gsc-results-wrapper-visible),
+.googleProvider :global(.gsc-results) {
+  display: none !important;
 }
 
 .googleAttribution {
@@ -277,7 +288,23 @@
 
 .opportunityBody {
   border-top: 0.5px solid var(--gray-200);
+  max-width: 100%;
+  overflow: hidden;
   padding: 16px 18px;
+}
+
+.opportunityBody .resultsLayout {
+  max-height: min(620px, calc(100vh - 220px));
+  min-height: 0;
+  overflow: hidden;
+}
+
+.opportunityBody .resultList,
+.opportunityBody .resultDetail {
+  max-height: min(620px, calc(100vh - 220px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .opportunityChevron {
