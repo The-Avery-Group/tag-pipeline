@@ -26,6 +26,31 @@ const pendingSheetReads = new Map()
 // Table schemas change far less often than table rows. Keep headers across
 // routine data refreshes so polling does not double every Graph request.
 const headerCache = new Map()
+const sessionRefreshListeners = new Set()
+let sessionRefreshRequired = false
+
+/**
+ * Lets the application present one consistent recovery action when Entra can
+ * no longer renew the current session in the background.
+ */
+export function onSessionRefreshRequired(listener) {
+  sessionRefreshListeners.add(listener)
+  return () => sessionRefreshListeners.delete(listener)
+}
+
+export function isSessionRefreshRequired() {
+  return sessionRefreshRequired
+}
+
+export function clearSessionRefreshRequired() {
+  sessionRefreshRequired = false
+}
+
+export function requestSessionRefresh(error) {
+  if (sessionRefreshRequired) return
+  sessionRefreshRequired = true
+  sessionRefreshListeners.forEach((listener) => listener(error))
+}
 
 function invalidate(sheet) {
   cache.delete(sheet)
@@ -64,7 +89,11 @@ export function isInteractionRequiredError(error) {
 
 export async function getToken({ interactive = false } = {}) {
   const account = msalInstance.getAllAccounts()[0]
-  if (!account) throw new Error('No authenticated account')
+  if (!account) {
+    const error = new Error('No authenticated account')
+    requestSessionRefresh(error)
+    throw error
+  }
   try {
     const response = await msalInstance.acquireTokenSilent({
       ...loginRequest,
@@ -74,8 +103,13 @@ export async function getToken({ interactive = false } = {}) {
   } catch (error) {
     // Background reads must not unexpectedly open a sign-in window. An
     // explicit user action may request the same scopes interactively instead.
-    if (!interactive || !isInteractionRequiredError(error)) throw error
+    if (!isInteractionRequiredError(error)) throw error
+    if (!interactive) {
+      requestSessionRefresh(error)
+      throw error
+    }
     const response = await msalInstance.acquireTokenPopup({ ...loginRequest, account })
+    clearSessionRefreshRequired()
     return response.accessToken
   }
 }
@@ -101,6 +135,8 @@ async function graphFetch(path, options = {}) {
       if (res.status === 204) return null
       return res.json()
     }
+
+    if (res.status === 401) requestSessionRefresh(new Error('Microsoft Graph session is no longer valid'))
 
     const shouldRetry = retryableRead && [429, 502, 503, 504].includes(res.status) && attempt < 2
     if (shouldRetry) {
@@ -131,6 +167,7 @@ export async function getWorkbookVersion() {
     { headers: { Authorization: `Bearer ${token}` } },
   )
   if (!response.ok) {
+    if (response.status === 401) requestSessionRefresh(new Error('Microsoft Graph session is no longer valid'))
     const body = await response.json().catch(() => ({}))
     throw new Error(body?.error?.message || `Could not check workbook changes (${response.status})`)
   }
