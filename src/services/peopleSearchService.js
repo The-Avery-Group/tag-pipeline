@@ -9,6 +9,13 @@ function cleanTerm(value) {
     .trim()
 }
 
+function cleanQuery(value) {
+  return String(value || '')
+    .replace(/[“”]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function quoted(value) {
   const cleaned = cleanTerm(value)
   return cleaned ? `"${cleaned}"` : ''
@@ -42,6 +49,17 @@ function uniqueQueries(items) {
     seen.add(key)
     return true
   })
+}
+
+function cleanList(value, limit = 12) {
+  const seen = new Set()
+  return (Array.isArray(value) ? value : []).flatMap((item) => {
+    const cleaned = cleanTerm(item)
+    const key = cleaned.toLowerCase()
+    if (!cleaned || seen.has(key)) return []
+    seen.add(key)
+    return [cleaned]
+  }).slice(0, limit)
 }
 
 /**
@@ -116,13 +134,30 @@ export async function suggestPeopleSearchQueries(input, { signal } = {}) {
     body: JSON.stringify(input),
     signal,
   })
+  const primaryQuery = cleanQuery(payload.query || payload.queries?.[0]?.query)
+  const queries = primaryQuery
+    ? [{
+        label: 'Research notes',
+        purpose: cleanTerm(payload.summary || payload.queries?.[0]?.purpose),
+        query: ensureLinkedInSiteFilter(primaryQuery),
+      }]
+    : []
   return {
     ...payload,
-    queries: uniqueQueries((payload.queries || []).map((item) => ({
-      label: cleanTerm(item.label) || 'Suggested search',
-      purpose: cleanTerm(item.purpose),
-      query: ensureLinkedInSiteFilter(item.query),
-    }))).slice(0, 6),
+    query: queries[0]?.query || '',
+    broadenedQuery: payload.broadenedQuery
+      ? ensureLinkedInSiteFilter(cleanQuery(payload.broadenedQuery))
+      : '',
+    summary: cleanTerm(payload.summary),
+    concepts: {
+      organization: cleanList(payload.concepts?.organization),
+      officeOrProgram: cleanList(payload.concepts?.officeOrProgram),
+      roles: cleanList(payload.concepts?.roles),
+      keywords: cleanList(payload.concepts?.keywords),
+    },
+    aliasesUsed: cleanList(payload.aliasesUsed),
+    insufficientReason: cleanTerm(payload.insufficientReason),
+    queries,
   }
 }
 
@@ -149,4 +184,3 @@ export function contactDraftFromSearchResult(result, organization = '', scopeLab
     Type: 'Private',
   }
 }
-
