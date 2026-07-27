@@ -5,7 +5,7 @@
  * attached to Worker requests. The Worker validates its Entra signature,
  * tenant, audience, and originating application before serving a request.
  */
-import { getToken } from '@/services/graphService'
+import { getToken, requestSessionRefresh } from '@/services/graphService'
 
 export const WORKER_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -17,10 +17,12 @@ export async function workerFetch(path, options = {}) {
   const headers = new Headers(fetchOptions.headers || {})
   headers.set('Authorization', `Bearer ${token}`)
 
-  return fetch(`${WORKER_URL}${path}`, {
+  const response = await fetch(`${WORKER_URL}${path}`, {
     ...fetchOptions,
     headers,
   })
+  if (response.status === 401) requestSessionRefresh(new Error('Your workspace session needs to be refreshed'))
+  return response
 }
 
 export async function workerJson(path, options = {}) {
