@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '@/services/graphService'
 import { notifyTaskCreated } from '@/services/notifyService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
 async function retryThrice(fn) {
   let lastErr
@@ -22,9 +22,11 @@ export function useTasks(contractNumber = null) {
   // an edit before the write has actually landed. Keyed by _rowIndex -> patch.
   const pendingPatches = useRef(new Map())
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const all = await getTasks()
       const filtered = contractNumber
@@ -42,9 +44,9 @@ export function useTasks(contractNumber = null) {
       })
       setTasks(reconciled)
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [contractNumber])
 
@@ -52,7 +54,8 @@ export function useTasks(contractNumber = null) {
 
   useEffect(() => {
     const unsub = onCacheRefresh((tables) => {
-      if (tables?.includes('TasksTable')) load()
+      if (tables?.includes('TasksTable')) return load({ silent: true })
+      return undefined
     })
     return unsub
   }, [load])
@@ -104,5 +107,10 @@ export function useTasks(contractNumber = null) {
     await invalidateCache(['TasksTable'])
   }, [])
 
-  return { tasks, loading, error, refresh: load, add, update, remove, refreshContext }
+  const refresh = useCallback(async () => {
+    await forceRefreshCache(['TasksTable']).catch(() => {})
+    await load()
+  }, [load])
+
+  return { tasks, loading, error, refresh, add, update, remove, refreshContext }
 }
