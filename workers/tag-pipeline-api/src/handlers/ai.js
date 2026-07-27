@@ -60,6 +60,51 @@ const PEOPLE_SEARCH_ALIASES = [
   },
 ]
 
+const PEOPLE_SEARCH_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    query: { type: 'string' },
+    broadenedQuery: { type: 'string' },
+    summary: { type: 'string' },
+    concepts: {
+      type: 'object',
+      properties: {
+        organization: { type: 'array', items: { type: 'string' } },
+        officeOrProgram: { type: 'array', items: { type: 'string' } },
+        roles: { type: 'array', items: { type: 'string' } },
+        keywords: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['organization', 'officeOrProgram', 'roles', 'keywords'],
+      additionalProperties: false,
+    },
+    aliasesUsed: { type: 'array', items: { type: 'string' } },
+    insufficientReason: { type: 'string' },
+  },
+  required: [
+    'query',
+    'broadenedQuery',
+    'summary',
+    'concepts',
+    'aliasesUsed',
+    'insufficientReason',
+  ],
+  additionalProperties: false,
+}
+
+function peopleSearchResponseFormat(model) {
+  if (model === 'openai/gpt-oss-120b' || model === 'openai/gpt-oss-20b') {
+    return {
+      type: 'json_schema',
+      json_schema: {
+        name: 'people_search_query',
+        strict: true,
+        schema: PEOPLE_SEARCH_RESPONSE_SCHEMA,
+      },
+    }
+  }
+  return { type: 'json_object' }
+}
+
 // The workbook and the optional capabilities document live in the same
 // SharePoint document library by default. A drive identifies that library;
 // the item ID alone does not identify a file across a SharePoint site.
@@ -888,13 +933,23 @@ function peopleSearchReference(body) {
   }
 }
 
-async function callGroq(messages, apiKey, tools = null, preferredModel = null) {
+async function callGroq(messages, apiKey, tools = null, preferredModel = null, options = {}) {
   let lastError = null
   const retryAfterSeconds = []
   for (const model of modelOrder(preferredModel)) {
     try {
-      const body = { model, max_tokens: 1000, messages }
+      const body = {
+        model,
+        max_tokens: options.maxTokens || 1000,
+        messages,
+      }
       if (tools) { body.tools = tools; body.tool_choice = 'auto' }
+      if (options.responseFormat) {
+        body.response_format = typeof options.responseFormat === 'function'
+          ? options.responseFormat(model)
+          : options.responseFormat
+      }
+      if (Number.isFinite(options.temperature)) body.temperature = options.temperature
 
       const res = await fetch(`${GROQ_BASE}/chat/completions`, {
         method: 'POST',
@@ -1107,7 +1162,10 @@ Do not include markdown or commentary.`
   ]
 
   try {
-    const result = await callGroq(messages, env.GROQ_API_KEY)
+    const result = await callGroq(messages, env.GROQ_API_KEY, null, null, {
+      responseFormat: peopleSearchResponseFormat,
+      temperature: 0.2,
+    })
     const suggestion = normalizePeopleSearchSuggestion(
       parseJsonObject(result.content),
       reference.approvedAliases || []
