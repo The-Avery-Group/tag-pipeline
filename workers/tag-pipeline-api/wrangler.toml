@@ -49,4 +49,7 @@ head_sampling_rate = 1
 enabled = true
 head_sampling_rate = 1
 persist = true
-invocation_logs = true
+# Keep application logs and genuine uncaught exceptions, but omit Cloudflare's
+# generic per-invocation records. Workflow health is reported through the
+# structured logs emitted by the workflow and its durable instance status.
+invocation_logs = false
