@@ -4,7 +4,7 @@ import {
   buildNotificationRecipientDirectory,
   resolveNotificationRecipients,
 } from '../src/handlers/notificationMonitor.js'
-import { cardForType } from '../src/handlers/notify.js'
+import { cardForType, taskSummaryDedupeKey } from '../src/handlers/notify.js'
 
 test('scheduled recipient mappings resolve short and display names to one Teams identity', () => {
   const directory = buildNotificationRecipientDirectory([
@@ -70,4 +70,19 @@ test('scheduled cards still render when no mention identity is configured', () =
   const content = card.attachments[0].content
   assert.equal(content.msteams, undefined)
   assert.match(JSON.stringify(content.body), /@Ayomide/)
+})
+
+test('task summaries share one daily dedupe key per reminder category', () => {
+  const date = '2026-07-28'
+
+  assert.equal(
+    taskSummaryDedupeKey('overdue_summary', { summaryDate: date }),
+    `teams_notification:overdue:${date}`,
+  )
+  assert.equal(
+    taskSummaryDedupeKey('due_soon_summary', { summaryDate: date }),
+    `teams_notification:duesoon:${date}`,
+  )
+  assert.equal(taskSummaryDedupeKey('task_created', { summaryDate: date }), '')
+  assert.equal(taskSummaryDedupeKey('due_soon_summary', {}), '')
 })
