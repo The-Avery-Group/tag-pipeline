@@ -19,12 +19,16 @@ import RfiFollowUpPanel from '@/components/Opportunity/RfiFollowUpPanel'
 import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
 import SAMChangeSuggestion from '@/components/Opportunity/SAMChangeSuggestion'
 import OpportunityField from '@/components/Opportunity/OpportunityField'
+import Section from '@/components/Opportunity/OpportunitySection'
+import OpportunityNotesSection from '@/components/Opportunity/OpportunityNotesSection'
+import OpportunityTasksSection from '@/components/Opportunity/OpportunityTasksSection'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
-import { formatDate, isOverdue } from '@/utils/kpiHelpers'
+import { formatDate } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import { invalidateCache } from '@/services/dataCache'
+import { retryIdempotent } from '@/services/workbookMutations'
 import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
@@ -34,14 +38,6 @@ import {
   saveRFIFollowUpDecision, saveRFIFollowUpOverride,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
-
-async function retryThrice(fn) {
-  let lastErr
-  for (let i = 0; i < 3; i++) {
-    try { return await fn() } catch (err) { lastErr = err }
-  }
-  throw lastErr
-}
 
 // ── Column constants ──────────────────────────────────────────────────────
 const C = {
@@ -99,30 +95,6 @@ function opportunityReturnPath(value) {
   return typeof value === 'string' && /^\/opportunities(?:\?|$)/.test(value)
     ? value
     : '/opportunities'
-}
-
-// ── Linkify note text ────────────────────────────────────────────────────
-// Detects URLs inside a note's plain text and renders them as real,
-// clickable links instead of inert text. Built as React elements (not
-// dangerouslySetInnerHTML) so note text can never be interpreted as markup.
-const URL_PATTERN = /(https?:\/\/[^\s<>"')]+|www\.[^\s<>"')]+)/gi
-
-function linkifyText(text) {
-  if (!text) return null
-  // .split() with a single capturing group interleaves [text, match, text, match, ...]
-  // — odd indices are always the captured URL matches, so no regex-statefulness
-  // concerns from re-using .test()/.exec() with the global flag.
-  return String(text).split(URL_PATTERN).map((part, i) => {
-    if (i % 2 === 1) {
-      const href = part.toLowerCase().startsWith('www.') ? `https://${part}` : part
-      return (
-        <a key={i} href={href} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>
-          {part}
-        </a>
-      )
-    }
-    return part
-  })
 }
 
 /**
@@ -311,19 +283,7 @@ const PHASE_BADGE = {
   'Cancelled':        'badge-closed-lost',
 }
 
-const STATUS_CYCLE = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
-const statusClass  = (s) => s === 'To Do' ? 'todo' : s === 'In Progress' ? 'progress' : 'done'
 const Field = (props) => <OpportunityField {...props} formatValue={formatFieldValue} />
-
-// ── Section wrapper ───────────────────────────────────────────────────────
-function Section({ title, children }) {
-  return (
-    <div className={styles.section}>
-      <div className={styles.sectionHeader}>{title}</div>
-      <div className={`card ${styles.sectionCard}`}>{children}</div>
-    </div>
-  )
-}
 
 // ── Main component ────────────────────────────────────────────────────────
 export default function OpportunityDetail({ toast }) {
@@ -854,7 +814,7 @@ export default function OpportunityDetail({ toast }) {
     setContactSearch('')
     try {
       const nextPOC = addPOCName(opp[C.poc], c.Name)
-      await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} linked`)
     } catch (err) {
@@ -868,7 +828,7 @@ export default function OpportunityDetail({ toast }) {
   const handleUnlinkContact = async (c) => {
     try {
       const nextPOC = parsePOCNames(opp[C.poc]).filter((name) => name !== c.Name).join(', ')
-      await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} unlinked`)
     } catch (err) {
@@ -900,7 +860,7 @@ export default function OpportunityDetail({ toast }) {
     try {
       creation = await addContactRecord({ ...contactData, Name: name })
       const nextPOC = addPOCName(opp[C.poc], name)
-      await retryThrice(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       if (!quiet) toast?.success(`${name} added and linked`)
       return { ...creation, name, nextPOC, linked: true }
@@ -1460,120 +1420,34 @@ export default function OpportunityDetail({ toast }) {
           </Section>
         )}
 
-        <Section title="Notes">
-          {notesLoading
-            ? <div className="skeleton" style={{ height: 60 }} />
-            : visibleNotes.length === 0
-              ? <p className="text-muted text-sm" style={{ marginBottom: 10 }}>No notes yet.</p>
-              : visibleNotes.map((n) => (
-                  <div key={n.NoteID} className={styles.noteItem}>
-                    <div className={styles.noteMeta} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span>{n.Date} · {n.Author}</span>
-                      {!n._temp && editingNoteId !== n._rowIndex && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-icon"
-                          style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--blue-600)', marginLeft: 'auto' }}
-                          onClick={() => startEditNote(n)}
-                          disabled={savingNoteId !== null || deletingNoteId === n._rowIndex}
-                          aria-label="Edit note"
-                          title="Edit note"
-                        >✎</button>
-                      )}
-                      {!n._temp && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-icon"
-                          style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--red-600)' }}
-                          onClick={() => handleDeleteNote(n)}
-                          disabled={deletingNoteId === n._rowIndex || savingNoteId !== null}
-                          aria-label="Delete note"
-                          title="Delete note"
-                        >
-                          {deletingNoteId === n._rowIndex ? '…' : '✕'}
-                        </button>
-                      )}
-                    </div>
-                    {editingNoteId === n._rowIndex
-                      ? <div className={styles.noteEditor}>
-                          <textarea className="form-input" rows={3} value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} disabled={savingNoteId === n._rowIndex} />
-                          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                            <button type="button" className="btn btn-primary text-sm" onClick={() => handleSaveNote(n)} disabled={savingNoteId === n._rowIndex || !noteDraft.trim()}>{savingNoteId === n._rowIndex ? 'Saving…' : 'Save note'}</button>
-                            <button type="button" className="btn text-sm" onClick={() => { setEditingNoteId(null); setNoteDraft('') }} disabled={savingNoteId === n._rowIndex}>Cancel</button>
-                          </div>
-                        </div>
-                      : <div className={styles.noteText}>{linkifyText(n.NoteText)}</div>}
-                  </div>
-                ))
-          }
-          <div className={styles.noteAdd}>
-            <textarea
-              className="form-input"
-              placeholder="Add a note…"
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              rows={2}
-            />
-            <button className="btn btn-primary text-sm" onClick={handleAddNote}
-              disabled={addingNote || !newNote.trim()}>
-              {addingNote ? 'Adding…' : 'Add note'}
-            </button>
-          </div>
-        </Section>
+        <OpportunityNotesSection
+          loading={notesLoading}
+          notes={visibleNotes}
+          editingNoteId={editingNoteId}
+          savingNoteId={savingNoteId}
+          deletingNoteId={deletingNoteId}
+          noteDraft={noteDraft}
+          setNoteDraft={setNoteDraft}
+          startEditNote={startEditNote}
+          saveNote={handleSaveNote}
+          deleteNote={handleDeleteNote}
+          cancelEdit={() => { setEditingNoteId(null); setNoteDraft('') }}
+          newNote={newNote}
+          setNewNote={setNewNote}
+          addNote={handleAddNote}
+          addingNote={addingNote}
+        />
 
         {/* ── Section 8: Tasks ── */}
-        <Section title="Tasks">
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-            <button
-              type="button"
-              className={`filter-chip ${hideDoneTasks ? 'active' : ''}`}
-              onClick={() => setHideDoneTasks((value) => !value)}
-            >
-              Hide completed
-            </button>
-          </div>
-          {tasks.filter((t) => !hideDoneTasks || t.Status !== 'Done').length === 0
-            ? <p className="text-muted text-sm" style={{ marginBottom: 8 }}>No tasks for this opportunity.</p>
-            : tasks.filter((t) => !hideDoneTasks || t.Status !== 'Done').map((t) => {
-                const over = isOverdue(t.DueDate) && t.Status !== 'Done'
-                return (
-                  <div key={t.TaskID} className={styles.taskRow}>
-                    <div style={{ flex: 1 }}>
-                      <div className={styles.taskTitle}>{t.Title}</div>
-                      <div className={styles.taskMeta}>
-                        <span className={`badge badge-${t.Priority?.toLowerCase()}`}>{t.Priority}</span>
-                        <span className={over ? 'text-danger text-xs' : 'text-muted text-xs'}>
-                          {formatDate(t.DueDate)}{over ? ' · overdue' : ''}
-                        </span>
-                      </div>
-                      {t.OpportunityNotes && (
-                        <button className={styles.refreshCtx} onClick={() => refreshContext(t)}>
-                          ↺ Refresh context
-                        </button>
-                      )}
-                    </div>
-                    <button
-                      className={`badge badge-${statusClass(t.Status)}`}
-                      style={{
-                        cursor: updatingTaskId === t.TaskID ? 'default' : 'pointer',
-                        border: 'none',
-                        opacity: updatingTaskId === t.TaskID ? 0.6 : 1,
-                      }}
-                      onClick={() => handleTaskStatusChange(t, STATUS_CYCLE[t.Status] || 'To Do')}
-                      disabled={updatingTaskId === t.TaskID}
-                      title="Click to advance status"
-                    >
-                      {updatingTaskId === t.TaskID ? 'Updating…' : t.Status}
-                    </button>
-                  </div>
-                )
-              })
-          }
-          <button className="btn text-sm w-full" style={{ marginTop: 8, justifyContent: 'center' }}
-            onClick={() => setShowAddTask(true)}>
-            + Add task
-          </button>
-        </Section>
+        <OpportunityTasksSection
+          tasks={tasks}
+          hideDoneTasks={hideDoneTasks}
+          setHideDoneTasks={setHideDoneTasks}
+          updatingTaskId={updatingTaskId}
+          updateTaskStatus={handleTaskStatusChange}
+          refreshContext={refreshContext}
+          addTask={() => setShowAddTask(true)}
+        />
 
         <AwardLookupPanel
           opp={opp}
