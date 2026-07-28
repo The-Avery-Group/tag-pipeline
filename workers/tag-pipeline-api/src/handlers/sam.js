@@ -292,6 +292,17 @@ async function appendOpportunity(env, token, data, headers = NEW_OPP_HEADERS) {
   })
 }
 
+async function updateOpportunityRow(env, token, rowIndex, data, headers = NEW_OPP_HEADERS) {
+  const row = headers.map((header) => data[header] ?? '')
+  await graphFetch(env, token,
+    `/tables/NewOpportunitiesTable/rows/itemAt(index=${rowIndex})`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ values: [row] }),
+    },
+  )
+}
+
 // ── SAM API fetcher ───────────────────────────────────────────────────────
 
 async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, rdlTo, offset = 0) {
@@ -335,16 +346,21 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
 
 // ── Map a SAM record to our column structure ──────────────────────────────
 
+export function normalizeDiscoveryNoticeType(...values) {
+  const types = values
+    .flat()
+    .map((value) => String(value || '').trim().toUpperCase())
+    .filter(Boolean)
+  const combined = types.join(' ')
+  if (types.includes('K') || types.includes('RFQ') || combined.includes('COMBINED')) return 'RFQ'
+  if (types.includes('O') || types.includes('RFP') || combined.includes('SOLICITATION')) return 'RFP'
+  if (types.includes('R') || types.includes('RFI') || (combined.includes('SOURCE') && combined.includes('SOUGHT'))) return 'RFI'
+  return 'RFI'
+}
+
 function mapRecord(raw, naicsCode) {
   const org = parseOrg(raw.fullParentPathName)
-  const rawType = String(raw.type || raw.baseType || '').trim().toLowerCase()
-  const noticeType = rawType.includes('source') && rawType.includes('sought')
-    ? 'RFI'
-    : rawType.includes('combined')
-      ? 'RFQ'
-      : rawType.includes('solicitation')
-        ? 'RFP'
-        : 'RFI'
+  const noticeType = normalizeDiscoveryNoticeType(raw.type, raw.baseType)
   return {
     'Notice ID':           String(raw.noticeId || '').trim(),
     'Solicitation Number': String(raw.solicitationNumber || '').trim(),
@@ -365,8 +381,7 @@ function mapRecord(raw, naicsCode) {
 }
 
 function normalizedNoticeType(value) {
-  const type = String(value || '').trim().toUpperCase()
-  return ['RFI', 'RFP', 'RFQ'].includes(type) ? type : 'RFI'
+  return normalizeDiscoveryNoticeType(value)
 }
 
 function solicitationDedupKey(solicitationNumber, noticeType) {
@@ -752,6 +767,11 @@ async function runSAMPull(
   const existingIds = new Set(
     existingRows.map((r) => normalizeNoticeId(r['Notice ID'])).filter(Boolean)
   )
+  const existingByNotice = new Map()
+  existingRows.forEach((row) => {
+    const key = normalizeNoticeId(row['Notice ID'])
+    if (key && !existingByNotice.has(key)) existingByNotice.set(key, row)
+  })
 
   // Solicitation Number -> the most-recent variant we currently know about
   // (either already in the sheet, or a candidate fetched earlier this run).
@@ -772,6 +792,12 @@ async function runSAMPull(
       }
       existingNoticeRows.set(noticeKey, r._rowIndex)
     }
+    // Legacy discovery rows were all treated as RFI, including some RFP/RFQ
+    // rows written before compact SAM type codes were supported. Do not use a
+    // stored RFI label to delete another existing row by solicitation number
+    // until SAM has revalidated and repaired that row's type. Exact Notice ID
+    // duplicate cleanup above remains safe.
+    if (normalizedNoticeType(r['Notice Type']) === 'RFI') return
     const solKey = solicitationDedupKey(r['Solicitation Number'], r['Notice Type'])
     if (!solKey) return
     const postedDate = String(r['Posted Date'] || '')
@@ -806,6 +832,7 @@ async function runSAMPull(
     ? []
     : ['NewOpportunitiesTable is missing the Notice Type column. RFP and RFQ results were skipped until that column is added.']
   const candidates  = []   // { mapped, noticeId, noticeKey, solKey }
+  const typeRepairs = []
   let fatalError = null
 
   let nextCursor = { naicsIndex: startIndex, offset: startOffset }
@@ -837,20 +864,37 @@ async function runSAMPull(
 
     if (!fatalError && page) {
       for (const raw of page.records) {
-      const noticeId = String(raw.noticeId || '').trim()
-      const noticeKey = normalizeNoticeId(noticeId)
-      if (!noticeId || existingIds.has(noticeKey)) continue
-      if (String(raw.active || '').toLowerCase() !== 'yes') continue
-      const mapped = mapRecord(raw, naics)
-      if (!hasNoticeTypeColumn && mapped['Notice Type'] !== 'RFI') continue
-      const solKey = solicitationDedupKey(mapped['Solicitation Number'], mapped['Notice Type'])
-      // Deduplicate before buffering. A page is at most ten records, matching
-      // the write cap for this checkpointed pull unit.
-      const knownSol = solKey ? solNumIndex.get(solKey) : null
-      if (knownSol && !newerRecord(mapped['Posted Date'], knownSol.postedDate)) continue
+        const noticeId = String(raw.noticeId || '').trim()
+        const noticeKey = normalizeNoticeId(noticeId)
+        if (!noticeId) continue
+        if (String(raw.active || '').toLowerCase() !== 'yes') continue
+        const mapped = mapRecord(raw, naics)
+        const existing = existingByNotice.get(noticeKey)
+        if (existing) {
+          // Rows written before compact SAM ptype codes were supported may
+          // have been labelled RFI. Repair only the type and preserve every
+          // user-controlled field, including Status.
+          if (
+            hasNoticeTypeColumn &&
+            normalizedNoticeType(existing['Notice Type']) !== mapped['Notice Type']
+          ) {
+            typeRepairs.push({
+              rowIndex: existing._rowIndex,
+              row: { ...existing, 'Notice Type': mapped['Notice Type'] },
+            })
+          }
+          continue
+        }
+        if (existingIds.has(noticeKey)) continue
+        if (!hasNoticeTypeColumn && mapped['Notice Type'] !== 'RFI') continue
+        const solKey = solicitationDedupKey(mapped['Solicitation Number'], mapped['Notice Type'])
+        // Deduplicate before buffering. A page is at most ten records,
+        // matching the write cap for this checkpointed pull unit.
+        const knownSol = solKey ? solNumIndex.get(solKey) : null
+        if (knownSol && !newerRecord(mapped['Posted Date'], knownSol.postedDate)) continue
 
-      candidates.push({ mapped, noticeId, noticeKey, solKey })
-    }
+        candidates.push({ mapped, noticeId, noticeKey, solKey })
+      }
 
       if (page.hasMore) {
         hasMoreWork = true
@@ -907,7 +951,8 @@ async function runSAMPull(
   // ── Phase 2: write survivors, capped to stay within subrequest budget ──
   // Skipped entirely if phase 1 hit a fatal error (nothing valid to write).
   let totalWritten = 0
-  if (!fatalError && toWrite.length > 0) {
+  let totalRepaired = 0
+  if (!fatalError && (toWrite.length > 0 || typeRepairs.length > 0)) {
     await setRunLog(env, {
       status: 'running', phase: 'writing', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
       // If this invocation is killed during Graph writes, resume from the
@@ -915,12 +960,20 @@ async function runSAMPull(
       // resuming at the next NAICS could otherwise lose rows not yet written.
       naicsTotal: naicsCodes.length, naicsProcessed, nextNaicsIndex: startIndex,
       nextCursor: { naicsIndex: startIndex, offset: startOffset },
-      toWrite: Math.min(toWrite.length, MAX_WRITES_PER_RUN), written: run.totalWritten,
+      toWrite: Math.min(toWrite.length + typeRepairs.length, MAX_WRITES_PER_RUN), written: run.totalWritten,
       fetched: run.totalFetched + totalFetched, deduped: run.totalDeduped + dedupDeleteRowIndices.size, deleted: run.totalDeleted,
       totalFetched: run.totalFetched + totalFetched, totalWritten: run.totalWritten,
       totalDeduped: run.totalDeduped + dedupDeleteRowIndices.size, totalDeleted: run.totalDeleted,
     })
 
+    for (const repair of typeRepairs) {
+      try {
+        await updateOpportunityRow(env, token, repair.rowIndex, repair.row, existingHeaders)
+        totalRepaired++
+      } catch (err) {
+        console.error(`[SAM] Notice type repair failed for row ${repair.rowIndex}:`, err.message)
+      }
+    }
     for (const c of toWrite) {
       try {
         await appendOpportunity(env, token, c.mapped, existingHeaders)
@@ -951,6 +1004,7 @@ async function runSAMPull(
       success: false, status: 'error', timestamp: new Date().toISOString(), runId: run.runId, startedAt: run.startedAt,
       error: fatalError, warnings: naicsErrors.length > 0 ? naicsErrors : undefined,
       batchFetched: totalFetched, batchWritten: totalWritten, batchDeduped: dedupDeleteRowIndices.size, batchDeleted: deleted,
+      batchRepaired: totalRepaired,
       fetched: run.totalFetched + totalFetched, written: run.totalWritten + totalWritten,
       deduped: run.totalDeduped + dedupDeleteRowIndices.size, deleted: run.totalDeleted + deleted,
       totalFetched: run.totalFetched + totalFetched, totalWritten: run.totalWritten + totalWritten,
@@ -975,6 +1029,7 @@ async function runSAMPull(
     naicsProcessed,
     batchFetched: totalFetched,
     batchWritten: totalWritten,
+    batchRepaired: totalRepaired,
     batchDeduped: dedupDeleteRowIndices.size,
     batchDeleted: deleted,
     fetched:   run.totalFetched + totalFetched,
@@ -1173,9 +1228,24 @@ export async function handleSAM(req, env, ctx) {
     if (!token) return json({ error: 'Missing Authorization token' }, 401)
     if (!config?.naicsCodes?.length) return json({ error: 'Missing or empty config.naicsCodes' }, 400)
 
+    const lastLog = await getRunLog(env)
+    // Freshness can be bypassed, but a manual pull must not overlap a live
+    // autonomous or browser pull. Concurrent pulls can both read the same
+    // workbook state before either appends, creating duplicate rows.
+    if (!resumeCursor && !resumeFrom && ['running', 'partial'].includes(lastLog?.status)) {
+      const activityAt = Date.parse(lastLog.timestamp || lastLog.startedAt || '')
+      const stillActive = Number.isFinite(activityAt) && Date.now() - activityAt < 15 * 60 * 1000
+      if (stillActive) {
+        return json({
+          error: 'An opportunity pull is already running. Follow its existing progress instead of starting another pull.',
+          code: 'pull_in_progress',
+          run: lastLog,
+        }, 409)
+      }
+    }
+
     // 12h throttle check (skipped when force=true, e.g. Settings page force pull)
     if (!force && !resumeCursor && !resumeFrom) {
-      const lastLog = await getRunLog(env)
       if (lastLog?.success && lastLog?.timestamp) {
         const lastRun  = new Date(lastLog.timestamp)
         const hoursSince = (Date.now() - lastRun.getTime()) / (1000 * 60 * 60)
