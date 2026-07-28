@@ -10,7 +10,7 @@ import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
 import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
 import { formatDate } from '@/utils/kpiHelpers'
-import { recordMatches } from '@/utils/searchHelpers'
+import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import { useAuth } from '@/auth/AuthContext'
 import styles from './Contacts.module.css'
 
@@ -88,11 +88,10 @@ export default function Contacts({ toast }) {
     return () => document.removeEventListener('keydown', fn)
   }, [])
 
+  const contactSearchIndex = useMemo(() => buildSearchIndex(contacts), [contacts])
   const filtered = useMemo(
-    () => contacts.filter(
-      (contact) => recordMatches(contact, search)
-    ),
-    [contacts, search]
+    () => filterSearchIndex(contactSearchIndex, search),
+    [contactSearchIndex, search]
   )
 
   // Opportunities linked to the selected contact (POC column contains their name)
