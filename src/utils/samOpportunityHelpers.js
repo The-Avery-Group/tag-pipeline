@@ -1,11 +1,14 @@
 const NOTICE_TYPES = new Set(['RFI', 'RFP', 'RFQ'])
 
 export function normalizeSAMNoticeType(value) {
-  const type = String(value || '').trim().toUpperCase()
-  if (NOTICE_TYPES.has(type)) return type
-  if (type.includes('SOURCE') && type.includes('SOUGHT')) return 'RFI'
-  if (type.includes('COMBINED')) return 'RFQ'
-  if (type.includes('SOLICITATION')) return 'RFP'
+  const values = (Array.isArray(value) ? value : [value])
+    .map((item) => String(item || '').trim().toUpperCase())
+    .filter(Boolean)
+  const combined = values.join(' ')
+  if (values.includes('K') || values.includes('RFQ') || combined.includes('COMBINED')) return 'RFQ'
+  if (values.includes('O') || values.includes('RFP') || combined.includes('SOLICITATION')) return 'RFP'
+  if (values.includes('R') || values.includes('RFI') || (combined.includes('SOURCE') && combined.includes('SOUGHT'))) return 'RFI'
+  if (values.some((type) => NOTICE_TYPES.has(type))) return values.find((type) => NOTICE_TYPES.has(type))
   // Rows pulled before Notice Type was introduced were all Sources Sought.
   return 'RFI'
 }
@@ -37,7 +40,7 @@ export function applySAMSnapshot(row, snapshot) {
     'Notice ID': snapshot.noticeId || row['Notice ID'],
     'Solicitation Number': snapshot.solicitationNumber || row['Solicitation Number'],
     Title: snapshot.title || row.Title,
-    'Notice Type': normalizeSAMNoticeType(snapshot.type || snapshot.baseType || row['Notice Type']),
+    'Notice Type': normalizeSAMNoticeType([snapshot.type, snapshot.baseType, row['Notice Type']]),
     'Set-Aside Type': snapshot.setAside || row['Set-Aside Type'],
     Department: organization.department || row.Department,
     Agency: organization.agency || row.Agency,
@@ -79,6 +82,53 @@ export function sortSAMOpportunities(rows, mode = 'dateAdded') {
 
 export function samTypeMatches(row, selectedType) {
   return selectedType === 'All' || normalizeSAMNoticeType(row['Notice Type']) === selectedType
+}
+
+function normalizedIdentity(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function statusWeight(status) {
+  return ['dismissed', 'added_to_pipeline', 'tracked'].includes(String(status || '').toLowerCase()) ? 1 : 0
+}
+
+function shouldReplaceSAMDuplicate(current, candidate) {
+  const currentWeight = statusWeight(current.Status)
+  const candidateWeight = statusWeight(candidate.Status)
+  if (candidateWeight !== currentWeight) return candidateWeight > currentWeight
+  const currentPosted = sortableDate(current['Posted Date']) ?? -Infinity
+  const candidatePosted = sortableDate(candidate['Posted Date']) ?? -Infinity
+  if (candidatePosted !== currentPosted) return candidatePosted > currentPosted
+  return Number(candidate._rowIndex || 0) > Number(current._rowIndex || 0)
+}
+
+/**
+ * Keeps malformed or concurrently inserted workbook duplicates from
+ * rendering twice. RFI and later procurement notices remain separate, while
+ * equal-type notices with the same notice ID or solicitation collapse.
+ */
+export function dedupeSAMOpportunities(rows) {
+  const byNotice = new Map()
+  const withoutNotice = []
+  ;(rows || []).forEach((row) => {
+    const notice = normalizedIdentity(row['Notice ID'])
+    if (!notice) {
+      withoutNotice.push(row)
+      return
+    }
+    const current = byNotice.get(notice)
+    if (!current || shouldReplaceSAMDuplicate(current, row)) byNotice.set(notice, row)
+  })
+
+  const bySolicitationAndType = new Map()
+  ;[...byNotice.values(), ...withoutNotice].forEach((row) => {
+    const solicitation = normalizedIdentity(row['Solicitation Number'])
+    const type = normalizeSAMNoticeType(row['Notice Type'])
+    const key = solicitation ? `${type}:${solicitation}` : `ROW:${row._rowIndex}`
+    const current = bySolicitationAndType.get(key)
+    if (!current || shouldReplaceSAMDuplicate(current, row)) bySolicitationAndType.set(key, row)
+  })
+  return [...bySolicitationAndType.values()]
 }
 
 function cleanLinks(value) {
