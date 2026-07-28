@@ -138,15 +138,50 @@ async function listWatches(env) {
 }
 
 async function writeStatusSnapshot(env, watches) {
-  await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify({
+  return persistStatusSnapshot(env, {
     watches: watches.map(publicWatch),
     updatedAt: new Date().toISOString(),
-  }))
+  })
 }
 
 async function readStatusSnapshot(env) {
-  const snapshot = await env.CACHE.get(STATUS_SNAPSHOT_KEY, 'json')
-  return Array.isArray(snapshot?.watches) ? snapshot : null
+  try {
+    const value = await env.CACHE.get(STATUS_SNAPSHOT_KEY)
+    if (!value) return null
+    const snapshot = JSON.parse(value)
+    return Array.isArray(snapshot?.watches) ? snapshot : null
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'sam_monitor_status_snapshot_read_failed',
+      message: error.message,
+    }))
+    return null
+  }
+}
+
+async function persistStatusSnapshot(env, snapshot) {
+  try {
+    await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+    return true
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'sam_monitor_status_snapshot_write_failed',
+      message: error.message,
+    }))
+    return false
+  }
+}
+
+async function readRunStatus(env) {
+  try {
+    return await env.CACHE.get(RUN_KEY, 'json')
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'sam_monitor_run_status_read_failed',
+      message: error.message,
+    }))
+    return null
+  }
 }
 
 async function updateStatusSnapshotEntry(env, watch) {
@@ -161,7 +196,7 @@ async function updateStatusSnapshotEntry(env, watch) {
   if (index >= 0) snapshot.watches[index] = next
   else snapshot.watches.push(next)
   snapshot.updatedAt = new Date().toISOString()
-  await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+  await persistStatusSnapshot(env, snapshot)
 }
 
 async function fetchSAM(env, parameter, value) {
@@ -372,17 +407,25 @@ export async function handleSAMMonitor(req, env) {
     const solicitationNumber = clean(url.searchParams.get('solicitationNumber'))
     if (noticeId || solicitationNumber) {
       const watch = await readWatch(env, watchKey({ noticeId, solicitationNumber }))
-      const run = await env.CACHE.get(RUN_KEY, 'json')
+      const run = await readRunStatus(env)
       return json({ watches: watch ? [publicWatch(watch)] : [], run: run || null })
     }
     const [snapshot, run] = await Promise.all([
       readStatusSnapshot(env),
-      env.CACHE.get(RUN_KEY, 'json'),
+      readRunStatus(env),
     ])
     if (snapshot) return json({ watches: snapshot.watches, run: run || null })
-    const watches = await listWatches(env)
-    await writeStatusSnapshot(env, watches)
-    return json({ watches: watches.map(publicWatch), run: run || null })
+    try {
+      const watches = await listWatches(env)
+      await writeStatusSnapshot(env, watches)
+      return json({ watches: watches.map(publicWatch), run: run || null })
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: 'sam_monitor_status_fallback_failed',
+        message: error.message,
+      }))
+      return json({ watches: [], run: run || null, temporarilyUnavailable: true })
+    }
   }
   if (path === '/sam/changes/review' && req.method === 'POST') {
     const body = await req.json()
