@@ -13,6 +13,12 @@ import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { recordMatches } from '@/utils/searchHelpers'
+import {
+  applySAMSnapshot,
+  normalizeSAMNoticeType,
+  samTypeMatches,
+  sortSAMOpportunities,
+} from '@/utils/samOpportunityHelpers'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 
@@ -389,12 +395,13 @@ export default function Opportunities({ toast }) {
   // The visible contract/notice number may contain whitespace or characters
   // that Excel/URLs normalize differently. Carrying the stable table row
   // index makes detail navigation reliable while retaining the readable URL.
-  const openOpportunity = (opp, { focusFollowUps = false } = {}) => {
+  const openOpportunity = (opp, { focusFollowUps = false, focusSAMChanges = false } = {}) => {
     const cn = opp[C.contractNum] || ''
     // Keep the complete list URL so the detail page's own back button can
     // restore the exact tab, search, and filters the user came from.
     const detailParams = new URLSearchParams({ row: String(opp._rowIndex) })
     if (focusFollowUps) detailParams.set('focus', 'follow-ups')
+    if (focusSAMChanges) detailParams.set('focus', 'sam-changes')
     const currentListQuery = searchParams.toString()
     detailParams.set('returnTo', `/opportunities${currentListQuery ? `?${currentListQuery}` : ''}`)
     navigate(`/opportunities/${encodeURIComponent(cn)}?${detailParams.toString()}`)
@@ -470,6 +477,8 @@ export default function Opportunities({ toast }) {
   const { statusByOpportunity: rfiFollowUpStatus, markSeen: markFollowUpsSeen } = useRfiFollowUpMonitor(pipeline, contacts, { replace: true })
 
   const [showDismissed, setShowDismissed] = useState(false)
+  const [samTypeFilter, setSAMTypeFilter] = useState('RFI')
+  const [samSortMode, setSAMSortMode] = useState('dateAdded')
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
   const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
@@ -547,28 +556,32 @@ export default function Opportunities({ toast }) {
     savedScrollTop.current = tableScrollRef.current?.scrollTop ?? 0
   }, [])
 
+  const currentSAMOpps = useMemo(() => samOpps.map((opportunity) =>
+    applySAMSnapshot(opportunity, samChangesByRow[opportunity._rowIndex]?.latest)
+  ), [samChangesByRow, samOpps])
+
   // Distinct departments from all SAM opportunities (for department filter)
   const samDepartments = useMemo(() => {
     const depts = new Set()
-    samOpps.forEach((o) => { const d = (o['Department'] || '').trim(); if (d) depts.add(d) })
+    currentSAMOpps.forEach((o) => { const d = (o['Department'] || '').trim(); if (d) depts.add(d) })
     return [...depts].sort()
-  }, [samOpps])
+  }, [currentSAMOpps])
 
-  const visibleSAMOpps = useMemo(() => samOpps.filter((o) => {
+  const visibleSAMOpps = useMemo(() => sortSAMOpportunities(currentSAMOpps.filter((o) => {
     const s = o.Status || 'new'
-    if (s === 'dismissed') return showDismissed
+    const searching = Boolean(search.trim())
+    if (s === 'dismissed' && !showDismissed && !searching) return false
+    if (!samTypeMatches(o, samTypeFilter)) return false
     if (deptFilter.size > 0 && !deptFilter.has((o['Department'] || '').trim())) return false
-    if (search.trim() && !recordMatches(o, search)) return false
+    if (searching && !recordMatches(o, search)) return false
     return true
-  }).sort((a, b) => {
-    // Default: earliest response date first
-    const da = (a['Response Date'] || '').slice(0, 10)
-    const db = (b['Response Date'] || '').slice(0, 10)
-    if (!da && !db) return 0
-    if (!da) return 1
-    if (!db) return -1
-    return da < db ? -1 : da > db ? 1 : 0
-  }), [samOpps, showDismissed, deptFilter, search])
+  }), samSortMode), [currentSAMOpps, deptFilter, samSortMode, samTypeFilter, search, showDismissed])
+
+  const cycleSAMResponseSort = () => {
+    setSAMSortMode((current) =>
+      current === 'dateAdded' ? 'responseAsc' : current === 'responseAsc' ? 'responseDesc' : 'dateAdded'
+    )
+  }
 
   const handleAddToPipeline = async (row, outlook) => {
     if (actioningRow === row._rowIndex || addingPipelineRowsRef.current.has(row._rowIndex)) return
@@ -766,10 +779,25 @@ export default function Opportunities({ toast }) {
       <button
         className={styles.samUpdatedBadge}
         title={change.summary || 'SAM has updated this opportunity.'}
-        onClick={() => markSAMChangeReviewed(opportunity).catch((error) => toast?.error(error.message))}
+        onClick={(event) => {
+          event.stopPropagation()
+          const linked = pipelineByOpportunityKey.get(
+            normalizeOpportunityKey(opportunity['Solicitation Number'] || opportunity['Notice ID'])
+          )
+          if (linked) {
+            openOpportunity(linked, { focusSAMChanges: true })
+            return
+          }
+          markSAMChangeReviewed(opportunity).catch((error) => toast?.error(error.message))
+        }}
       >
         SAM updated
-        <span className={styles.samUpdatedTooltip}>{change.summary || 'SAM has updated this opportunity.'}<br /><strong>Click to mark reviewed</strong></span>
+        <span className={styles.samUpdatedTooltip}>
+          {change.summary || 'SAM has updated this opportunity.'}<br />
+          <strong>{pipelineByOpportunityKey.get(normalizeOpportunityKey(opportunity['Solicitation Number'] || opportunity['Notice ID']))
+            ? 'Click to review pipeline updates'
+            : 'Click to mark reviewed'}</strong>
+        </span>
       </button>
     )
   }
@@ -819,15 +847,29 @@ export default function Opportunities({ toast }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span className="text-sm text-muted">
             {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
-            {!showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
+            {search.trim() && samOpps.some((o) => o.Status === 'dismissed') && <> · search includes dismissed</>}
+            {!search.trim() && !showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
               <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
                 onClick={() => { saveScroll(); setShowDismissed(true) }}>Show dismissed</button></>
             )}
-            {showDismissed && (
+            {!search.trim() && showDismissed && (
               <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
                 onClick={() => { saveScroll(); setShowDismissed(false) }}>Hide dismissed</button></>
             )}
           </span>
+          <label className={styles.samTypeFilter}>
+            <span>Type</span>
+            <select value={samTypeFilter} onChange={(event) => {
+              saveScroll()
+              setSAMTypeFilter(event.target.value)
+              setSelectedRows(new Set())
+            }}>
+              <option value="RFI">RFIs</option>
+              <option value="RFP">RFPs</option>
+              <option value="RFQ">RFQs</option>
+              <option value="All">All types</option>
+            </select>
+          </label>
           {showSyncDetails && <>
           <button className="btn btn-primary text-xs" style={{ padding: '3px 10px' }}
             onClick={() => handlePull()} disabled={isPulling}>
@@ -960,7 +1002,11 @@ export default function Opportunities({ toast }) {
                 <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360 }}>
                   {samOpps.length === 0
                     ? 'Use Refresh to pull opportunities from SAM.gov that match your NAICS codes.'
-                    : 'All opportunities have been dismissed. Toggle "Show dismissed" to see them.'}
+                    : search.trim()
+                      ? 'No opportunity, including dismissed records, matches this search.'
+                      : samTypeFilter !== 'All'
+                        ? `No ${samTypeFilter} opportunities match the current filters.`
+                        : 'All opportunities have been dismissed. Toggle "Show dismissed" to see them.'}
                 </div>
               </div>
             )
@@ -987,7 +1033,17 @@ export default function Opportunities({ toast }) {
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Title</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Agency</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>NAICS</th>
-                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Response Date</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
+                        <button
+                          type="button"
+                          className={styles.samSortHeader}
+                          onClick={cycleSAMResponseSort}
+                          title="Cycle response date sorting"
+                        >
+                          Response Date
+                          <span>{samSortMode === 'responseAsc' ? '↑' : samSortMode === 'responseDesc' ? '↓' : '↕'}</span>
+                        </button>
+                      </th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
                       <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Actions</th>
                     </tr>
@@ -1026,6 +1082,9 @@ export default function Opportunities({ toast }) {
 						  <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
+                              <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
+                                {normalizeSAMNoticeType(opp['Notice Type'])}
+                              </span>
                               {samStatusBadge(opp.Status)}
                               {samChangeBadge(opp)}
                               {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Sync failed</span>}
