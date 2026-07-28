@@ -3,7 +3,12 @@ import {
   addContactInteraction,
   getContactInteractions,
 } from '@/services/graphService'
-import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import {
+  forceRefreshCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { createStableId } from '@/services/workbookMutations'
 
 export function useContactEngagement(enabled = false) {
   const [interactions, setInteractions] = useState(null)
@@ -42,12 +47,27 @@ export function useContactEngagement(enabled = false) {
   }, [enabled, load])
 
   const addInteraction = useCallback(async (data) => {
-    const saved = await addContactInteraction(data)
-    // Show the newly logged interaction immediately. The background refresh
-    // below reconciles this optimistic entry with the workbook afterwards.
-    setInteractions((current) => [...(current || []), saved])
-    await invalidateCache(['ContactInteractionsTable'])
-    return saved
+    const interactionId = createStableId('CI')
+    const optimistic = {
+      ...data,
+      InteractionID: interactionId,
+      _rowIndex: -1,
+      _temp: true,
+    }
+    setInteractions((current) => [...(current || []), optimistic])
+    try {
+      const saved = await addContactInteraction(data, interactionId)
+      setInteractions((current) => (current || []).map((interaction) =>
+        interaction.InteractionID === interactionId ? saved : interaction
+      ))
+      verifyCacheInBackground(['ContactInteractionsTable'])
+      return saved
+    } catch (err) {
+      setInteractions((current) => (current || []).filter(
+        (interaction) => interaction.InteractionID !== interactionId
+      ))
+      throw err
+    }
   }, [])
 
   const refresh = useCallback(async () => {
