@@ -4,11 +4,13 @@ import { runSAMPullWorkflowCheckpoint } from './samPullChain.js'
 
 export class SAMPullWorkflow extends WorkflowEntrypoint {
   async run(event, step) {
-    return runSAMPullWorkflowCheckpoint({
+    const result = await runSAMPullWorkflowCheckpoint({
       env: this.env,
       event,
       step,
       runCheckpoint: runScheduledSAMPull,
     })
+
+    return result
   }
 }
