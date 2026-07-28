@@ -901,7 +901,7 @@ export default function Opportunities({ toast }) {
               )}
               {samRunStatus?.status === 'partial' && (
                 <span style={{ color: 'var(--blue-600)' }}>
-                  Pull checkpoint saved · {samRunStatus.written || 0} new total · continues at the next scheduled pull
+                  Pull checkpoint saved · {samRunStatus.written || 0} new total · continuing automatically
                 </span>
               )}
               {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && (
