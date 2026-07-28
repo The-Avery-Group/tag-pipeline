@@ -317,7 +317,12 @@ export async function runScheduledNotifications(env) {
         assignee, count, recipient: resolveNotificationRecipients(directory, [assignee])[0] || { name: assignee, id: '' },
       }))
       if (overdueGroups.size) await sendAndLog('overdue_summary', { people: groupPayload(overdueGroups), summaryDate: today }, 'overdue')
-      if (dueSoonGroups.size) await sendAndLog('due_soon_summary', { people: groupPayload(dueSoonGroups) }, 'duesoon')
+      if (dueSoonGroups.size) {
+        await sendAndLog('due_soon_summary', {
+          people: groupPayload(dueSoonGroups),
+          summaryDate: today,
+        }, 'duesoon')
+      }
 
       const rfiDue = pipeline.rows.filter((opportunity) =>
         clean(opportunity['TAG Pipeline Activity Phase']) === 'Submitted RFI' && !clean(opportunity['RFI Notified']) &&
