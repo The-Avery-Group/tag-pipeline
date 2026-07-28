@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useDeferredValue } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useContacts } from '@/hooks/useContacts'
@@ -8,31 +8,14 @@ import { useNotes } from '@/hooks/useNotes'
 import { useContactEngagement } from '@/hooks/useContactEngagement'
 import { getSAMOpportunities } from '@/services/graphService'
 import { formatDate } from '@/utils/kpiHelpers'
-import { searchableValues } from '@/utils/searchHelpers'
+import { buildSearchIndex, rankSearchIndex } from '@/utils/searchHelpers'
 import styles from './SearchModal.module.css'
 
 const MAX_PER_CATEGORY = 5
 
-function scoreMatch(values, query) {
-  return values.reduce((best, value) => {
-    const text = String(value || '').toLowerCase()
-    if (!text.includes(query)) return best
-    if (text === query) return Math.max(best, 100)
-    if (text.startsWith(query)) return Math.max(best, 60)
-    return Math.max(best, 20)
-  }, 0)
-}
-
-function rankMatches(rows, valuesFor, query) {
-  return rows
-    .map((row) => ({ row, score: scoreMatch(valuesFor(row), query) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map(({ row }) => row)
-}
-
 export default function SearchModal({ onClose }) {
   const [query, setQuery]   = useState('')
+  const deferredQuery       = useDeferredValue(query)
   const inputRef            = useRef(null)
   const modalRef            = useRef(null)
   const navigate            = useNavigate()
@@ -84,7 +67,17 @@ export default function SearchModal({ onClose }) {
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
 
-  const q = query.trim().toLowerCase()
+  const q = deferredQuery.trim().toLowerCase()
+
+  const indexes = useMemo(() => ({
+    opportunities: buildSearchIndex(pipeline),
+    samOpportunities: buildSearchIndex(samOpportunities),
+    partners: buildSearchIndex(partners),
+    contacts: buildSearchIndex(contacts),
+    tasks: buildSearchIndex(tasks),
+    interactions: buildSearchIndex(contactEngagement.interactions),
+    notes: buildSearchIndex(notes),
+  }), [pipeline, samOpportunities, partners, contacts, tasks, contactEngagement.interactions, notes])
 
   const opportunitiesByContract = useMemo(
     () => new Map(pipeline.map((opportunity) => [opportunity['Contract Number / Notice ID'], opportunity])),
@@ -99,22 +92,19 @@ export default function SearchModal({ onClose }) {
   const results = useMemo(() => {
     if (!q) return { opportunities: [], samOpportunities: [], partners: [], contacts: [], tasks: [], interactions: [], notes: [], counts: {} }
 
-    const allOpportunities = rankMatches(pipeline, searchableValues, q)
-    const allSAMOpportunities = rankMatches(samOpportunities, searchableValues, q)
-
-    const allContacts = rankMatches(contacts, searchableValues, q)
-    const allPartners = rankMatches(partners, searchableValues, q)
-
-    const allTasks = rankMatches(tasks, searchableValues, q)
-
-    const allInteractions = rankMatches(contactEngagement.interactions, searchableValues, q)
+    const allOpportunities = rankSearchIndex(indexes.opportunities, q)
+    const allSAMOpportunities = rankSearchIndex(indexes.samOpportunities, q)
+    const allContacts = rankSearchIndex(indexes.contacts, q)
+    const allPartners = rankSearchIndex(indexes.partners, q)
+    const allTasks = rankSearchIndex(indexes.tasks, q)
+    const allInteractions = rankSearchIndex(indexes.interactions, q)
       .map((interaction) => ({
         ...interaction,
         contact: contactsById.get(String(interaction.ContactID || '')),
       }))
       .filter((interaction) => interaction.contact)
 
-    const allNotes = rankMatches(notes, searchableValues, q)
+    const allNotes = rankSearchIndex(indexes.notes, q)
       .map((n) => ({
         ...n,
         opportunity: opportunitiesByContract.get(n.ContractNumber),
@@ -140,7 +130,7 @@ export default function SearchModal({ onClose }) {
         notes: allNotes.length,
       },
     }
-  }, [q, pipeline, samOpportunities, partners, contacts, tasks, notes, contactEngagement.interactions, opportunitiesByContract, contactsById, expandedCategories])
+  }, [q, indexes, opportunitiesByContract, contactsById, expandedCategories])
 
   const total = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + results.notes.length
   const hasResults = total > 0
