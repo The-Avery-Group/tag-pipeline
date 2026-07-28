@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   applySAMSnapshot,
   buildSAMOpportunityPatch,
+  dedupeSAMOpportunities,
   normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
@@ -12,6 +13,10 @@ test('normalizes current and legacy SAM notice types', () => {
   assert.equal(normalizeSAMNoticeType('Sources Sought'), 'RFI')
   assert.equal(normalizeSAMNoticeType('Solicitation'), 'RFP')
   assert.equal(normalizeSAMNoticeType('Combined Synopsis/Solicitation'), 'RFQ')
+  assert.equal(normalizeSAMNoticeType('r'), 'RFI')
+  assert.equal(normalizeSAMNoticeType('o'), 'RFP')
+  assert.equal(normalizeSAMNoticeType('k'), 'RFQ')
+  assert.equal(normalizeSAMNoticeType(['Solicitation', 'Combined Synopsis/Solicitation']), 'RFQ')
   assert.equal(normalizeSAMNoticeType(''), 'RFI')
 })
 
@@ -41,6 +46,17 @@ test('defaults legacy discovery rows to the RFI filter', () => {
   assert.equal(samTypeMatches({}, 'RFI'), true)
   assert.equal(samTypeMatches({ 'Notice Type': 'RFP' }, 'RFI'), false)
   assert.equal(samTypeMatches({ 'Notice Type': 'RFQ' }, 'All'), true)
+})
+
+test('collapses duplicate discovery rows without merging an RFI into its RFP follow-on', () => {
+  const rows = [
+    { _rowIndex: 1, 'Notice ID': 'same', 'Solicitation Number': 'ABC-1', 'Notice Type': 'k', Status: 'new' },
+    { _rowIndex: 2, 'Notice ID': 'same', 'Solicitation Number': 'ABC-1', 'Notice Type': 'RFQ', Status: 'dismissed' },
+    { _rowIndex: 3, 'Notice ID': 'rfi', 'Solicitation Number': 'ABC-1', 'Notice Type': 'RFI', Status: 'new' },
+  ]
+
+  const result = dedupeSAMOpportunities(rows)
+  assert.deepEqual(result.map((row) => row._rowIndex).sort(), [2, 3])
 })
 
 test('builds a reviewable pipeline patch without replacing the contract identifier', () => {
