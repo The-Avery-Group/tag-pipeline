@@ -6,7 +6,7 @@ import { usePartners } from '@/hooks/usePartners'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
-import { recordMatches } from '@/utils/searchHelpers'
+import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import styles from './Partners.module.css'
 
 const FIELDS = [
@@ -88,12 +88,12 @@ export default function Partners({ toast }) {
   const saveAction = useAsyncAction()
   const deleteAction = useAsyncAction()
 
+  const partnerSearchIndex = useMemo(() => buildSearchIndex(partners), [partners])
   const filtered = useMemo(() => (
-    partners
-      .filter((partner) => recordMatches(partner, search))
+    filterSearchIndex(partnerSearchIndex, search)
       .slice()
       .sort((a, b) => partnerName(a).localeCompare(partnerName(b), undefined, { sensitivity: 'base' }))
-  ), [partners, search])
+  ), [partnerSearchIndex, search])
   const requestedPartnerUEI = String(searchParams.get('partner') || '').trim().toUpperCase()
   useEffect(() => {
     if (!requestedPartnerUEI) return
