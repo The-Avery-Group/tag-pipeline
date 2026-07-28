@@ -1,14 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getNotes, addNote, updateNote, deleteNote } from '@/services/graphService'
-import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
-
-async function retryThrice(fn) {
-  let lastErr
-  for (let i = 0; i < 3; i++) {
-    try { return await fn() } catch (err) { lastErr = err }
-  }
-  throw lastErr
-}
+import {
+  forceRefreshCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { createStableId, retryIdempotent } from '@/services/workbookMutations'
 
 // Notes are presented as a chronological conversation. The workbook stores a
 // date rather than a time, so use its physical row order to keep notes added
@@ -74,11 +71,12 @@ export function useNotes(contractNumber) {
 
   const add = useCallback(async (author, text) => {
     if (!contractNumber) throw new Error('contractNumber required')
+    const noteId = createStableId('N')
 
     // Optimistic: append note immediately so the composer and note stream
     // retain their oldest-to-newest order.
     const tempNote = {
-      NoteID:         `temp-${Date.now()}`,
+      NoteID:         noteId,
       ContractNumber: contractNumber,
       Author:         author,
       NoteText:       text,
@@ -89,14 +87,14 @@ export function useNotes(contractNumber) {
     setNotes((prev) => [...prev, tempNote])
 
     try {
-      // Retry up to 3 times silently
-      await retryThrice(() => addNote(contractNumber, author, text))
-      await invalidateCache(['NotesTable'])
-      // Cache refresh will replace the temp note with the real one
+      const saved = await addNote(contractNumber, author, text, noteId)
+      setNotes((current) => current.map((note) =>
+        note.NoteID === noteId ? saved : note
+      ).sort(compareNotesOldestFirst))
+      verifyCacheInBackground(['NotesTable'])
+      return saved
     } catch (err) {
-      // Silent fail: remove temp note, will reappear on next sync
       setNotes((prev) => prev.filter((n) => n.NoteID !== tempNote.NoteID))
-      // Re-throw so the caller can show a toast
       throw err
     }
   }, [contractNumber])
@@ -105,8 +103,8 @@ export function useNotes(contractNumber) {
     pendingDeletes.current.add(rowIndex)
     setNotes((prev) => prev.filter((n) => n._rowIndex !== rowIndex))
     try {
-      await retryThrice(() => deleteNote(rowIndex))
-      await invalidateCache(['NotesTable'])
+      await retryIdempotent(() => deleteNote(rowIndex))
+      verifyCacheInBackground(['NotesTable'])
     } catch (err) {
       // Delete didn't actually happen — stop hiding it so the note
       // reappears (via reload) rather than staying hidden forever
@@ -120,8 +118,8 @@ export function useNotes(contractNumber) {
     pendingPatches.current.set(rowIndex, patch)
     setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? { ...note, ...patch } : note))
     try {
-      await retryThrice(() => updateNote(rowIndex, patch))
-      await invalidateCache(['NotesTable'])
+      await retryIdempotent(() => updateNote(rowIndex, patch))
+      verifyCacheInBackground(['NotesTable'])
     } catch (err) {
       pendingPatches.current.delete(rowIndex)
       setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? original : note))
