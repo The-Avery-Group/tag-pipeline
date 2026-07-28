@@ -1,15 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '@/services/graphService'
 import { notifyTaskCreated } from '@/services/notifyService'
-import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
-
-async function retryThrice(fn) {
-  let lastErr
-  for (let i = 0; i < 3; i++) {
-    try { return await fn() } catch (err) { lastErr = err }
-  }
-  throw lastErr
-}
+import {
+  forceRefreshCache,
+  invalidateCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { createStableId, retryIdempotent } from '@/services/workbookMutations'
 
 export function useTasks(contractNumber = null) {
   const [tasks, setTasks]   = useState([])
@@ -68,9 +66,31 @@ export function useTasks(contractNumber = null) {
           : String(data.DueDate))
       : ''
     const taskData = { ...data, DueDate: dueDate, OpportunityNotes: notes }
-    await addTask(taskData, createdBy)
-    notifyTaskCreated({ ...taskData, CreatedBy: createdBy }).catch(() => {})
-    await invalidateCache(['TasksTable'])
+    const taskId = createStableId('T')
+    const optimistic = {
+      ...taskData,
+      TaskID: taskId,
+      Status: 'To Do',
+      CreatedBy: createdBy,
+      CreatedDate: new Date().toISOString().split('T')[0],
+      UpdatedDate: new Date().toISOString().split('T')[0],
+      _rowIndex: -1,
+    }
+    setTasks((current) => current.some((task) => task.TaskID === taskId)
+      ? current
+      : [...current, optimistic])
+    try {
+      const saved = await addTask(taskData, createdBy, taskId)
+      setTasks((current) => current.map((task) => task.TaskID === taskId ? saved : task))
+      if (!saved._alreadyExisted) {
+        notifyTaskCreated({ ...saved, CreatedBy: createdBy }).catch(() => {})
+      }
+      verifyCacheInBackground(['TasksTable'])
+      return saved
+    } catch (error) {
+      setTasks((current) => current.filter((task) => task.TaskID !== taskId))
+      throw error
+    }
   }, [])
 
   const update = useCallback(async (rowIndex, patch) => {
@@ -84,8 +104,8 @@ export function useTasks(contractNumber = null) {
       prev.map((t) => t._rowIndex === rowIndex ? { ...t, ...safePatch } : t)
     )
     try {
-      await retryThrice(() => updateTask(rowIndex, safePatch))
-      await invalidateCache(['TasksTable'])
+      await retryIdempotent(() => updateTask(rowIndex, safePatch))
+      verifyCacheInBackground(['TasksTable'])
     } catch (err) {
       // A conflicting Excel edit must not remain on screen as though it was
       // saved. Reload the authoritative row and let the caller show the
@@ -97,13 +117,13 @@ export function useTasks(contractNumber = null) {
   }, [load])
 
   const remove = useCallback(async (rowIndex) => {
-    await deleteTask(rowIndex)
+    await retryIdempotent(() => deleteTask(rowIndex))
     await invalidateCache(['TasksTable'])
   }, [])
 
   const refreshContext = useCallback(async (task) => {
     const notes = await getNotesForContract(task.ContractNumber)
-    await updateTask(task._rowIndex, { OpportunityNotes: notes })
+    await retryIdempotent(() => updateTask(task._rowIndex, { OpportunityNotes: notes }))
     await invalidateCache(['TasksTable'])
   }, [])
 
