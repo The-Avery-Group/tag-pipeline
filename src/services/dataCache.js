@@ -2,8 +2,10 @@
  * Session cache coordinator for workbook data.
  *
  * The previous approach downloaded every commonly-used table every 30 seconds.
- * This version checks the workbook drive item's eTag once a minute and only
- * reloads tables that are already in use when the workbook actually changed.
+ * This version checks the workbook drive item's eTag once a minute, while also
+ * refreshing the tables used by the visible page on a bounded schedule. The
+ * targeted refresh is intentional: SharePoint's drive-item eTag is useful as
+ * an early signal, but it does not reliably move for every direct table edit.
  * Writes invalidate only their affected tables.
  */
 import {
@@ -21,9 +23,9 @@ import {
 } from '@/services/graphService'
 
 const POLL_INTERVAL_MS = 60 * 1000
-const FORCED_REFRESH_INTERVAL_MS = 3 * 60 * 1000
-const SLOW_REFRESH_INTERVAL_MS = 15 * 60 * 1000
+const ACTIVE_REFRESH_INTERVAL_MS = 3 * 60 * 1000
 const RETURN_REFRESH_AFTER_MS = 60 * 1000
+const PAGE_ENTRY_FRESH_MS = 30 * 1000
 const CORE_TABLES = ['PipelineTable', 'TasksTable', 'DataValidationTable']
 const SECONDARY_TABLES = [
   'NotesTable',
@@ -32,16 +34,6 @@ const SECONDARY_TABLES = [
   'PartnersTable',
   'ContactInteractionsTable',
 ]
-const FREQUENT_TABLES = [
-  'PipelineTable',
-  'TasksTable',
-  'NotesTable',
-  'ContactsTable',
-  'NewOpportunitiesTable',
-  'ContactInteractionsTable',
-]
-const SLOW_TABLES = ['DataValidationTable', 'PartnersTable']
-
 const loaders = {
   PipelineTable: getPipeline,
   TasksTable: getTasks,
@@ -59,9 +51,10 @@ let pollTimer = null
 let pollInFlight = false
 let visibilityHandler = null
 let knownWorkbookVersion = ''
-let lastSuccessfulRefreshAt = 0
-let lastForcedRefreshAt = 0
-let lastSlowRefreshAt = 0
+let activeTableSignature = ''
+let activeTables = new Set(CORE_TABLES)
+const dirtyTables = new Set()
+const lastTableRefreshAt = new Map()
 const listeners = new Set()
 
 export function onCacheRefresh(listener) {
@@ -85,7 +78,13 @@ async function loadTables(tableNames, { invalidate = false, tolerateFailures = f
   if (invalidate) invalidateTables(unique)
   const results = await Promise.allSettled(unique.map((tableName) => loaders[tableName]()))
   const refreshed = unique.filter((_, index) => results[index].status === 'fulfilled')
-  if (refreshed.length) lastSuccessfulRefreshAt = Date.now()
+  if (refreshed.length) {
+    const refreshedAt = Date.now()
+    refreshed.forEach((tableName) => {
+      lastTableRefreshAt.set(tableName, refreshedAt)
+      dirtyTables.delete(tableName)
+    })
+  }
   const failure = results.find((result) => result.status === 'rejected')
   if (failure && !tolerateFailures) throw failure.reason
   if (failure && tolerateFailures) {
@@ -116,8 +115,6 @@ export async function warmCache() {
   try {
     await loadTables(CORE_TABLES)
     await recordWorkbookVersion().catch(() => '')
-    lastForcedRefreshAt = Date.now()
-    lastSlowRefreshAt = Date.now()
     warmed = true
     await notify(CORE_TABLES)
     // Continue warming the search/contact datasets without blocking the app.
@@ -158,11 +155,52 @@ function cachedTargets(tableNames) {
   return tableNames.filter((tableName) => cached.has(tableName))
 }
 
+function activeTargets({ cachedOnly = true } = {}) {
+  const targets = [...activeTables].filter((tableName) => loaders[tableName])
+  return cachedOnly ? cachedTargets(targets) : targets
+}
+
+async function refreshActiveTables({ returningToTab = false, pageEntry = false } = {}) {
+  if (!warmed || document.hidden) return []
+  const now = Date.now()
+  const targets = activeTargets({ cachedOnly: false }).filter((tableName) => {
+    const age = now - (lastTableRefreshAt.get(tableName) || 0)
+    if (dirtyTables.has(tableName)) return true
+    if (returningToTab) return age >= RETURN_REFRESH_AFTER_MS
+    if (pageEntry) return age >= PAGE_ENTRY_FRESH_MS
+    return age >= ACTIVE_REFRESH_INTERVAL_MS
+  })
+  if (!targets.length) return []
+  const refreshed = await loadTables(targets, {
+    invalidate: true,
+    tolerateFailures: true,
+  })
+  await notify(refreshed)
+  return refreshed
+}
+
+/**
+ * Tell the cache coordinator which workbook tables matter to the current
+ * route. Inactive cached tables are retained for fast navigation, but are not
+ * repeatedly downloaded in the background. They refresh when their page is
+ * opened, when explicitly requested, or after the workbook version signals a
+ * change and that page becomes active.
+ */
+export function setActiveCacheTables(tableNames = []) {
+  const next = [...new Set(tableNames)].filter((tableName) => loaders[tableName])
+  const signature = [...next].sort().join('|')
+  if (signature === activeTableSignature) return
+  activeTableSignature = signature
+  activeTables = new Set(next)
+  if (warmed && !document.hidden) {
+    void refreshActiveTables({ pageEntry: true })
+  }
+}
+
 async function refreshIfWorkbookChanged({ returningToTab = false } = {}) {
   if (pollInFlight || document.hidden) return
   pollInFlight = true
   try {
-    const now = Date.now()
     const version = await getWorkbookVersion()
     const next = version.eTag || version.lastModifiedDateTime || ''
     const versionChanged = Boolean(next && knownWorkbookVersion && next !== knownWorkbookVersion)
@@ -171,37 +209,21 @@ async function refreshIfWorkbookChanged({ returningToTab = false } = {}) {
     }
 
     if (versionChanged) {
-      const refreshed = await loadTables(getCachedTableNames(), {
+      const cached = getCachedTableNames()
+      const active = new Set(activeTargets())
+      cached.forEach((tableName) => {
+        if (!active.has(tableName)) dirtyTables.add(tableName)
+      })
+      const refreshed = await loadTables([...active], {
         invalidate: true,
         tolerateFailures: true,
       })
       knownWorkbookVersion = next
-      lastForcedRefreshAt = now
-      lastSlowRefreshAt = now
       await notify(refreshed)
       return
     }
 
-    const returningStale = returningToTab &&
-      now - lastSuccessfulRefreshAt >= RETURN_REFRESH_AFTER_MS
-    const frequentDue = now - lastForcedRefreshAt >= FORCED_REFRESH_INTERVAL_MS
-    if (returningStale || frequentDue) {
-      const refreshed = await loadTables(cachedTargets(FREQUENT_TABLES), {
-        invalidate: true,
-        tolerateFailures: true,
-      })
-      lastForcedRefreshAt = now
-      await notify(refreshed)
-    }
-
-    if (now - lastSlowRefreshAt >= SLOW_REFRESH_INTERVAL_MS) {
-      const refreshed = await loadTables(cachedTargets(SLOW_TABLES), {
-        invalidate: true,
-        tolerateFailures: true,
-      })
-      lastSlowRefreshAt = now
-      await notify(refreshed)
-    }
+    await refreshActiveTables({ returningToTab })
   } catch (error) {
     // A transient Graph failure should preserve the visible workspace.
     console.warn('[Cache] Background version check failed:', error.message)
@@ -228,7 +250,8 @@ export function stopPolling() {
   warmed = false
   warming = false
   knownWorkbookVersion = ''
-  lastSuccessfulRefreshAt = 0
-  lastForcedRefreshAt = 0
-  lastSlowRefreshAt = 0
+  activeTableSignature = ''
+  activeTables = new Set(CORE_TABLES)
+  dirtyTables.clear()
+  lastTableRefreshAt.clear()
 }
