@@ -4,6 +4,7 @@ import { putAutomationRun } from '../lib/automationHealth.js'
 
 const WATCH_PREFIX = 'rfi_followup_watch:'
 const RUN_KEY = 'rfi_followup_monitor_run'
+const STATUS_SNAPSHOT_KEY = 'rfi_followup_status_snapshot_v1'
 const BATCH_SIZE = 3
 const DAILY_MS = 24 * 60 * 60 * 1000
 const SEEN_MS = 12 * 60 * 60 * 1000
@@ -137,6 +138,31 @@ function publicWatch(watch) {
   }
 }
 
+async function writeStatusSnapshot(env, watches) {
+  await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify({
+    watches: watches.map(publicWatch),
+    updatedAt: new Date().toISOString(),
+  }))
+}
+
+async function readStatusSnapshot(env) {
+  const snapshot = await env.CACHE.get(STATUS_SNAPSHOT_KEY, 'json')
+  return Array.isArray(snapshot?.watches) ? snapshot : null
+}
+
+async function updateStatusSnapshotEntry(env, watch) {
+  const snapshot = await readStatusSnapshot(env)
+  if (!snapshot) return
+  const next = publicWatch(watch)
+  const index = snapshot.watches.findIndex((item) =>
+    normalized(item.opportunityId) === normalized(next.opportunityId)
+  )
+  if (index >= 0) snapshot.watches[index] = next
+  else snapshot.watches.push(next)
+  snapshot.updatedAt = new Date().toISOString()
+  await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+}
+
 async function checkWatch(env, watch) {
   if (!watch.source?.rules?.monitoringEnabled) return watch
   try {
@@ -158,6 +184,7 @@ async function checkWatch(env, watch) {
 
 async function syncWatches(env, inputs, { replace = false } = {}) {
   const existing = await listWatches(env)
+  const finalWatches = new Map(existing.map((watch) => [watch.key, watch]))
   const incomingKeys = new Set()
   const written = []
   let unchanged = 0
@@ -175,14 +202,20 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
       watch.syncedAt = new Date().toISOString()
       await writeWatch(env, watch)
       written.push(watch)
+      finalWatches.set(watch.key, watch)
     } else {
       unchanged++
     }
   }
   if (replace) {
-    await Promise.all(existing.filter((watch) => !incomingKeys.has(watch.key)).map((watch) => env.CACHE.delete(watch.key)))
+    const removed = existing.filter((watch) => !incomingKeys.has(watch.key))
+    await Promise.all(removed.map((watch) => env.CACHE.delete(watch.key)))
+    removed.forEach((watch) => finalWatches.delete(watch.key))
+    if (removed.length || written.length) await writeStatusSnapshot(env, [...finalWatches.values()])
+  } else if (written.length) {
+    await writeStatusSnapshot(env, [...finalWatches.values()])
   }
-  return { written, unchanged }
+  return { written, unchanged, watches: [...finalWatches.values()] }
 }
 
 async function appOnlyToken(env) {
@@ -261,7 +294,10 @@ export async function runRFIFollowUpMonitor(env) {
   const run = { status: 'success', checkedAt: new Date().toISOString(), source, total: watches.length, due: Math.max(0, due.length - batch.length), checked: batch.length }
   // One result write only when a real batch ran. Previously this wrote a
   // running and success record every hour, including no-op hours.
-  await putAutomationRun(env, RUN_KEY, run)
+  await Promise.all([
+    putAutomationRun(env, RUN_KEY, run),
+    writeStatusSnapshot(env, watches),
+  ])
   return { ok: true, ...run }
 }
 
@@ -276,7 +312,13 @@ export async function handleRFIFollowUpMonitor(req, env) {
     return json({ ok: true, synchronized: result.written.length, unchanged: result.unchanged })
   }
   if (path === '/sam/follow-up-monitor/status' && req.method === 'GET') {
-    const [watches, run] = await Promise.all([listWatches(env), env.CACHE.get(RUN_KEY, 'json')])
+    const [snapshot, run] = await Promise.all([
+      readStatusSnapshot(env),
+      env.CACHE.get(RUN_KEY, 'json'),
+    ])
+    if (snapshot) return json({ watches: snapshot.watches, run: run || null })
+    const watches = await listWatches(env)
+    await writeStatusSnapshot(env, watches)
     return json({ watches: watches.map(publicWatch), run: run || null })
   }
   if (path === '/sam/follow-up-monitor/check-one' && req.method === 'POST') {
@@ -284,6 +326,7 @@ export async function handleRFIFollowUpMonitor(req, env) {
     const watch = await readWatch(env, watchKey(body.opportunityId))
     if (!watch) return json({ error: 'Follow-up watch not found. Synchronize this RFI first.' }, 404)
     await checkWatch(env, watch)
+    await updateStatusSnapshotEntry(env, watch)
     return json({ ok: true, watch: publicWatch(watch) })
   }
   if (path === '/sam/follow-up-monitor/seen' && req.method === 'POST') {
@@ -293,6 +336,7 @@ export async function handleRFIFollowUpMonitor(req, env) {
     const pending = (watch.candidates || []).filter((candidate) => !decisionFor(watch, candidate)).length
     if (pending > 0) watch.seenUntil = new Date(Date.now() + SEEN_MS).toISOString()
     await writeWatch(env, watch)
+    await updateStatusSnapshotEntry(env, watch)
     return json({ ok: true, watch: publicWatch(watch) })
   }
   return json({ error: 'Not found' }, 404)
