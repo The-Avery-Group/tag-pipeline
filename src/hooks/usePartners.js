@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPartners, addPartner, updatePartner, deletePartner } from '@/services/graphService'
-import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import {
+  forceRefreshCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { retryIdempotent } from '@/services/workbookMutations'
 
 export function usePartners() {
   const [partners, setPartners] = useState([])
@@ -38,8 +43,13 @@ export function usePartners() {
   }), [load])
 
   const add = useCallback(async (data) => {
-    await addPartner(data)
-    await invalidateCache(['PartnersTable'])
+    const saved = await addPartner(data)
+    setPartners((current) => {
+      if (current.some((partner) => partner['UEI Number'] === saved['UEI Number'])) return current
+      return [...current, saved]
+    })
+    verifyCacheInBackground(['PartnersTable'])
+    return saved
   }, [])
 
   const update = useCallback(async (rowIndex, patch, original) => {
@@ -48,8 +58,8 @@ export function usePartners() {
       partner._rowIndex === rowIndex ? { ...partner, ...patch } : partner
     ))
     try {
-      await updatePartner(rowIndex, patch)
-      await invalidateCache(['PartnersTable'])
+      await retryIdempotent(() => updatePartner(rowIndex, patch))
+      verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
       pendingPatches.current.delete(rowIndex)
       setPartners((current) => current.map((partner) =>
@@ -62,8 +72,8 @@ export function usePartners() {
   const remove = useCallback(async (rowIndex, original) => {
     setPartners((current) => current.filter((partner) => partner._rowIndex !== rowIndex))
     try {
-      await deletePartner(rowIndex)
-      await invalidateCache(['PartnersTable'])
+      await retryIdempotent(() => deletePartner(rowIndex))
+      verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
       setPartners((current) => [...current, original].sort((a, b) => a._rowIndex - b._rowIndex))
       throw err
