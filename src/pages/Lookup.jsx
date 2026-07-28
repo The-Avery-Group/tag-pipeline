@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
+import { useContacts } from '@/hooks/useContacts'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
-import { OPPORTUNITY_OUTLOOK } from '@/services/graphService'
+import { CONTACT_TYPES, OPPORTUNITY_OUTLOOK } from '@/services/graphService'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import EntityAwardHistory from '@/components/Lookup/EntityAwardHistory'
+import PeopleSearch from '@/components/PeopleSearch/PeopleSearch'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 import styles from './Lookup.module.css'
 
@@ -62,16 +64,44 @@ function fieldsForModification(fields, modification) {
   return { ...withoutLatestModification, ...modification }
 }
 
+function PeopleSearchLookup({ toast, initialValues, contactTypes }) {
+  const { add } = useContacts()
+  return (
+    <PeopleSearch
+      variant="contacts"
+      scopeLabel={initialValues?.scopeLabel || 'general contact research'}
+      context={initialValues?.context || {}}
+      initialValues={initialValues || {}}
+      contactTypes={contactTypes}
+      onAddContact={add}
+      toast={toast}
+    />
+  )
+}
+
 export default function Lookup({ toast }) {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { pipeline, add } = usePipeline()
   const { lists } = useValidationLists()
   const outlookOptions = pickList(lists, 'Opportunity Outlook', OPPORTUNITY_OUTLOOK)
+  const contactTypeOptions = pickList(lists, 'Types', CONTACT_TYPES)
   const { results, loading, error, searched, cache, resultMeta, lookup } = useAwardsLookup()
   const [input, setInput] = useState('')
   const [awardeeUEI, setAwardeeUEI] = useState('')
   const [selectedModification, setSelectedModification] = useState({})
-  const [lookupView, setLookupView] = useState('awards')
+  const requestedView = searchParams.get('view')
+  const lookupView = ['entity', 'people'].includes(requestedView) ? requestedView : 'awards'
+
+  const changeLookupView = (view) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      if (view === 'awards') next.delete('view')
+      else next.set('view', view)
+      return next
+    }, { replace: true })
+  }
 
   const matchedPipelineRecord = useMemo(() => {
     const identifier = input.trim().toUpperCase()
@@ -151,17 +181,28 @@ export default function Lookup({ toast }) {
     <>
       <Topbar
         title="Lookup"
-        subtitle1="Search award records and entity contract history"
+        subtitle1="Search award records, entity history, and public profiles"
         showFilter={false}
         showNew={false}
       />
       <div className="page-body">
         <div className={styles.lookupTabs} role="tablist" aria-label="Lookup type">
-          <button type="button" role="tab" aria-selected={lookupView === 'awards'} className={lookupView === 'awards' ? styles.lookupTabActive : styles.lookupTab} onClick={() => setLookupView('awards')}>Award records</button>
-          <button type="button" role="tab" aria-selected={lookupView === 'entity'} className={lookupView === 'entity' ? styles.lookupTabActive : styles.lookupTab} onClick={() => setLookupView('entity')}>Entity award history</button>
+          <button type="button" role="tab" aria-selected={lookupView === 'awards'} className={lookupView === 'awards' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('awards')}>Award records</button>
+          <button type="button" role="tab" aria-selected={lookupView === 'entity'} className={lookupView === 'entity' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('entity')}>Entity award history</button>
+          <button type="button" role="tab" aria-selected={lookupView === 'people'} className={lookupView === 'people' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('people')}>People Search</button>
         </div>
 
-        {lookupView === 'entity' ? <EntityAwardHistory /> : <>
+        {lookupView === 'entity'
+          ? <EntityAwardHistory />
+          : lookupView === 'people'
+            ? (
+              <PeopleSearchLookup
+                toast={toast}
+                initialValues={location.state?.peopleSearch}
+                contactTypes={contactTypeOptions}
+              />
+            )
+            : <>
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -271,7 +312,7 @@ export default function Lookup({ toast }) {
             </div>
           )
         })}
-        </>}
+            </>}
       </div>
 
       {pendingResult && (
