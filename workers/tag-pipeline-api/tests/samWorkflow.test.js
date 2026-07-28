@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { startScheduledSAMPull } from '../src/handlers/sam.js'
+import { normalizeDiscoveryNoticeType, startScheduledSAMPull } from '../src/handlers/sam.js'
 import { runSAMPullWorkflowCheckpoint } from '../src/workflows/samPullChain.js'
 
 test('scheduled SAM pulls create one idempotent workflow instance per day', async () => {
@@ -170,5 +170,17 @@ test('a chained checkpoint fails when its cursor does not advance', async () => 
       }),
     }),
     /did not advance/,
+  )
+})
+
+test('SAM discovery classifies compact and descriptive procurement types consistently', () => {
+  assert.equal(normalizeDiscoveryNoticeType('r'), 'RFI')
+  assert.equal(normalizeDiscoveryNoticeType('o'), 'RFP')
+  assert.equal(normalizeDiscoveryNoticeType('k'), 'RFQ')
+  assert.equal(normalizeDiscoveryNoticeType('Solicitation'), 'RFP')
+  assert.equal(normalizeDiscoveryNoticeType('Combined Synopsis/Solicitation'), 'RFQ')
+  assert.equal(
+    normalizeDiscoveryNoticeType('Solicitation', 'Combined Synopsis/Solicitation'),
+    'RFQ',
   )
 })
