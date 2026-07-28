@@ -14,4 +14,5 @@ test('blocks only fields that changed externally and are also being saved', () =
 
   assert.deepEqual(externallyChangedPatchedFields(cached, current, { Title: 'Updated' }), [])
   assert.deepEqual(externallyChangedPatchedFields(cached, current, { Agency: 'Agency C', Priority: 'Hot' }), ['Agency'])
+  assert.deepEqual(externallyChangedPatchedFields(cached, current, { Agency: 'Agency B' }), [])
 })
