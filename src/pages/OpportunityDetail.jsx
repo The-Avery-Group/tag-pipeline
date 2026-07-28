@@ -932,7 +932,7 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const continuePeopleSearch = (searchState) => {
-    navigate('/contacts?view=people-search', {
+    navigate('/lookup?view=people', {
       state: {
         peopleSearch: {
           ...searchState,
