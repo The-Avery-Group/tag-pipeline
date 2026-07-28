@@ -1185,6 +1185,7 @@ export const NEW_OPP_HEADERS = [
   'SAM.gov URL',
   'Date Added',
   'Status',
+  'Notice Type',
 ]
 
 export async function getSAMOpportunities() {
@@ -1192,11 +1193,13 @@ export async function getSAMOpportunities() {
 }
 
 export async function addSAMOpportunity(data) {
-  return appendRow('NewOpportunitiesTable', data, NEW_OPP_HEADERS)
+  const headers = await getTableHeaders('NewOpportunitiesTable')
+  return appendRow('NewOpportunitiesTable', data, headers)
 }
 
 export async function updateSAMOpportunity(rowIndex, patch) {
-  return updateRow('NewOpportunitiesTable', rowIndex, patch, NEW_OPP_HEADERS)
+  const headers = await getTableHeaders('NewOpportunitiesTable')
+  return updateRow('NewOpportunitiesTable', rowIndex, patch, headers)
 }
 
 export async function deleteSAMOpportunity(rowIndex) {
