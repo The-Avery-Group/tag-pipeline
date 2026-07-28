@@ -48,6 +48,7 @@ const MAX_SAM_DATE_RANGE_DAYS = 364
 // can be reasoned about together.
 const MAX_WRITES_PER_RUN  = 10
 const MAX_DELETES_PER_RUN = 10
+const DISCOVERY_PROCUREMENT_TYPES = ['r', 'o', 'k']
 
 // Hardcoded — matches frontend graphService.js constant exactly
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
@@ -225,18 +226,23 @@ async function graphFetch(env, token, path, options = {}) {
   throw new Error('Graph read retry loop ended unexpectedly')
 }
 
-async function getTableRows(env, token, tableName) {
+async function getTableData(env, token, tableName) {
   const [rowsData, colsData] = await Promise.all([
     graphFetch(env, token, `/tables/${tableName}/rows`),
     graphFetch(env, token, `/tables/${tableName}/columns`),
   ])
   const headers = (colsData?.value || []).map((c) => c.name)
-  return (rowsData?.value || []).map((row) => {
+  const rows = (rowsData?.value || []).map((row) => {
     const obj = {}
     headers.forEach((h, i) => { obj[h] = row.values[0][i] })
     obj._rowIndex = row.index
     return obj
   })
+  return { headers, rows }
+}
+
+async function getTableRows(env, token, tableName) {
+  return (await getTableData(env, token, tableName)).rows
 }
 
 // ── Delete expired + solicitation-superseded rows, one shared cap ──────────
@@ -275,10 +281,11 @@ const NEW_OPP_HEADERS = [
   'Notice ID', 'Solicitation Number', 'Title', 'Set-Aside Type',
   'Department', 'Agency', 'Office', 'Response Date', 'Point of Contact',
   'NAICS Code', 'Posted Date', 'SAM.gov URL', 'Date Added', 'Status',
+  'Notice Type',
 ]
 
-async function appendOpportunity(env, token, data) {
-  const row = NEW_OPP_HEADERS.map((h) => data[h] ?? '')
+async function appendOpportunity(env, token, data, headers = NEW_OPP_HEADERS) {
+  const row = headers.map((h) => data[h] ?? '')
   await graphFetch(env, token, '/tables/NewOpportunitiesTable/rows/add', {
     method: 'POST',
     body: JSON.stringify({ values: [row] }),
@@ -290,7 +297,6 @@ async function appendOpportunity(env, token, data) {
 async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, rdlTo, offset = 0) {
   const params = new URLSearchParams({
     api_key:    env.SAM_API_KEY,
-    ptype:      'r',
     ncode:      naicsCode,
     postedFrom,
     postedTo,
@@ -299,6 +305,10 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
     limit:      String(PAGE_SIZE),
     offset:     String(offset),
   })
+  // SAM documents ptype as a repeatable array parameter. One paginated query
+  // therefore discovers Sources Sought, Solicitations, and Combined
+  // Synopsis/Solicitations without tripling the Workflow checkpoints.
+  DISCOVERY_PROCUREMENT_TYPES.forEach((type) => params.append('ptype', type))
 
   const res = await fetchWithRetry(`${SAM_BASE}?${params}`)
 
@@ -327,6 +337,14 @@ async function fetchSAMForNAICS(env, naicsCode, postedFrom, postedTo, rdlFrom, r
 
 function mapRecord(raw, naicsCode) {
   const org = parseOrg(raw.fullParentPathName)
+  const rawType = String(raw.type || raw.baseType || '').trim().toLowerCase()
+  const noticeType = rawType.includes('source') && rawType.includes('sought')
+    ? 'RFI'
+    : rawType.includes('combined')
+      ? 'RFQ'
+      : rawType.includes('solicitation')
+        ? 'RFP'
+        : 'RFI'
   return {
     'Notice ID':           String(raw.noticeId || '').trim(),
     'Solicitation Number': String(raw.solicitationNumber || '').trim(),
@@ -342,7 +360,18 @@ function mapRecord(raw, naicsCode) {
     'SAM.gov URL':         String(raw.uiLink || '').trim(),
     'Date Added':          todayISO(),
     'Status':              'new',
+    'Notice Type':         noticeType,
   }
+}
+
+function normalizedNoticeType(value) {
+  const type = String(value || '').trim().toUpperCase()
+  return ['RFI', 'RFP', 'RFQ'].includes(type) ? type : 'RFI'
+}
+
+function solicitationDedupKey(solicitationNumber, noticeType) {
+  const solicitation = normalizeSolNum(solicitationNumber)
+  return solicitation ? `${normalizedNoticeType(noticeType)}:${solicitation}` : ''
 }
 
 // ── RFI follow-up matcher ────────────────────────────────────────────────
@@ -704,8 +733,11 @@ async function runSAMPull(
   // Get existing rows ONCE — reused for Notice-ID dedup, Solicitation-Number
   // dedup, AND expired-row cleanup, saving subrequests.
   let existingRows
+  let existingHeaders
   try {
-    existingRows = await getTableRows(env, token, 'NewOpportunitiesTable')
+    const table = await getTableData(env, token, 'NewOpportunitiesTable')
+    existingRows = table.rows
+    existingHeaders = table.headers
   } catch (err) {
     const msg = `Failed to read NewOpportunitiesTable: ${err.message}`
     await setRunLog(env, {
@@ -740,13 +772,13 @@ async function runSAMPull(
       }
       existingNoticeRows.set(noticeKey, r._rowIndex)
     }
-    const solNum = normalizeSolNum(r['Solicitation Number'])
-    if (!solNum) return
+    const solKey = solicitationDedupKey(r['Solicitation Number'], r['Notice Type'])
+    if (!solKey) return
     const postedDate = String(r['Posted Date'] || '')
-    const current = solNumIndex.get(solNum)
+    const current = solNumIndex.get(solKey)
     if (!current || newerRecord(postedDate, current.postedDate)) {
       if (current?.fromExisting) duplicateExistingRowIndices.add(current.rowIndex)
-      solNumIndex.set(solNum, { noticeId: r['Notice ID'], rowIndex: r._rowIndex, postedDate, fromExisting: true })
+      solNumIndex.set(solKey, { noticeId: r['Notice ID'], rowIndex: r._rowIndex, postedDate, fromExisting: true })
     } else {
       duplicateExistingRowIndices.add(r._rowIndex)
     }
@@ -769,8 +801,11 @@ async function runSAMPull(
   let naicsProcessed = startIndex
   let nextNaicsIndex = startIndex
   let hasMoreWork = false
-  const naicsErrors = []
-  const candidates  = []   // { mapped, noticeId, noticeKey, solNum }
+  const hasNoticeTypeColumn = existingHeaders.includes('Notice Type')
+  const naicsErrors = hasNoticeTypeColumn
+    ? []
+    : ['NewOpportunitiesTable is missing the Notice Type column. RFP and RFQ results were skipped until that column is added.']
+  const candidates  = []   // { mapped, noticeId, noticeKey, solKey }
   let fatalError = null
 
   let nextCursor = { naicsIndex: startIndex, offset: startOffset }
@@ -807,13 +842,14 @@ async function runSAMPull(
       if (!noticeId || existingIds.has(noticeKey)) continue
       if (String(raw.active || '').toLowerCase() !== 'yes') continue
       const mapped = mapRecord(raw, naics)
-      const solNum = normalizeSolNum(mapped['Solicitation Number'])
+      if (!hasNoticeTypeColumn && mapped['Notice Type'] !== 'RFI') continue
+      const solKey = solicitationDedupKey(mapped['Solicitation Number'], mapped['Notice Type'])
       // Deduplicate before buffering. A page is at most ten records, matching
       // the write cap for this checkpointed pull unit.
-      const knownSol = solNum ? solNumIndex.get(solNum) : null
+      const knownSol = solKey ? solNumIndex.get(solKey) : null
       if (knownSol && !newerRecord(mapped['Posted Date'], knownSol.postedDate)) continue
 
-      candidates.push({ mapped, noticeId, noticeKey, solNum })
+      candidates.push({ mapped, noticeId, noticeKey, solKey })
     }
 
       if (page.hasMore) {
@@ -845,11 +881,11 @@ async function runSAMPull(
   const toWrite = []
 
   for (const c of byNoticeId.values()) {
-    if (!c.solNum) { toWrite.push(c); continue }
+    if (!c.solKey) { toWrite.push(c); continue }
 
-    const current = solNumIndex.get(c.solNum)
+    const current = solNumIndex.get(c.solKey)
     if (!current) {
-      solNumIndex.set(c.solNum, { noticeId: c.noticeId, rowIndex: null, postedDate: c.mapped['Posted Date'], fromExisting: false })
+      solNumIndex.set(c.solKey, { noticeId: c.noticeId, rowIndex: null, postedDate: c.mapped['Posted Date'], fromExisting: false })
       toWrite.push(c)
       continue
     }
@@ -861,7 +897,7 @@ async function runSAMPull(
         const staleIdx = toWrite.findIndex((w) => w.noticeId === current.noticeId)
         if (staleIdx !== -1) toWrite.splice(staleIdx, 1)
       }
-      solNumIndex.set(c.solNum, { noticeId: c.noticeId, rowIndex: null, postedDate: c.mapped['Posted Date'], fromExisting: false })
+      solNumIndex.set(c.solKey, { noticeId: c.noticeId, rowIndex: null, postedDate: c.mapped['Posted Date'], fromExisting: false })
       toWrite.push(c)
     }
     // else: an existing row or an already-queued candidate is the same age
@@ -887,7 +923,7 @@ async function runSAMPull(
 
     for (const c of toWrite) {
       try {
-        await appendOpportunity(env, token, c.mapped)
+        await appendOpportunity(env, token, c.mapped, existingHeaders)
         totalWritten++
       } catch (err) {
         console.error(`[SAM] Write failed for ${c.noticeId}:`, err.message)
