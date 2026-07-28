@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPipeline, addOpportunity, updateOpportunity, deleteOpportunity } from '@/services/graphService'
 import { notifyNewOpportunity, notifyPhaseChange } from '@/services/notifyService'
-import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import {
+  forceRefreshCache,
+  invalidateCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { retryIdempotent } from '@/services/workbookMutations'
 
 export function usePipeline() {
   const [pipeline, setPipeline] = useState([])
@@ -52,12 +58,17 @@ export function usePipeline() {
   }, [load])
 
   const add = useCallback(async (data) => {
-    await addOpportunity(data)
-    if (!notifyLock.current) {
+    const saved = await addOpportunity(data)
+    const identifier = saved['Contract Number / Notice ID']
+    setPipeline((current) => current.some((item) =>
+      item['Contract Number / Notice ID'] === identifier
+    ) ? current : [...current, saved])
+    if (!saved._alreadyExisted && !notifyLock.current) {
       notifyLock.current = true
-      notifyNewOpportunity(data).finally(() => { notifyLock.current = false })
+      notifyNewOpportunity(saved).finally(() => { notifyLock.current = false })
     }
-    await invalidateCache(['PipelineTable'])
+    verifyCacheInBackground(['PipelineTable'])
+    return saved
   }, [])
 
   const update = useCallback(async (rowIndex, patch, original) => {
@@ -83,8 +94,8 @@ export function usePipeline() {
     }
 
     try {
-      await updateOpportunity(rowIndex, patch)
-      await invalidateCache(['PipelineTable'])
+      await retryIdempotent(() => updateOpportunity(rowIndex, patch))
+      verifyCacheInBackground(['PipelineTable'])
     } catch (err) {
       // Roll back optimistic update on failure
       pendingPatches.current.delete(rowIndex)
@@ -98,7 +109,7 @@ export function usePipeline() {
   }, [])
 
   const remove = useCallback(async (rowIndex) => {
-    await deleteOpportunity(rowIndex)
+    await retryIdempotent(() => deleteOpportunity(rowIndex))
     await invalidateCache(['PipelineTable'])
   }, [])
 
