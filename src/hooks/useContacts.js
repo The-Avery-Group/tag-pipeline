@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getContacts, addContact, updateContact, deleteContact } from '@/services/graphService'
-import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import {
+  forceRefreshCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { createStableId, retryIdempotent } from '@/services/workbookMutations'
 
 export function useContacts() {
   const [contacts, setContacts] = useState([])
@@ -74,29 +79,23 @@ export function useContacts() {
     if (pendingAdds.current.has(fingerprint)) return pendingAdds.current.get(fingerprint)
 
     const operation = (async () => {
-      // Optimistic: add a placeholder row immediately so the UI reflects the
-      // new contact without waiting for the full round-trip + cache refresh.
-      const tempId = `C-temp-${Date.now()}`
-      const optimistic = { ...data, ContactID: tempId, _rowIndex: -1 }
+      const contactId = createStableId('C')
+      const optimistic = { ...data, ContactID: contactId, _rowIndex: -1, _temp: true }
       setContacts((prev) => [...prev, optimistic])
       try {
-        const saved = await addContact(data)
+        const saved = await addContact(data, contactId)
         setContacts((prev) =>
-          prev.map((contact) => contact.ContactID === tempId ? { ...saved, _rowIndex: -1 } : contact)
+          prev.map((contact) => contact.ContactID === contactId ? saved : contact)
         )
-        await invalidateCache(['ContactsTable'])
-        return { contact: saved, added: true, existed: false }
-      } catch (err) {
-        // A request can fail after Excel accepted the append. Reconcile once
-        // before reporting failure so the UI never invites a duplicate retry.
-        await invalidateCache(['ContactsTable'])
-        const latest = await getContacts().catch(() => [])
-        const recovered = latest.find(matches)
-        if (recovered) {
-          setContacts(latest)
-          return { contact: recovered, added: true, existed: false, recovered: true }
+        verifyCacheInBackground(['ContactsTable'])
+        return {
+          contact: saved,
+          added: !saved._alreadyExisted,
+          existed: Boolean(saved._alreadyExisted),
+          recovered: Boolean(saved._reconciled),
         }
-        setContacts((prev) => prev.filter((contact) => contact.ContactID !== tempId))
+      } catch (err) {
+        setContacts((prev) => prev.filter((contact) => contact.ContactID !== contactId))
         throw err
       }
     })()
@@ -116,8 +115,8 @@ export function useContacts() {
       prev.map((c) => c._rowIndex === rowIndex ? { ...c, ...patch } : c)
     )
     try {
-      await updateContact(rowIndex, patch)
-      await invalidateCache(['ContactsTable'])
+      await retryIdempotent(() => updateContact(rowIndex, patch))
+      verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
       // Roll back by reloading from server
       pendingPatches.current.delete(rowIndex)
@@ -130,8 +129,8 @@ export function useContacts() {
     // Optimistic: remove immediately
     setContacts((prev) => prev.filter((c) => c._rowIndex !== rowIndex))
     try {
-      await deleteContact(rowIndex)
-      await invalidateCache(['ContactsTable'])
+      await retryIdempotent(() => deleteContact(rowIndex))
+      verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
       await load()
       throw err
