@@ -1010,15 +1010,23 @@ export async function runScheduledSAMPull(env, continuation = null) {
 }
 
 export async function startScheduledSAMPull(env, scheduledTime = Date.now()) {
-  // Keep the former one-checkpoint path as a safe fallback for local
-  // development or a deployment made before the Workflow binding exists.
+  // An autonomous pull must run as a Workflow chain. Running one checkpoint
+  // as a fallback leaves a partial pull waiting for the next cron and makes
+  // the schedule appear healthy when the binding is actually missing.
   if (!env.SAM_PULL_WORKFLOW?.createBatch) {
-    console.warn(JSON.stringify({
+    const message = 'SAM_PULL_WORKFLOW binding is unavailable; autonomous opportunity pull was not started'
+    console.error(JSON.stringify({
       event: 'scheduled_sam_pull_workflow',
-      status: 'fallback',
-      message: 'SAM_PULL_WORKFLOW binding is unavailable; running one checkpoint',
+      status: 'error',
+      message,
     }))
-    return runScheduledSAMPull(env)
+    await setRunLog(env, {
+      success: false,
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: message,
+    }, { completed: true })
+    return { ok: false, source: 'workflow', error: message }
   }
 
   const timestamp = new Date(Number(scheduledTime) || Date.now())
