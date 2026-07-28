@@ -9,6 +9,7 @@ import { putAutomationRun } from '../lib/automationHealth.js'
 const SAM_BASE = 'https://api.sam.gov/opportunities/v2/search'
 const WATCH_PREFIX = 'sam_monitor_watch:'
 const RUN_KEY = 'sam_monitor_run'
+const STATUS_SNAPSHOT_KEY = 'sam_monitor_status_snapshot_v1'
 const CHECK_BATCH_SIZE = 5
 // Scheduled checks are intentionally larger than the interactive batches.
 // A watch can require one notice lookup and one solicitation fallback, so 15
@@ -136,6 +137,33 @@ async function listWatches(env) {
   return watches.filter(Boolean)
 }
 
+async function writeStatusSnapshot(env, watches) {
+  await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify({
+    watches: watches.map(publicWatch),
+    updatedAt: new Date().toISOString(),
+  }))
+}
+
+async function readStatusSnapshot(env) {
+  const snapshot = await env.CACHE.get(STATUS_SNAPSHOT_KEY, 'json')
+  return Array.isArray(snapshot?.watches) ? snapshot : null
+}
+
+async function updateStatusSnapshotEntry(env, watch) {
+  const snapshot = await readStatusSnapshot(env)
+  if (!snapshot) return
+  const next = publicWatch(watch)
+  const index = snapshot.watches.findIndex((item) =>
+    Number(item.rowIndex) === Number(next.rowIndex) ||
+    (next.noticeId && normalized(item.noticeId) === normalized(next.noticeId)) ||
+    (next.solicitationNumber && normalized(item.solicitationNumber) === normalized(next.solicitationNumber))
+  )
+  if (index >= 0) snapshot.watches[index] = next
+  else snapshot.watches.push(next)
+  snapshot.updatedAt = new Date().toISOString()
+  await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+}
+
 async function fetchSAM(env, parameter, value) {
   const { from, to } = dateWindow()
   const params = new URLSearchParams({ api_key: env.SAM_API_KEY, postedFrom: from, postedTo: to, limit: '10', [parameter]: value })
@@ -227,11 +255,15 @@ async function sync(req, env) {
     if (!existing || !sameWatchSource(existing, next)) {
       next.updatedAt = new Date().toISOString()
       await writeWatch(env, next)
+      const existingIndex = activeWatches.findIndex((watch) => watch.key === next.key)
+      if (existingIndex >= 0) activeWatches[existingIndex] = next
+      else activeWatches.push(next)
       synchronized++
     } else {
       unchanged++
     }
   }
+  if (synchronized || removed.length) await writeStatusSnapshot(env, activeWatches)
   return json({ ok: true, synchronized, unchanged, removed: removed.length })
 }
 
@@ -315,7 +347,10 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
   const run = { status: completed ? 'success' : 'partial', checkedAt: new Date().toISOString(), total: watches.length, checked: nextCursor, nextCursor: completed ? null : nextCursor, errors }
   // Persist one completed status only when work was performed. The old
   // running/success pair was two writes every hour even with no useful work.
-  await putAutomationRun(env, RUN_KEY, run)
+  await Promise.all([
+    putAutomationRun(env, RUN_KEY, run),
+    writeStatusSnapshot(env, watches),
+  ])
   console.info(JSON.stringify({ event: 'sam_monitor_completed', status: run.status, checked: run.checked, total: run.total, errors: errors.length }))
   return { ok: true, ...run }
 }
@@ -340,7 +375,13 @@ export async function handleSAMMonitor(req, env) {
       const run = await env.CACHE.get(RUN_KEY, 'json')
       return json({ watches: watch ? [publicWatch(watch)] : [], run: run || null })
     }
-    const [watches, run] = await Promise.all([listWatches(env), env.CACHE.get(RUN_KEY, 'json')])
+    const [snapshot, run] = await Promise.all([
+      readStatusSnapshot(env),
+      env.CACHE.get(RUN_KEY, 'json'),
+    ])
+    if (snapshot) return json({ watches: snapshot.watches, run: run || null })
+    const watches = await listWatches(env)
+    await writeStatusSnapshot(env, watches)
     return json({ watches: watches.map(publicWatch), run: run || null })
   }
   if (path === '/sam/changes/review' && req.method === 'POST') {
@@ -359,6 +400,7 @@ export async function handleSAMMonitor(req, env) {
     if (!watch) return json({ error: 'Monitor record not found' }, 404)
     if (watch.change) watch.change.reviewedAt = new Date().toISOString()
     await writeWatch(env, watch)
+    await updateStatusSnapshotEntry(env, watch)
     return json({ ok: true, watch: publicWatch(watch) })
   }
   return json({ error: 'Not found' }, 404)
