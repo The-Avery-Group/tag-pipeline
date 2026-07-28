@@ -12,7 +12,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
-import { recordMatches } from '@/utils/searchHelpers'
+import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
   applySAMSnapshot,
   dedupeSAMOpportunities,
@@ -328,13 +328,18 @@ export default function Opportunities({ toast }) {
     return [...vals].sort()
   }, [pipeline, activeTab])
 
+  const noteSearchIndex = useMemo(() => buildSearchIndex(notes), [notes])
+  const pipelineSearchIndex = useMemo(() => buildSearchIndex(pipeline), [pipeline])
   const noteContractsMatchingSearch = useMemo(() => {
     if (!search.trim()) return new Set()
-    return new Set(notes
-      .filter((note) => recordMatches(note, search))
+    return new Set(filterSearchIndex(noteSearchIndex, search)
       .map((note) => String(note.ContractNumber || '').trim())
       .filter(Boolean))
-  }, [notes, search])
+  }, [noteSearchIndex, search])
+  const pipelineRowsMatchingSearch = useMemo(
+    () => new Set(filterSearchIndex(pipelineSearchIndex, search)),
+    [pipelineSearchIndex, search]
+  )
 
   // ── Filtered + sorted rows for the active tab ─────────────────────────
   const filtered = useMemo(() => {
@@ -348,7 +353,7 @@ export default function Opportunities({ toast }) {
 
     if (search.trim()) {
       rows = rows.filter((o) =>
-        recordMatches(o, search) || noteContractsMatchingSearch.has(String(o[C.contractNum] || '').trim())
+        pipelineRowsMatchingSearch.has(o) || noteContractsMatchingSearch.has(String(o[C.contractNum] || '').trim())
       )
     }
 
@@ -379,7 +384,7 @@ export default function Opportunities({ toast }) {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, sortKey, sortDir])
+  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, sortKey, sortDir])
 
   // ── Tab switch — filters are scoped to the tab that applied them. Search
   // remains because it is a separate, deliberate cross-tab lookup.
@@ -560,6 +565,11 @@ export default function Opportunities({ toast }) {
   const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(samOpps.map((opportunity) =>
     applySAMSnapshot(opportunity, samChangesByRow[opportunity._rowIndex]?.latest)
   )), [samChangesByRow, samOpps])
+  const samSearchIndex = useMemo(() => buildSearchIndex(currentSAMOpps), [currentSAMOpps])
+  const samRowsMatchingSearch = useMemo(
+    () => new Set(filterSearchIndex(samSearchIndex, search)),
+    [samSearchIndex, search]
+  )
 
   // Distinct departments from all SAM opportunities (for department filter)
   const samDepartments = useMemo(() => {
@@ -574,9 +584,9 @@ export default function Opportunities({ toast }) {
     if (s === 'dismissed' && !showDismissed && !searching) return false
     if (!samTypeMatches(o, samTypeFilter)) return false
     if (deptFilter.size > 0 && !deptFilter.has((o['Department'] || '').trim())) return false
-    if (searching && !recordMatches(o, search)) return false
+    if (searching && !samRowsMatchingSearch.has(o)) return false
     return true
-  }), samSortMode), [currentSAMOpps, deptFilter, samSortMode, samTypeFilter, search, showDismissed])
+  }), samSortMode), [currentSAMOpps, deptFilter, samRowsMatchingSearch, samSortMode, samTypeFilter, search, showDismissed])
 
   const cycleSAMResponseSort = () => {
     setSAMSortMode((current) =>
