@@ -15,6 +15,7 @@ import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/ut
 import { recordMatches } from '@/utils/searchHelpers'
 import {
   applySAMSnapshot,
+  dedupeSAMOpportunities,
   normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
@@ -556,9 +557,9 @@ export default function Opportunities({ toast }) {
     savedScrollTop.current = tableScrollRef.current?.scrollTop ?? 0
   }, [])
 
-  const currentSAMOpps = useMemo(() => samOpps.map((opportunity) =>
+  const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(samOpps.map((opportunity) =>
     applySAMSnapshot(opportunity, samChangesByRow[opportunity._rowIndex]?.latest)
-  ), [samChangesByRow, samOpps])
+  )), [samChangesByRow, samOpps])
 
   // Distinct departments from all SAM opportunities (for department filter)
   const samDepartments = useMemo(() => {
@@ -1061,7 +1062,7 @@ export default function Opportunities({ toast }) {
                       // All buttons same size, text centered
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
-                        <tr key={opp['Notice ID']}
+                        <tr key={`${opp['Notice ID'] || opp['Solicitation Number'] || 'sam'}:${opp._rowIndex}`}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
                           {selectionMode && <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
                             <input type="checkbox"
