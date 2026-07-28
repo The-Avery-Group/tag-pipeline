@@ -55,6 +55,7 @@ let activeTableSignature = ''
 let activeTables = new Set(CORE_TABLES)
 const dirtyTables = new Set()
 const lastTableRefreshAt = new Map()
+const verificationTimers = new Map()
 const listeners = new Set()
 
 export function onCacheRefresh(listener) {
@@ -148,6 +149,25 @@ export async function invalidateCache(tableNames = []) {
   } catch (error) {
     console.warn('[Cache] Refresh failed:', error.message)
   }
+}
+
+/**
+ * Re-read newly created rows without making the save button wait for a full
+ * table download. Calls for the same table are coalesced into one verification.
+ */
+export function verifyCacheInBackground(tableNames = [], delayMs = 350) {
+  const targets = [...new Set(tableNames)].filter((tableName) => loaders[tableName])
+  targets.forEach((tableName) => {
+    if (verificationTimers.has(tableName)) clearTimeout(verificationTimers.get(tableName))
+    const timer = setTimeout(() => {
+      verificationTimers.delete(tableName)
+      forceRefreshCache([tableName]).catch((error) => {
+        dirtyTables.add(tableName)
+        console.warn(`[Cache] Background verification failed for ${tableName}:`, error.message)
+      })
+    }, delayMs)
+    verificationTimers.set(tableName, timer)
+  })
 }
 
 function cachedTargets(tableNames) {
@@ -254,4 +274,6 @@ export function stopPolling() {
   activeTables = new Set(CORE_TABLES)
   dirtyTables.clear()
   lastTableRefreshAt.clear()
+  verificationTimers.forEach((timer) => clearTimeout(timer))
+  verificationTimers.clear()
 }
