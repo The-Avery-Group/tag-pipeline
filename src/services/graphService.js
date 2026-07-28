@@ -59,6 +59,10 @@ function invalidate(sheet) {
 /** Clear the entire cache — called by dataCache before a full re-fetch. */
 export function invalidateAll() {
   cache.clear()
+  // A workbook table can gain or lose columns while the app is open. Keeping
+  // the old schema after a full refresh makes row PATCH payloads the wrong
+  // width, which Excel rejects with a range-dimensions error.
+  headerCache.clear()
   notificationRecipientsUnavailable = false
   contactInteractionsUnavailable = false
 }
@@ -73,8 +77,8 @@ export function getCachedTableNames() {
   return [...cache.keys()]
 }
 
-async function getTableHeaders(tableName) {
-  if (headerCache.has(tableName)) return headerCache.get(tableName)
+async function getTableHeaders(tableName, { force = false } = {}) {
+  if (!force && headerCache.has(tableName)) return headerCache.get(tableName)
   const headerData = await graphFetch(`/tables/${tableName}/columns`)
   const headers = headerData.value.map((column) => column.name)
   headerCache.set(tableName, headers)
@@ -330,8 +334,18 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, { retryReads: true })
   const values = response?.values?.[0]
   if (!values) throw new Error(`Row ${targetRowIndex} not found in ${tableName}`)
+  let activeHeaders = Array.isArray(headers) ? headers : []
+  if (activeHeaders.length !== values.length) {
+    activeHeaders = await getTableHeaders(tableName, { force: true })
+  }
+  if (activeHeaders.length !== values.length) {
+    throw new Error(
+      `${tableName} has ${activeHeaders.length} table columns but this row has ${values.length}. ` +
+      'Refresh the workbook table structure before saving.',
+    )
+  }
   let current = { _rowIndex: targetRowIndex }
-  headers.forEach((header, index) => {
+  activeHeaders.forEach((header, index) => {
     current[header] = DATE_COLUMNS.has(header) ? excelDateToISO(values[index]) : values[index]
   })
 
@@ -351,6 +365,9 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
     }
     targetRowIndex = relocated._rowIndex
     current = relocated
+    // getSheetRows() above used the newly refreshed header list. Keep the
+    // outgoing row aligned with that same live schema.
+    activeHeaders = await getTableHeaders(tableName)
   }
 
   const conflictedFields = externallyChangedPatchedFields(cached, current, patch)
@@ -359,7 +376,7 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   }
 
   const merged = { ...current, ...patch }
-  const row = headers.map((h) => {
+  const row = activeHeaders.map((h) => {
     const val = merged[h] ?? ''
     return DATE_COLUMNS.has(h) ? isoToExcelSerial(val) : val
   })
