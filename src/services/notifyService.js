@@ -34,18 +34,22 @@ async function sendNotification(type, payload) {
 }
 
 // Scheduled, app-only notifications are the primary path once the Worker is
-// configured. The browser's ageing-reminder hook checks this before acting;
-// if the Worker reports an integration failure it resumes as the fallback.
+// configured. A failed or temporarily unreadable run must not hand ownership
+// back to every signed-in browser, because each login would then attempt the
+// same reminder cycle. The browser fallback is used only when the Worker
+// explicitly reports that app-only delivery is not configured.
 export async function scheduledNotificationsArePrimary() {
   if (!WORKER_URL) return false
   try {
     const response = await workerFetch('/integrations/status', { cache: 'no-store' })
-    if (!response.ok) return false
+    // A transient status/auth/network failure is not proof that app-only
+    // delivery is unavailable. Fail closed to avoid duplicate Teams cards.
+    if (!response.ok) return true
     const payload = await response.json()
     const state = payload?.notifications
-    return Boolean(state?.appOnlyAvailable && state?.lastRun?.ok !== false)
+    return state?.appOnlyAvailable !== false
   } catch {
-    return false
+    return true
   }
 }
 
@@ -140,7 +144,7 @@ async function notifyTaskSummary(type, tasks) {
   const directory = await recipientDirectory()
 
   return sendNotification(type, {
-    ...(type === 'overdue_summary' ? { summaryDate: localCalendarDay() } : {}),
+    summaryDate: localCalendarDay(),
     people: groups.map((group) => ({
       ...group,
       recipient: directory.get(group.assignee.toLowerCase()) || { name: group.assignee, id: '' },
