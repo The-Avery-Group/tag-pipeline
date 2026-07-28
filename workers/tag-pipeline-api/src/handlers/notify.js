@@ -12,12 +12,14 @@ function json(data, status = 200) {
 
 const text = (value) => String(value ?? '').trim()
 
-function overdueSummaryDedupeKey(type, payload) {
-  if (type !== 'overdue_summary') return ''
+export function taskSummaryDedupeKey(type, payload) {
+  if (!['overdue_summary', 'due_soon_summary'].includes(type)) return ''
   const date = text(payload?.summaryDate)
   // The browser provides its local calendar day so the card follows the
   // same day boundary as the signed-in users who trigger the check.
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? `teams_notification:overdue:${date}` : ''
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return ''
+  const category = type === 'overdue_summary' ? 'overdue' : 'duesoon'
+  return `teams_notification:${category}:${date}`
 }
 
 async function reserveDedupeKey(env, key, expirationTtl = 172800) {
@@ -454,7 +456,7 @@ export async function handleNotify(req, env) {
   if (!type || !payload) return json({ error: 'Missing type or payload' }, 400)
 
   const reservedKeys = []
-  const dedupeKey = overdueSummaryDedupeKey(type, payload)
+  const dedupeKey = taskSummaryDedupeKey(type, payload)
   if (!(await reserveDedupeKey(env, dedupeKey))) return json({ ok: true, deduplicated: true })
   if (dedupeKey) reservedKeys.push(dedupeKey)
 
