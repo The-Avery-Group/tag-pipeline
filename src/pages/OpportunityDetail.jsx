@@ -11,11 +11,13 @@ import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
+import { useSAMChangeSuggestion } from '@/hooks/useSAMChangeSuggestion'
 import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardHistory'
 import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import PeopleSearch from '@/components/PeopleSearch/PeopleSearch'
 import RfiFollowUpPanel from '@/components/Opportunity/RfiFollowUpPanel'
 import RelatedContactsPanel from '@/components/Opportunity/RelatedContactsPanel'
+import SAMChangeSuggestion from '@/components/Opportunity/SAMChangeSuggestion'
 import OpportunityField from '@/components/Opportunity/OpportunityField'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
@@ -387,6 +389,7 @@ export default function OpportunityDetail({ toast }) {
   const [renameProgress, setRenameProgress] = useState('')
   const [addingEightANote, setAddingEightANote] = useState(false)
   const [eightANoteAdded, setEightANoteAdded] = useState(false)
+  const [applyingSAMUpdate, setApplyingSAMUpdate] = useState(false)
   
 
   const opp = useMemo(
@@ -403,6 +406,7 @@ export default function OpportunityDetail({ toast }) {
 
   const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI])
   const rfiFollowUpMonitor = useRfiFollowUpMonitor(opp ? [opp] : [], contacts)
+  const samChangeSuggestion = useSAMChangeSuggestion(opp, C)
   const followUpPanelRef = useRef(null)
   const focusFollowUps = searchParams.get('focus') === 'follow-ups'
 
@@ -638,6 +642,34 @@ export default function OpportunityDetail({ toast }) {
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
   const handleCancel = () => { setForm(null); setEditing(false) }
+
+  const handleApplySAMUpdate = async () => {
+    const patch = samChangeSuggestion.suggestion?.patch
+    if (!patch || Object.keys(patch).length === 0 || applyingSAMUpdate) return
+    setApplyingSAMUpdate(true)
+    try {
+      await updateOpp(opp._rowIndex, patch, opp)
+      await samChangeSuggestion.markReviewed()
+      toast?.success('Pipeline updated with the latest SAM.gov information')
+    } catch (error) {
+      toast?.error(`SAM update failed: ${error.message}`)
+    } finally {
+      setApplyingSAMUpdate(false)
+    }
+  }
+
+  const handleKeepCurrentSAMValues = async () => {
+    if (applyingSAMUpdate) return
+    setApplyingSAMUpdate(true)
+    try {
+      await samChangeSuggestion.markReviewed()
+      toast?.success('Current pipeline values kept')
+    } catch (error) {
+      toast?.error(error.message)
+    } finally {
+      setApplyingSAMUpdate(false)
+    }
+  }
 
   const persistOpportunity = async (nextForm) => {
     setSaving(true)
@@ -1008,6 +1040,7 @@ export default function OpportunityDetail({ toast }) {
           {followUpStatus?.badgeVisible && <button className="badge" style={{ background: followUpStatus.badgeState === 'seen' ? 'var(--gray-100)' : 'var(--blue-50)', border: `0.5px solid ${followUpStatus.badgeState === 'seen' ? 'var(--gray-300)' : 'var(--blue-200)'}`, color: followUpStatus.badgeState === 'seen' ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer' }} onClick={() => { rfiFollowUpMonitor.markSeen(opp[C.contractNum]).catch(() => {}); const next = new URLSearchParams(searchParams); next.set('focus', 'follow-ups'); navigate({ search: `?${next.toString()}` }, { replace: true }) }} title={`${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}>
             {followUpStatus.badgeState === 'seen' ? 'Follow-ups seen' : `${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
+          {samChangeSuggestion.suggestion && <span className="badge badge-qualify">SAM update available</span>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
           {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Exact UEI match to TAG partner ${incumbentPartnerMatch.partner['Partner Name']}`}>Incumbent is a TAG partner</span>}
         </div>}
@@ -1018,6 +1051,13 @@ export default function OpportunityDetail({ toast }) {
           onClick={() => navigate(returnTo)}>
           ← Opportunities
         </button>
+
+        <SAMChangeSuggestion
+          suggestion={samChangeSuggestion.suggestion}
+          applying={applyingSAMUpdate}
+          onApply={handleApplySAMUpdate}
+          onKeepCurrent={handleKeepCurrentSAMValues}
+        />
 
         {/* ── Page header ── */}
         <div className={styles.pageHeader}>
