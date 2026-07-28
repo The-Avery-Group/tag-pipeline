@@ -154,17 +154,26 @@ async function findCurrentRecord(env, watch) {
 }
 
 function publicWatch(watch) {
+  const fields = watch.change?.fields || []
+  const changeDay = clean(watch.change?.changedAt).slice(0, 10)
+  const addedDay = clean(watch.dateAdded).slice(0, 10)
+  const invalidInitialBadge = fields.length === 1 &&
+    fields[0] === 'samUpdate' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(changeDay) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(addedDay) &&
+    changeDay <= addedDay
+  const visibleChange = invalidInitialBadge ? null : watch.change
   return {
     rowIndex: watch.rowIndex,
     noticeId: watch.noticeId,
     solicitationNumber: watch.solicitationNumber,
-    changed: Boolean(watch.change && !watch.change.reviewedAt),
-    change: watch.change ? {
-      fields: watch.change.fields || [],
-      summary: watch.change.summary || '',
-      changedAt: watch.change.changedAt,
-      reviewedAt: watch.change.reviewedAt || null,
-      uiLink: watch.change.uiLink || watch.snapshot?.uiLink || '',
+    changed: Boolean(visibleChange && !visibleChange.reviewedAt),
+    change: visibleChange ? {
+      fields: visibleChange.fields || [],
+      summary: visibleChange.summary || '',
+      changedAt: visibleChange.changedAt,
+      reviewedAt: visibleChange.reviewedAt || null,
+      uiLink: visibleChange.uiLink || watch.snapshot?.uiLink || '',
     } : null,
     lastCheckedAt: watch.lastCheckedAt || null,
     latest: watch.snapshot || null,
@@ -248,8 +257,20 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
       if (record) {
         const nextSnapshot = snapshot(record)
         const sourceDate = nextSnapshot.modifiedDate || nextSnapshot.postedDate
-        const added = Date.parse(watch.dateAdded || '')
-        const changedAfterAdded = Number.isFinite(added) && Date.parse(sourceDate || '') > added
+        // Date Added has no time component. Compare calendar days so a notice
+        // pulled later on its first day is not immediately labelled updated.
+        const sourceDay = clean(sourceDate).slice(0, 10)
+        const addedDay = clean(watch.dateAdded).slice(0, 10)
+        const changedAfterAdded = /^\d{4}-\d{2}-\d{2}$/.test(sourceDay) &&
+          /^\d{4}-\d{2}-\d{2}$/.test(addedDay) &&
+          sourceDay > addedDay
+        if (
+          watch.change?.fields?.length === 1 &&
+          watch.change.fields[0] === 'samUpdate' &&
+          !changedAfterAdded
+        ) {
+          delete watch.change
+        }
         if (watch.snapshot) {
           const fields = differences(watch.snapshot, nextSnapshot)
           if (fields.length) {
