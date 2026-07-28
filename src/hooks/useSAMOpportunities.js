@@ -4,7 +4,12 @@ import {
   getContacts, addContact, addOpportunity,
   getSAMNAICS, getSAMSettings,
 } from '@/services/graphService'
-import { invalidateCache, onCacheRefresh } from '@/services/dataCache'
+import {
+  invalidateCache,
+  onCacheRefresh,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
+import { retryIdempotent } from '@/services/workbookMutations'
 import { notifyNewOpportunity } from '@/services/notifyService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
@@ -97,14 +102,6 @@ function startSharedPullPolling({ reconcileNow = false } = {}) {
   // triggering page waits for its normal interval so it cannot accidentally
   // read the previous run before the Worker writes the new running status.
   if (reconcileNow) refreshSharedPullProgress()
-}
-
-async function retryThrice(fn) {
-  let lastErr
-  for (let i = 0; i < 3; i++) {
-    try { return await fn() } catch (err) { lastErr = err }
-  }
-  throw lastErr
 }
 
 // ── POC parser ────────────────────────────────────────────────────────────
@@ -279,7 +276,7 @@ export function useSAMOpportunities() {
       prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
     )
     try {
-      await retryThrice(() => updateSAMOpportunity(rowIndex, { Status: status }))
+      await retryIdempotent(() => updateSAMOpportunity(rowIndex, { Status: status }))
       setFailedStatuses((previous) => {
         if (!previous[rowIndex]) return previous
         const next = { ...previous }
@@ -322,8 +319,9 @@ export function useSAMOpportunities() {
       'Other Links*':                            row['SAM.gov URL']          || '',
     }
 
-    await addOpportunity(opportunity)
-    notifyNewOpportunity(opportunity).catch(() => {})
+    const saved = await addOpportunity(opportunity)
+    if (!saved._alreadyExisted) notifyNewOpportunity(opportunity).catch(() => {})
+    verifyCacheInBackground(['PipelineTable'])
 
     await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
   }, [resolveContact, updateStatus])
