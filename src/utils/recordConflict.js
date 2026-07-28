@@ -16,5 +16,7 @@ export function recordIdentity(tableName, row) {
 
 export function externallyChangedPatchedFields(cached, current, patch) {
   if (!cached) return []
-  return Object.keys(patch).filter((field) => cached[field] !== current[field])
+  return Object.keys(patch).filter((field) =>
+    cached[field] !== current[field] && current[field] !== patch[field]
+  )
 }
