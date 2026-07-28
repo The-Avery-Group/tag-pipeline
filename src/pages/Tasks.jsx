@@ -9,7 +9,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
-import { recordMatches } from '@/utils/searchHelpers'
+import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import styles from './Tasks.module.css'
 
 const STATUSES  = ['All', 'Overdue', 'To Do', 'In Progress', 'Done']
@@ -360,6 +360,12 @@ export default function Tasks({ toast }) {
   useEffect(() => { localStorage.setItem('tasks_sort_by', sortBy) }, [sortBy])
   useEffect(() => { localStorage.setItem('tasks_sort_dir', sortDir) }, [sortDir])
 
+  const taskSearchIndex = useMemo(() => buildSearchIndex(tasks), [tasks])
+  const tasksMatchingSearch = useMemo(
+    () => new Set(filterSearchIndex(taskSearchIndex, search)),
+    [taskSearchIndex, search]
+  )
+
   const filtered = useMemo(() => {
     let rows = statusFilter === 'All'
       ? tasks
@@ -368,7 +374,7 @@ export default function Tasks({ toast }) {
         : tasks.filter((t) => t.Status === statusFilter)
     if (priorityFilter !== 'All') rows = rows.filter((t) => t.Priority === priorityFilter)
     if (hideDone) rows = rows.filter((t) => t.Status !== 'Done')
-    if (search.trim()) rows = rows.filter((task) => recordMatches(task, search))
+    if (search.trim()) rows = rows.filter((task) => tasksMatchingSearch.has(task))
     return [...rows].sort((a, b) => {
       let cmp = 0
       if (sortBy === 'Due Date') {
@@ -387,7 +393,7 @@ export default function Tasks({ toast }) {
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [tasks, statusFilter, priorityFilter, hideDone, search, sortBy, sortDir])
+  }, [tasks, statusFilter, priorityFilter, hideDone, search, sortBy, sortDir, tasksMatchingSearch])
 
   const grouped = useMemo(() => {
     if (groupBy === 'None') return { '': filtered }
