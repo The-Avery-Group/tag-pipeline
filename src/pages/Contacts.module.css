@@ -1,32 +1,3 @@
-.pageTabs {
-  align-items: center;
-  border-bottom: 0.5px solid var(--gray-200);
-  display: flex;
-  gap: 20px;
-  margin-bottom: 14px;
-}
-
-.pageTab {
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--gray-500);
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 500;
-  padding: 8px 1px 9px;
-}
-
-.pageTab:hover {
-  color: var(--gray-900);
-}
-
-.pageTabActive {
-  border-bottom-color: var(--blue-600);
-  color: var(--gray-900);
-}
-
 /* ── Search bar ── */
 .searchBar {
   display: flex;
