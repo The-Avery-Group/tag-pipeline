@@ -9,7 +9,14 @@ import { ThemeProvider } from '@/theme/ThemeContext'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
 import Modal from '@/components/Common/Modal'
-import { warmCache, startPolling, stopPolling, invalidateCache, isCacheWarmed } from '@/services/dataCache'
+import {
+  warmCache,
+  startPolling,
+  stopPolling,
+  invalidateCache,
+  isCacheWarmed,
+  setActiveCacheTables,
+} from '@/services/dataCache'
 import {
   clearSessionRefreshRequired,
   getToken,
@@ -30,6 +37,37 @@ const Partners          = lazy(() => import('@/pages/Partners'))
 const Settings          = lazy(() => import('@/pages/Settings'))
 const Lookup            = lazy(() => import('@/pages/Lookup'))
 const Login             = lazy(() => import('@/pages/Login'))
+
+function cacheTablesForLocation(location) {
+  const path = location.pathname
+  const params = new URLSearchParams(location.search)
+
+  if (path === '/') return ['PipelineTable', 'TasksTable']
+  if (path.startsWith('/opportunities/')) {
+    return ['PipelineTable', 'NotesTable', 'TasksTable', 'ContactsTable', 'DataValidationTable']
+  }
+  if (path === '/opportunities') {
+    return params.get('tab') === 'New'
+      ? ['PipelineTable', 'NewOpportunitiesTable', 'DataValidationTable']
+      : ['PipelineTable', 'NotesTable', 'ContactsTable', 'DataValidationTable']
+  }
+  if (path === '/pipeline-board') return ['PipelineTable', 'DataValidationTable']
+  if (path === '/tasks') return ['TasksTable', 'PipelineTable', 'DataValidationTable']
+  if (path === '/contacts') {
+    return ['ContactsTable', 'ContactInteractionsTable', 'PipelineTable', 'DataValidationTable']
+  }
+  if (path === '/partners') return ['PartnersTable', 'PipelineTable']
+  if (path === '/settings') return ['DataValidationTable']
+  if (path === '/lookup') {
+    return params.get('view') === 'people'
+      ? ['ContactsTable', 'DataValidationTable']
+      : ['PipelineTable', 'DataValidationTable']
+  }
+  if (path === '/ai-chat') {
+    return ['PipelineTable', 'TasksTable', 'ContactsTable', 'NotesTable']
+  }
+  return []
+}
 
 // Shown only while lazy chunks load (very brief)
 function PageFallback() {
@@ -169,6 +207,14 @@ function AppShell() {
   useEffect(() => {
     if (!isAuthenticated) setCacheReady(false)
   }, [isAuthenticated])
+
+  // Keep direct workbook edits visible without repeatedly downloading every
+  // cached table. The cache coordinator refreshes only the datasets needed by
+  // the current route, while retaining inactive data for fast navigation.
+  useEffect(() => {
+    if (!isAuthenticated) return
+    setActiveCacheTables(cacheTablesForLocation(location))
+  }, [isAuthenticated, location.pathname, location.search])
 
   if (loading || (isAuthenticated && !cacheReady)) return <AuthInitScreen />
 
