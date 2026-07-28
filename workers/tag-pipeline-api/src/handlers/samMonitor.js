@@ -167,6 +167,7 @@ function publicWatch(watch) {
       uiLink: watch.change.uiLink || watch.snapshot?.uiLink || '',
     } : null,
     lastCheckedAt: watch.lastCheckedAt || null,
+    latest: watch.snapshot || null,
   }
 }
 
@@ -306,10 +307,18 @@ async function check(req, env) {
 }
 
 export async function handleSAMMonitor(req, env) {
-  const path = new URL(req.url).pathname
+  const url = new URL(req.url)
+  const path = url.pathname
   if (path === '/sam/changes/sync' && req.method === 'POST') return sync(req, env)
   if (path === '/sam/changes/check' && req.method === 'POST') return check(req, env)
   if (path === '/sam/changes/status' && req.method === 'GET') {
+    const noticeId = clean(url.searchParams.get('noticeId'))
+    const solicitationNumber = clean(url.searchParams.get('solicitationNumber'))
+    if (noticeId || solicitationNumber) {
+      const watch = await readWatch(env, watchKey({ noticeId, solicitationNumber }))
+      const run = await env.CACHE.get(RUN_KEY, 'json')
+      return json({ watches: watch ? [publicWatch(watch)] : [], run: run || null })
+    }
     const [watches, run] = await Promise.all([listWatches(env), env.CACHE.get(RUN_KEY, 'json')])
     return json({ watches: watches.map(publicWatch), run: run || null })
   }
@@ -319,7 +328,12 @@ export async function handleSAMMonitor(req, env) {
     if (!watch) {
       const notice = normalized(body?.['Notice ID'] ?? body?.noticeId)
       const solicitation = normalized(body?.['Solicitation Number'] ?? body?.solicitationNumber)
-      watch = (await listWatches(env)).find((item) => normalized(item.noticeId) === notice || (solicitation && normalized(item.solicitationNumber) === solicitation))
+      const rowIndex = Number(body?._rowIndex ?? body?.rowIndex)
+      watch = (await listWatches(env)).find((item) =>
+        (Number.isFinite(rowIndex) && Number(item.rowIndex) === rowIndex) ||
+        normalized(item.noticeId) === notice ||
+        (solicitation && normalized(item.solicitationNumber) === solicitation)
+      )
     }
     if (!watch) return json({ error: 'Monitor record not found' }, 404)
     if (watch.change) watch.change.reviewedAt = new Date().toISOString()
