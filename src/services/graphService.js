@@ -1,6 +1,11 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { msalInstance, loginRequest } from '@/auth/msalConfig'
 import { externallyChangedPatchedFields, recordIdentity } from '@/utils/recordConflict'
+import {
+  appendWithReconciliation,
+  createFingerprint,
+  createStableId,
+} from '@/services/workbookMutations'
 
 // VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook,
 // e.g. 01FVYRIFDLMKLW3D4HKVE34O5ZGVXE4Y6H
@@ -75,6 +80,20 @@ export function invalidateTables(tableNames = []) {
 /** Tables already loaded in this browser session. */
 export function getCachedTableNames() {
   return [...cache.keys()]
+}
+
+async function createWorkbookRecord({ tableName, idColumn, idValue, ...options }) {
+  const previousRows = cache.get(tableName)
+  const saved = await appendWithReconciliation({ idColumn, idValue, ...options })
+  const baseRows = cache.get(tableName) || previousRows
+  if (baseRows) {
+    const identity = String(idValue || '').trim().toLowerCase()
+    const withoutDuplicate = baseRows.filter((row) =>
+      String(row?.[idColumn] || '').trim().toLowerCase() !== identity
+    )
+    cache.set(tableName, [...withoutDuplicate, saved])
+  }
+  return saved
 }
 
 async function getTableHeaders(tableName, { force = false } = {}) {
@@ -787,7 +806,22 @@ function partnerValuesForWorkbook(values, schema) {
 
 export async function addPartner(data) {
   const schema = await partnerSchema()
-  return appendRow('PartnersTable', partnerValuesForWorkbook(data, schema), schema.headers)
+  const record = partnerValuesForWorkbook(data, schema)
+  const uei = String(record['UEI Number'] || '').trim().toUpperCase()
+  if (!uei) throw new Error('UEI Number is required before creating a partner')
+  return createWorkbookRecord({
+    tableName: 'PartnersTable',
+    operationKey: `partner:${uei}`,
+    idColumn: 'UEI Number',
+    idValue: uei,
+    record: { ...record, 'UEI Number': uei },
+    append: () => appendRow('PartnersTable', { ...record, 'UEI Number': uei }, schema.headers),
+    readRows: async () => {
+      invalidate('PartnersTable')
+      return getPartners()
+    },
+    checkBeforeAppend: true,
+  })
 }
 
 export async function updatePartner(rowIndex, patch) {
@@ -841,10 +875,25 @@ export async function getNotificationRecipients() {
 }
 
 export async function addOpportunity(data) {
-  return appendRow('PipelineTable', {
+  const record = {
     ...data,
     'Last Modified*': new Date().toISOString().split('T')[0],
-  }, PIPELINE_HEADERS)
+  }
+  const identifier = String(record['Contract Number / Notice ID'] || '').trim()
+  if (!identifier) throw new Error('Contract Number / Notice ID is required before creating an opportunity')
+  return createWorkbookRecord({
+    tableName: 'PipelineTable',
+    operationKey: `opportunity:${identifier.toLowerCase()}`,
+    idColumn: 'Contract Number / Notice ID',
+    idValue: identifier,
+    record,
+    append: () => appendRow('PipelineTable', record, PIPELINE_HEADERS),
+    readRows: async () => {
+      invalidate('PipelineTable')
+      return getPipeline()
+    },
+    checkBeforeAppend: true,
+  })
 }
 
 export async function updateOpportunity(rowIndex, patch) {
@@ -858,15 +907,26 @@ export async function deleteOpportunity(rowIndex) {
   return deleteRow('PipelineTable', rowIndex)
 }
 
-export async function addNote(contractNumber, author, text) {
-  const id = `N-${Date.now()}`
-  return appendRow('NotesTable', {
-    NoteID: id,
+export async function addNote(contractNumber, author, text, noteId = createStableId('N')) {
+  const record = {
+    NoteID: noteId,
     ContractNumber: contractNumber,
     Date: new Date().toISOString().split('T')[0],
     Author: author,
     NoteText: text,
-  }, NOTES_HEADERS)
+  }
+  return createWorkbookRecord({
+    tableName: 'NotesTable',
+    operationKey: `note:${createFingerprint({ contractNumber, author, text })}`,
+    idColumn: 'NoteID',
+    idValue: noteId,
+    record,
+    append: () => appendRow('NotesTable', record, NOTES_HEADERS),
+    readRows: async () => {
+      invalidate('NotesTable')
+      return getNotes()
+    },
+  })
 }
 
 export async function updateNote(rowIndex, patch) {
@@ -877,16 +937,27 @@ export async function deleteNote(rowIndex) {
   return deleteRow('NotesTable', rowIndex)
 }
 
-export async function addTask(data, createdBy) {
-  const id = `T-${Date.now()}`
-  return appendRow('TasksTable', {
+export async function addTask(data, createdBy, taskId = createStableId('T')) {
+  const record = {
     ...data,
-    TaskID: id,
+    TaskID: taskId,
     Status: 'To Do',
     CreatedBy: createdBy,
     CreatedDate: new Date().toISOString().split('T')[0],
     UpdatedDate: new Date().toISOString().split('T')[0],
-  }, TASKS_HEADERS)
+  }
+  return createWorkbookRecord({
+    tableName: 'TasksTable',
+    operationKey: `task:${createFingerprint({ ...data, createdBy })}`,
+    idColumn: 'TaskID',
+    idValue: taskId,
+    record,
+    append: () => appendRow('TasksTable', record, TASKS_HEADERS),
+    readRows: async () => {
+      invalidate('TasksTable')
+      return getTasks()
+    },
+  })
 }
 
 export async function updateTask(rowIndex, patch) {
@@ -1126,8 +1197,7 @@ export async function deleteTask(rowIndex) {
   return deleteRow('TasksTable', rowIndex)
 }
 
-export async function addContact(data) {
-  const id = `C-${Date.now()}`
+export async function addContact(data, contactId = createStableId('C')) {
   // ContactsTable can gain the optional Offices column while the app is open.
   // Refresh only this schema before a write so column order stays correct.
   headerCache.delete('ContactsTable')
@@ -1135,14 +1205,28 @@ export async function addContact(data) {
   if (String(data.Offices || '').trim() && !headers.includes('Offices')) {
     throw new Error('Add an "Offices" column to ContactsTable before saving office assignments')
   }
-  await appendRow('ContactsTable', { ...data, ContactID: id }, headers)
-  return { ...data, ContactID: id }
+  const record = { ...data, ContactID: contactId }
+  return createWorkbookRecord({
+    tableName: 'ContactsTable',
+    operationKey: `contact:${createFingerprint({
+      email: data.Email,
+      name: data.Name,
+      organization: data.Agency || data.Organization,
+    })}`,
+    idColumn: 'ContactID',
+    idValue: contactId,
+    record,
+    append: () => appendRow('ContactsTable', record, headers),
+    readRows: async () => {
+      invalidate('ContactsTable')
+      return getContacts()
+    },
+  })
 }
 
-export async function addContactInteraction(data) {
+export async function addContactInteraction(data, interactionId = createStableId('CI')) {
   const contactId = String(data.ContactID || '').trim()
   if (!contactId) throw new Error('Contact ID is required')
-  const id = `CI-${Date.now()}`
   // This table is often created by hand. Read its live schema before writing
   // so a harmless column reordering cannot make a log entry fail silently.
   headerCache.delete(CONTACT_INTERACTIONS_TABLE)
@@ -1151,9 +1235,19 @@ export async function addContactInteraction(data) {
   if (missing.length) {
     throw new Error(`ContactInteractionsTable is missing: ${missing.join(', ')}`)
   }
-  const interaction = { ...data, InteractionID: id }
-  await appendRow(CONTACT_INTERACTIONS_TABLE, interaction, headers)
-  return interaction
+  const interaction = { ...data, InteractionID: interactionId }
+  return createWorkbookRecord({
+    tableName: CONTACT_INTERACTIONS_TABLE,
+    operationKey: `interaction:${createFingerprint(data)}`,
+    idColumn: 'InteractionID',
+    idValue: interactionId,
+    record: interaction,
+    append: () => appendRow(CONTACT_INTERACTIONS_TABLE, interaction, headers),
+    readRows: async () => {
+      invalidate(CONTACT_INTERACTIONS_TABLE)
+      return (await getContactInteractions()) || []
+    },
+  })
 }
 
 export async function updateContact(rowIndex, patch) {
@@ -1211,7 +1305,21 @@ export async function getSAMOpportunities() {
 
 export async function addSAMOpportunity(data) {
   const headers = await getTableHeaders('NewOpportunitiesTable')
-  return appendRow('NewOpportunitiesTable', data, headers)
+  const idColumn = String(data['Notice ID'] || '').trim() ? 'Notice ID' : 'Solicitation Number'
+  const idValue = String(data[idColumn] || '').trim()
+  return createWorkbookRecord({
+    tableName: 'NewOpportunitiesTable',
+    operationKey: `sam-opportunity:${idValue.toLowerCase()}`,
+    idColumn,
+    idValue,
+    record: data,
+    append: () => appendRow('NewOpportunitiesTable', data, headers),
+    readRows: async () => {
+      invalidate('NewOpportunitiesTable')
+      return getSAMOpportunities()
+    },
+    checkBeforeAppend: true,
+  })
 }
 
 export async function updateSAMOpportunity(rowIndex, patch) {
