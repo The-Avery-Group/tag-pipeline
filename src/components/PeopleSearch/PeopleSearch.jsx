@@ -103,9 +103,10 @@ function configureGoogleCallbacks(resolve) {
                 .map(normalizeGoogleResult)
                 .filter(isPublicLinkedInProfile),
             })
-            resultsDiv.hidden = true
+            // Keep Google's internal result nodes intact. Removing them makes
+            // the same search element unable to execute a broadened or second
+            // query until the browser reloads the whole page.
             resultsDiv.setAttribute('aria-hidden', 'true')
-            resultsDiv.replaceChildren()
             return true
           }
           return typeof previousReady === 'function'
@@ -497,6 +498,7 @@ export default function PeopleSearch({
 
     try {
       const element = await prepareGoogleElement()
+      element.clearAllResults?.()
       searchTimeoutRef.current = window.setTimeout(() => {
         searchTimeoutRef.current = null
         setSearching(false)
