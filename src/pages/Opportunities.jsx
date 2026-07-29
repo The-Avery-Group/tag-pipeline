@@ -1771,3 +1771,4 @@ export default function Opportunities({ toast }) {
     </>
   )
 }
+
