@@ -1143,11 +1143,19 @@ export default function Opportunities({ toast }) {
                                       </button>
                                     </>
                                   )}
-                                  {isActioned && linkedOpportunity && !selectionMode && (
-                                    <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
-                                      onClick={() => openOpportunity(linkedOpportunity)}>
-                                      View pipeline
-                                    </button>
+                                  {isActioned && !selectionMode && (
+                                    <>
+                                      {linkedOpportunity && (
+                                        <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                          onClick={() => openOpportunity(linkedOpportunity)}>
+                                          View pipeline
+                                        </button>
+                                      )}
+                                      <button className={`${styles.newAction} ${styles.newActionDismiss}`} style={btnSm}
+                                        disabled={isActioning} onClick={() => handleDismiss(opp)}>
+                                        {isActioning ? '…' : 'Dismiss'}
+                                      </button>
+                                    </>
                                   )}
                                   {syncFailure && !selectionMode && (
                                     <button className={`btn ${styles.newActionSam}`} style={btnSm}
