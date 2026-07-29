@@ -109,6 +109,7 @@
 }
 
 .conceptGroup > div {
+  align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -116,16 +117,21 @@
 }
 
 .conceptGroup small {
+  align-items: center;
+  align-self: flex-start;
   background: var(--surface);
   border: 0.5px solid var(--gray-200);
   border-radius: 999px;
   color: var(--gray-700);
+  display: inline-flex;
+  flex: 0 0 auto;
   font-size: 10px;
   line-height: 1.2;
   max-width: 100%;
-  overflow-wrap: anywhere;
   padding: 3px 6px;
+  overflow-wrap: break-word;
   white-space: normal;
+  width: fit-content;
 }
 
 .aliasLine {
