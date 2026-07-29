@@ -50,6 +50,8 @@
   min-height: 82px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   line-height: 1.5;
+  overflow-y: hidden;
+  resize: none;
 }
 
 .queryActions {
@@ -261,6 +263,30 @@
   pointer-events: none;
 }
 
+.resultStatuses {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.possibleFormerBadge {
+  background: var(--amber-50);
+  border: 0.5px solid var(--amber-600);
+  border-radius: 999px;
+  color: var(--amber-700);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.currentRoleWarning {
+  color: var(--amber-700) !important;
+  font-weight: 600;
+}
+
 .resultDetail {
   border-left: 0.5px solid var(--gray-200);
   display: flex;
@@ -452,6 +478,10 @@
 
   .reviewStatus {
     justify-self: start;
+  }
+
+  .resultStatuses {
+    align-items: flex-start;
   }
 
   .resultDetail dl {
