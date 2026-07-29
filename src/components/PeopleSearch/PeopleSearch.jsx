@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '@/components/Common/Modal'
 import {
   buildDefaultPeopleQueries,
@@ -7,6 +7,7 @@ import {
   googleSearchUrl,
   suggestPeopleSearchQueries,
 } from '@/services/peopleSearchService'
+import { possibleFormerRoleReason } from '@/utils/peopleSearchResults'
 import styles from './PeopleSearch.module.css'
 
 const GOOGLE_SEARCH_ENGINE_ID = import.meta.env.VITE_GOOGLE_SEARCH_ENGINE_ID || ''
@@ -18,6 +19,13 @@ const EMPTY_CONTACT = {
 
 const googleListeners = new Map()
 let googleLoaderPromise = null
+let googleElementSequence = 0
+
+function createGoogleElementToken() {
+  googleElementSequence += 1
+  return globalThis.crypto?.randomUUID?.().replaceAll('-', '')
+    || `instance-${googleElementSequence}`
+}
 
 function linkedInProfileUrl(value) {
   const raw = String(value || '').trim()
@@ -46,11 +54,15 @@ function linkedInProfileUrl(value) {
 function normalizeGoogleResult(result) {
   const profileUrl = linkedInProfileUrl(result?.url)
     || linkedInProfileUrl(result?.visibleUrl)
-  return {
+  const normalized = {
     title: String(result?.titleNoFormatting || result?.title || '').trim(),
     snippet: String(result?.contentNoFormatting || result?.content || '').trim(),
     url: profileUrl,
     visibleUrl: String(result?.visibleUrl || '').trim(),
+  }
+  return {
+    ...normalized,
+    possibleFormerReason: possibleFormerRoleReason(normalized),
   }
 }
 
@@ -105,16 +117,34 @@ function configureGoogleCallbacks(resolve) {
   }
 }
 
+function waitForGoogleApi(timeoutMs = 10000) {
+  const startedAt = Date.now()
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (window.google?.search?.cse?.element) {
+        resolve()
+        return
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error('Google search could not finish loading. Please try again.'))
+        return
+      }
+      window.setTimeout(check, 100)
+    }
+    check()
+  })
+}
+
 function loadGoogleSearchElement() {
   if (!GOOGLE_SEARCH_ENGINE_ID) return Promise.reject(new Error('Google People Search is not configured'))
   if (window.google?.search?.cse?.element) return Promise.resolve()
   if (googleLoaderPromise) return googleLoaderPromise
 
-  googleLoaderPromise = new Promise((resolve, reject) => {
+  const loader = new Promise((resolve, reject) => {
     configureGoogleCallbacks(resolve)
     const existing = document.getElementById('tag-google-people-search-script')
     if (existing) {
-      existing.addEventListener('load', resolve, { once: true })
+      void waitForGoogleApi().then(resolve, reject)
       existing.addEventListener('error', () => reject(new Error('Google search could not load')), { once: true })
       return
     }
@@ -127,6 +157,10 @@ function loadGoogleSearchElement() {
       reject(new Error('Google search could not load'))
     }, { once: true })
     document.head.appendChild(script)
+  })
+  googleLoaderPromise = loader.catch((error) => {
+    googleLoaderPromise = null
+    throw error
   })
   return googleLoaderPromise
 }
@@ -188,7 +222,7 @@ export default function PeopleSearch({
   onContinue,
   toast,
 }) {
-  const generatedId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  const [generatedId] = useState(createGoogleElementToken)
   const googleElementId = `people-search-google-${generatedId}`
   const googleElementName = `people-search-${generatedId}`
   const notesOnly = sourceMode === 'opportunity-notes'
@@ -231,6 +265,7 @@ export default function PeopleSearch({
   const [selectedUrl, setSelectedUrl] = useState('')
   const [decisions, setDecisions] = useState({})
   const [showExcluded, setShowExcluded] = useState(false)
+  const [showPossibleFormer, setShowPossibleFormer] = useState(false)
   const [searchNotice, setSearchNotice] = useState('')
   const [contactDraft, setContactDraft] = useState(null)
   const [savingContact, setSavingContact] = useState(false)
@@ -238,13 +273,29 @@ export default function PeopleSearch({
   const savingContactRef = useRef(false)
   const searchContainerRendered = useRef(false)
   const suggestionAbortRef = useRef(null)
+  const searchTimeoutRef = useRef(null)
+  const queryEditorRef = useRef(null)
 
   const currentScope = queryScope(scopeId, queryDraft)
   const selected = results.find((result) => result.url === selectedUrl) || null
   const excludedCount = results.filter((result) => decisions[result.url] === 'irrelevant').length
+  const possibleFormerCount = results.filter((result) =>
+    result.possibleFormerReason && decisions[result.url] !== 'irrelevant'
+  ).length
   const visibleResults = results.filter((result) =>
-    showExcluded || decisions[result.url] !== 'irrelevant'
+    (showExcluded || decisions[result.url] !== 'irrelevant')
+    && (
+      showPossibleFormer
+      || !result.possibleFormerReason
+      || ['relevant', 'added'].includes(decisions[result.url])
+    )
   )
+
+  const clearSearchTimeout = useCallback(() => {
+    if (!searchTimeoutRef.current) return
+    window.clearTimeout(searchTimeoutRef.current)
+    searchTimeoutRef.current = null
+  }, [])
 
   const prepareGoogleElement = useCallback(async () => {
     await loadGoogleSearchElement()
@@ -279,6 +330,7 @@ export default function PeopleSearch({
       aliasesUsed: details.aliasesUsed || [],
       broadenedQuery: details.broadenedQuery || '',
     })
+    setShowPossibleFormer(false)
   }, [fallbackQueries, notesOnly])
 
   const resetFromFields = useCallback((next) => {
@@ -296,6 +348,7 @@ export default function PeopleSearch({
     setSelectedUrl('')
     setSearched(false)
     setSearchNotice('')
+    setShowPossibleFormer(false)
   }, [context])
 
   const updateField = (field, value) => {
@@ -345,7 +398,24 @@ export default function PeopleSearch({
     }
   }, [context, fallbackQueries, keywords, notesOnly, organization, program, queryDraft, suggesting, useQueries])
 
-  useEffect(() => () => suggestionAbortRef.current?.abort(), [])
+  useEffect(() => () => {
+    suggestionAbortRef.current?.abort()
+    clearSearchTimeout()
+  }, [clearSearchTimeout])
+
+  useEffect(() => {
+    if (!GOOGLE_SEARCH_ENGINE_ID) return
+    void loadGoogleSearchElement().catch(() => {
+      // A visible message is shown if the user starts a search and loading still fails.
+    })
+  }, [])
+
+  useEffect(() => {
+    const editor = queryEditorRef.current
+    if (!editor || !expanded) return
+    editor.style.height = 'auto'
+    editor.style.height = `${editor.scrollHeight}px`
+  }, [expanded, queryDraft])
 
   useEffect(() => {
     if (variant !== 'opportunity' || !expanded || suggestedOnce) return
@@ -361,6 +431,7 @@ export default function PeopleSearch({
     let cancelled = false
     googleListeners.set(googleElementName, ({ results: nextResults, rawResultCount }) => {
       if (cancelled) return
+      clearSearchTimeout()
       setResults(nextResults)
       setSelectedUrl((current) =>
         nextResults.some((item) => item.url === current) ? current : (nextResults[0]?.url || '')
@@ -381,9 +452,10 @@ export default function PeopleSearch({
 
     return () => {
       cancelled = true
+      clearSearchTimeout()
       googleListeners.delete(googleElementName)
     }
-  }, [expanded, googleElementName, prepareGoogleElement])
+  }, [clearSearchTimeout, expanded, googleElementName, prepareGoogleElement])
 
   const selectQuery = (index) => {
     setActiveQueryIndex(index)
@@ -392,6 +464,7 @@ export default function PeopleSearch({
     setSelectedUrl('')
     setSearched(false)
     setSearchNotice('')
+    setShowPossibleFormer(false)
   }
 
   const broadenSearch = () => {
@@ -400,6 +473,7 @@ export default function PeopleSearch({
     setResults([])
     setSelectedUrl('')
     setSearched(false)
+    setShowPossibleFormer(false)
     setSearchNotice('The least essential search group was removed. Review the broader query, then search again.')
   }
 
@@ -411,6 +485,8 @@ export default function PeopleSearch({
     setResults([])
     setSelectedUrl('')
     setSearched(false)
+    setShowPossibleFormer(false)
+    clearSearchTimeout()
 
     if (!GOOGLE_SEARCH_ENGINE_ID) {
       window.open(googleSearchUrl(query), '_blank', 'noopener,noreferrer')
@@ -421,8 +497,14 @@ export default function PeopleSearch({
 
     try {
       const element = await prepareGoogleElement()
+      searchTimeoutRef.current = window.setTimeout(() => {
+        searchTimeoutRef.current = null
+        setSearching(false)
+        setSearchNotice('Google is taking longer than expected. Try again or open the query in Google.')
+      }, 15000)
       element.execute(embeddedGoogleQuery(query))
     } catch (error) {
+      clearSearchTimeout()
       setSearching(false)
       setSearchNotice(error.message || 'Google search could not run.')
     }
@@ -589,6 +671,7 @@ export default function PeopleSearch({
           </span>
         </div>
         <textarea
+          ref={queryEditorRef}
           id={`people-query-${generatedId}`}
           className={`form-input ${styles.queryEditor}`}
           value={queryDraft}
@@ -657,6 +740,11 @@ export default function PeopleSearch({
               {showExcluded ? 'Hide excluded' : `Show excluded (${excludedCount})`}
             </button>
           )}
+          {possibleFormerCount > 0 && (
+            <button type="button" className="btn" onClick={() => setShowPossibleFormer((value) => !value)}>
+              {showPossibleFormer ? 'Hide possible former' : `Show possible former (${possibleFormerCount})`}
+            </button>
+          )}
           {searched && <span className="badge badge-tracking">{results.length} results</span>}
         </div>
       </div>
@@ -666,7 +754,13 @@ export default function PeopleSearch({
         : searching
           ? <div className={styles.loadingState}><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
           : visibleResults.length === 0
-            ? <div className={styles.emptyState}>{excludedCount ? 'All visible results have been excluded.' : 'No embedded results are available. Try the same query with Open in Google.'}</div>
+            ? <div className={styles.emptyState}>
+                {possibleFormerCount && !showPossibleFormer
+                  ? 'Only possible former-role results are hidden. Use Show possible former to review them.'
+                  : excludedCount
+                    ? 'All visible results have been excluded.'
+                    : 'No embedded results are available. Try the same query with Open in Google.'}
+              </div>
             : (
               <div className={styles.resultsLayout}>
                 <div className={styles.resultList}>
@@ -681,9 +775,16 @@ export default function PeopleSearch({
                           <strong>{result.title || 'Public LinkedIn profile'}</strong>
                           <span>{result.snippet || result.visibleUrl}</span>
                         </button>
-                        <span className={`btn ${styles.reviewStatus}`}>
-                          {decision === 'added' ? 'Added' : decision === 'relevant' ? 'Relevant' : decision === 'irrelevant' ? 'Excluded' : 'Review'}
-                        </span>
+                        <div className={styles.resultStatuses}>
+                          {result.possibleFormerReason && (
+                            <span className={styles.possibleFormerBadge} title={result.possibleFormerReason}>
+                              Possible former
+                            </span>
+                          )}
+                          <span className={`btn ${styles.reviewStatus}`}>
+                            {decision === 'added' ? 'Added' : decision === 'relevant' ? 'Relevant' : decision === 'irrelevant' ? 'Excluded' : 'Review'}
+                          </span>
+                        </div>
                       </div>
                     )
                   })}
@@ -699,6 +800,14 @@ export default function PeopleSearch({
                       <dd>{selected.visibleUrl || selected.url}</dd>
                       <dt>Found using</dt>
                       <dd>{queries[activeQueryIndex]?.label || 'Edited Google query'}</dd>
+                      {selected.possibleFormerReason && (
+                        <>
+                          <dt>Current-role check</dt>
+                          <dd className={styles.currentRoleWarning}>
+                            {selected.possibleFormerReason} Verify the person’s current employment before saving.
+                          </dd>
+                        </>
+                      )}
                     </dl>
                     <div className={styles.detailActions}>
                       <a className="btn" href={selected.url} target="_blank" rel="noreferrer">Open profile</a>
