@@ -5,6 +5,7 @@ import {
   forceRefreshCache,
   invalidateCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { createStableId, retryIdempotent } from '@/services/workbookMutations'
@@ -85,6 +86,7 @@ export function useTasks(contractNumber = null) {
       if (!saved._alreadyExisted) {
         notifyTaskCreated({ ...saved, CreatedBy: createdBy }).catch(() => {})
       }
+      await publishCacheUpdate(['TasksTable'])
       verifyCacheInBackground(['TasksTable'])
       return saved
     } catch (error) {
@@ -105,6 +107,7 @@ export function useTasks(contractNumber = null) {
     )
     try {
       await retryIdempotent(() => updateTask(rowIndex, safePatch))
+      await publishCacheUpdate(['TasksTable'])
       verifyCacheInBackground(['TasksTable'])
     } catch (err) {
       // A conflicting Excel edit must not remain on screen as though it was
@@ -117,9 +120,16 @@ export function useTasks(contractNumber = null) {
   }, [load])
 
   const remove = useCallback(async (rowIndex) => {
-    await retryIdempotent(() => deleteTask(rowIndex))
-    await invalidateCache(['TasksTable'])
-  }, [])
+    setTasks((current) => current.filter((task) => task._rowIndex !== rowIndex))
+    try {
+      await retryIdempotent(() => deleteTask(rowIndex))
+      await publishCacheUpdate(['TasksTable'])
+      verifyCacheInBackground(['TasksTable'])
+    } catch (error) {
+      await load()
+      throw error
+    }
+  }, [load])
 
   const refreshContext = useCallback(async (task) => {
     const notes = await getNotesForContract(task.ContractNumber)
