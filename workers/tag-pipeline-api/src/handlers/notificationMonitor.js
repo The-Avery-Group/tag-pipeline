@@ -23,6 +23,11 @@ const EMAIL_TEMPLATES_TABLE = 'EmailFollowUpTemplatesTable'
 const EMAIL_DRAFTS_TABLE = 'EmailFollowUpDraftsTable'
 
 const clean = (value) => String(value ?? '').trim()
+const normalizedHeader = (value) => clean(value)
+  .normalize('NFKC')
+  .replace(/[\u200B-\u200D\uFEFF]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, '')
 const dateKey = (date = new Date()) => {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Lagos', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -237,7 +242,10 @@ function firstMatchingContact(opportunity, contacts) {
 }
 
 async function appendTableRecord(env, token, data, record) {
-  const values = data.headers.map((header) => record[header] ?? '')
+  const recordByHeader = new Map(
+    Object.entries(record).map(([header, value]) => [normalizedHeader(header), value])
+  )
+  const values = data.headers.map((header) => recordByHeader.get(normalizedHeader(header)) ?? '')
   const response = await graph(env, token, `/tables/${data.name}/rows/add`, {
     method: 'POST',
     body: JSON.stringify({ values: [values] }),
@@ -261,7 +269,18 @@ async function prepareScheduledEmailDrafts(env, token, pipeline, contacts, today
       return { status: 'not_configured', created: 0 }
     }
 
-    const activeTemplates = templates.rows.filter((template) =>
+    const templateValue = (template, header) => {
+      const actualHeader = Object.keys(template).find((key) => normalizedHeader(key) === normalizedHeader(header))
+      return actualHeader ? template[actualHeader] : ''
+    }
+    const normalizedTemplates = templates.rows.map((template) => ({
+      ...template,
+      ...Object.fromEntries([
+        'Template ID', 'Template Name', 'Days After Submission', 'Subject',
+        'Body', 'Active', 'Created At',
+      ].map((header) => [header, templateValue(template, header)])),
+    }))
+    const activeTemplates = normalizedTemplates.filter((template) =>
       clean(template.Active).toLowerCase() !== 'no' &&
       clean(template['Template ID']) &&
       Number(template['Days After Submission']) > 0
