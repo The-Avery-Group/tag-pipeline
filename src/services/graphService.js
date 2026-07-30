@@ -823,7 +823,15 @@ export async function getContacts() {
 }
 
 function normalizeTableHeader(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+  // Excel headers can contain non-breaking spaces, zero-width characters, or
+  // line breaks that look identical in the workbook UI. Compare the semantic
+  // header name so "Created At" and visually identical variants resolve to
+  // the same column without weakening the required-column check.
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
 }
 
 export async function getPartners() {
@@ -1586,7 +1594,12 @@ async function emailTableSchema(tableName, requiredHeaders, { force = false } = 
   const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
   const missing = requiredHeaders.filter((header) => !byNormalizedHeader.has(normalizeTableHeader(header)))
   if (missing.length) {
-    throw new Error(`${tableName} is missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`)
+    const detected = headers.length ? headers.map((header) => `"${header}"`).join(', ') : 'none'
+    throw new Error(
+      `${tableName} is missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}. ` +
+      `Microsoft Graph currently reports these table columns: ${detected}. ` +
+      'If the header is visible in Excel, confirm that the column is inside the named table range.',
+    )
   }
   return { headers, byNormalizedHeader }
 }
