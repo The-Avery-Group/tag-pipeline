@@ -3,6 +3,7 @@ import { getNotes, addNote, updateNote, deleteNote } from '@/services/graphServi
 import {
   forceRefreshCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { createStableId, retryIdempotent } from '@/services/workbookMutations'
@@ -91,6 +92,7 @@ export function useNotes(contractNumber) {
       setNotes((current) => current.map((note) =>
         note.NoteID === noteId ? saved : note
       ).sort(compareNotesOldestFirst))
+      await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
       return saved
     } catch (err) {
@@ -104,6 +106,7 @@ export function useNotes(contractNumber) {
     setNotes((prev) => prev.filter((n) => n._rowIndex !== rowIndex))
     try {
       await retryIdempotent(() => deleteNote(rowIndex))
+      await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
     } catch (err) {
       // Delete didn't actually happen — stop hiding it so the note
@@ -119,6 +122,7 @@ export function useNotes(contractNumber) {
     setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? { ...note, ...patch } : note))
     try {
       await retryIdempotent(() => updateNote(rowIndex, patch))
+      await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
     } catch (err) {
       pendingPatches.current.delete(rowIndex)
