@@ -1,0 +1,69 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  min-height: 360px;
+  border-top: 0.5px solid var(--gray-200);
+}
+
+.templateList {
+  padding: 10px;
+  border-right: 0.5px solid var(--gray-200);
+  background: var(--gray-50);
+  overflow-y: auto;
+}
+
+.templateItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 5px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--gray-800);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.templateItem:hover { background: var(--surface); }
+.templateItem span { font-size: 12px; font-weight: 600; }
+.templateItem small { color: var(--gray-500); font-size: 10px; }
+.templateItem.selected { border-color: var(--blue-300); background: var(--blue-50); color: var(--blue-800); }
+
+.editor { padding: 16px 18px; }
+.editorGrid { display: grid; grid-template-columns: 1.5fr 0.8fr 0.8fr; gap: 12px; }
+.editor label, .fullField { display: flex; flex-direction: column; gap: 5px; color: var(--gray-700); font-size: 11px; font-weight: 600; }
+.fullField { margin-top: 12px; }
+.fullField textarea { resize: vertical; line-height: 1.55; }
+
+.mergeFields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 11px;
+  color: var(--gray-500);
+  font-size: 10px;
+}
+
+.mergeFields code {
+  padding: 2px 6px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: 999px;
+  background: var(--gray-50);
+  color: var(--blue-700);
+}
+
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
+.setup { margin: 14px 18px; padding: 14px; border: 1px solid var(--amber-600); border-radius: var(--radius-md); background: var(--amber-50); color: var(--gray-800); font-size: 12px; }
+.setup p { margin-top: 5px; color: var(--gray-600); line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  .templateList { display: flex; gap: 6px; border-right: 0; border-bottom: 0.5px solid var(--gray-200); overflow-x: auto; }
+  .templateItem { min-width: 150px; margin: 0; }
+  .editorGrid { grid-template-columns: 1fr; }
+}
