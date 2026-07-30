@@ -152,6 +152,23 @@ export async function invalidateCache(tableNames = []) {
 }
 
 /**
+ * Publish a successful app write from the already-updated in-memory Graph
+ * cache. Consumers reload from memory immediately; the later verification
+ * remains responsible for reconciling against the workbook.
+ */
+export async function publishCacheUpdate(tableNames = []) {
+  const targets = [...new Set(tableNames)].filter((tableName) => loaders[tableName])
+  if (!targets.length) return []
+  const updatedAt = Date.now()
+  targets.forEach((tableName) => {
+    lastTableRefreshAt.set(tableName, updatedAt)
+    dirtyTables.delete(tableName)
+  })
+  await notify(targets)
+  return targets
+}
+
+/**
  * Re-read newly created rows without making the save button wait for a full
  * table download. Calls for the same table are coalesced into one verification.
  */
