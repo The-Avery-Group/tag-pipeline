@@ -69,6 +69,8 @@
   overflow: hidden;
 }
 
+.collapsible + .collapsible { margin-top: 10px; }
+
 .collapsibleHeader {
   display: flex;
   align-items: center;
