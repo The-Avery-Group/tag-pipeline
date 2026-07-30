@@ -3,6 +3,7 @@ import { getContacts, addContact, updateContact, deleteContact } from '@/service
 import {
   forceRefreshCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { createStableId, retryIdempotent } from '@/services/workbookMutations'
@@ -87,6 +88,7 @@ export function useContacts() {
         setContacts((prev) =>
           prev.map((contact) => contact.ContactID === contactId ? saved : contact)
         )
+        await publishCacheUpdate(['ContactsTable'])
         verifyCacheInBackground(['ContactsTable'])
         return {
           contact: saved,
@@ -116,6 +118,7 @@ export function useContacts() {
     )
     try {
       await retryIdempotent(() => updateContact(rowIndex, patch))
+      await publishCacheUpdate(['ContactsTable'])
       verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
       // Roll back by reloading from server
@@ -130,6 +133,7 @@ export function useContacts() {
     setContacts((prev) => prev.filter((c) => c._rowIndex !== rowIndex))
     try {
       await retryIdempotent(() => deleteContact(rowIndex))
+      await publishCacheUpdate(['ContactsTable'])
       verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
       await load()
