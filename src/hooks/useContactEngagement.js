@@ -6,6 +6,7 @@ import {
 import {
   forceRefreshCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { createStableId } from '@/services/workbookMutations'
@@ -60,6 +61,7 @@ export function useContactEngagement(enabled = false) {
       setInteractions((current) => (current || []).map((interaction) =>
         interaction.InteractionID === interactionId ? saved : interaction
       ))
+      await publishCacheUpdate(['ContactInteractionsTable'])
       verifyCacheInBackground(['ContactInteractionsTable'])
       return saved
     } catch (err) {
