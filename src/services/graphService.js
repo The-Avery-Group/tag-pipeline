@@ -1233,8 +1233,8 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
     })),
     ...plan.emailDraftPatches.map((item) => ({
       label: 'RFI follow-up email draft',
-      apply: () => updateWithRetry(() => updateRow('EmailFollowUpDraftsTable', item.rowIndex, item.patch, EMAIL_FOLLOW_UP_DRAFT_HEADERS)),
-      rollback: () => updateWithRetry(() => updateRow('EmailFollowUpDraftsTable', item.rowIndex, item.rollback, EMAIL_FOLLOW_UP_DRAFT_HEADERS)),
+      apply: () => updateWithRetry(() => updateEmailFollowUpDraft(item.rowIndex, item.patch, 'Opportunity rename')),
+      rollback: () => updateWithRetry(() => updateEmailFollowUpDraft(item.rowIndex, item.rollback, 'Opportunity rename rollback')),
     })),
     {
       label: 'opportunity',
@@ -1581,9 +1581,49 @@ function isMissingWorkbookTable(error) {
   return /not found|does not exist|itemNotFound|Graph API error: 404/i.test(String(error?.message || ''))
 }
 
+async function emailTableSchema(tableName, requiredHeaders, { force = false } = {}) {
+  const headers = await getTableHeaders(tableName, { force })
+  const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
+  const missing = requiredHeaders.filter((header) => !byNormalizedHeader.has(normalizeTableHeader(header)))
+  if (missing.length) {
+    throw new Error(`${tableName} is missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`)
+  }
+  return { headers, byNormalizedHeader }
+}
+
+function canonicalEmailRows(rows, requiredHeaders) {
+  return rows.map((row) => {
+    const byNormalizedHeader = new Map(Object.keys(row).map((header) => [normalizeTableHeader(header), header]))
+    const canonical = Object.fromEntries(requiredHeaders.map((header) => {
+      const source = byNormalizedHeader.get(normalizeTableHeader(header))
+      return [header, source ? row[source] : '']
+    }))
+    return { ...row, ...canonical }
+  })
+}
+
+function emailRecordForWorkbook(values, schema) {
+  const byNormalizedValue = new Map(
+    Object.entries(values || {}).map(([header, value]) => [normalizeTableHeader(header), value])
+  )
+  return Object.fromEntries(schema.headers.map((header) => [
+    header,
+    byNormalizedValue.get(normalizeTableHeader(header)) ?? '',
+  ]))
+}
+
+function emailPatchForWorkbook(patch, schema) {
+  return Object.fromEntries(Object.entries(patch || {}).map(([header, value]) => {
+    const workbookHeader = schema.byNormalizedHeader.get(normalizeTableHeader(header))
+    return [workbookHeader || header, value]
+  }))
+}
+
 export async function getEmailFollowUpTemplates() {
   try {
-    return await getSheetRows('EmailFollowUpTemplatesTable')
+    const rows = await getSheetRows('EmailFollowUpTemplatesTable')
+    await emailTableSchema('EmailFollowUpTemplatesTable', EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
+    return canonicalEmailRows(rows, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
   } catch (error) {
     if (isMissingWorkbookTable(error)) return null
     throw error
@@ -1591,6 +1631,11 @@ export async function getEmailFollowUpTemplates() {
 }
 
 export async function addEmailFollowUpTemplate(values, updatedBy, templateId = createStableId('FUT')) {
+  const schema = await emailTableSchema(
+    'EmailFollowUpTemplatesTable',
+    EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
+    { force: true },
+  )
   const now = new Date().toISOString()
   const record = {
     ...values,
@@ -1605,7 +1650,11 @@ export async function addEmailFollowUpTemplate(values, updatedBy, templateId = c
     idColumn: 'Template ID',
     idValue: templateId,
     record,
-    append: () => appendRow('EmailFollowUpTemplatesTable', record, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS),
+    append: () => appendRow(
+      'EmailFollowUpTemplatesTable',
+      emailRecordForWorkbook(record, schema),
+      schema.headers,
+    ),
     readRows: async () => {
       invalidate('EmailFollowUpTemplatesTable')
       return (await getEmailFollowUpTemplates()) || []
@@ -1614,11 +1663,22 @@ export async function addEmailFollowUpTemplate(values, updatedBy, templateId = c
 }
 
 export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy) {
-  return updateRow('EmailFollowUpTemplatesTable', rowIndex, {
+  const schema = await emailTableSchema(
+    'EmailFollowUpTemplatesTable',
+    EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
+    { force: true },
+  )
+  const nextPatch = {
     ...patch,
     'Last Updated': new Date().toISOString(),
     'Updated By': updatedBy || '',
-  }, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
+  }
+  return updateRow(
+    'EmailFollowUpTemplatesTable',
+    rowIndex,
+    emailPatchForWorkbook(nextPatch, schema),
+    schema.headers,
+  )
 }
 
 export async function deleteEmailFollowUpTemplate(rowIndex) {
@@ -1627,7 +1687,9 @@ export async function deleteEmailFollowUpTemplate(rowIndex) {
 
 export async function getEmailFollowUpDrafts() {
   try {
-    return await getSheetRows('EmailFollowUpDraftsTable')
+    const rows = await getSheetRows('EmailFollowUpDraftsTable')
+    await emailTableSchema('EmailFollowUpDraftsTable', EMAIL_FOLLOW_UP_DRAFT_HEADERS)
+    return canonicalEmailRows(rows, EMAIL_FOLLOW_UP_DRAFT_HEADERS)
   } catch (error) {
     if (isMissingWorkbookTable(error)) return null
     throw error
@@ -1637,13 +1699,22 @@ export async function getEmailFollowUpDrafts() {
 export async function addEmailFollowUpDraft(record) {
   const draftId = String(record?.['Draft ID'] || '').trim()
   if (!draftId) throw new Error('Draft ID is required')
+  const schema = await emailTableSchema(
+    'EmailFollowUpDraftsTable',
+    EMAIL_FOLLOW_UP_DRAFT_HEADERS,
+    { force: true },
+  )
   return createWorkbookRecord({
     tableName: 'EmailFollowUpDraftsTable',
     operationKey: `follow-up-draft:${draftId}`,
     idColumn: 'Draft ID',
     idValue: draftId,
     record,
-    append: () => appendRow('EmailFollowUpDraftsTable', record, EMAIL_FOLLOW_UP_DRAFT_HEADERS),
+    append: () => appendRow(
+      'EmailFollowUpDraftsTable',
+      emailRecordForWorkbook(record, schema),
+      schema.headers,
+    ),
     readRows: async () => {
       invalidate('EmailFollowUpDraftsTable')
       return (await getEmailFollowUpDrafts()) || []
@@ -1653,9 +1724,20 @@ export async function addEmailFollowUpDraft(record) {
 }
 
 export async function updateEmailFollowUpDraft(rowIndex, patch, updatedBy) {
-  return updateRow('EmailFollowUpDraftsTable', rowIndex, {
+  const schema = await emailTableSchema(
+    'EmailFollowUpDraftsTable',
+    EMAIL_FOLLOW_UP_DRAFT_HEADERS,
+    { force: true },
+  )
+  const nextPatch = {
     ...patch,
     'Updated At': new Date().toISOString(),
     'Updated By': updatedBy || '',
-  }, EMAIL_FOLLOW_UP_DRAFT_HEADERS)
+  }
+  return updateRow(
+    'EmailFollowUpDraftsTable',
+    rowIndex,
+    emailPatchForWorkbook(nextPatch, schema),
+    schema.headers,
+  )
 }
