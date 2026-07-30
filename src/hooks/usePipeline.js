@@ -3,8 +3,8 @@ import { getPipeline, addOpportunity, updateOpportunity, deleteOpportunity } fro
 import { notifyNewOpportunity, notifyPhaseChange } from '@/services/notifyService'
 import {
   forceRefreshCache,
-  invalidateCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
@@ -67,6 +67,7 @@ export function usePipeline() {
       notifyLock.current = true
       notifyNewOpportunity(saved).finally(() => { notifyLock.current = false })
     }
+    await publishCacheUpdate(['PipelineTable'])
     verifyCacheInBackground(['PipelineTable'])
     return saved
   }, [])
@@ -95,6 +96,7 @@ export function usePipeline() {
 
     try {
       await retryIdempotent(() => updateOpportunity(rowIndex, patch))
+      await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
     } catch (err) {
       // Roll back optimistic update on failure
@@ -109,9 +111,16 @@ export function usePipeline() {
   }, [])
 
   const remove = useCallback(async (rowIndex) => {
-    await retryIdempotent(() => deleteOpportunity(rowIndex))
-    await invalidateCache(['PipelineTable'])
-  }, [])
+    setPipeline((current) => current.filter((opportunity) => opportunity._rowIndex !== rowIndex))
+    try {
+      await retryIdempotent(() => deleteOpportunity(rowIndex))
+      await publishCacheUpdate(['PipelineTable'])
+      verifyCacheInBackground(['PipelineTable'])
+    } catch (error) {
+      await load()
+      throw error
+    }
+  }, [load])
 
   const refresh = useCallback(async () => {
     await forceRefreshCache(['PipelineTable']).catch(() => {})
