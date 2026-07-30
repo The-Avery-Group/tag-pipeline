@@ -1,0 +1,122 @@
+.panel {
+  margin-top: 18px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 13px 16px;
+  border: 0;
+  background: var(--surface);
+  color: var(--gray-900);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panelHeader:hover { background: var(--gray-50); }
+.headerCopy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.title { font-size: 13px; font-weight: 650; }
+.hint { color: var(--gray-500); font-size: 10px; }
+.count { min-width: 22px; padding: 2px 7px; border-radius: 999px; background: var(--blue-50); color: var(--blue-700); font-size: 10px; font-weight: 700; text-align: center; }
+.chevron { color: var(--gray-400); font-size: 18px; transition: transform 0.18s; }
+.chevronOpen { transform: rotate(90deg); }
+.body { padding: 16px; border-top: 0.5px solid var(--gray-200); }
+
+.notice, .empty {
+  padding: 14px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+  color: var(--gray-600);
+  font-size: 12px;
+}
+
+.empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.empty strong { color: var(--gray-900); }
+.empty p { margin-top: 4px; }
+.milestones { display: flex; gap: 7px; padding-bottom: 13px; overflow-x: auto; }
+
+.milestone {
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--gray-700);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.milestone span { font-size: 11px; font-weight: 650; }
+.milestone small { color: var(--gray-500); font-size: 9px; }
+.milestone:hover { border-color: var(--blue-300); }
+.activeMilestone { border-color: var(--blue-500); background: var(--blue-50); color: var(--blue-800); }
+
+.composerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 0.5px solid var(--gray-200);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: var(--gray-50);
+  color: var(--gray-900);
+  font-size: 12px;
+}
+
+.composerHeader > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.composerHeader small { color: var(--gray-500); font-size: 10px; white-space: nowrap; }
+.status { padding: 2px 7px; border-radius: 999px; font-size: 9px; font-weight: 700; }
+.ready { background: var(--green-50); color: var(--green-700); }
+.scheduled { background: var(--blue-50); color: var(--blue-700); }
+.needsRecipient { background: var(--amber-50); color: var(--amber-600); }
+.skipped { background: var(--gray-100); color: var(--gray-600); }
+
+.addressRows { border: 0.5px solid var(--gray-200); border-bottom: 0; }
+.addressRows label { display: grid; grid-template-columns: 66px 1fr; align-items: center; min-height: 36px; border-bottom: 0.5px solid var(--gray-200); }
+.addressRows span { padding-left: 12px; color: var(--gray-500); font-size: 10px; font-weight: 650; }
+.addressRows input { min-width: 0; height: 35px; padding: 0 11px; border: 0; outline: 0; background: transparent; color: var(--gray-900); font: inherit; font-size: 11px; }
+.addressRows input[readonly] { color: var(--gray-500); }
+
+.editor {
+  display: block;
+  width: 100%;
+  min-height: 230px;
+  padding: 15px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  outline: 0;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--gray-900);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.editor:focus { border-color: var(--blue-500); }
+.safety { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 2px; color: var(--gray-500); font-size: 10px; }
+.actions, .actions > div { display: flex; align-items: center; gap: 8px; }
+.actions { justify-content: space-between; padding-top: 12px; border-top: 0.5px solid var(--gray-200); }
+.disabledActions { opacity: 0.68; }
+
+@media (max-width: 700px) {
+  .hint { display: none; }
+  .empty, .actions, .safety { align-items: stretch; flex-direction: column; }
+  .actions > div { flex-wrap: wrap; }
+  .composerHeader { align-items: flex-start; flex-direction: column; }
+  .addressRows label { grid-template-columns: 50px 1fr; }
+}
