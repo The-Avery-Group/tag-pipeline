@@ -22,6 +22,7 @@ import OpportunityField from '@/components/Opportunity/OpportunityField'
 import Section from '@/components/Opportunity/OpportunitySection'
 import OpportunityNotesSection from '@/components/Opportunity/OpportunityNotesSection'
 import OpportunityTasksSection from '@/components/Opportunity/OpportunityTasksSection'
+import FollowUpEmailComposer from '@/components/Opportunity/FollowUpEmailComposer'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
 import { formatDate } from '@/utils/kpiHelpers'
@@ -29,7 +30,7 @@ import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import { invalidateCache } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
-import { buildEmailDraftContext, buildCapabilityStatementContext } from '@/services/groqService'
+import { buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
@@ -459,11 +460,6 @@ export default function OpportunityDetail({ toast }) {
     }).slice(0, 20)
   }, [contacts, linkedContacts, contactSearch])
 
-  const contact = useMemo(
-    () => contacts.find((c) => c.Notes?.includes(decodedCN)),
-    [contacts, decodedCN]
-  )
-
   const relatedOpportunities = useMemo(
     () => notes.map((n) => parseRelatedOpportunityNote(n.NoteText)).filter(Boolean),
     [notes]
@@ -555,11 +551,6 @@ export default function OpportunityDetail({ toast }) {
   const contractLifecycleBadgeClass = contractLifecycleAlert?.type === 'closedOut'
     ? 'badge-tracking'
     : 'badge-closed-lost'
-
-  const emailPrompt = useCallback(
-    () => buildEmailDraftContext(opp ?? {}, contact, recentNotesStr),
-    [opp, notes, contact, decodedCN]
-  )
 
   const capPrompt = useCallback(
     () => buildCapabilityStatementContext(opp ?? {}, recentNotesStr),
@@ -1480,7 +1471,12 @@ export default function OpportunityDetail({ toast }) {
         />
 
         {/* ── AI panels ── */}
-        <AIPanel title="Draft follow-up email"        buildPrompt={emailPrompt} defaultCollapsed />
+        <FollowUpEmailComposer
+          opportunity={opp}
+          linkedContacts={linkedContacts}
+          user={user}
+          toast={toast}
+        />
         <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
 
         {isRFI && (
