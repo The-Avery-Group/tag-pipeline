@@ -9,6 +9,7 @@
 import { sendTeamsNotification } from './notify.js'
 import { getAppOnlyGraphToken as appOnlyToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
+import { buildScheduledDraft, deterministicDraftId, normalizedDate as followUpDate } from '../lib/followUpEmails.js'
 
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const NOTIFICATION_LOG_TABLE = 'DataValidationTable'
@@ -18,6 +19,8 @@ const CONTACTS_TABLE = 'ContactsTable'
 const INTERACTIONS_TABLE = 'ContactInteractionsTable'
 const RECIPIENTS_TABLE = 'NotificationRecipientsTable'
 const RUN_KEY = 'scheduled_notifications:last_run'
+const EMAIL_TEMPLATES_TABLE = 'EmailFollowUpTemplatesTable'
+const EMAIL_DRAFTS_TABLE = 'EmailFollowUpDraftsTable'
 
 const clean = (value) => String(value ?? '').trim()
 const dateKey = (date = new Date()) => {
@@ -113,7 +116,7 @@ async function table(env, token, name, optional = false) {
       })),
     }
   } catch (error) {
-    if (optional && /not found|itemNotFound|404/i.test(error.message)) return { name, headers: [], rows: [] }
+    if (optional && /not found|does not exist|itemNotFound|404/i.test(error.message)) return { name, headers: [], rows: [] }
     throw error
   }
 }
@@ -222,6 +225,95 @@ function logMap(rows) {
   return Object.fromEntries(rows.filter((row) => clean(row.Key)).map((row) => [clean(row.Key), clean(row.LastSent)]))
 }
 
+function firstMatchingContact(opportunity, contacts) {
+  const poc = clean(opportunity['Contracting Officer / Specialist (POC)*']).toLowerCase()
+  if (!poc) return { name: '', email: '' }
+  const contact = contacts.find((item) => {
+    const name = clean(item.Name).toLowerCase()
+    const email = clean(item.Email).toLowerCase()
+    return (email && poc.includes(email)) || (name.length >= 3 && poc.includes(name))
+  })
+  return contact ? { name: clean(contact.Name), email: clean(contact.Email) } : { name: '', email: '' }
+}
+
+async function appendTableRecord(env, token, data, record) {
+  const values = data.headers.map((header) => record[header] ?? '')
+  const response = await graph(env, token, `/tables/${data.name}/rows/add`, {
+    method: 'POST',
+    body: JSON.stringify({ values: [values] }),
+  })
+  data.rows.push({
+    ...record,
+    _rowIndex: Number(response?.index ?? -1),
+    _values: values,
+    headers: data.headers,
+    _tableName: data.name,
+  })
+}
+
+async function prepareScheduledEmailDrafts(env, token, pipeline, contacts, today) {
+  try {
+    const [templates, drafts] = await Promise.all([
+      table(env, token, EMAIL_TEMPLATES_TABLE, true),
+      table(env, token, EMAIL_DRAFTS_TABLE, true),
+    ])
+    if (!templates.headers.length || !drafts.headers.length) {
+      return { status: 'not_configured', created: 0 }
+    }
+
+    const activeTemplates = templates.rows.filter((template) =>
+      clean(template.Active).toLowerCase() !== 'no' &&
+      clean(template['Template ID']) &&
+      Number(template['Days After Submission']) > 0
+    )
+    if (!activeTemplates.length) return { status: 'no_active_templates', created: 0 }
+
+    // The first template's creation date is the feature activation boundary.
+    // This leaves older submitted RFIs opt-in while enrolling new submissions
+    // without another PipelineTable column.
+    const activationDate = activeTemplates
+      .map((template) => followUpDate(template['Created At']))
+      .filter(Boolean)
+      .sort()[0]
+    if (!activationDate) return { status: 'activation_date_missing', created: 0 }
+
+    const existingIds = new Set(drafts.rows.map((draft) => clean(draft['Draft ID']).toLowerCase()))
+    let created = 0
+    const now = new Date().toISOString()
+
+    for (const opportunity of pipeline.rows) {
+      const submissionDate = normalizedDate(opportunity['Submission Date (Response Date)*'])
+      if (
+        clean(opportunity['TAG Pipeline Activity Phase']) !== 'Submitted RFI' ||
+        !submissionDate ||
+        submissionDate < activationDate ||
+        !clean(opportunity['Contract Number / Notice ID'])
+      ) continue
+
+      const recipient = firstMatchingContact(opportunity, contacts.rows)
+      for (const template of activeTemplates) {
+        const draftId = deterministicDraftId(
+          opportunity['Contract Number / Notice ID'],
+          template['Template ID'],
+        )
+        if (existingIds.has(draftId.toLowerCase())) continue
+        const record = buildScheduledDraft({ opportunity, template, recipient, today, now })
+        await appendTableRecord(env, token, drafts, record)
+        existingIds.add(draftId.toLowerCase())
+        created += 1
+      }
+    }
+    return { status: 'success', created }
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'scheduled_email_draft_preparation',
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Unknown email draft error',
+    }))
+    return { status: 'error', created: 0, message: error instanceof Error ? error.message : 'Unknown email draft error' }
+  }
+}
+
 export function notificationsAppOnlyAvailable(env) {
   return Boolean(env.TEAMS_WEBHOOK_URL && env.WORKBOOK_ID && env.MS_TENANT_ID && env.MS_CLIENT_ID && env.MS_CLIENT_SECRET)
 }
@@ -275,6 +367,7 @@ export async function runScheduledNotifications(env) {
       }))
     }
     const sent = []
+    const emailDrafts = await prepareScheduledEmailDrafts(env, token, pipeline, contacts, today)
 
     const sendAndLog = async (type, payload, key) => {
       if (key && log[key] === today) return false
@@ -375,6 +468,7 @@ export async function runScheduledNotifications(env) {
       weekday: isWeekday,
       recipients: recipientStatus,
       sent,
+      emailDrafts,
     }
     await putAutomationRun(env, RUN_KEY, result, { expirationTtl: 60 * 60 * 24 * 14 })
     console.log(JSON.stringify({ event: 'scheduled_notifications', ...result }))
