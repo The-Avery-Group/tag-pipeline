@@ -3,6 +3,7 @@ import { getPartners, addPartner, updatePartner, deletePartner } from '@/service
 import {
   forceRefreshCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
@@ -48,6 +49,7 @@ export function usePartners() {
       if (current.some((partner) => partner['UEI Number'] === saved['UEI Number'])) return current
       return [...current, saved]
     })
+    await publishCacheUpdate(['PartnersTable'])
     verifyCacheInBackground(['PartnersTable'])
     return saved
   }, [])
@@ -59,6 +61,7 @@ export function usePartners() {
     ))
     try {
       await retryIdempotent(() => updatePartner(rowIndex, patch))
+      await publishCacheUpdate(['PartnersTable'])
       verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
       pendingPatches.current.delete(rowIndex)
@@ -73,6 +76,7 @@ export function usePartners() {
     setPartners((current) => current.filter((partner) => partner._rowIndex !== rowIndex))
     try {
       await retryIdempotent(() => deletePartner(rowIndex))
+      await publishCacheUpdate(['PartnersTable'])
       verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
       setPartners((current) => [...current, original].sort((a, b) => a._rowIndex - b._rowIndex))
