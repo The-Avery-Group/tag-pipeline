@@ -1621,8 +1621,16 @@ function emailPatchForWorkbook(patch, schema) {
 
 export async function getEmailFollowUpTemplates() {
   try {
+    // These tables are configured by administrators after the app is already
+    // deployed. Always refresh their schema before validation so a column
+    // added in Excel during the current browser session is recognized.
+    await emailTableSchema(
+      'EmailFollowUpTemplatesTable',
+      EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
+      { force: true },
+    )
+    invalidate('EmailFollowUpTemplatesTable')
     const rows = await getSheetRows('EmailFollowUpTemplatesTable')
-    await emailTableSchema('EmailFollowUpTemplatesTable', EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
     return canonicalEmailRows(rows, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
   } catch (error) {
     if (isMissingWorkbookTable(error)) return null
@@ -1687,8 +1695,13 @@ export async function deleteEmailFollowUpTemplate(rowIndex) {
 
 export async function getEmailFollowUpDrafts() {
   try {
+    await emailTableSchema(
+      'EmailFollowUpDraftsTable',
+      EMAIL_FOLLOW_UP_DRAFT_HEADERS,
+      { force: true },
+    )
+    invalidate('EmailFollowUpDraftsTable')
     const rows = await getSheetRows('EmailFollowUpDraftsTable')
-    await emailTableSchema('EmailFollowUpDraftsTable', EMAIL_FOLLOW_UP_DRAFT_HEADERS)
     return canonicalEmailRows(rows, EMAIL_FOLLOW_UP_DRAFT_HEADERS)
   } catch (error) {
     if (isMissingWorkbookTable(error)) return null
