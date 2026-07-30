@@ -403,7 +403,17 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
     method: 'PATCH',
     body: JSON.stringify({ values: [row] }),
   })
-  invalidate(tableName)
+  // Keep the successful write in the shared browser cache. Invalidating here
+  // forces every mounted consumer to wait for another Graph read and leaves
+  // universal search temporarily indexing the old row.
+  const cachedRows = cache.get(tableName)
+  if (cachedRows) {
+    cache.set(tableName, cachedRows.map((cachedRow) =>
+      cachedRow._rowIndex === targetRowIndex
+        ? { ...current, ...patch, _rowIndex: targetRowIndex }
+        : cachedRow
+    ))
+  }
 }
 
 /**
@@ -413,7 +423,10 @@ export async function deleteRow(tableName, rowIndex) {
   await graphFetch(`/tables/${tableName}/rows/itemAt(index=${rowIndex})`, {
     method: 'DELETE',
   })
-  invalidate(tableName)
+  const cachedRows = cache.get(tableName)
+  if (cachedRows) {
+    cache.set(tableName, cachedRows.filter((row) => row._rowIndex !== rowIndex))
+  }
 }
 
 // ── Column header constants ────────────────────────────────────────────────
