@@ -6,6 +6,7 @@ import {
   createFingerprint,
   createStableId,
 } from '@/services/workbookMutations'
+import { deterministicDraftId } from '@/utils/followUpEmails'
 
 // VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook,
 // e.g. 01FVYRIFDLMKLW3D4HKVE34O5ZGVXE4Y6H
@@ -222,6 +223,10 @@ const DATE_COLUMNS = new Set([
   'Response Date',   // NewOpportunitiesTable
   'Posted Date',     // NewOpportunitiesTable
   'Date Added',      // NewOpportunitiesTable
+  'Due Date',        // EmailFollowUpDraftsTable
+  'Created At',      // Email follow-up tables
+  'Updated At',      // Email follow-up tables
+  'Enrollment Date', // EmailFollowUpDraftsTable
 ])
 
 /**
@@ -508,6 +513,43 @@ export const PARTNER_HEADERS = [
 
 export const NOTES_HEADERS = [
   'NoteID', 'ContractNumber', 'Date', 'Author', 'NoteText',
+]
+
+export const EMAIL_FOLLOW_UP_TEMPLATE_HEADERS = [
+  'Template ID',
+  'Template Name',
+  'Days After Submission',
+  'Subject',
+  'Body',
+  'Active',
+  'Created At',
+  'Last Updated',
+  'Updated By',
+]
+
+export const EMAIL_FOLLOW_UP_DRAFT_HEADERS = [
+  'Draft ID',
+  'Opportunity ID',
+  'Template ID',
+  'Template Name',
+  'Milestone Days',
+  'Due Date',
+  'To',
+  'CC',
+  'Subject',
+  'Body',
+  'Status',
+  'Enrollment Date',
+  'Enrollment Source',
+  'Created At',
+  'Updated At',
+  'Updated By',
+  'Teams Notified At',
+  'Outlook Draft ID',
+  'Outlook Web Link',
+  'Sent At',
+  'Sent By',
+  'Last Error',
 ]
 
 // ── Column name aliases — use these throughout the app ────────────────────
@@ -1007,7 +1049,7 @@ function updateWithRetry(fn) {
   })()
 }
 
-function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides = [], followUpDecisions = []) {
+function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides = [], followUpDecisions = [], emailDrafts = []) {
   const oldId = String(current[OPPORTUNITY_ID_COL] ?? '').trim()
   const newId = String(nextForm[OPPORTUNITY_ID_COL] ?? '').trim()
   const oldTitle = String(current[OPPORTUNITY_TITLE_COL] ?? '').trim()
@@ -1085,6 +1127,21 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
         rollback: { 'Opportunity ID': row['Opportunity ID'] },
       }))
     : []
+  const emailDraftPatches = identifierChanged
+    ? emailDrafts
+      .filter((row) => String(row['Opportunity ID'] ?? '').trim() === oldId)
+      .map((row) => ({
+        rowIndex: row._rowIndex,
+        patch: {
+          'Opportunity ID': newId,
+          'Draft ID': deterministicDraftId(newId, row['Template ID']),
+        },
+        rollback: {
+          'Opportunity ID': row['Opportunity ID'],
+          'Draft ID': row['Draft ID'],
+        },
+      }))
+    : []
   return {
     oldId,
     newId,
@@ -1096,6 +1153,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     notePatches,
     overridePatches,
     followUpDecisionPatches,
+    emailDraftPatches,
     preview: {
       identifierChanged,
       titleChanged,
@@ -1104,7 +1162,8 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
       relationshipCount: relationshipRows.size,
       followUpOverrideCount: overridePatches.length,
       followUpDecisionCount: followUpDecisionPatches.length,
-      totalLinkedRecords: taskPatches.length + notePatches.length + overridePatches.length + followUpDecisionPatches.length,
+      emailDraftCount: emailDraftPatches.length,
+      totalLinkedRecords: taskPatches.length + notePatches.length + overridePatches.length + followUpDecisionPatches.length + emailDraftPatches.length,
     },
   }
 }
@@ -1121,12 +1180,13 @@ export async function previewOpportunityRename(rowIndex, nextForm) {
   invalidate('NotesTable')
   invalidate('RFIFollowUpOverridesTable')
   invalidate('RFIFollowUpDecisionsTable')
-  const [pipeline, tasks, notes, followUpOverrides, followUpDecisions] = await Promise.all([
-    getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(),
+  invalidate('EmailFollowUpDraftsTable')
+  const [pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts] = await Promise.all([
+    getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(), getEmailFollowUpDrafts(),
   ])
   const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
   if (!current) throw new Error('Opportunity no longer exists in the pipeline')
-  return createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions).preview
+  return createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts || []).preview
 }
 
 /**
@@ -1142,12 +1202,13 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
   invalidate('NotesTable')
   invalidate('RFIFollowUpOverridesTable')
   invalidate('RFIFollowUpDecisionsTable')
-  const [pipeline, tasks, notes, followUpOverrides, followUpDecisions] = await Promise.all([
-    getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(),
+  invalidate('EmailFollowUpDraftsTable')
+  const [pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts] = await Promise.all([
+    getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(), getEmailFollowUpDrafts(),
   ])
   const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
   if (!current) throw new Error('Opportunity no longer exists in the pipeline')
-  const plan = createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions)
+  const plan = createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts || [])
 
   const operations = [
     ...plan.taskPatches.map((item) => ({
@@ -1169,6 +1230,11 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
       label: 'RFI follow-up decision',
       apply: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_DECISION_HEADERS)),
       rollback: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_DECISION_HEADERS)),
+    })),
+    ...plan.emailDraftPatches.map((item) => ({
+      label: 'RFI follow-up email draft',
+      apply: () => updateWithRetry(() => updateRow('EmailFollowUpDraftsTable', item.rowIndex, item.patch, EMAIL_FOLLOW_UP_DRAFT_HEADERS)),
+      rollback: () => updateWithRetry(() => updateRow('EmailFollowUpDraftsTable', item.rowIndex, item.rollback, EMAIL_FOLLOW_UP_DRAFT_HEADERS)),
     })),
     {
       label: 'opportunity',
@@ -1509,4 +1575,87 @@ export async function saveRFIFollowUpDecision(values) {
   const payload = { ...values, 'Decided At': new Date().toISOString() }
   if (sameDecision) return updateRow('RFIFollowUpDecisionsTable', sameDecision._rowIndex, payload, RFI_FOLLOW_UP_DECISION_HEADERS)
   return appendRow('RFIFollowUpDecisionsTable', payload, RFI_FOLLOW_UP_DECISION_HEADERS)
+}
+
+function isMissingWorkbookTable(error) {
+  return /not found|does not exist|itemNotFound|Graph API error: 404/i.test(String(error?.message || ''))
+}
+
+export async function getEmailFollowUpTemplates() {
+  try {
+    return await getSheetRows('EmailFollowUpTemplatesTable')
+  } catch (error) {
+    if (isMissingWorkbookTable(error)) return null
+    throw error
+  }
+}
+
+export async function addEmailFollowUpTemplate(values, updatedBy, templateId = createStableId('FUT')) {
+  const now = new Date().toISOString()
+  const record = {
+    ...values,
+    'Template ID': templateId,
+    'Created At': values['Created At'] || now,
+    'Last Updated': now,
+    'Updated By': updatedBy || '',
+  }
+  return createWorkbookRecord({
+    tableName: 'EmailFollowUpTemplatesTable',
+    operationKey: `follow-up-template:${templateId}`,
+    idColumn: 'Template ID',
+    idValue: templateId,
+    record,
+    append: () => appendRow('EmailFollowUpTemplatesTable', record, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS),
+    readRows: async () => {
+      invalidate('EmailFollowUpTemplatesTable')
+      return (await getEmailFollowUpTemplates()) || []
+    },
+  })
+}
+
+export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy) {
+  return updateRow('EmailFollowUpTemplatesTable', rowIndex, {
+    ...patch,
+    'Last Updated': new Date().toISOString(),
+    'Updated By': updatedBy || '',
+  }, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
+}
+
+export async function deleteEmailFollowUpTemplate(rowIndex) {
+  return deleteRow('EmailFollowUpTemplatesTable', rowIndex)
+}
+
+export async function getEmailFollowUpDrafts() {
+  try {
+    return await getSheetRows('EmailFollowUpDraftsTable')
+  } catch (error) {
+    if (isMissingWorkbookTable(error)) return null
+    throw error
+  }
+}
+
+export async function addEmailFollowUpDraft(record) {
+  const draftId = String(record?.['Draft ID'] || '').trim()
+  if (!draftId) throw new Error('Draft ID is required')
+  return createWorkbookRecord({
+    tableName: 'EmailFollowUpDraftsTable',
+    operationKey: `follow-up-draft:${draftId}`,
+    idColumn: 'Draft ID',
+    idValue: draftId,
+    record,
+    append: () => appendRow('EmailFollowUpDraftsTable', record, EMAIL_FOLLOW_UP_DRAFT_HEADERS),
+    readRows: async () => {
+      invalidate('EmailFollowUpDraftsTable')
+      return (await getEmailFollowUpDrafts()) || []
+    },
+    checkBeforeAppend: true,
+  })
+}
+
+export async function updateEmailFollowUpDraft(rowIndex, patch, updatedBy) {
+  return updateRow('EmailFollowUpDraftsTable', rowIndex, {
+    ...patch,
+    'Updated At': new Date().toISOString(),
+    'Updated By': updatedBy || '',
+  }, EMAIL_FOLLOW_UP_DRAFT_HEADERS)
 }
