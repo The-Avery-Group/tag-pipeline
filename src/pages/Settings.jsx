@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import Topbar from '@/components/Layout/Topbar'
+import FollowUpEmailTemplates from '@/components/Settings/FollowUpEmailTemplates'
+import { useAuth } from '@/auth/AuthContext'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
@@ -93,6 +95,7 @@ function teamsIntegration(notifications) {
 }
 
 export default function Settings({ toast }) {
+  const { user } = useAuth()
   const { lists, loading, update } = useValidationLists()
   const { triggerPull } = useSAMOpportunities()
   const { preference: themePreference, resolvedTheme, setThemePreference } = useTheme()
@@ -121,6 +124,7 @@ export default function Settings({ toast }) {
   const [openSections,  setOpenSections]  = useState({
     dropdowns: false,
     health:    false,
+    emailTemplates: false,
     sam:       false,
   })
   const toggleSection = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -356,6 +360,12 @@ export default function Settings({ toast }) {
                   <td className={styles.integrationDetails}>{teamsIntegrationStatus.details}</td>
                   <td className={styles.integrationAction}><span className="text-xs text-muted">No action</span></td>
                 </tr>
+                <tr>
+                  <td className={styles.integrationName}>Procurement email</td>
+                  <td><span className={`${styles.integrationBadge} ${styles.integrationNotConfigured}`}>Draft only</span></td>
+                  <td className={styles.integrationDetails}>Templates and editable drafts are available. Sending and Outlook actions remain disabled until Exchange mail permissions are granted.</td>
+                  <td className={styles.integrationAction}><span className="text-xs text-muted">No action</span></td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -412,6 +422,17 @@ export default function Settings({ toast }) {
               )}
             </div>
           )}
+        </div>
+
+        <div className={styles.collapsible}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('emailTemplates')}>
+            <span>
+              <span className={styles.collapsibleTitle}>RFI Follow-up Email Templates</span>
+              <span className={styles.collapsibleHint}>Editable milestone templates for user-approved drafts</span>
+            </span>
+            <span className={`${styles.chevron} ${openSections.emailTemplates ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.emailTemplates && <FollowUpEmailTemplates user={user} toast={toast} />}
         </div>
 
         {/* ── Collapsible: Dropdown Options ── */}
