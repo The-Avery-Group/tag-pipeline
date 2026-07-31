@@ -11,6 +11,10 @@
 .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
 .controls input { width: 160px; }
 
+.entityIdentity { display: grid; gap: 2px; margin: 2px 0 12px; padding: 9px 11px; border-left: 3px solid var(--blue-600); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--blue-50); }
+.entityIdentity span, .entityIdentity small { color: var(--gray-500); font-size: 10px; }
+.entityIdentity strong { color: var(--gray-900); font-size: 13px; font-weight: 650; }
+
 .choiceGroup { display: inline-flex; overflow: hidden; border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); }
 .choice { padding: 6px 8px; border: 0; border-right: 0.5px solid var(--gray-200); background: var(--surface); color: var(--gray-600); cursor: pointer; font: 500 11px var(--font); }
 .choice:last-child { border-right: 0; }
