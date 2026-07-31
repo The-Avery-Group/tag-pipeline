@@ -5,14 +5,25 @@ import {
   getEmailFollowUpTemplates,
   updateEmailFollowUpDraft,
 } from '@/services/graphService'
-import { buildFollowUpDraft, isoDate } from '@/utils/followUpEmails'
+import { buildFollowUpDraft, formatRecipientNames, isoDate } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
 import styles from './FollowUpEmailComposer.module.css'
 
 const clean = (value) => String(value ?? '').trim()
 
-function firstEmail(contacts) {
-  return contacts.map((contact) => clean(contact.Email)).find(Boolean) || ''
+function contactRecipients(contacts) {
+  const seen = new Set()
+  return contacts.flatMap((contact) => {
+    const email = clean(contact.Email)
+    const key = email.toLowerCase()
+    if (!email || seen.has(key)) return []
+    seen.add(key)
+    return [{ name: clean(contact.Name), firstName: clean(contact.Name).split(/\s+/)[0] || '', email }]
+  })
+}
+
+function parseRecipientEmails(value) {
+  return String(value || '').split(/[;,]/).map(clean).filter(Boolean)
 }
 
 function samLink(opportunity) {
@@ -41,6 +52,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   const [improving, setImproving] = useState(false)
   const savingRef = useRef(false)
   const opportunityId = clean(opportunity?.['Contract Number / Notice ID'])
+  const availableRecipients = useMemo(() => contactRecipients(linkedContacts), [linkedContacts])
   const submissionDate = isoDate(opportunity?.['Submission Date (Response Date)*'])
   const eligible = clean(opportunity?.['TAG Pipeline Activity Phase']) === 'Submitted RFI' && Boolean(submissionDate)
 
@@ -100,10 +112,10 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     }
     setEnrolling(true)
     try {
-      const recipient = firstEmail(linkedContacts)
+      const recipient = availableRecipients.map((contact) => contact.email).join('; ')
       const sourceOpportunity = {
         ...opportunity,
-        contactFirstName: clean(linkedContacts[0]?.Name).split(/\s+/)[0] || '',
+        contactFirstName: formatRecipientNames(availableRecipients.map((contact) => contact.firstName)),
         samUrl: samLink(opportunity),
       }
       const created = []
@@ -130,6 +142,21 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     } finally {
       setEnrolling(false)
     }
+  }
+
+  const toggleRecipient = (email) => {
+    setForm((current) => {
+      if (!current) return current
+      const selected = new Set(parseRecipientEmails(current.To).map((value) => value.toLowerCase()))
+      if (selected.has(email.toLowerCase())) selected.delete(email.toLowerCase())
+      else selected.add(email.toLowerCase())
+      const ordered = availableRecipients
+        .filter((contact) => selected.has(contact.email.toLowerCase()))
+        .map((contact) => contact.email)
+      const unmatched = parseRecipientEmails(current.To)
+        .filter((value) => !availableRecipients.some((contact) => contact.email.toLowerCase() === value.toLowerCase()))
+      return { ...current, To: [...ordered, ...unmatched].join('; ') }
+    })
   }
 
   const save = async (status = form?.Status || 'Ready for review') => {
@@ -235,6 +262,24 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
                 </div>
                 <small>Due {form['Due Date'] || 'date unavailable'}</small>
               </div>
+
+              {availableRecipients.length > 0 && (
+                <fieldset className={styles.recipientPicker}>
+                  <legend>Linked contact recipients</legend>
+                  <div className={styles.recipientOptions}>
+                    {availableRecipients.map((contact) => (
+                      <label key={contact.email}>
+                        <input
+                          type="checkbox"
+                          checked={parseRecipientEmails(form.To).some((value) => value.toLowerCase() === contact.email.toLowerCase())}
+                          onChange={() => toggleRecipient(contact.email)}
+                        />
+                        <span><strong>{contact.name || contact.email}</strong><small>{contact.email}</small></span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
 
               <div className={styles.addressRows}>
                 <label><span>From</span><input value="Procurement mailbox · available after mail permissions" readOnly /></label>
