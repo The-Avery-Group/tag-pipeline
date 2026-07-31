@@ -39,7 +39,7 @@ export default function EntityAwardHistory() {
   const { data, loading, error, refresh } = useEntityAwardHistory(submittedUEI, yearType, group)
   const agencies = data?.departments || data?.agencies || []
   const total = agencies.reduce((sum, item) => sum + item.count, 0)
-  const doughnut = agencies.slice(0, 8).map((item) => ({ ...item, percent: total ? item.count / total * 100 : 0 }))
+  const doughnut = agencies.slice(0, 8).map((item) => ({ ...item, percentage: total ? item.count / total * 100 : 0 }))
 
   const submit = (event) => {
     event.preventDefault()
@@ -77,6 +77,11 @@ export default function EntityAwardHistory() {
         : loading ? <div className={`skeleton ${styles.skeleton}`} />
           : error ? <p className="text-sm text-danger">Could not load award history: {error}</p>
             : data && <>
+              <div className={styles.entityIdentity}>
+                <span>Incumbent</span>
+                <strong>{data.incumbentName || 'Name unavailable from USAspending'}</strong>
+                <small>UEI {data.uei}</small>
+              </div>
               <div className={styles.metrics}>
                 <Metric label="Prime contracts" value={data.contractCount} detail="Last five years" />
                 <Metric label="Average award value" value={formatCurrency(data.averageAwardValue)} detail="Award amounts in period" />
@@ -105,13 +110,13 @@ export default function EntityAwardHistory() {
                     <div className={styles.agencyDistribution}>
                       <ResponsiveContainer width="48%" height={220}>
                         <PieChart>
-                          <Tooltip content={<ChartTooltip formatLabel={(item) => item.name} formatValue={(item) => `${item.count} contract${item.count === 1 ? '' : 's'} · ${item.percent.toFixed(1)}%`} />} />
-                          <Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={48} outerRadius={78} label={({ percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                          <Tooltip content={<ChartTooltip formatLabel={(item) => item.name} formatValue={(item) => `${item.count} contract${item.count === 1 ? '' : 's'} · ${item.percentage.toFixed(1)}%`} />} />
+                          <Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={48} outerRadius={78} label={({ value }) => `${(total ? Number(value) / total * 100 : 0).toFixed(0)}%`} labelLine={false}>
                             {doughnut.map((item, index) => <Cell key={item.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}
                           </Pie>
                         </PieChart>
                       </ResponsiveContainer>
-                      <div className={styles.agencyTable}>{doughnut.map((item) => <div key={item.name} className={styles.agencyRow} title={`${item.count} prime contract${item.count === 1 ? '' : 's'} `}><span>{item.name}</span><strong>{item.percent.toFixed(1)}%</strong></div>)}</div>
+                      <div className={styles.agencyTable}>{doughnut.map((item) => <div key={item.name} className={styles.agencyRow} title={`${item.count} prime contract${item.count === 1 ? '' : 's'} `}><span>{item.name}</span><strong>{item.percentage.toFixed(1)}%</strong></div>)}</div>
                     </div>
                   )}
                 </div>
