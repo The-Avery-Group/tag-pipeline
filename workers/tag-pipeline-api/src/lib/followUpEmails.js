@@ -1,5 +1,12 @@
 const clean = (value) => String(value ?? '').trim()
 
+export function formatRecipientNames(names = []) {
+  const unique = [...new Set(names.map(clean).filter(Boolean))]
+  if (unique.length < 2) return unique[0] || ''
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`
+  return `${unique.slice(0, -1).join(', ')}, and ${unique.at(-1)}`
+}
+
 export function normalizedDate(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     const date = new Date((value - 25569) * 86400000)
@@ -37,16 +44,19 @@ export function mergeTemplate(value, context = {}) {
   )
 }
 
-export function buildScheduledDraft({ opportunity, template, recipient = '', today, now }) {
+export function buildScheduledDraft({ opportunity, template, recipient = '', recipients, today, now }) {
   const opportunityId = clean(opportunity['Contract Number / Notice ID'])
   const templateId = clean(template['Template ID'])
   const milestoneDays = Number(template['Days After Submission'] || 0)
   const submissionDate = normalizedDate(opportunity['Submission Date (Response Date)*'])
   const dueDate = addDays(submissionDate, milestoneDays)
   const samUrl = clean(opportunity['Other Links*']).split(/\s+/).find((value) => /sam\.gov/i.test(value)) || ''
-  const contactName = clean(recipient.name)
+  const recipientList = Array.isArray(recipients) ? recipients : [recipient]
+  const validRecipients = recipientList.filter((item) => clean(item?.email))
+  const contactFirstNames = validRecipients.map((item) => clean(item.name).split(/\s+/)[0] || '')
+  const recipientEmails = [...new Set(validRecipients.map((item) => clean(item.email)).filter(Boolean))]
   const context = {
-    contactFirstName: contactName.split(/\s+/)[0] || '',
+    contactFirstName: formatRecipientNames(contactFirstNames),
     opportunityTitle: opportunity['Project Title / Description*'],
     noticeId: opportunityId,
     agency: opportunity['Agency*'],
@@ -61,11 +71,11 @@ export function buildScheduledDraft({ opportunity, template, recipient = '', tod
     'Template Name': clean(template['Template Name']),
     'Milestone Days': milestoneDays,
     'Due Date': dueDate,
-    To: clean(recipient.email),
+    To: recipientEmails.join('; '),
     CC: '',
     Subject: mergeTemplate(template.Subject, context),
     Body: mergeTemplate(template.Body, context),
-    Status: recipient.email ? (dueDate && dueDate <= today ? 'Ready for review' : 'Scheduled') : 'Recipient needed',
+    Status: recipientEmails.length ? (dueDate && dueDate <= today ? 'Ready for review' : 'Scheduled') : 'Recipient needed',
     'Enrollment Date': today,
     'Enrollment Source': 'Automatic',
     'Created At': now,
