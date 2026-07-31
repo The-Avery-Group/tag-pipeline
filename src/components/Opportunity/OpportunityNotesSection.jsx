@@ -1,22 +1,7 @@
 import OpportunitySection from '@/components/Opportunity/OpportunitySection'
+import ActionIcon from '@/components/Common/ActionIcon'
+import RichText from '@/components/Common/RichText'
 import styles from '@/pages/OpportunityDetail.module.css'
-
-const URL_PATTERN = /(https?:\/\/[^\s<>"')]+|www\.[^\s<>"')]+)/gi
-
-function linkifyText(text) {
-  if (!text) return null
-  return String(text).split(URL_PATTERN).map((part, index) => {
-    if (index % 2 === 1) {
-      const href = part.toLowerCase().startsWith('www.') ? `https://${part}` : part
-      return (
-        <a key={index} href={href} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>
-          {part}
-        </a>
-      )
-    }
-    return part
-  })
-}
 
 export default function OpportunityNotesSection({
   loading,
@@ -34,9 +19,10 @@ export default function OpportunityNotesSection({
   setNewNote,
   addNote,
   addingNote,
+  id,
 }) {
   return (
-    <OpportunitySection title="Notes">
+    <OpportunitySection title="Notes" id={id}>
       {loading
         ? <div className="skeleton" style={{ height: 60 }} />
         : notes.length === 0
@@ -54,7 +40,7 @@ export default function OpportunityNotesSection({
                       disabled={savingNoteId !== null || deletingNoteId === note._rowIndex}
                       aria-label="Edit note"
                       title="Edit note"
-                    >✎</button>
+                    ><ActionIcon name="edit" /></button>
                   )}
                   {!note._temp && (
                     <button
@@ -66,7 +52,7 @@ export default function OpportunityNotesSection({
                       aria-label="Delete note"
                       title="Delete note"
                     >
-                      {deletingNoteId === note._rowIndex ? '…' : '✕'}
+                      {deletingNoteId === note._rowIndex ? '…' : <ActionIcon name="delete" />}
                     </button>
                   )}
                 </div>
@@ -78,7 +64,7 @@ export default function OpportunityNotesSection({
                         <button type="button" className="btn text-sm" onClick={cancelEdit} disabled={savingNoteId === note._rowIndex}>Cancel</button>
                       </div>
                     </div>
-                  : <div className={styles.noteText}>{linkifyText(note.NoteText)}</div>}
+                  : <div className={styles.noteText}><RichText value={note.NoteText} /></div>}
               </div>
             ))
       }
