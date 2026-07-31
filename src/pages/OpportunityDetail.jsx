@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
@@ -7,7 +7,6 @@ import { useContacts } from '@/hooks/useContacts'
 import { usePartners } from '@/hooks/usePartners'
 import { useAuth } from '@/auth/AuthContext'
 import Topbar from '@/components/Layout/Topbar'
-import AIPanel from '@/components/AI/AIPanel'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
@@ -25,12 +24,12 @@ import OpportunityTasksSection from '@/components/Opportunity/OpportunityTasksSe
 import FollowUpEmailComposer from '@/components/Opportunity/FollowUpEmailComposer'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
+import ActionIcon from '@/components/Common/ActionIcon'
 import { formatDate } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import { invalidateCache } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
-import { buildCapabilityStatementContext } from '@/services/groqService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
@@ -116,6 +115,33 @@ function joinLinks(arr) {
 }
 function cleanLinks(val) {
   return parseLinks(val).filter(Boolean)
+}
+
+function inferredLinkLabel(url) {
+  try {
+    const host = new URL(safeUrl(url)).hostname.replace(/^www\./, '')
+    if (/sam\.gov$/i.test(host)) return 'SAM.gov opportunity'
+    if (/sharepoint\.com$/i.test(host)) return 'SharePoint folder'
+    if (/1drv\.ms|onedrive\.live\.com$/i.test(host)) return 'OneDrive file'
+    if (/govwin\.com$/i.test(host)) return 'GovWin opportunity'
+    return host || 'External link'
+  } catch {
+    return 'External link'
+  }
+}
+
+function parseNamedLink(line) {
+  const value = String(line || '').trim()
+  const separator = value.match(/^(.+?)\s*\|\s*((?:https?:\/\/|www\.)\S+)$/i)
+  const url = separator ? separator[2].trim() : value
+  return { label: separator?.[1]?.trim() || inferredLinkLabel(url), url }
+}
+
+function namedLinkLine(label, url) {
+  const cleanUrl = String(url || '').trim()
+  if (!cleanUrl) return ''
+  const cleanLabel = String(label || '').trim()
+  return cleanLabel && cleanLabel !== inferredLinkLabel(cleanUrl) ? `${cleanLabel} | ${cleanUrl}` : cleanUrl
 }
 
 function addPOCName(currentPOC, contactName) {
@@ -286,6 +312,22 @@ const PHASE_BADGE = {
 
 const Field = (props) => <OpportunityField {...props} formatValue={formatFieldValue} />
 
+function SummaryGroup({ title, items }) {
+  const visible = items.filter((item) => item.value !== null && item.value !== undefined && String(item.value).trim() !== '')
+  if (!visible.length) return null
+  return (
+    <div className={styles.summaryGroup}>
+      <div className={styles.summaryGroupTitle}>{title}</div>
+      <dl className={styles.summaryGrid}>
+        {visible.map((item) => <div key={item.label} className={styles.summaryField}>
+          <dt>{item.label}</dt>
+          <dd>{item.display ?? (item.raw ? String(item.value) : formatFieldValue(item.value))}</dd>
+        </div>)}
+      </dl>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 export default function OpportunityDetail({ toast }) {
   const { contractNumber } = useParams()
@@ -299,7 +341,7 @@ export default function OpportunityDetail({ toast }) {
 
   const { pipeline, loading: pipelineLoading, add: addPipelineOpp, update: updateOpp, remove: removeOpp } = usePipeline()
   const { notes, loading: notesLoading, add: addNote, update: updateNote, remove: removeNote } = useNotes(decodedCN)
-  const { tasks, add: addTask, update: updateTask, refreshContext } = useTasks(decodedCN)
+  const { tasks, add: addTask, update: updateTask, remove: removeTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
   const { partners } = usePartners()
   const { lists }     = useValidationLists()
@@ -328,11 +370,14 @@ export default function OpportunityDetail({ toast }) {
   const [noteDraft,       setNoteDraft]       = useState('')
   const [savingNoteId,    setSavingNoteId]    = useState(null)
   const [showAddTask,     setShowAddTask]     = useState(false)
+  const [editingTask,     setEditingTask]     = useState(null)
+  const [deleteTaskTarget, setDeleteTaskTarget] = useState(null)
+  const [deletingTaskId,  setDeletingTaskId]  = useState(null)
   const [savingTask,      setSavingTask]      = useState(false)
   const creatingTaskRef = useRef(false)
   const [updatingTaskId,  setUpdatingTaskId]  = useState(null)
   const [taskForm,        setTaskForm]        = useState({
-    Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium',
+    Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium', Status: 'To Do',
   })
   const [contactSearch,   setContactSearch]   = useState('')
   const [linkingContactId, setLinkingContactId] = useState(null)
@@ -351,6 +396,9 @@ export default function OpportunityDetail({ toast }) {
   const [addingEightANote, setAddingEightANote] = useState(false)
   const [eightANoteAdded, setEightANoteAdded] = useState(false)
   const [applyingSAMUpdate, setApplyingSAMUpdate] = useState(false)
+  const [editingLinks, setEditingLinks] = useState(false)
+  const [savingLinks, setSavingLinks] = useState(false)
+  const [linkDraft, setLinkDraft] = useState(null)
   
 
   const opp = useMemo(
@@ -468,7 +516,6 @@ export default function OpportunityDetail({ toast }) {
     () => notes.filter((n) => !parseRelatedOpportunityNote(n.NoteText)),
     [notes]
   )
-  const recentNotesStr = visibleNotes.slice(-3).map((n) => n.NoteText).join(' | ')
   const peopleSearchContext = useMemo(() => {
     if (!opp) return {}
     return {
@@ -552,11 +599,6 @@ export default function OpportunityDetail({ toast }) {
     ? 'badge-tracking'
     : 'badge-closed-lost'
 
-  const capPrompt = useCallback(
-    () => buildCapabilityStatementContext(opp ?? {}, recentNotesStr),
-    [opp, notes, decodedCN]
-  )
-
   // ── Early returns after all hooks ─────────────────────────────────────
   if (pipelineLoading) {
     return (
@@ -593,6 +635,38 @@ export default function OpportunityDetail({ toast }) {
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
   const handleCancel = () => { setForm(null); setEditing(false) }
+
+  const beginLinkEdit = () => {
+    setLinkDraft({
+      [C.govwin]: opp[C.govwin] || '',
+      [C.folder]: opp[C.folder] || '',
+      [C.slideDeck]: opp[C.slideDeck] || '',
+      other: cleanLinks(opp[C.otherLinks]).map(parseNamedLink),
+    })
+    setEditingLinks(true)
+  }
+
+  const saveLinks = async () => {
+    if (!linkDraft || savingLinks) return
+    setSavingLinks(true)
+    try {
+      const patch = {
+        [C.govwin]: linkDraft[C.govwin] || '',
+        [C.folder]: linkDraft[C.folder] || '',
+        [C.slideDeck]: linkDraft[C.slideDeck] || '',
+        [C.otherLinks]: joinLinks(linkDraft.other.map(({ label, url }) => namedLinkLine(label, url)).filter(Boolean)),
+      }
+      await updateOpp(opp._rowIndex, patch, opp)
+      setForm((current) => current ? { ...current, ...patch } : current)
+      setEditingLinks(false)
+      setLinkDraft(null)
+      toast?.success('Links updated')
+    } catch (error) {
+      toast?.error(`Could not update links: ${error.message}`)
+    } finally {
+      setSavingLinks(false)
+    }
+  }
 
   const handleApplySAMUpdate = async () => {
     const patch = samChangeSuggestion.suggestion?.patch
@@ -817,13 +891,20 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const handleUnlinkContact = async (c) => {
+    const key = contactKey(c)
+    if (!key || linkingContactIdsRef.current.has(key)) return
+    linkingContactIdsRef.current.add(key)
+    setLinkingContactId(key)
     try {
       const nextPOC = parsePOCNames(opp[C.poc]).filter((name) => name !== c.Name).join(', ')
       await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} unlinked`)
     } catch (err) {
-      toast?.error(`Failed to unlink ${c.Name}`)
+      toast?.error(`Failed to unlink ${c.Name}: ${err.message}`)
+    } finally {
+      linkingContactIdsRef.current.delete(key)
+      setLinkingContactId((current) => current === key ? null : current)
     }
   }
 
@@ -945,6 +1026,39 @@ export default function OpportunityDetail({ toast }) {
     toast?.success('Follow-on added and linked to this RFI')
   }
 
+  const openAddTask = () => {
+    setEditingTask(null)
+    setTaskForm({ Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium', Status: 'To Do' })
+    setShowAddTask(true)
+  }
+
+  const openEditTask = (task) => {
+    setEditingTask(task)
+    setTaskForm({
+      Title: task.Title || '',
+      Description: task.Description || '',
+      AssignedTo: task.AssignedTo || '',
+      DueDate: dateOnly(task.DueDate) || '',
+      Priority: task.Priority || 'Medium',
+      Status: task.Status || 'To Do',
+    })
+    setShowAddTask(true)
+  }
+
+  const handleDeleteTask = async () => {
+    if (!deleteTaskTarget || deletingTaskId) return
+    setDeletingTaskId(deleteTaskTarget.TaskID)
+    try {
+      await removeTask(deleteTaskTarget._rowIndex)
+      toast?.success('Task deleted')
+      setDeleteTaskTarget(null)
+    } catch (error) {
+      toast?.error(`Failed to delete task: ${error.message}`)
+    } finally {
+      setDeletingTaskId(null)
+    }
+  }
+
   const submitTask = async () => {
     if (creatingTaskRef.current) return
     if (!taskForm.Title.trim()) {
@@ -955,17 +1069,29 @@ export default function OpportunityDetail({ toast }) {
     creatingTaskRef.current = true
     setSavingTask(true)
     try {
-      await addTask({
-        ContractNumber: decodedCN,
-        ContractTitle:  opp[C.title],
-        ...taskForm,
-        DueDate: taskForm.DueDate || '',
-      }, user.displayName)
+      if (editingTask) {
+        await updateTask(editingTask._rowIndex, {
+          Title: taskForm.Title.trim(),
+          Description: taskForm.Description,
+          AssignedTo: taskForm.AssignedTo,
+          DueDate: taskForm.DueDate || '',
+          Priority: taskForm.Priority,
+          Status: taskForm.Status,
+        })
+      } else {
+        await addTask({
+          ContractNumber: decodedCN,
+          ContractTitle:  opp[C.title],
+          ...taskForm,
+          DueDate: taskForm.DueDate || '',
+        }, user.displayName)
+      }
       setShowAddTask(false)
-      setTaskForm({ Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium' })
-      toast?.success('Task added')
+      setEditingTask(null)
+      setTaskForm({ Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium', Status: 'To Do' })
+      toast?.success(editingTask ? 'Task updated' : 'Task added')
     } catch (err) {
-      toast?.error(`Failed to add task: ${err.message}`)
+      toast?.error(`Failed to ${editingTask ? 'update' : 'add'} task: ${err.message}`)
     } finally {
       creatingTaskRef.current = false
       setSavingTask(false)
@@ -1078,13 +1204,13 @@ export default function OpportunityDetail({ toast }) {
                     onClick={() => navigate(`/ai-chat?opportunity=${encodeURIComponent(decodedCN)}`)}
                     title="Discuss this opportunity with AI"
                   >✦ Discuss with AI</button>
-                  <button className="btn" onClick={handleEdit}>Edit</button>
+                  <button className="btn" onClick={handleEdit}><ActionIcon name="edit" /> Edit</button>
                   <button
                     className="btn btn-ghost"
                     style={{ fontSize: 12, color: 'var(--red-600)' }}
                     onClick={() => setConfirmDelete(true)}
                     title="Delete this opportunity"
-                  >🗑 Delete</button>
+                  ><ActionIcon name="delete" /> Delete</button>
                 </>
               )
               : (
@@ -1099,81 +1225,92 @@ export default function OpportunityDetail({ toast }) {
           </div>
         </div>
 
-        {/* ── Section 1: Opportunity Details ── */}
-        <Section title="Opportunity Details">
-          <div className={styles.fieldGrid}>
-            {editing && (
-              <>
-                <Field label="Opportunity Title" value={f(C.title)} editing onChange={set(C.title)} />
-                <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
-              </>
-            )}
-            <Field label="Agency"      value={f(C.agency)}     editing={editing} onChange={set(C.agency)} />
-            <Field label="Department"  value={f(C.department)} editing={editing} onChange={set(C.department)} />
-            <Field label="Office"                  value={f(C.office)}         editing={editing} onChange={set(C.office)} />
-            <Field label="NAICS Code"              value={f(C.naics)}          editing={editing} onChange={set(C.naics)}           raw />
-            <Field label="Set-Aside"               value={f(C.setAside)}       editing={editing} onChange={set(C.setAside)}       options={setAsideOptions} />
-            <Field label="Contract Vehicle Number" value={f(C.vehicleNumber)}  editing={editing} onChange={set(C.vehicleNumber)} />
-            <Field label="Contract Vehicle"        value={f(C.vehicle)}        editing={editing} onChange={set(C.vehicle)} />
-            <Field label="Contract Classification" value={f(C.classification)} editing={editing} onChange={set(C.classification)} />
-            <Field label="Incumbent"               value={f(C.incumbent)}      editing={editing} onChange={set(C.incumbent)} />
-            <Field label="Incumbent UEI"           value={f(C.incumbentUEI)}   editing={editing} onChange={set(C.incumbentUEI)} raw />
-            <EightAExitCallout
-              entityData={incumbentEightA.data}
-              incumbentUEI={f(C.incumbentUEI)}
-              loading={incumbentEightA.loading}
-              error={incumbentEightA.error}
-              contractEndDate={f(C.endDate)}
-              onAddNote={handleAddEightANote}
-              addingNote={addingEightANote}
-              noteAdded={eightANoteAdded}
-            />
-            <IncumbentPartnerCallout
-              match={incumbentPartnerMatch}
-              onOpenPartner={() => navigate(`/partners?partner=${encodeURIComponent(String(incumbentPartnerMatch.partner['UEI Number'] || '').trim())}`)}
-            />
-            <IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} />
-          </div>
-        </Section>
-
-        {/* ── Section 2: Contract Value ── */}
-        <Section title="Contract Value">
-          <div className={styles.fieldGrid}>
-            <Field label="Total Contract Value ($)" value={f(C.value)}     editing={editing} onChange={set(C.value)}     type="number" />
-            <Field label="Base Year Value ($)"      value={f(C.baseValue)} editing={editing} onChange={set(C.baseValue)} type="number" />
-          </div>
-        </Section>
-
-        {/* ── Section 3: Timeline ── */}
-        {(() => {
-          return (
-            <Section title="Timeline">
-              <div className={styles.fieldGrid}>
-                {(isRFI || (editing && hasSubmissionDate)) && (
-                  <Field label="RFI Submission Date" value={f(C.submDate)} editing={editing} onChange={set(C.submDate)} type="date" />
-                )}
-                <Field label="Contract End Date"      value={f(C.endDate)}    editing={editing} onChange={set(C.endDate)}    type="date" />
-                <Field label="Anticipated Award Date" value={f(C.awardDate)}  editing={editing} onChange={set(C.awardDate)}  type="date" />
-                <Field label="Fiscal Year"            value={f(C.fiscalYear)} editing={editing} onChange={set(C.fiscalYear)} raw />
-              </div>
-            </Section>
-          )
-        })()}
-
-        {/* ── Section 4: Pursuit ── */}
-        <Section title="Pursuit">
-          <div className={styles.fieldGrid}>
-            <Field label="Solicitation Number"   value={f(C.solNum)}    editing={editing} onChange={set(C.solNum)} />
-            <Field label="Activity Phase"        value={f(C.actPhase)}  editing={editing} onChange={set(C.actPhase)} options={activityPhaseOptions} />
-            <Field label="Bid / No Bid?"         value={f(C.bidNoBid)}  editing={editing} onChange={set(C.bidNoBid)}  options={bidNoBidOptions} />
-            <Field label="Prime or Sub?"         value={f(C.primeOrSub)} editing={editing} onChange={set(C.primeOrSub)} options={primeOrSubOptions} />
-            <Field label="Partner"               value={f(C.partner)}   editing={editing} onChange={set(C.partner)} />
-            <Field label="Priority"              value={f(C.priority)}  editing={editing} onChange={set(C.priority)}  options={priorityOptions} />
+        <label className={styles.detailJump}>
+          <span>Jump to section</span>
+          <select className="form-input" defaultValue="" onChange={(event) => { if (event.target.value) document.getElementById(event.target.value)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
+            <option value="" disabled>Select a section</option>
+            <option value="overview-summary">Overview · Summary</option>
+            <option value="overview-contacts">Overview · Contacts</option>
+            <option value="overview-links">Overview · Partners & links</option>
+            <option value="activity-notes">Activity · Notes</option>
+            <option value="activity-tasks">Activity · Tasks</option>
+            <option value="research-incumbent">Research · Incumbent history</option>
+            <option value="research-awards">Research · Award lookup</option>
+            <option value="research-contacts">Research · Find contacts</option>
+            <option value="followup-email">Follow-up · Email drafts</option>
+          </select>
+        </label>
+        <div className={styles.detailLayout}>
+          <aside className={styles.detailOutline} aria-label="Opportunity sections">
+            <div className={styles.outlineHeading}>On this page</div>
+            {[['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]], ['Activity', [['Notes', 'activity-notes'], ['Tasks', 'activity-tasks']]], ['Research', [['Incumbent history', 'research-incumbent'], ['Award lookup', 'research-awards'], ['Find contacts', 'research-contacts']]], ['Follow-up', [['Email drafts', 'followup-email'], ['RFI matcher', 'followup-rfi']]]].map(([group, items]) => <div className={styles.outlineGroup} key={group}><strong>{group}</strong>{items.map(([label, id]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{label}</button>)}</div>)}
+          </aside>
+          <main className={styles.detailContent}>
+        <div className={`${styles.categoryHeading} ${styles.categoryOverview}`}>Overview</div>
+        <Section title="Opportunity Summary" id="overview-summary">
+          {editing ? <div className={styles.summaryEditGroups}>
+            <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Capture status</div><div className={styles.fieldGrid}>
+              <Field label="Opportunity Title" value={f(C.title)} editing onChange={set(C.title)} />
+              <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
+              <Field label="Activity Phase" value={f(C.actPhase)} editing onChange={set(C.actPhase)} options={activityPhaseOptions} />
+              <Field label="Priority" value={f(C.priority)} editing onChange={set(C.priority)} options={priorityOptions} />
+              <Field label="Bid / No Bid?" value={f(C.bidNoBid)} editing onChange={set(C.bidNoBid)} options={bidNoBidOptions} />
+              <Field label="Prime or Sub?" value={f(C.primeOrSub)} editing onChange={set(C.primeOrSub)} options={primeOrSubOptions} />
+              <Field label="Partner" value={f(C.partner)} editing onChange={set(C.partner)} />
+            </div></div>
+            <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Customer and requirement</div><div className={styles.fieldGrid}>
+              <Field label="Department" value={f(C.department)} editing onChange={set(C.department)} />
+              <Field label="Agency" value={f(C.agency)} editing onChange={set(C.agency)} />
+              <Field label="Office" value={f(C.office)} editing onChange={set(C.office)} />
+              <Field label="Solicitation Number" value={f(C.solNum)} editing onChange={set(C.solNum)} />
+              <Field label="NAICS Code" value={f(C.naics)} editing onChange={set(C.naics)} raw />
+              <Field label="Set-Aside" value={f(C.setAside)} editing onChange={set(C.setAside)} options={setAsideOptions} />
+              <Field label="Contract Vehicle" value={f(C.vehicle)} editing onChange={set(C.vehicle)} />
+              <Field label="Contract Vehicle Number" value={f(C.vehicleNumber)} editing onChange={set(C.vehicleNumber)} />
+              <Field label="Contract Classification" value={f(C.classification)} editing onChange={set(C.classification)} />
+              <Field label="Incumbent" value={f(C.incumbent)} editing onChange={set(C.incumbent)} />
+              <Field label="Incumbent UEI" value={f(C.incumbentUEI)} editing onChange={set(C.incumbentUEI)} raw />
+            </div></div>
+            <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Dates and contract</div><div className={styles.fieldGrid}>
+              {(isRFI || hasSubmissionDate) && <Field label="RFI Submission Date" value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
+              <Field label="Contract End Date" value={f(C.endDate)} editing onChange={set(C.endDate)} type="date" />
+              <Field label="Anticipated Award Date" value={f(C.awardDate)} editing onChange={set(C.awardDate)} type="date" />
+              <Field label="Fiscal Year" value={f(C.fiscalYear)} editing onChange={set(C.fiscalYear)} raw />
+              <Field label="Total Contract Value ($)" value={f(C.value)} editing onChange={set(C.value)} type="number" />
+              <Field label="Base Year Value ($)" value={f(C.baseValue)} editing onChange={set(C.baseValue)} type="number" />
+            </div></div>
+          </div> : <>
+            <SummaryGroup title="Capture status" items={[
+              { label: 'Opportunity phase', value: f(C.phase), raw: true }, { label: 'Activity phase', value: f(C.actPhase), raw: true },
+              { label: 'Outlook', value: f(C.outlook), raw: true }, { label: 'Priority', value: f(C.priority), raw: true },
+              { label: 'Bid decision', value: f(C.bidNoBid), raw: true }, { label: 'Assigned to', value: f(C.assignedTo), raw: true },
+              { label: 'Prime or sub', value: f(C.primeOrSub), raw: true }, { label: 'Partner', value: f(C.partner), raw: true },
+            ]} />
+            <SummaryGroup title="Customer and requirement" items={[
+              { label: 'Department', value: f(C.department), raw: true }, { label: 'Agency', value: f(C.agency), raw: true },
+              { label: 'Office', value: f(C.office), raw: true }, { label: 'Solicitation number', value: f(C.solNum), raw: true },
+              { label: 'NAICS code', value: f(C.naics), raw: true }, { label: 'Set-aside', value: f(C.setAside), raw: true },
+              { label: 'Contract vehicle', value: f(C.vehicle), raw: true }, { label: 'Vehicle number', value: f(C.vehicleNumber), raw: true },
+              { label: 'Classification', value: f(C.classification), raw: true }, { label: 'Incumbent', value: f(C.incumbent), raw: true },
+              { label: 'Incumbent UEI', value: f(C.incumbentUEI), raw: true },
+            ]} />
+            <SummaryGroup title="Dates and contract" items={[
+              { label: 'RFI submission date', value: (isRFI || hasSubmissionDate) ? f(C.submDate) : '', display: formatDate(f(C.submDate)) },
+              { label: 'Contract end date', value: f(C.endDate), display: formatDate(f(C.endDate)) },
+              { label: 'Anticipated award', value: f(C.awardDate), display: formatDate(f(C.awardDate)) },
+              { label: 'Fiscal year', value: f(C.fiscalYear), raw: true },
+              { label: 'Total contract value', value: f(C.value), display: fmtValue(f(C.value)) },
+              { label: 'Base year value', value: f(C.baseValue), display: fmtValue(f(C.baseValue)) },
+              { label: 'Last modified', value: f(C.lastMod), display: formatDate(f(C.lastMod)) },
+            ]} />
+          </>}
+          <div className={styles.summaryCallouts}>
+            <EightAExitCallout entityData={incumbentEightA.data} incumbentUEI={f(C.incumbentUEI)} loading={incumbentEightA.loading} error={incumbentEightA.error} contractEndDate={f(C.endDate)} onAddNote={handleAddEightANote} addingNote={addingEightANote} noteAdded={eightANoteAdded} />
           </div>
         </Section>
 
         {/* ── Section 5: Contacts ── */}
-        <Section title="Contacts">
+        <Section title="Contacts" id="overview-contacts">
           {linkedContacts.length > 0
             ? linkedContacts.map((c) => (
                 <div key={c.ContactID} className={styles.contactCard}>
@@ -1190,8 +1327,10 @@ export default function OpportunityDetail({ toast }) {
                     type="button"
                     className="btn btn-ghost btn-icon"
                     title="Unlink contact"
+                    aria-label={`Unlink ${c.Name}`}
                     onClick={() => handleUnlinkContact(c)}
-                  >✕</button>
+                    disabled={Boolean(linkingContactId)}
+                  >{linkingContactId === contactKey(c) ? '…' : <ActionIcon name="unlink" />}</button>
                 </div>
               ))
             : <p className="text-sm text-muted" style={{ marginBottom: 8 }}>No contacts linked.</p>
@@ -1315,82 +1454,50 @@ export default function OpportunityDetail({ toast }) {
           )}
         </Section>
 
-        {/* ── Section 6: Links ── */}
-        <Section title="Links">
-          {editing
-            ? (
-              <div className={styles.fieldGrid}>
-                <Field label="GovWin Link"       value={f(C.govwin)}     editing onChange={set(C.govwin)} />
-                <Field label="Link to Folder"    value={f(C.folder)}     editing onChange={set(C.folder)} />
-                <Field label="Link to Slide Deck" value={f(C.slideDeck)} editing onChange={set(C.slideDeck)} />
-                <div className={`form-field ${styles.spanFull}`}>
-                  <label className="form-label">Other Links</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {(parseLinks(f(C.otherLinks)).length > 0 ? parseLinks(f(C.otherLinks)) : ['']).map((link, i) => {
-                      const links = parseLinks(f(C.otherLinks)).length > 0 ? parseLinks(f(C.otherLinks)) : ['']
-                      return (
-                        <div key={i} style={{ display: 'flex', gap: 6 }}>
-                          <input
-                            className="form-input"
-                            placeholder="https://…"
-                            value={link}
-                            onChange={(e) => {
-                              const next = [...links]
-                              next[i] = e.target.value
-                              set(C.otherLinks)(joinLinks(next))
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-icon"
-                            aria-label="Remove link"
-                            title="Remove link"
-                            onClick={() => {
-                              const next = links.filter((_, j) => j !== i)
-                              set(C.otherLinks)(joinLinks(next))
-                            }}
-                          >✕</button>
-                        </div>
-                      )
-                    })}
-                    <button
-                      type="button"
-                      className="btn text-sm"
-                      style={{ alignSelf: 'flex-start' }}
-                      onClick={() => set(C.otherLinks)(joinLinks([...parseLinks(f(C.otherLinks)), '']))}
-                    >
-                      + Add link
-                    </button>
-                  </div>
-                </div>
+        <Section title="Partners & Links" id="overview-links">
+          {incumbentPartnerMatch && <div className={styles.partnerLinkRow}><IncumbentPartnerCallout match={incumbentPartnerMatch} onOpenPartner={() => navigate(`/partners?partner=${encodeURIComponent(String(incumbentPartnerMatch.partner['UEI Number'] || '').trim())}`)} /></div>}
+          {editingLinks ? (() => {
+            const draft = linkDraft
+            if (!draft) return null
+            const updateDraft = (patch) => setLinkDraft((current) => ({ ...current, ...patch }))
+            return <div className={styles.linksEditor}>
+              <div className={styles.fixedLinksEditor}>{[['GovWin link', C.govwin], ['Opportunity folder', C.folder], ['Opportunity slide deck', C.slideDeck]].map(([label, key], index) => <div className={styles.fixedLinkEditRow} key={key}>
+                <label className="form-label" htmlFor={`fixed-link-${index}`}>{label}</label>
+                <input id={`fixed-link-${index}`} className="form-input" value={draft[key]} placeholder="https://…" onChange={(event) => updateDraft({ [key]: event.target.value })} />
+                <button type="button" className="btn btn-ghost btn-icon" aria-label={`Delete ${label}`} title={`Delete ${label}`} onClick={() => updateDraft({ [key]: '' })} disabled={!draft[key]} style={{ color: 'var(--red-600)' }}><ActionIcon name="delete" /></button>
+              </div>)}</div>
+              <div className={styles.otherLinksEditor}>
+                <label className="form-label">Other links</label>
+                {draft.other.map((entry, index) => <div key={index} className={styles.linkEditRow}>
+                  <input className="form-input" aria-label={`Link ${index + 1} name`} placeholder="Link name" value={entry.label} onChange={(event) => { const next = [...draft.other]; next[index] = { ...entry, label: event.target.value }; updateDraft({ other: next }) }} />
+                  <input className="form-input" aria-label={`Link ${index + 1} URL`} placeholder="https://…" value={entry.url} onChange={(event) => { const next = [...draft.other]; next[index] = { ...entry, url: event.target.value }; updateDraft({ other: next }) }} />
+                  <button type="button" className="btn btn-ghost btn-icon" aria-label={`Delete link ${index + 1}`} title="Delete link" onClick={() => updateDraft({ other: draft.other.filter((_, itemIndex) => itemIndex !== index) })} style={{ color: 'var(--red-600)' }}><ActionIcon name="delete" /></button>
+                </div>)}
+                <button type="button" className="btn text-sm" onClick={() => updateDraft({ other: [...draft.other, { label: '', url: '' }] })}>+ Add link</button>
               </div>
-            )
-            : (() => {
-                const otherLinkList = cleanLinks(cur[C.otherLinks])
-                const fixedLinks = [
-                  [C.govwin,    'GovWin ↗'],
-                  [C.folder,    '📁 Folder ↗'],
-                  [C.slideDeck, '📊 Slide Deck ↗'],
-                ].filter(([key]) => cur[key])
-                if (fixedLinks.length === 0 && otherLinkList.length === 0) {
-                  return <p className="text-sm text-muted">No links added.</p>
-                }
-                return (
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    {fixedLinks.map(([key, label]) => (
-                      <a key={key} href={safeUrl(cur[key])} target="_blank" rel="noreferrer" className="btn text-sm">{label}</a>
-                    ))}
-                    {otherLinkList.map((link, i) => (
-                      <a key={i} href={safeUrl(link)} target="_blank" rel="noreferrer" className="btn text-sm">
-                        🔗 Other Link{otherLinkList.length > 1 ? ` ${i + 1}` : ''} ↗
-                      </a>
-                    ))}
-                  </div>
-                )
-              })()
-          }
+              <div className={styles.linkEditorActions}><button type="button" className="btn" onClick={() => { setEditingLinks(false); setLinkDraft(null) }} disabled={savingLinks}>Cancel</button><button type="button" className="btn btn-primary" onClick={saveLinks} disabled={savingLinks}>{savingLinks ? 'Saving…' : 'Save links'}</button></div>
+            </div>
+          })() : (() => {
+            const entries = [
+              cur[C.govwin] && { label: 'GovWin opportunity', url: cur[C.govwin] },
+              cur[C.folder] && { label: 'Opportunity folder', url: cur[C.folder] },
+              cur[C.slideDeck] && { label: 'Opportunity slide deck', url: cur[C.slideDeck] },
+              ...cleanLinks(cur[C.otherLinks]).map(parseNamedLink),
+            ].filter(Boolean)
+            return <>
+              <div className={styles.linksToolbar}><button type="button" className="btn text-sm" onClick={beginLinkEdit} disabled={editing} title={editing ? 'Save or cancel the opportunity edit first' : 'Edit links'}><ActionIcon name="edit" /> Edit links</button></div>
+              {entries.length === 0 ? <p className="text-sm text-muted">No links added.</p> : <details className={styles.linksDisclosure} open>
+                <summary>Opportunity links <span>{entries.length}</span></summary>
+                <div className={styles.compactLinks}>{entries.map((entry, index) => <div key={`${entry.url}-${index}`} className={styles.compactLinkRow}>
+                  <span><strong>{entry.label || inferredLinkLabel(entry.url)}</strong><small>{inferredLinkLabel(entry.url)}</small></span>
+                  <a href={safeUrl(entry.url)} target="_blank" rel="noreferrer" className="btn btn-ghost btn-icon" aria-label={`Open ${entry.label || 'link'}`} title="Open link"><ActionIcon name="open" /></a>
+                </div>)}</div>
+              </details>}
+            </>
+          })()}
         </Section>
 
+        <div className={`${styles.categoryHeading} ${styles.categoryActivity}`}>Activity</div>
         {/* ── Section 7: Notes ── */}
         {relatedOpportunities.length > 0 && (
           <Section title="Related Opportunities">
@@ -1412,6 +1519,7 @@ export default function OpportunityDetail({ toast }) {
         )}
 
         <OpportunityNotesSection
+          id="activity-notes"
           loading={notesLoading}
           notes={visibleNotes}
           editingNoteId={editingNoteId}
@@ -1431,16 +1539,22 @@ export default function OpportunityDetail({ toast }) {
 
         {/* ── Section 8: Tasks ── */}
         <OpportunityTasksSection
+          id="activity-tasks"
           tasks={tasks}
           hideDoneTasks={hideDoneTasks}
           setHideDoneTasks={setHideDoneTasks}
           updatingTaskId={updatingTaskId}
           updateTaskStatus={handleTaskStatusChange}
           refreshContext={refreshContext}
-          addTask={() => setShowAddTask(true)}
+          addTask={openAddTask}
+          editTask={openEditTask}
+          deleteTask={setDeleteTaskTarget}
+          deletingTaskId={deletingTaskId}
         />
 
-        <AwardLookupPanel
+        <div className={`${styles.categoryHeading} ${styles.categoryResearch}`}>Research</div>
+        <div id="research-incumbent" className={styles.sectionAnchor}><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} /></div>
+        <div id="research-awards" className={styles.sectionAnchor}><AwardLookupPanel
           opp={opp}
           contractNumber={decodedCN}
           updateOpp={updateOpp}
@@ -1450,9 +1564,9 @@ export default function OpportunityDetail({ toast }) {
           dateOnly={dateOnly}
           cleanLinks={cleanLinks}
           joinLinks={joinLinks}
-        />
+        /></div>
 
-        <PeopleSearch
+        <div id="research-contacts" className={styles.sectionAnchor}><PeopleSearch
           variant="opportunity"
           sourceMode="opportunity-notes"
           scopeId={`opportunity:${opp[C.contractNum] || decodedCN}`}
@@ -1468,19 +1582,17 @@ export default function OpportunityDetail({ toast }) {
           onAddAndLinkContact={(contactData) => createAndLinkContact(contactData, { quiet: true })}
           onContinue={continuePeopleSearch}
           toast={toast}
-        />
+        /></div>
 
-        {/* ── AI panels ── */}
-        <FollowUpEmailComposer
+        <div className={`${styles.categoryHeading} ${styles.categoryFollowUp}`}>Follow-up</div>
+        <div id="followup-email" className={styles.sectionAnchor}><FollowUpEmailComposer
           opportunity={opp}
           linkedContacts={linkedContacts}
           user={user}
           toast={toast}
-        />
-        <AIPanel title="Generate capability statement" buildPrompt={capPrompt}   defaultCollapsed />
-
+        /></div>
         {isRFI && (
-          <RfiFollowUpPanel
+          <div id="followup-rfi" className={styles.sectionAnchor}><RfiFollowUpPanel
             opp={opp}
             contacts={contacts}
             linkedContractNumbers={linkedContractNumbers}
@@ -1492,18 +1604,20 @@ export default function OpportunityDetail({ toast }) {
             panelRef={followUpPanelRef}
             toast={toast}
             columns={C}
-          />
+          /></div>
         )}
+          </main>
+        </div>
       </div>
 
       {/* ── Add task modal ── */}
       {showAddTask && (
-        <Modal title="Add task" onClose={() => !savingTask && setShowAddTask(false)}
+        <Modal title={editingTask ? 'Edit task' : 'Add task'} onClose={() => { if (!savingTask) { setShowAddTask(false); setEditingTask(null) } }}
           footer={
             <>
-              <button className="btn" onClick={() => setShowAddTask(false)} disabled={savingTask}>Cancel</button>
+              <button className="btn" onClick={() => { setShowAddTask(false); setEditingTask(null) }} disabled={savingTask}>Cancel</button>
               <button className="btn btn-primary" onClick={submitTask} disabled={savingTask} aria-busy={savingTask}>
-                {savingTask ? 'Adding…' : 'Add task'}
+                {savingTask ? 'Saving…' : editingTask ? 'Save changes' : 'Add task'}
               </button>
             </>
           }
@@ -1541,9 +1655,29 @@ export default function OpportunityDetail({ toast }) {
                     <option>Low</option><option>Medium</option><option>High</option>
                   </select>
                 </div>
+                {editingTask && <div className="form-field">
+                  <label className="form-label">Status</label>
+                  <select className="form-input" value={taskForm.Status}
+                    onChange={(e) => setTaskForm({ ...taskForm, Status: e.target.value })}>
+                    <option>To Do</option><option>In Progress</option><option>Done</option>
+                  </select>
+                </div>}
               </div>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {deleteTaskTarget && (
+        <Modal
+          title="Delete task"
+          onClose={() => !deletingTaskId && setDeleteTaskTarget(null)}
+          footer={<>
+            <button className="btn" onClick={() => setDeleteTaskTarget(null)} disabled={Boolean(deletingTaskId)}>Cancel</button>
+            <button className="btn btn-danger" onClick={handleDeleteTask} disabled={Boolean(deletingTaskId)}>{deletingTaskId ? 'Deleting…' : 'Delete task'}</button>
+          </>}
+        >
+          <p className="text-sm">Delete <strong>{deleteTaskTarget.Title}</strong>? This cannot be undone.</p>
         </Modal>
       )}
 
