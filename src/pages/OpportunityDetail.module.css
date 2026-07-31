@@ -25,7 +25,7 @@
 .detailOutline { align-self: start; display: grid; gap: 13px; position: sticky; top: 12px; }
 .outlineHeading { color: var(--gray-400); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .outlineGroup { display: grid; gap: 2px; }
-.outlineGroup strong { border-left: 3px solid var(--blue-500); color: var(--gray-900); font-size: 11px; margin-bottom: 3px; padding-left: 7px; }
+.outlineGroup strong { border-left: 3px solid var(--blue-600); color: var(--gray-900); font-size: 11px; margin-bottom: 3px; padding-left: 7px; }
 .outlineGroup:nth-of-type(3) strong { border-left-color: var(--green-600); }
 .outlineGroup:nth-of-type(4) strong { border-left-color: var(--amber-600); }
 .outlineGroup:nth-of-type(5) strong { border-left-color: var(--purple-500, var(--blue-600)); }
@@ -34,7 +34,7 @@
 .detailContent { min-width: 0; }
 .detailJump { display: none; }
 .categoryHeading { align-items: center; color: var(--gray-900); display: flex; font-size: 13px; font-weight: 650; gap: 8px; margin: 5px 0 9px; }
-.categoryHeading::before { background: var(--blue-500); border-radius: 999px; content: ''; height: 18px; width: 3px; }
+.categoryHeading::before, .categoryOverview::before { background: var(--blue-600); border-radius: 999px; content: ''; height: 18px; width: 3px; }
 .categoryActivity::before { background: var(--green-600); }
 .categoryResearch::before { background: var(--amber-600); }
 .categoryFollowUp::before { background: var(--purple-500, var(--blue-600)); }
@@ -272,6 +272,7 @@
 .incumbentHistoryHeader { align-items: center; background: var(--surface); border: 0; color: var(--gray-900); cursor: pointer; display: flex; font-family: var(--font); justify-content: space-between; padding: 9px 10px; text-align: left; width: 100%; }
 .incumbentHistoryHeader:hover { background: var(--gray-50); }
 .incumbentHistoryHeader small { color: var(--gray-400); display: block; font-size: 10px; font-weight: 400; margin-top: 2px; }
+.incumbentHistoryHeader .incumbentHistoryIdentity { color: var(--gray-700); font-size: 11px; font-weight: 600; }
 .incumbentHistoryBody { border-top: 0.5px solid var(--gray-200); padding: 9px 10px; }
 .incumbentHistoryControls { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; margin-bottom: 9px; }
 .incumbentHistoryControls > div { display: inline-flex; }
