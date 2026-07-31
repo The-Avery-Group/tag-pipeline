@@ -1,4 +1,5 @@
 import OpportunitySection from '@/components/Opportunity/OpportunitySection'
+import ActionIcon from '@/components/Common/ActionIcon'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import styles from '@/pages/OpportunityDetail.module.css'
 
@@ -13,18 +14,22 @@ export default function OpportunityTasksSection({
   updateTaskStatus,
   refreshContext,
   addTask,
+  editTask,
+  deleteTask,
+  deletingTaskId,
+  id,
 }) {
   const visibleTasks = tasks.filter((task) => !hideDoneTasks || task.Status !== 'Done')
 
   return (
-    <OpportunitySection title="Tasks">
+    <OpportunitySection title="Tasks" id={id}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
         <button
           type="button"
-          className={`filter-chip ${hideDoneTasks ? 'active' : ''}`}
+          className={`filter-chip ${!hideDoneTasks ? 'active' : ''}`}
           onClick={() => setHideDoneTasks((value) => !value)}
         >
-          Hide completed
+          {hideDoneTasks ? 'Show completed' : 'Hide completed'}
         </button>
       </div>
       {visibleTasks.length === 0
@@ -47,19 +52,27 @@ export default function OpportunityTasksSection({
                     </button>
                   )}
                 </div>
-                <button
-                  className={`badge badge-${statusClass(task.Status)}`}
-                  style={{
-                    cursor: updatingTaskId === task.TaskID ? 'default' : 'pointer',
-                    border: 'none',
-                    opacity: updatingTaskId === task.TaskID ? 0.6 : 1,
-                  }}
-                  onClick={() => updateTaskStatus(task, STATUS_CYCLE[task.Status] || 'To Do')}
-                  disabled={updatingTaskId === task.TaskID}
-                  title="Click to advance status"
-                >
-                  {updatingTaskId === task.TaskID ? 'Updating…' : task.Status}
-                </button>
+                <div className={styles.taskActions}>
+                  <button
+                    className={`badge badge-${statusClass(task.Status)}`}
+                    style={{
+                      cursor: updatingTaskId === task.TaskID ? 'default' : 'pointer',
+                      border: 'none',
+                      opacity: updatingTaskId === task.TaskID ? 0.6 : 1,
+                    }}
+                    onClick={() => updateTaskStatus(task, STATUS_CYCLE[task.Status] || 'To Do')}
+                    disabled={updatingTaskId === task.TaskID}
+                    title="Click to advance status"
+                  >
+                    {updatingTaskId === task.TaskID ? 'Updating…' : task.Status}
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-icon" onClick={() => editTask(task)} aria-label={`Edit ${task.Title}`} title="Edit task" disabled={deletingTaskId === task.TaskID}>
+                    <ActionIcon name="edit" />
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-icon" onClick={() => deleteTask(task)} aria-label={`Delete ${task.Title}`} title="Delete task" disabled={deletingTaskId === task.TaskID} style={{ color: 'var(--red-600)' }}>
+                    {deletingTaskId === task.TaskID ? '…' : <ActionIcon name="delete" />}
+                  </button>
+                </div>
               </div>
             )
           })
