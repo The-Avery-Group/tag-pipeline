@@ -21,6 +21,25 @@
   flex-shrink: 0;
 }
 
+.detailLayout { align-items: start; display: grid; gap: 24px; grid-template-columns: 172px minmax(0, 1fr); }
+.detailOutline { align-self: start; display: grid; gap: 13px; position: sticky; top: 12px; }
+.outlineHeading { color: var(--gray-400); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.outlineGroup { display: grid; gap: 2px; }
+.outlineGroup strong { border-left: 3px solid var(--blue-500); color: var(--gray-900); font-size: 11px; margin-bottom: 3px; padding-left: 7px; }
+.outlineGroup:nth-of-type(3) strong { border-left-color: var(--green-600); }
+.outlineGroup:nth-of-type(4) strong { border-left-color: var(--amber-600); }
+.outlineGroup:nth-of-type(5) strong { border-left-color: var(--purple-500, var(--blue-600)); }
+.outlineGroup button { background: transparent; border: 0; border-radius: var(--radius-sm); color: var(--gray-500); cursor: pointer; font: inherit; font-size: 11px; padding: 4px 8px 4px 10px; text-align: left; }
+.outlineGroup button:hover { background: var(--gray-50); color: var(--blue-700); }
+.detailContent { min-width: 0; }
+.detailJump { display: none; }
+.categoryHeading { align-items: center; color: var(--gray-900); display: flex; font-size: 13px; font-weight: 650; gap: 8px; margin: 5px 0 9px; }
+.categoryHeading::before { background: var(--blue-500); border-radius: 999px; content: ''; height: 18px; width: 3px; }
+.categoryActivity::before { background: var(--green-600); }
+.categoryResearch::before { background: var(--amber-600); }
+.categoryFollowUp::before { background: var(--purple-500, var(--blue-600)); }
+.sectionAnchor { margin-bottom: 16px; scroll-margin-top: 16px; }
+
 .badgeRow {
   display: flex;
   align-items: center;
@@ -47,6 +66,7 @@
 /* ── Sections ── */
 .section {
   margin-bottom: 16px;
+  scroll-margin-top: 16px;
 }
 
 .sectionHeader {
@@ -62,6 +82,15 @@
 .sectionCard {
   padding: 16px 18px;
 }
+
+.summaryGroup + .summaryGroup, .summaryEditGroup + .summaryEditGroup { border-top: 0.5px solid var(--gray-200); margin-top: 16px; padding-top: 16px; }
+.summaryGroupTitle { color: var(--blue-800); font-size: 11px; font-weight: 650; margin-bottom: 10px; }
+.summaryGrid { display: grid; gap: 14px 22px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.summaryField { min-width: 0; }
+.summaryField dt { color: var(--gray-500); font-size: 10px; margin-bottom: 3px; }
+.summaryField dd { color: var(--gray-900); font-size: 13px; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
+.summaryEditGroups { display: grid; }
+.summaryCallouts { display: grid; gap: 8px; margin-top: 16px; }
 
 .samSuggestion {
   background: var(--blue-50);
@@ -305,12 +334,10 @@
   padding-top: 8px;
 }
 
-.relatedContactsTitle {
-  color: var(--gray-500);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
+.relatedContactsSummary { align-items: center; background: transparent; border: 0; color: var(--gray-500); cursor: pointer; display: flex; font: inherit; font-size: 11px; gap: 12px; justify-content: space-between; padding: 5px 2px; text-align: left; width: 100%; }
+.relatedContactsSummary:hover { color: var(--blue-700); }
+.relatedContactsSummary strong { color: var(--gray-900); }
+.relatedContactsList { padding-top: 5px; }
 
 .relatedContactsHint {
   color: var(--gray-400);
@@ -318,13 +345,11 @@
   margin: 2px 0 3px;
 }
 
-.relatedContactReason {
-  color: var(--blue-700);
-  display: block;
-  font-size: 10px;
-  line-height: 1.35;
-  margin-top: 3px;
-}
+.relatedContactRow { align-items: center; border-top: 0.5px solid var(--gray-100); display: flex; gap: 10px; justify-content: space-between; padding: 7px 2px; }
+.relatedContactOpen { background: transparent; border: 0; color: var(--gray-900); cursor: pointer; display: grid; flex: 1; font: inherit; gap: 2px; min-width: 0; padding: 0; text-align: left; }
+.relatedContactOpen strong { font-size: 12px; }
+.relatedContactOpen span { color: var(--gray-500); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relatedContactOpen:hover strong { color: var(--blue-700); text-decoration: underline; }
 
 .contactAv {
   width: 34px;
@@ -455,6 +480,31 @@
   align-items: center;
   flex-wrap: wrap;
 }
+.taskActions { align-items: center; display: flex; flex-shrink: 0; gap: 5px; }
+
+/* ── Compact partner and link management ── */
+.partnerLinkRow { margin-bottom: 10px; }
+.partnerLinkRow .partnerCallout { grid-column: auto; }
+.linksToolbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.linksDisclosure { border-top: 0.5px solid var(--gray-200); }
+.linksDisclosure summary { align-items: center; color: var(--gray-700); cursor: pointer; display: flex; font-size: 11px; font-weight: 650; gap: 7px; list-style: none; padding: 8px 2px; }
+.linksDisclosure summary::-webkit-details-marker { display: none; }
+.linksDisclosure summary::before { color: var(--gray-400); content: '›'; font-size: 15px; transform: rotate(0); transition: transform .15s; }
+.linksDisclosure[open] summary::before { transform: rotate(90deg); }
+.linksDisclosure summary span { color: var(--gray-400); font-size: 10px; font-weight: 500; }
+.compactLinks { border-top: 0.5px solid var(--gray-100); }
+.compactLinkRow { align-items: center; border-bottom: 0.5px solid var(--gray-100); display: flex; gap: 10px; justify-content: space-between; min-height: 34px; padding: 5px 2px; }
+.compactLinkRow:last-child { border-bottom: 0; }
+.compactLinkRow > span { align-items: baseline; display: flex; flex: 1; gap: 7px; min-width: 0; }
+.compactLinkRow strong { color: var(--gray-900); font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
+.compactLinkRow small { color: var(--gray-400); font-size: 9px; white-space: nowrap; }
+.linksEditor { display: grid; gap: 12px; }
+.fixedLinksEditor { display: grid; gap: 8px; }
+.fixedLinkEditRow { align-items: center; display: grid; gap: 7px; grid-template-columns: minmax(120px, .45fr) minmax(200px, 1.55fr) auto; }
+.fixedLinkEditRow .form-label { margin: 0; }
+.otherLinksEditor { border-top: 0.5px solid var(--gray-200); display: grid; gap: 7px; padding-top: 11px; }
+.linkEditRow { align-items: center; display: grid; gap: 7px; grid-template-columns: minmax(120px, .7fr) minmax(180px, 1.3fr) auto; }
+.linkEditorActions { border-top: 0.5px solid var(--gray-200); display: flex; gap: 7px; justify-content: flex-end; padding-top: 11px; }
 
 .refreshCtx {
   font-size: 11px;
@@ -467,6 +517,28 @@
   display: block;
 }
 .refreshCtx:hover { text-decoration: underline; }
+
+@media (max-width: 760px) {
+  .detailLayout { grid-template-columns: 1fr; }
+  .detailOutline { display: none; }
+  .detailJump { display: grid; gap: 5px; margin-bottom: 14px; }
+  .detailJump span { color: var(--gray-500); font-size: 10px; font-weight: 600; }
+  .summaryGrid { grid-template-columns: 1fr 1fr; }
+  .linkEditRow { grid-template-columns: 1fr auto; }
+  .fixedLinkEditRow { grid-template-columns: 1fr auto; }
+  .fixedLinkEditRow input { grid-column: 1 / -1; grid-row: 2; }
+  .fixedLinkEditRow button { grid-column: 2; grid-row: 1; }
+  .linkEditRow input:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .linkEditRow button { grid-column: 2; grid-row: 1; }
+}
+
+@media (max-width: 480px) {
+  .summaryGrid, .fieldGrid { grid-template-columns: 1fr; }
+  .contactCard, .taskRow { align-items: flex-start; }
+  .taskRow { flex-direction: column; }
+  .taskActions { justify-content: flex-end; width: 100%; }
+  .compactLinkRow > span { align-items: flex-start; flex-direction: column; gap: 1px; }
+}
 
 /* ── Badge-style select (phase/outlook in edit mode) ── */
 .badgeSelect {
