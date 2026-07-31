@@ -1,5 +1,12 @@
 const clean = (value) => String(value ?? '').trim()
 
+export function formatRecipientNames(names = []) {
+  const unique = [...new Set(names.map(clean).filter(Boolean))]
+  if (unique.length < 2) return unique[0] || ''
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`
+  return `${unique.slice(0, -1).join(', ')}, and ${unique.at(-1)}`
+}
+
 export const FOLLOW_UP_MERGE_FIELDS = [
   '{{contact_first_name}}',
   '{{opportunity_title}}',
