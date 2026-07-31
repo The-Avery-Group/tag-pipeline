@@ -6,6 +6,8 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction, useAsyncActionKeyed } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import ActionIcon from '@/components/Common/ActionIcon'
+import RichText from '@/components/Common/RichText'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
 import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
@@ -429,7 +431,9 @@ export default function Contacts({ toast }) {
                           <span className={styles.panelValue}>
                             {label === 'Email'
                               ? <a href={`mailto:${value}`} className="text-sm">{value}</a>
-                              : value}
+                              : label === 'Notes'
+                                ? <RichText value={value} />
+                                : value}
                           </span>
                         </div>
                       ))}
@@ -463,7 +467,7 @@ export default function Contacts({ toast }) {
                               : selectedInteractions.map((row) => (
                                 <div id={`contact-interaction-${row.InteractionID || row._rowIndex}`} key={row.InteractionID || row._rowIndex} className={`${styles.interactionRow} ${String(row.InteractionID || row._rowIndex) === focusedInteractionId ? styles.interactionFocused : ''}`}>
                                   <div><strong>{row['Interaction Type'] || 'Interaction'}</strong><span>{formatDate(row['Interaction Date'])}{row['Logged By'] ? ` · ${row['Logged By']}` : ''}</span></div>
-                                  <p>{row.Notes}</p>
+                                  {row.Notes && <p><RichText value={row.Notes} /></p>}
                                   {row['Follow-up Date'] && <small>Follow up {formatDate(row['Follow-up Date'])}</small>}
                                 </div>
                               ))}
@@ -487,6 +491,14 @@ export default function Contacts({ toast }) {
                               <div className={styles.linkedOppTitle}>{o[C_TITLE]}</div>
                               <div className={styles.linkedOppMeta}>{o[C_CN]} · {o[C_PHASE]} · View opportunity</div>
                             </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-icon"
+                              title="Unlink opportunity"
+                              aria-label={`Unlink ${o[C_TITLE] || o[C_CN]}`}
+                              onClick={() => handleUnlinkOpp(o)}
+                              disabled={unlinkAction.isPending(o[C_CN])}
+                            >{unlinkAction.isPending(o[C_CN]) ? '…' : <ActionIcon name="unlink" />}</button>
                           </div>
                         ))
                       }
@@ -494,7 +506,7 @@ export default function Contacts({ toast }) {
 
                     {/* Footer actions */}
                     <div className={styles.panelActions}>
-                      <button className="btn btn-primary" onClick={startEdit}>Edit contact</button>
+                      <button className="btn btn-primary" onClick={startEdit}><ActionIcon name="edit" /> Edit contact</button>
                       <button className="btn btn-ghost"
                         style={{ color: 'var(--red-600)' }}
                         onClick={() => setConfirmDelete(true)}>Delete</button>
@@ -525,7 +537,7 @@ export default function Contacts({ toast }) {
                             title="Unlink"
                             onClick={() => handleUnlinkOpp(o)}
                             disabled={unlinkAction.isPending(o[C_CN])}
-                          >{unlinkAction.isPending(o[C_CN]) ? '…' : '✕'}</button>
+                          >{unlinkAction.isPending(o[C_CN]) ? '…' : <ActionIcon name="unlink" />}</button>
                         </div>
                       ))}
                       <div style={{ marginTop: 8 }}>
