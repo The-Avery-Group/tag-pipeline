@@ -2,6 +2,12 @@ import { useState } from 'react'
 import AwardRecordCard from '@/components/Awards/AwardRecordCard'
 import awardStyles from '@/components/Awards/AwardRecordCard.module.css'
 
+function storedLinkUrl(value) {
+  const text = String(value || '').trim()
+  const separator = text.lastIndexOf('|')
+  return (separator >= 0 ? text.slice(separator + 1) : text).trim()
+}
+
 // Kept separate from OpportunityDetail so award lookup state, record
 // selection, and field-level updates cannot affect the rest of the page.
 export default function AwardLookupPanel({
@@ -44,7 +50,7 @@ export default function AwardLookupPanel({
     const link = String(field.value || '').trim()
     if (!link) return
     const existing = cleanLinks(opp[columns.otherLinks])
-    if (existing.some((value) => value.toLowerCase() === link.toLowerCase())) {
+    if (existing.some((value) => storedLinkUrl(value).toLowerCase() === link.toLowerCase())) {
       toast?.success('Award Notice link is already in Other Links')
       setUpdated(piid, fieldKey)
       return
