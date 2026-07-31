@@ -230,15 +230,24 @@ function logMap(rows) {
   return Object.fromEntries(rows.filter((row) => clean(row.Key)).map((row) => [clean(row.Key), clean(row.LastSent)]))
 }
 
-function firstMatchingContact(opportunity, contacts) {
-  const poc = clean(opportunity['Contracting Officer / Specialist (POC)*']).toLowerCase()
-  if (!poc) return { name: '', email: '' }
-  const contact = contacts.find((item) => {
-    const name = clean(item.Name).toLowerCase()
-    const email = clean(item.Email).toLowerCase()
-    return (email && poc.includes(email)) || (name.length >= 3 && poc.includes(name))
+function matchingContacts(opportunity, contacts) {
+  const pocNames = clean(opportunity['Contracting Officer / Specialist (POC)*'])
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+  if (!pocNames.length) return []
+  const seen = new Set()
+  return contacts.flatMap((item) => {
+    const name = clean(item.Name)
+    const email = clean(item.Email)
+    const key = email.toLowerCase()
+    if (!email || seen.has(key)) return []
+    const normalizedName = name.toLowerCase()
+    const matches = pocNames.some((value) => value === normalizedName || value === key || value.includes(key))
+    if (!matches) return []
+    seen.add(key)
+    return [{ name, email }]
   })
-  return contact ? { name: clean(contact.Name), email: clean(contact.Email) } : { name: '', email: '' }
 }
 
 async function appendTableRecord(env, token, data, record) {
@@ -309,14 +318,14 @@ async function prepareScheduledEmailDrafts(env, token, pipeline, contacts, today
         !clean(opportunity['Contract Number / Notice ID'])
       ) continue
 
-      const recipient = firstMatchingContact(opportunity, contacts.rows)
+      const recipients = matchingContacts(opportunity, contacts.rows)
       for (const template of activeTemplates) {
         const draftId = deterministicDraftId(
           opportunity['Contract Number / Notice ID'],
           template['Template ID'],
         )
         if (existingIds.has(draftId.toLowerCase())) continue
-        const record = buildScheduledDraft({ opportunity, template, recipient, today, now })
+        const record = buildScheduledDraft({ opportunity, template, recipients, today, now })
         await appendTableRecord(env, token, drafts, record)
         existingIds.add(draftId.toLowerCase())
         created += 1
