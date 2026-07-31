@@ -1553,7 +1553,7 @@ export default function OpportunityDetail({ toast }) {
         />
 
         <div className={`${styles.categoryHeading} ${styles.categoryResearch}`}>Research</div>
-        <div id="research-incumbent" className={styles.sectionAnchor}><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} /></div>
+        <div id="research-incumbent" className={styles.sectionAnchor}><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} incumbentName={f(C.incumbent)} /></div>
         <div id="research-awards" className={styles.sectionAnchor}><AwardLookupPanel
           opp={opp}
           contractNumber={decodedCN}
