@@ -287,14 +287,16 @@
 .historyControlActive { background: var(--blue-50); color: var(--blue-800); }
 .incumbentHistoryMetrics { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 9px; color: var(--gray-500); font-size: 10px; }
 .incumbentHistoryMetrics strong { color: var(--gray-900); font-size: 13px; margin-right: 3px; }
-.incumbentHistoryContent { align-items: start; display: grid; gap: 18px; grid-template-columns: minmax(0, 1.55fr) minmax(330px, .85fr); margin-bottom: 7px; }
+.incumbentChartSwitch { display: inline-flex; margin-bottom: 10px; }
+.incumbentHistoryContent { margin-bottom: 7px; min-width: 0; }
+.incumbentActivityPanel { max-width: 940px; min-width: 0; }
 .incumbentChartTitle { color: var(--gray-900); font-size: 11px; font-weight: 600; margin-bottom: 5px; }
 .incumbentChartLegend { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; margin: -1px 0 6px; }
 .incumbentChartLegend span { align-items: center; background: var(--gray-50); border: 0.5px solid var(--gray-200); border-radius: 999px; color: var(--gray-700); display: inline-flex; font-size: 10px; gap: 5px; padding: 2px 6px; }
 .incumbentChartLegend i, .incumbentTooltipRow i { border-radius: 50%; display: inline-block; flex: 0 0 auto; height: 7px; width: 7px; }
 .incumbentActivityChart { height: 280px; min-width: 0; }
-.incumbentAgencyPanel { align-self: start; border-left: 0.5px solid var(--gray-200); min-width: 0; padding-left: 16px; }
-.incumbentAgencyLayout { align-items: center; display: grid; gap: 8px; grid-template-columns: minmax(160px, 190px) minmax(0, 1fr); min-width: 0; }
+.incumbentAgencyPanel { min-width: 0; }
+.incumbentAgencyLayout { align-items: center; display: grid; gap: 12px; grid-template-columns: minmax(180px, 210px) minmax(220px, 340px); justify-content: start; max-width: 580px; min-width: 0; }
 .incumbentDoughnut { height: 225px; min-width: 0; }
 .incumbentChartTooltip { background: var(--surface-raised); border: 0.5px solid var(--gray-200); border-radius: var(--radius-sm); box-shadow: 0 4px 14px var(--shadow-color); color: var(--gray-900); display: grid; font-size: 11px; gap: 5px; min-width: 245px; padding: 10px 12px; }
 .incumbentChartTooltip span { color: var(--gray-600); }
@@ -306,7 +308,6 @@
 .incumbentHistoryAgencies span { color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .incumbentHistoryAgencies strong { color: var(--blue-600); text-align: right; }
 .incumbentHistorySource { color: var(--gray-400); font-size: 9px; margin-top: 4px; text-align: right; }
-@media (max-width: 1120px) { .incumbentHistoryContent { grid-template-columns: 1fr; } .incumbentAgencyPanel { border-left: 0; border-top: 0.5px solid var(--gray-200); padding-left: 0; padding-top: 12px; } }
 @media (max-width: 700px) { .incumbentAgencyLayout { grid-template-columns: 1fr; } .incumbentHistorySource { text-align: left; } }
 
 /* ── Contacts ── */
