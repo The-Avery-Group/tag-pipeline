@@ -171,11 +171,17 @@
   gap: 4px;
 }
 
+.footerUtilityRow {
+  display: flex;
+  gap: 4px;
+}
+
 .settingsBtn {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 6px 10px;
   border-radius: var(--radius-md);
   font-size: 12px;
@@ -187,9 +193,25 @@
   text-decoration: none;
   transition: background 0.12s, color 0.12s;
 }
+.themeToggle {
+  align-items: center;
+  background: none;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  color: var(--gray-600);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 32px;
+  justify-content: center;
+  padding: 0;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.themeToggle:hover { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-800); }
+.themeToggle:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
 .settingsBtn:hover { background: var(--gray-50); color: var(--gray-900); text-decoration: none; }
 .settingsBtnActive { background: var(--blue-50) !important; color: var(--blue-800) !important; border-color: var(--blue-200) !important; }
 .settingsBtn .navIcon,
+.themeToggle .navIcon,
 .signOutBtn .navIcon {
   width: 15px;
   height: 15px;
