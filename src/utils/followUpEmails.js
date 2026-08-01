@@ -9,6 +9,7 @@ export function formatRecipientNames(names = []) {
 
 export const FOLLOW_UP_MERGE_FIELDS = [
   '{{contact_first_name}}',
+  '{{contact_first_names}}',
   '{{opportunity_title}}',
   '{{notice_id}}',
   '{{agency}}',
@@ -47,8 +48,10 @@ export function deterministicDraftId(opportunityId, templateId) {
 }
 
 export function mergeFollowUpTemplate(value, context = {}) {
+  const contactNames = clean(context.contactFirstName)
   const replacements = {
-    contact_first_name: clean(context.contactFirstName),
+    contact_first_name: contactNames,
+    contact_first_names: contactNames,
     opportunity_title: clean(context.opportunityTitle),
     notice_id: clean(context.noticeId),
     agency: clean(context.agency),
@@ -61,15 +64,21 @@ export function mergeFollowUpTemplate(value, context = {}) {
   )
 }
 
-export function buildFollowUpDraft({ opportunity, template, recipient = '', cc = '', user = '', source = 'Manual' }) {
+export function buildFollowUpDraft({ opportunity, template, recipient = '', recipients, cc = '', user = '', source = 'Manual' }) {
   const opportunityId = clean(opportunity['Contract Number / Notice ID'])
   const templateId = clean(template['Template ID'])
   const milestoneDays = Number(template['Days After Submission'] || 0)
   const submissionDate = isoDate(opportunity['Submission Date (Response Date)*'])
   const dueDate = addDays(submissionDate, milestoneDays)
   const today = todayInLagos()
+  const recipientList = Array.isArray(recipients) ? recipients : []
+  const validRecipients = recipientList.filter((item) => clean(item?.email))
+  const recipientEmails = validRecipients.length
+    ? [...new Set(validRecipients.map((item) => clean(item.email)).filter(Boolean))]
+    : String(recipient || '').split(/[;,]/).map(clean).filter(Boolean)
+  const contactFirstNames = validRecipients.map((item) => clean(item.firstName || item.name).split(/\s+/)[0] || '')
   const context = {
-    contactFirstName: clean(opportunity.contactFirstName),
+    contactFirstName: formatRecipientNames(contactFirstNames) || clean(opportunity.contactFirstName),
     opportunityTitle: opportunity['Project Title / Description*'],
     noticeId: opportunityId,
     agency: opportunity['Agency*'],
@@ -85,11 +94,11 @@ export function buildFollowUpDraft({ opportunity, template, recipient = '', cc =
     'Template Name': clean(template['Template Name']),
     'Milestone Days': milestoneDays,
     'Due Date': dueDate,
-    To: clean(recipient),
+    To: recipientEmails.join('; '),
     CC: clean(cc),
     Subject: mergeFollowUpTemplate(template.Subject, context),
     Body: mergeFollowUpTemplate(template.Body, context),
-    Status: recipient ? (dueDate && dueDate <= today ? 'Ready for review' : 'Scheduled') : 'Recipient needed',
+    Status: recipientEmails.length ? (dueDate && dueDate <= today ? 'Ready for review' : 'Scheduled') : 'Recipient needed',
     'Enrollment Date': today,
     'Enrollment Source': source,
     'Created At': now,
