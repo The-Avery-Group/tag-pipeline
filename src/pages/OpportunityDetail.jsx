@@ -399,7 +399,7 @@ export default function OpportunityDetail({ toast }) {
   const [editingLinks, setEditingLinks] = useState(false)
   const [savingLinks, setSavingLinks] = useState(false)
   const [linkDraft, setLinkDraft] = useState(null)
-  const [outlineCollapsed, setOutlineCollapsed] = useState(false)
+  const [outlineCollapsed, setOutlineCollapsed] = useState(true)
   
 
   const opp = useMemo(
@@ -630,6 +630,20 @@ export default function OpportunityDetail({ toast }) {
   const f = (key) => cur[key]
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
   const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
+  const hasIncumbentHistory = /^[A-Z0-9]{12}$/.test(String(opp[C.incumbentUEI] || '').trim().toUpperCase())
+  const sectionGroups = [
+    ['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]],
+    ['Activity', [['Notes', 'activity-notes'], ['Tasks', 'activity-tasks']]],
+    ['Research', [
+      ...(hasIncumbentHistory ? [['Incumbent history', 'research-incumbent']] : []),
+      ['Award lookup', 'research-awards'],
+      ['Find contacts', 'research-contacts'],
+    ]],
+    ['Follow-up', [
+      ['Email drafts', 'followup-email'],
+      ...(isRFI ? [['RFI matcher', 'followup-rfi']] : []),
+    ]],
+  ]
   const hasSubmissionDate = !Number.isNaN(localDate(opp[C.submDate]).getTime())
   const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.contractNumber))
   const followUpStatus = rfiFollowUpMonitor.statusByOpportunity[normalizeOpportunityKey(opp[C.contractNum])]
@@ -1230,15 +1244,7 @@ export default function OpportunityDetail({ toast }) {
           <span>Jump to section</span>
           <select className="form-input" defaultValue="" onChange={(event) => { if (event.target.value) document.getElementById(event.target.value)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
             <option value="" disabled>Select a section</option>
-            <option value="overview-summary">Overview · Summary</option>
-            <option value="overview-contacts">Overview · Contacts</option>
-            <option value="overview-links">Overview · Partners & links</option>
-            <option value="activity-notes">Activity · Notes</option>
-            <option value="activity-tasks">Activity · Tasks</option>
-            <option value="research-incumbent">Research · Incumbent history</option>
-            <option value="research-awards">Research · Award lookup</option>
-            <option value="research-contacts">Research · Find contacts</option>
-            <option value="followup-email">Follow-up · Email drafts</option>
+            {sectionGroups.flatMap(([group, items]) => items.map(([label, id]) => <option value={id} key={id}>{group} · {label}</option>))}
           </select>
         </label>
         <div className={`${styles.detailLayout} ${outlineCollapsed ? styles.detailLayoutCollapsed : ''}`}>
@@ -1249,11 +1255,11 @@ export default function OpportunityDetail({ toast }) {
                 type="button"
                 className={styles.outlineToggle}
                 onClick={() => setOutlineCollapsed((value) => !value)}
-                aria-label={outlineCollapsed ? 'Show page sections' : 'Hide page sections'}
-                title={outlineCollapsed ? 'Show page sections' : 'Hide page sections'}
+                aria-label={outlineCollapsed ? 'Open page navigator' : 'Close page navigator'}
+                title={outlineCollapsed ? 'Open page navigator' : 'Close page navigator'}
               >{outlineCollapsed ? '›' : '‹'}</button>
             </div>
-            {!outlineCollapsed && [['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]], ['Activity', [['Notes', 'activity-notes'], ['Tasks', 'activity-tasks']]], ['Research', [['Incumbent history', 'research-incumbent'], ['Award lookup', 'research-awards'], ['Find contacts', 'research-contacts']]], ['Follow-up', [['Email drafts', 'followup-email'], ['RFI matcher', 'followup-rfi']]]].map(([group, items]) => <div className={styles.outlineGroup} key={group}><strong>{group}</strong>{items.map(([label, id]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{label}</button>)}</div>)}
+            {!outlineCollapsed && sectionGroups.map(([group, items]) => <div className={styles.outlineGroup} key={group}><strong>{group}</strong>{items.map(([label, id]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{label}</button>)}</div>)}
           </aside>
           <main className={styles.detailContent}>
         <div className={`${styles.categoryHeading} ${styles.categoryOverview}`}>Overview</div>
@@ -1563,7 +1569,7 @@ export default function OpportunityDetail({ toast }) {
         />
 
         <div className={`${styles.categoryHeading} ${styles.categoryResearch}`}>Research</div>
-        <div id="research-incumbent" className={styles.sectionAnchor}><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} incumbentName={f(C.incumbent)} /></div>
+        {hasIncumbentHistory && <div id="research-incumbent" className={styles.sectionAnchor}><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} incumbentName={f(C.incumbent)} /></div>}
         <div id="research-awards" className={styles.sectionAnchor}><AwardLookupPanel
           opp={opp}
           contractNumber={decodedCN}
