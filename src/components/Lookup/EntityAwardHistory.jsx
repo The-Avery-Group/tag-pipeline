@@ -108,7 +108,7 @@ export default function EntityAwardHistory() {
                   <h3>Prime contracts by agency</h3>
                   {doughnut.length === 0 ? <p className="text-sm text-muted">No agency data.</p> : (
                     <div className={styles.agencyDistribution}>
-                      <ResponsiveContainer width="48%" height={220}>
+                      <ResponsiveContainer width="100%" height={220}>
                         <PieChart>
                           <Tooltip content={<ChartTooltip formatLabel={(item) => item.name} formatValue={(item) => `${item.count} contract${item.count === 1 ? '' : 's'} · ${item.percentage.toFixed(1)}%`} />} />
                           <Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={48} outerRadius={78} label={({ value }) => `${(total ? Number(value) / total * 100 : 0).toFixed(0)}%`} labelLine={false}>
