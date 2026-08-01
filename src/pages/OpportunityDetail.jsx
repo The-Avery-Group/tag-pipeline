@@ -399,6 +399,7 @@ export default function OpportunityDetail({ toast }) {
   const [editingLinks, setEditingLinks] = useState(false)
   const [savingLinks, setSavingLinks] = useState(false)
   const [linkDraft, setLinkDraft] = useState(null)
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false)
   
 
   const opp = useMemo(
@@ -1240,10 +1241,19 @@ export default function OpportunityDetail({ toast }) {
             <option value="followup-email">Follow-up · Email drafts</option>
           </select>
         </label>
-        <div className={styles.detailLayout}>
-          <aside className={styles.detailOutline} aria-label="Opportunity sections">
-            <div className={styles.outlineHeading}>On this page</div>
-            {[['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]], ['Activity', [['Notes', 'activity-notes'], ['Tasks', 'activity-tasks']]], ['Research', [['Incumbent history', 'research-incumbent'], ['Award lookup', 'research-awards'], ['Find contacts', 'research-contacts']]], ['Follow-up', [['Email drafts', 'followup-email'], ['RFI matcher', 'followup-rfi']]]].map(([group, items]) => <div className={styles.outlineGroup} key={group}><strong>{group}</strong>{items.map(([label, id]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{label}</button>)}</div>)}
+        <div className={`${styles.detailLayout} ${outlineCollapsed ? styles.detailLayoutCollapsed : ''}`}>
+          <aside className={`${styles.detailOutline} ${outlineCollapsed ? styles.detailOutlineCollapsed : ''}`} aria-label="Opportunity sections">
+            <div className={styles.outlineHeader}>
+              {!outlineCollapsed && <div className={styles.outlineHeading}>On this page</div>}
+              <button
+                type="button"
+                className={styles.outlineToggle}
+                onClick={() => setOutlineCollapsed((value) => !value)}
+                aria-label={outlineCollapsed ? 'Show page sections' : 'Hide page sections'}
+                title={outlineCollapsed ? 'Show page sections' : 'Hide page sections'}
+              >{outlineCollapsed ? '›' : '‹'}</button>
+            </div>
+            {!outlineCollapsed && [['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]], ['Activity', [['Notes', 'activity-notes'], ['Tasks', 'activity-tasks']]], ['Research', [['Incumbent history', 'research-incumbent'], ['Award lookup', 'research-awards'], ['Find contacts', 'research-contacts']]], ['Follow-up', [['Email drafts', 'followup-email'], ['RFI matcher', 'followup-rfi']]]].map(([group, items]) => <div className={styles.outlineGroup} key={group}><strong>{group}</strong>{items.map(([label, id]) => <button type="button" key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{label}</button>)}</div>)}
           </aside>
           <main className={styles.detailContent}>
         <div className={`${styles.categoryHeading} ${styles.categoryOverview}`}>Overview</div>
