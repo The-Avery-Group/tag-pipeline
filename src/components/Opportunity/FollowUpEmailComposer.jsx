@@ -5,7 +5,7 @@ import {
   getEmailFollowUpTemplates,
   updateEmailFollowUpDraft,
 } from '@/services/graphService'
-import { buildFollowUpDraft, formatRecipientNames, isoDate } from '@/utils/followUpEmails'
+import { buildFollowUpDraft, isoDate } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
 import styles from './FollowUpEmailComposer.module.css'
 
@@ -24,6 +24,56 @@ function contactRecipients(contacts) {
 
 function parseRecipientEmails(value) {
   return String(value || '').split(/[;,]/).map(clean).filter(Boolean)
+}
+
+function recipientsInDraft(draft, availableRecipients) {
+  const emails = new Set(parseRecipientEmails(draft?.To).map((value) => value.toLowerCase()))
+  return availableRecipients.filter((contact) => emails.has(contact.email.toLowerCase()))
+}
+
+function renderRecipientTemplate(draft, template, opportunity, recipients) {
+  if (!template || !recipients.length) return null
+  return buildFollowUpDraft({
+    opportunity: { ...opportunity, samUrl: samLink(opportunity) },
+    template,
+    recipients,
+    cc: draft?.CC || '',
+    source: draft?.['Enrollment Source'] || 'Manual',
+  })
+}
+
+function reconcileLegacyRecipients(draft, templates, opportunity, availableRecipients) {
+  if (!draft || availableRecipients.length < 2) return { draft, patch: null }
+  const updatedBy = clean(draft['Updated By']).toLowerCase()
+  const untouchedAutomatic = clean(draft['Enrollment Source']).toLowerCase() === 'automatic' &&
+    (!updatedBy || updatedBy === 'scheduled worker' || updatedBy === 'automatic recipient sync')
+  if (!untouchedAutomatic) return { draft, patch: null }
+  const template = templates.find((item) => clean(item['Template ID']) === clean(draft['Template ID']))
+  if (!template) return { draft, patch: null }
+
+  const draftEmails = parseRecipientEmails(draft.To)
+  const currentRecipients = recipientsInDraft(draft, availableRecipients)
+  const allRecipientsKnown = draftEmails.length > 0 && draftEmails.length === currentRecipients.length
+  if (!allRecipientsKnown) return { draft, patch: null }
+
+  const target = renderRecipientTemplate(draft, template, opportunity, availableRecipients)
+  const possibleOriginals = [
+    renderRecipientTemplate(draft, template, opportunity, currentRecipients),
+    ...availableRecipients.map((recipient) => renderRecipientTemplate(draft, template, opportunity, [recipient])),
+  ].filter(Boolean)
+  const bodyMatchesTemplate = possibleOriginals.some((item) => clean(item.Body) === clean(draft.Body))
+  const subjectMatchesTemplate = possibleOriginals.some((item) => clean(item.Subject) === clean(draft.Subject))
+  const needsAllRecipients = currentRecipients.length !== availableRecipients.length
+  if (!bodyMatchesTemplate && !subjectMatchesTemplate) return { draft, patch: null }
+
+  const patch = {
+    ...(needsAllRecipients ? { To: target.To } : {}),
+    ...(bodyMatchesTemplate && clean(target.Body) !== clean(draft.Body) ? { Body: target.Body } : {}),
+    ...(subjectMatchesTemplate && clean(target.Subject) !== clean(draft.Subject) ? { Subject: target.Subject } : {}),
+  }
+  return Object.keys(patch).length
+    ? { draft: { ...draft, ...patch }, patch }
+    : { draft, patch: null }
 }
 
 function samLink(opportunity) {
@@ -73,9 +123,23 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       ])
       const isConfigured = templateRows !== null && draftRows !== null
       setConfigured(isConfigured)
-      setTemplates(templateRows || [])
-      setDrafts(draftRows || [])
-      const matching = (draftRows || [])
+      const loadedTemplates = templateRows || []
+      const reconciled = (draftRows || []).map((draft) => reconcileLegacyRecipients(
+        draft,
+        loadedTemplates,
+        opportunity,
+        availableRecipients,
+      ))
+      const loadedDrafts = reconciled.map((item) => item.draft)
+      setTemplates(loadedTemplates)
+      setDrafts(loadedDrafts)
+      const repairs = reconciled.filter((item) => item.patch && Number.isInteger(item.draft._rowIndex))
+      if (repairs.length) {
+        void Promise.allSettled(repairs.map((item) =>
+          updateEmailFollowUpDraft(item.draft._rowIndex, item.patch, 'Automatic recipient sync')
+        ))
+      }
+      const matching = loadedDrafts
         .filter((draft) => clean(draft['Opportunity ID']).toLowerCase() === opportunityId.toLowerCase())
         .sort((a, b) => Number(a['Milestone Days']) - Number(b['Milestone Days']))
       const initial = matching.find((draft) => draft.Status !== 'Skipped') || matching[0]
@@ -112,10 +176,8 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     }
     setEnrolling(true)
     try {
-      const recipient = availableRecipients.map((contact) => contact.email).join('; ')
       const sourceOpportunity = {
         ...opportunity,
-        contactFirstName: formatRecipientNames(availableRecipients.map((contact) => contact.firstName)),
         samUrl: samLink(opportunity),
       }
       const created = []
@@ -123,7 +185,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
         const record = buildFollowUpDraft({
           opportunity: sourceOpportunity,
           template,
-          recipient,
+          recipients: availableRecipients,
           user: user?.displayName,
           source: 'Manual',
         })
@@ -155,7 +217,15 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
         .map((contact) => contact.email)
       const unmatched = parseRecipientEmails(current.To)
         .filter((value) => !availableRecipients.some((contact) => contact.email.toLowerCase() === value.toLowerCase()))
-      return { ...current, To: [...ordered, ...unmatched].join('; ') }
+      const next = { ...current, To: [...ordered, ...unmatched].join('; ') }
+      const template = templates.find((item) => clean(item['Template ID']) === clean(current['Template ID']))
+      const previousRecipients = recipientsInDraft(current, availableRecipients)
+      const nextRecipients = recipientsInDraft(next, availableRecipients)
+      const previousRender = renderRecipientTemplate(current, template, opportunity, previousRecipients)
+      const nextRender = renderRecipientTemplate(next, template, opportunity, nextRecipients)
+      if (previousRender && nextRender && clean(current.Body) === clean(previousRender.Body)) next.Body = nextRender.Body
+      if (previousRender && nextRender && clean(current.Subject) === clean(previousRender.Subject)) next.Subject = nextRender.Subject
+      return next
     })
   }
 
