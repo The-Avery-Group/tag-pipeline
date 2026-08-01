@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
+import { useTheme } from '@/theme/ThemeContext'
 import styles from './Sidebar.module.css'
 
 const NAV = [
@@ -25,6 +26,8 @@ function NavIcon({ name }) {
     partners: <><path d="M8 12 5.5 9.5a2.2 2.2 0 0 0-3 3L7 17l4-4M16 12l2.5-2.5a2.2 2.2 0 0 1 3 3L17 17l-4-4"/><path d="m9 14 2-2 2 2"/></>,
     advisor: <><path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6ZM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1-2.1 2.1-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.1h-3v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1-2.1-2.1.1-.1A1.6 1.6 0 0 0 7.2 15a1.6 1.6 0 0 0-1.5-1H5.6v-3h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1L8.9 6l.1.1a1.6 1.6 0 0 0 1.8.3 1.6 1.6 0 0 0 1-1.5v-.1h3v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1 2.1 2.1-.1.1a1.6 1.6 0 0 0-.3 1.8 1.6 1.6 0 0 0 1.5 1h.1v3h-.1a1.6 1.6 0 0 0-1.5 1Z"/></>,
+    sun: <><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></>,
+    moon: <path d="M20.5 15.2A8.4 8.4 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/>,
     signOut: <><path d="m10 17 5-5-5-5M15 12H3M21 3v18H10"/></>,
   }
   return <svg {...props}>{paths[name]}</svg>
@@ -32,6 +35,8 @@ function NavIcon({ name }) {
 
 export default function Sidebar({ onSearchOpen }) {
   const { user, logout } = useAuth()
+  const { resolvedTheme, setThemePreference } = useTheme()
+  const quickTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
   const assetBase = import.meta.env.BASE_URL
   const initials = user?.displayName
     ?.split(' ')
@@ -81,14 +86,25 @@ export default function Sidebar({ onSearchOpen }) {
           </div>
         </div>
         <div className={styles.footerActions}>
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              `${styles.settingsBtn} ${isActive ? styles.settingsBtnActive : ''}`
-            }
-          >
-            <NavIcon name="settings" /> Settings
-          </NavLink>
+          <div className={styles.footerUtilityRow}>
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                `${styles.settingsBtn} ${isActive ? styles.settingsBtnActive : ''}`
+              }
+            >
+              <NavIcon name="settings" /> Settings
+            </NavLink>
+            <button
+              type="button"
+              className={styles.themeToggle}
+              onClick={() => setThemePreference(quickTheme)}
+              aria-label={`Switch to ${quickTheme} mode`}
+              title={`Switch to ${quickTheme} mode`}
+            >
+              <NavIcon name={resolvedTheme === 'dark' ? 'sun' : 'moon'} />
+            </button>
+          </div>
           <button className={styles.signOutBtn} onClick={logout}>
             <NavIcon name="signOut" /> Sign out
           </button>
