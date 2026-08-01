@@ -30,8 +30,10 @@ export function deterministicDraftId(opportunityId, templateId) {
 }
 
 export function mergeTemplate(value, context = {}) {
+  const contactNames = clean(context.contactFirstName)
   const replacements = {
-    contact_first_name: clean(context.contactFirstName),
+    contact_first_name: contactNames,
+    contact_first_names: contactNames,
     opportunity_title: clean(context.opportunityTitle),
     notice_id: clean(context.noticeId),
     agency: clean(context.agency),
