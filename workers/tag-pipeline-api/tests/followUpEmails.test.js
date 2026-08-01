@@ -16,6 +16,13 @@ test('merges only supported follow-up fields', () => {
   )
 })
 
+test('supports the plural contact first names merge field', () => {
+  assert.equal(
+    mergeTemplate('Hello {{contact_first_names}}', { contactFirstName: 'Alex and Morgan' }),
+    'Hello Alex and Morgan',
+  )
+})
+
 test('formats multiple recipient first names naturally', () => {
   assert.equal(formatRecipientNames(['Alex', 'Morgan']), 'Alex and Morgan')
   assert.equal(formatRecipientNames(['Alex', 'Morgan', 'Taylor']), 'Alex, Morgan, and Taylor')
