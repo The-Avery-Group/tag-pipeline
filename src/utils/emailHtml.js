@@ -152,7 +152,10 @@ export function sanitizeEmailHtml(value) {
         child.setAttribute('rel', 'noreferrer')
       }
       if (isSignature) child.setAttribute('data-email-signature', 'true')
-      if (isMergeField) child.setAttribute('data-email-merge-field', 'true')
+      if (isMergeField) {
+        child.setAttribute('data-email-merge-field', 'true')
+        child.setAttribute('contenteditable', 'false')
+      }
       applyEmailSafeTableStyles(child)
       cleanNode(child)
     }
@@ -182,6 +185,7 @@ export function decorateEmailMergeFields(value) {
           if (MERGE_FIELD_PATTERN.test(part)) {
             const token = documentNode.createElement('span')
             token.setAttribute('data-email-merge-field', 'true')
+            token.setAttribute('contenteditable', 'false')
             token.textContent = part
             fragment.appendChild(token)
           } else {
