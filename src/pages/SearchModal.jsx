@@ -13,6 +13,10 @@ import styles from './SearchModal.module.css'
 
 const MAX_PER_CATEGORY = 5
 
+function newOpportunityNoticeId(opportunity) {
+  return opportunity?.['Solicitation Number'] || opportunity?.notice_id || opportunity?.['Notice ID'] || ''
+}
+
 export default function SearchModal({ onClose }) {
   const [query, setQuery]   = useState('')
   const deferredQuery       = useDeferredValue(query)
@@ -143,7 +147,7 @@ export default function SearchModal({ onClose }) {
   const selectableResults = useMemo(() => [
     ...results.opportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}` })),
     ...results.samOpportunities.map((opportunity) => ({
-      path: `/opportunities?tab=New&search=${encodeURIComponent(opportunity['Notice ID'] || opportunity['Solicitation Number'] || opportunity.Title || '')}`,
+      path: `/opportunities?tab=New&search=${encodeURIComponent(newOpportunityNoticeId(opportunity) || opportunity.Title || '')}`,
     })),
     ...results.partners.map((partner) => ({ path: `/partners?search=${encodeURIComponent(partner['Partner Name'] || '')}` })),
     ...results.contacts.map((c) => ({ path: `/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}` })),
@@ -244,7 +248,7 @@ export default function SearchModal({ onClose }) {
               <div className={styles.groupLabel}>New SAM opportunities</div>
               {results.samOpportunities.map((opportunity, i) => {
                 const index = results.opportunities.length + i
-                const identifier = opportunity['Notice ID'] || opportunity['Solicitation Number'] || ''
+                const identifier = newOpportunityNoticeId(opportunity)
                 return (
                   <button key={(opportunity._rowIndex ?? identifier) || opportunity.Title || i}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
