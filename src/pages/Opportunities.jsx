@@ -22,6 +22,7 @@ import {
 } from '@/utils/samOpportunityHelpers'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 // ── Column name constants ─────────────────────────────────────────────────
 const C = {
@@ -451,6 +452,11 @@ export default function Opportunities({ toast }) {
   }
 
   const handleAdd = (e) => { e.preventDefault(); requestAdd() }
+  useSaveShortcut({
+    enabled: showAdd && !saving,
+    label: 'this new opportunity',
+    onSave: requestAdd,
+  })
 
   const handleDelete = async () => {
     if (!confirmDelete) return
@@ -1771,4 +1777,3 @@ export default function Opportunities({ toast }) {
     </>
   )
 }
-
