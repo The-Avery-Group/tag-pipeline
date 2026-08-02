@@ -60,7 +60,16 @@ function applyEmailSafeTableStyles(element) {
 }
 
 function markDetectedSignature(container) {
-  if (container.querySelector('[data-email-signature="true"]')) return
+  const existing = [...container.querySelectorAll('[data-email-signature="true"]')]
+  if (existing.length) {
+    const signature = existing[0]
+    existing.slice(1).forEach((extra) => {
+      while (extra.firstChild) signature.appendChild(extra.firstChild)
+      extra.remove()
+    })
+    container.appendChild(signature)
+    return
+  }
   const children = [...container.children]
   const signatureIndex = children.findIndex((child) => SIGNATURE_PATTERN.test(String(child.textContent || '').trim()))
   if (signatureIndex < 0) return
@@ -68,6 +77,44 @@ function markDetectedSignature(container) {
   signature.setAttribute('data-email-signature', 'true')
   children.slice(signatureIndex).forEach((child) => signature.appendChild(child))
   container.appendChild(signature)
+}
+
+function markDetectedLinks(container) {
+  const linkPattern = /((?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[a-z]{2,})/gi
+  const decorateNode = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === 3) {
+        if (child.parentElement?.closest?.('a, [data-email-merge-field="true"]')) continue
+        const value = String(child.nodeValue || '')
+        const parts = value.split(linkPattern)
+        if (parts.length < 2) continue
+        const fragment = container.ownerDocument.createDocumentFragment()
+        parts.forEach((part, index) => {
+          if (!part) return
+          if (index % 2 === 0) {
+            fragment.appendChild(container.ownerDocument.createTextNode(part))
+            return
+          }
+          const trailing = part.match(/[),.;!?]+$/)?.[0] || ''
+          const label = trailing ? part.slice(0, -trailing.length) : part
+          const href = label.includes('@') && !/^https?:/i.test(label)
+            ? `mailto:${label}`
+            : /^www\./i.test(label) ? `https://${label}` : label
+          const anchor = container.ownerDocument.createElement('a')
+          anchor.setAttribute('href', href)
+          anchor.setAttribute('target', '_blank')
+          anchor.setAttribute('rel', 'noreferrer')
+          anchor.textContent = label
+          fragment.appendChild(anchor)
+          if (trailing) fragment.appendChild(container.ownerDocument.createTextNode(trailing))
+        })
+        child.replaceWith(fragment)
+        continue
+      }
+      if (child.nodeType === 1 && child.tagName !== 'A') decorateNode(child)
+    }
+  }
+  decorateNode(container)
 }
 
 export function sanitizeEmailHtml(value) {
@@ -112,6 +159,7 @@ export function sanitizeEmailHtml(value) {
   }
   cleanNode(root)
   markDetectedSignature(root)
+  markDetectedLinks(root)
   return root.innerHTML || '<p><br></p>'
 }
 
