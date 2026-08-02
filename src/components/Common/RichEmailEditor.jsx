@@ -64,6 +64,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   const shellRef = useRef(null)
   const lastEmittedRef = useRef('')
   const savedRangeRef = useRef(null)
+  const lastDoubleClickRef = useRef(0)
   const [tableDialogOpen, setTableDialogOpen] = useState(false)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkText, setLinkText] = useState('')
@@ -147,6 +148,41 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   const command = (name, commandValue = null) => {
     restoreSelection()
     document.execCommand(name, false, commandValue)
+    updateTableSelection()
+    emit()
+  }
+
+  const replaceTable = (table, replacement, targetRowIndex = 0, targetCellIndex = 0) => {
+    const editor = editorRef.current
+    if (!editor || !table) return
+    const tableIndex = [...editor.querySelectorAll('table')].indexOf(table)
+    if (tableIndex < 0) return
+
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNode(table)
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    if (replacement) {
+      document.execCommand('insertHTML', false, sanitizeEmailHtml(replacement.outerHTML))
+      const nextTable = editor.querySelectorAll('table')[tableIndex]
+      const nextRows = [...(nextTable?.querySelectorAll('tr') || [])]
+      const nextRow = nextRows[Math.min(Math.max(0, targetRowIndex), Math.max(0, nextRows.length - 1))]
+      const nextCells = [...(nextRow?.children || [])]
+      const nextCell = nextCells[Math.min(Math.max(0, targetCellIndex), Math.max(0, nextCells.length - 1))]
+      if (nextCell) {
+        setCaretInside(nextCell)
+        const nextSelection = window.getSelection()
+        if (nextSelection?.rangeCount) savedRangeRef.current = nextSelection.getRangeAt(0).cloneRange()
+        setTableSelected(true)
+      } else {
+        setTableSelected(false)
+      }
+    } else {
+      document.execCommand('delete')
+      setTableSelected(false)
+    }
     emit()
   }
 
@@ -225,33 +261,69 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
     const row = cell?.closest('tr')
     const table = cell?.closest('table')
     if (!cell || !row || !table) return
+    const rows = [...table.querySelectorAll('tr')]
+    const rowIndex = rows.indexOf(row)
     const cellIndex = [...row.children].indexOf(cell)
+    const replacement = table.cloneNode(true)
+    const replacementRows = [...replacement.querySelectorAll('tr')]
+    const replacementRow = replacementRows[rowIndex]
+    let targetRowIndex = rowIndex
+    let targetCellIndex = cellIndex
 
     if (action === 'add-row') {
-      const next = row.cloneNode(true)
-      ;[...next.children].forEach((item) => { item.innerHTML = '<br>'; if (item.tagName === 'TH') { const replacement = document.createElement('td'); replacement.innerHTML = '<br>'; item.replaceWith(replacement) } })
-      row.parentElement.appendChild(next)
-      setCaretInside(next.children[Math.max(0, cellIndex)])
+      const next = replacementRow.cloneNode(true)
+      ;[...next.children].forEach((item) => {
+        item.innerHTML = '<br>'
+        if (item.tagName === 'TH') {
+          const dataCell = document.createElement('td')
+          dataCell.innerHTML = '<br>'
+          item.replaceWith(dataCell)
+        }
+      })
+      if (replacementRow.parentElement.tagName === 'THEAD') {
+        let body = replacement.querySelector('tbody')
+        if (!body) {
+          body = document.createElement('tbody')
+          replacement.appendChild(body)
+        }
+        body.prepend(next)
+        targetRowIndex = [...replacement.querySelectorAll('tr')].indexOf(next)
+      } else {
+        replacementRow.after(next)
+        targetRowIndex = [...replacement.querySelectorAll('tr')].indexOf(next)
+      }
     }
     if (action === 'delete-row') {
-      const rows = table.querySelectorAll('tr')
-      if (rows.length > 1) row.remove()
-      else table.remove()
+      if (replacementRows.length <= 1) {
+        replaceTable(table, null)
+        return
+      }
+      replacementRow.remove()
+      targetRowIndex = Math.min(rowIndex, replacementRows.length - 2)
     }
     if (action === 'add-column') {
-      table.querySelectorAll('tr').forEach((currentRow) => {
+      replacement.querySelectorAll('tr').forEach((currentRow) => {
         const source = currentRow.children[Math.min(cellIndex, currentRow.children.length - 1)]
         const next = document.createElement(source?.tagName === 'TH' ? 'th' : 'td')
         next.innerHTML = source?.tagName === 'TH' ? `Heading ${currentRow.children.length + 1}` : '<br>'
-        currentRow.appendChild(next)
+        source?.after(next)
       })
+      targetCellIndex = cellIndex + 1
     }
     if (action === 'delete-column') {
-      table.querySelectorAll('tr').forEach((currentRow) => currentRow.children[cellIndex]?.remove())
-      if (!table.querySelector('td, th')) table.remove()
+      replacement.querySelectorAll('tr').forEach((currentRow) => currentRow.children[cellIndex]?.remove())
+      if (!replacement.querySelector('td, th')) {
+        replaceTable(table, null)
+        return
+      }
+      const remainingCells = replacement.querySelectorAll('tr')[Math.min(rowIndex, replacement.querySelectorAll('tr').length - 1)]?.children.length || 1
+      targetCellIndex = Math.min(cellIndex, remainingCells - 1)
     }
-    if (action === 'delete-table') table.remove()
-    emit()
+    if (action === 'delete-table') {
+      replaceTable(table, null)
+      return
+    }
+    replaceTable(table, replacement, targetRowIndex, targetCellIndex)
   }
 
   const insertSignature = () => {
@@ -318,6 +390,11 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   }
 
   const handleEditorKeyDown = (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') {
+      event.preventDefault()
+      command('bold')
+      return
+    }
     if (event.key === ' ' || event.key === 'Enter') autoLinkAtCaret()
     if (event.key !== 'Backspace' && event.key !== 'Delete') return
     const selection = window.getSelection()
@@ -332,6 +409,18 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   const handlePaste = (event) => {
     event.preventDefault()
     document.execCommand('insertText', false, event.clipboardData.getData('text/plain'))
+  }
+
+  const handleEditorDoubleClick = (event) => {
+    lastDoubleClickRef.current = window.performance.now()
+    event.stopPropagation()
+    updateTableSelection()
+  }
+
+  const handleBeforeInput = (event) => {
+    const inputType = event.nativeEvent?.inputType || ''
+    const followsDoubleClick = window.performance.now() - lastDoubleClickRef.current < 500
+    if (inputType === 'formatBold' && followsDoubleClick) event.preventDefault()
   }
 
   return (
@@ -391,8 +480,10 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}
+        onBeforeInput={handleBeforeInput}
         onInput={() => { emit(); updateTableSelection() }}
         onClick={updateTableSelection}
+        onDoubleClick={handleEditorDoubleClick}
         onKeyUp={updateTableSelection}
         onKeyDown={handleEditorKeyDown}
         onBlur={(event) => {
