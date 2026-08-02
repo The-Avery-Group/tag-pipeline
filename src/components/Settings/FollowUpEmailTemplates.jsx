@@ -7,6 +7,7 @@ import {
 } from '@/services/graphService'
 import { FOLLOW_UP_MERGE_FIELDS } from '@/utils/followUpEmails'
 import styles from './FollowUpEmailTemplates.module.css'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 const EMPTY_TEMPLATE = {
   'Template Name': '',
@@ -29,6 +30,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const savingRef = useRef(false)
+  const editorRef = useRef(null)
 
   const selected = useMemo(
     () => templates.find((item) => item['Template ID'] === selectedId) || null,
@@ -92,6 +94,12 @@ export default function FollowUpEmailTemplates({ user, toast }) {
       setSaving(false)
     }
   }
+  useSaveShortcut({
+    enabled: configured && !loading && !saving && !deleting,
+    label: 'this follow-up email template',
+    onSave: save,
+    scopeRef: editorRef,
+  })
 
   const remove = async () => {
     if (!selected || deleting) return
@@ -144,7 +152,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
           ))}
       </aside>
 
-      <div className={styles.editor}>
+      <div ref={editorRef} className={styles.editor}>
         <div className={styles.editorGrid}>
           <label>
             <span>Template name</span>
