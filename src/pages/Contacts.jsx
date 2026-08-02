@@ -14,6 +14,7 @@ import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services
 import { formatDate } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import { useAuth } from '@/auth/AuthContext'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import styles from './Contacts.module.css'
 
 const BLANK = { Name: '', Title: '', Agency: '', Organization: '', Offices: '', Email: '', Phone: '', Notes: '', Type: '' }
@@ -282,6 +283,14 @@ export default function Contacts({ toast }) {
       // The action wrapper has already shown the error.
     }
   }
+
+  useSaveShortcut({ enabled: editing && !saving, label: 'this contact', onSave: saveEdit })
+  useSaveShortcut({ enabled: showAdd && !saving, label: 'this new contact', onSave: submitAdd })
+  useSaveShortcut({
+    enabled: showInteractionForm && !interactionAction.isLoading,
+    label: 'this contact interaction',
+    onSave: handleAddInteraction,
+  })
 
   const contactFormFields = () => (
     <div className={styles.formGrid}>
