@@ -38,6 +38,7 @@ import {
   saveRFIFollowUpDecision, saveRFIFollowUpOverride,
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 // ── Column constants ──────────────────────────────────────────────────────
 const C = {
@@ -400,6 +401,14 @@ export default function OpportunityDetail({ toast }) {
   const [savingLinks, setSavingLinks] = useState(false)
   const [linkDraft, setLinkDraft] = useState(null)
   const [outlineCollapsed, setOutlineCollapsed] = useState(true)
+  const opportunityEditRef = useRef(null)
+  const linksEditRef = useRef(null)
+  const taskEditRef = useRef(null)
+  const contactEditRef = useRef(null)
+  const opportunitySaveActionRef = useRef(null)
+  const linksSaveActionRef = useRef(null)
+  const taskSaveActionRef = useRef(null)
+  const contactSaveActionRef = useRef(null)
   
 
   const opp = useMemo(
@@ -599,6 +608,31 @@ export default function OpportunityDetail({ toast }) {
   const contractLifecycleBadgeClass = contractLifecycleAlert?.type === 'closedOut'
     ? 'badge-tracking'
     : 'badge-closed-lost'
+
+  useSaveShortcut({
+    enabled: editing && !saving,
+    label: 'these opportunity changes',
+    onSave: () => opportunitySaveActionRef.current?.(),
+    scopeRef: opportunityEditRef,
+  })
+  useSaveShortcut({
+    enabled: editingLinks && !savingLinks,
+    label: 'these opportunity links',
+    onSave: () => linksSaveActionRef.current?.(),
+    scopeRef: linksEditRef,
+  })
+  useSaveShortcut({
+    enabled: showAddTask && !savingTask,
+    label: editingTask ? 'these task changes' : 'this new task',
+    onSave: () => taskSaveActionRef.current?.(),
+    scopeRef: taskEditRef,
+  })
+  useSaveShortcut({
+    enabled: showNewContact && !savingContact,
+    label: 'this new linked contact',
+    onSave: () => contactSaveActionRef.current?.(),
+    scopeRef: contactEditRef,
+  })
 
   // ── Early returns after all hooks ─────────────────────────────────────
   if (pipelineLoading) {
@@ -1113,6 +1147,11 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
+  opportunitySaveActionRef.current = handleSave
+  linksSaveActionRef.current = saveLinks
+  taskSaveActionRef.current = submitTask
+  contactSaveActionRef.current = handleCreateAndLinkContact
+
   const valueFormatted = fmtValue(opp[C.value])
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -1264,7 +1303,7 @@ export default function OpportunityDetail({ toast }) {
           <main className={styles.detailContent}>
         <div className={`${styles.categoryHeading} ${styles.categoryOverview}`}>Overview</div>
         <Section title="Opportunity Summary" id="overview-summary">
-          {editing ? <div className={styles.summaryEditGroups}>
+          {editing ? <div ref={opportunityEditRef} className={styles.summaryEditGroups}>
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Capture status</div><div className={styles.fieldGrid}>
               <Field label="Opportunity Title" value={f(C.title)} editing onChange={set(C.title)} />
               <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
@@ -1411,7 +1450,7 @@ export default function OpportunityDetail({ toast }) {
 
           {/* Inline "new contact" form */}
           {showNewContact && (
-            <div className="card" style={{ marginTop: 10, padding: 12 }}>
+            <div ref={contactEditRef} className="card" style={{ marginTop: 10, padding: 12 }}>
               <div className={styles.fieldGrid}>
                 <div className="form-field">
                   <label className="form-label">Name *</label>
@@ -1476,7 +1515,7 @@ export default function OpportunityDetail({ toast }) {
             const draft = linkDraft
             if (!draft) return null
             const updateDraft = (patch) => setLinkDraft((current) => ({ ...current, ...patch }))
-            return <div className={styles.linksEditor}>
+            return <div ref={linksEditRef} className={styles.linksEditor}>
               <div className={styles.fixedLinksEditor}>{[['GovWin link', C.govwin], ['Opportunity folder', C.folder], ['Opportunity slide deck', C.slideDeck]].map(([label, key], index) => <div className={styles.fixedLinkEditRow} key={key}>
                 <label className="form-label" htmlFor={`fixed-link-${index}`}>{label}</label>
                 <input id={`fixed-link-${index}`} className="form-input" value={draft[key]} placeholder="https://…" onChange={(event) => updateDraft({ [key]: event.target.value })} />
@@ -1638,7 +1677,7 @@ export default function OpportunityDetail({ toast }) {
             </>
           }
         >
-          <form onSubmit={(e) => { e.preventDefault(); submitTask() }}>
+          <form ref={taskEditRef} onSubmit={(e) => { e.preventDefault(); submitTask() }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="form-field">
                 <label className="form-label">Title *</label>
