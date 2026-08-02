@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  buildContextBlock,
   capabilityChunks,
   handlePeopleSearchQueries,
   matchingPeopleSearchAliases,
@@ -8,6 +9,19 @@ import {
   normalizePeopleSearchSuggestion,
   retrieveCapabilityExcerpts,
 } from '../src/handlers/ai.js'
+
+test('includes the current email draft in AI reference data', () => {
+  const context = buildContextBlock({
+    currentDraft: {
+      subject: 'Following up on the RFI',
+      body: 'Hello Alex,\n\nI am following up on our response.',
+    },
+  })
+
+  assert.match(context, /CURRENT EMAIL DRAFT/)
+  assert.match(context, /Following up on the RFI/)
+  assert.match(context, /Hello Alex,\n\nI am following up on our response\./)
+})
 
 const documentText = [
   ...Array.from({ length: 14 }, (_, index) => `TAG delivers cloud modernization, program management, and mission support services for federal customers. Reference section ${index + 1}.`),
