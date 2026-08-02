@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { decorateEmailMergeFields, sanitizeEmailHtml } from '@/utils/emailHtml'
 import styles from './RichEmailEditor.module.css'
 
@@ -38,13 +38,13 @@ function normalizeLink(value) {
   return /^(?:https?:|mailto:)/i.test(link) ? link : ''
 }
 
-export default function RichEmailEditor({
+const RichEmailEditor = forwardRef(function RichEmailEditor({
   value,
   onChange,
   ariaLabel = 'Email body',
   allowSignature = false,
   highlightMergeFields = false,
-}) {
+}, forwardedRef) {
   const editorRef = useRef(null)
   const shellRef = useRef(null)
   const lastEmittedRef = useRef('')
@@ -108,6 +108,20 @@ export default function RichEmailEditor({
     selection.addRange(range)
     return true
   }
+
+  useImperativeHandle(forwardedRef, () => ({
+    insertMergeField(field) {
+      const token = String(field || '').trim()
+      if (!/^\{\{\s*[a-z_]+\s*\}\}$/i.test(token) || !restoreSelection()) return false
+      document.execCommand(
+        'insertHTML',
+        false,
+        `<span data-email-merge-field="true" contenteditable="false">${escapeHtml(token)}</span>&nbsp;`,
+      )
+      emit()
+      return true
+    },
+  }))
 
   const updateTableSelection = () => {
     const selection = window.getSelection()
@@ -346,4 +360,6 @@ export default function RichEmailEditor({
       />
     </div>
   )
-}
+})
+
+export default RichEmailEditor
