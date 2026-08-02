@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { sanitizeEmailHtml } from '@/utils/emailHtml'
+import { decorateEmailMergeFields, sanitizeEmailHtml } from '@/utils/emailHtml'
 import styles from './RichEmailEditor.module.css'
 
 function positiveInteger(value, fallback = 1) {
@@ -22,7 +22,13 @@ function setCaretInside(element) {
   selection.addRange(range)
 }
 
-export default function RichEmailEditor({ value, onChange, ariaLabel = 'Email body', allowSignature = false }) {
+export default function RichEmailEditor({
+  value,
+  onChange,
+  ariaLabel = 'Email body',
+  allowSignature = false,
+  highlightMergeFields = false,
+}) {
   const editorRef = useRef(null)
   const lastEmittedRef = useRef('')
   const [tableDialogOpen, setTableDialogOpen] = useState(false)
@@ -32,11 +38,12 @@ export default function RichEmailEditor({ value, onChange, ariaLabel = 'Email bo
   const [tableSelected, setTableSelected] = useState(false)
 
   useEffect(() => {
-    const normalized = sanitizeEmailHtml(value)
+    const sanitized = sanitizeEmailHtml(value)
+    const normalized = highlightMergeFields ? decorateEmailMergeFields(sanitized) : sanitized
     if (!editorRef.current || normalized === lastEmittedRef.current) return
     editorRef.current.innerHTML = normalized
     lastEmittedRef.current = normalized
-  }, [value])
+  }, [highlightMergeFields, value])
 
   const emit = () => {
     if (!editorRef.current) return
@@ -175,9 +182,10 @@ export default function RichEmailEditor({ value, onChange, ariaLabel = 'Email bo
         onBlur={() => {
           if (!editorRef.current) return
           const html = sanitizeEmailHtml(editorRef.current.innerHTML)
-          editorRef.current.innerHTML = html
-          lastEmittedRef.current = html
-          onChange(html)
+          const displayHtml = highlightMergeFields ? decorateEmailMergeFields(html) : html
+          editorRef.current.innerHTML = displayHtml
+          lastEmittedRef.current = displayHtml
+          onChange(displayHtml)
         }}
         onPaste={handlePaste}
       />
