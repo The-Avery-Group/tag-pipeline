@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Topbar from '@/components/Layout/Topbar'
 import FollowUpEmailTemplates from '@/components/Settings/FollowUpEmailTemplates'
 import { useAuth } from '@/auth/AuthContext'
@@ -14,6 +14,7 @@ import {
   isInteractionRequiredError,
 } from '@/services/graphService'
 import styles from './Settings.module.css'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 // Fallback defaults used only if the Data Validation column is missing/empty
 const FALLBACKS = {
@@ -120,6 +121,9 @@ export default function Settings({ toast }) {
   const [savedSAM,      setSavedSAM]      = useState(false)
   const [triggering,    setTriggering]    = useState(false)
   const [triggerResult, setTriggerResult] = useState(null)
+  const [focusedValidationKey, setFocusedValidationKey] = useState(null)
+  const dropdownScopeRef = useRef(null)
+  const samScopeRef = useRef(null)
   // Collapsible sections — all collapsed on first load
   const [openSections,  setOpenSections]  = useState({
     dropdowns: false,
@@ -296,6 +300,20 @@ export default function Settings({ toast }) {
       setSavingKey(null)
     }
   }
+  useSaveShortcut({
+    enabled: openSections.dropdowns && Boolean(focusedValidationKey) && !savingKey,
+    label: focusedValidationKey
+      ? `${SECTIONS.find((section) => section.key === focusedValidationKey)?.label || 'these dropdown options'}`
+      : 'these dropdown options',
+    onSave: () => focusedValidationKey && handleSave(focusedValidationKey),
+    scopeRef: dropdownScopeRef,
+  })
+  useSaveShortcut({
+    enabled: openSections.sam && samLoaded && !savingSAM,
+    label: 'the SAM.gov settings',
+    onSave: handleSaveSAM,
+    scopeRef: samScopeRef,
+  })
 
   return (
     <>
@@ -446,13 +464,13 @@ export default function Settings({ toast }) {
               {loading
                 ? <div className="skeleton" style={{ height: 200 }} />
                 : (
-                  <div className={styles.grid}>
+                  <div ref={dropdownScopeRef} className={styles.grid}>
                     {SECTIONS.map(({ key, label }) => {
                       const items = drafts[key] || []
                       const isLong = items.length > LONG_LIST_THRESHOLD
                       const isOpen = openLists[key] ?? !isLong   // long lists default closed, short ones default open
                       return (
-                        <div key={key} className="card">
+                        <div key={key} className="card" onFocusCapture={() => setFocusedValidationKey(key)}>
                           <button
                             type="button"
                             onClick={() => isLong && toggleList(key)}
@@ -524,7 +542,7 @@ export default function Settings({ toast }) {
             <span className={`${styles.chevron} ${openSections.sam ? styles.chevronOpen : ''}`}>›</span>
           </button>
           {openSections.sam && (
-            <div className={styles.collapsibleBody}>
+            <div ref={samScopeRef} className={styles.collapsibleBody}>
               <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
                 Controls the pull of Sources Sought opportunities from SAM.gov.
               </p>
