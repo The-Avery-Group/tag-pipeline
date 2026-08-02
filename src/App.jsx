@@ -9,6 +9,7 @@ import { ThemeProvider } from '@/theme/ThemeContext'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
 import Modal from '@/components/Common/Modal'
+import { SaveShortcutProvider } from '@/shortcuts/SaveShortcutContext'
 import {
   warmCache,
   startPolling,
@@ -279,7 +280,9 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter basename="/tag-pipeline">
           <ThemeProvider>
-            <AppShell />
+            <SaveShortcutProvider>
+              <AppShell />
+            </SaveShortcutProvider>
           </ThemeProvider>
         </BrowserRouter>
       </AuthProvider>
