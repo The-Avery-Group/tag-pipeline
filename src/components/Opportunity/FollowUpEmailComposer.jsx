@@ -7,6 +7,7 @@ import {
 } from '@/services/graphService'
 import { buildFollowUpDraft, isoDate } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import styles from './FollowUpEmailComposer.module.css'
 
 const clean = (value) => String(value ?? '').trim()
@@ -90,6 +91,7 @@ function statusTone(status) {
 }
 
 export default function FollowUpEmailComposer({ opportunity, linkedContacts = [], user, toast }) {
+  const panelRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [templates, setTemplates] = useState([])
   const [drafts, setDrafts] = useState([])
@@ -100,7 +102,12 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   const [saving, setSaving] = useState(false)
   const [enrolling, setEnrolling] = useState(false)
   const [improving, setImproving] = useState(false)
+  const [undoDepth, setUndoDepth] = useState(0)
   const savingRef = useRef(false)
+  const saveRef = useRef(null)
+  const formRef = useRef(null)
+  const undoStackRef = useRef([])
+  const lastUndoGroupRef = useRef({ key: '', at: 0 })
   const opportunityId = clean(opportunity?.['Contract Number / Notice ID'])
   const availableRecipients = useMemo(() => contactRecipients(linkedContacts), [linkedContacts])
   const submissionDate = isoDate(opportunity?.['Submission Date (Response Date)*'])
@@ -113,6 +120,40 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     [drafts, opportunityId],
   )
   const selected = opportunityDrafts.find((draft) => draft['Draft ID'] === selectedId) || opportunityDrafts[0] || null
+
+  const resetUndo = () => {
+    undoStackRef.current = []
+    lastUndoGroupRef.current = { key: '', at: 0 }
+    setUndoDepth(0)
+  }
+
+  const rememberForUndo = (snapshot, groupKey = '') => {
+    if (!snapshot) return
+    const now = Date.now()
+    const previousGroup = lastUndoGroupRef.current
+    const isSameTypingGroup = groupKey && previousGroup.key === groupKey && now - previousGroup.at < 800
+    if (!isSameTypingGroup) {
+      undoStackRef.current = [...undoStackRef.current.slice(-24), { ...snapshot }]
+      setUndoDepth(undoStackRef.current.length)
+    }
+    lastUndoGroupRef.current = { key: groupKey, at: now }
+  }
+
+  const updateField = (field, value) => {
+    rememberForUndo(form, `field:${field}`)
+    const next = { ...form, [field]: value }
+    formRef.current = next
+    setForm(next)
+  }
+
+  const undo = () => {
+    const previous = undoStackRef.current.pop()
+    if (!previous) return
+    formRef.current = previous
+    setForm(previous)
+    lastUndoGroupRef.current = { key: '', at: 0 }
+    setUndoDepth(undoStackRef.current.length)
+  }
 
   const load = async () => {
     setLoading(true)
@@ -145,6 +186,8 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       const initial = matching.find((draft) => draft.Status !== 'Skipped') || matching[0]
       setSelectedId(initial?.['Draft ID'] || '')
       setForm(initial ? { ...initial } : null)
+      formRef.current = initial ? { ...initial } : null
+      resetUndo()
     } catch (error) {
       toast?.error(`Could not load follow-up drafts: ${error.message}`)
     } finally {
@@ -155,8 +198,10 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   useEffect(() => {
     setOpen(false)
     setForm(null)
+    formRef.current = null
     setDrafts([])
     setSelectedId('')
+    resetUndo()
   }, [opportunityId])
 
   useEffect(() => {
@@ -164,8 +209,28 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   }, [open])
 
   useEffect(() => {
-    if (selected) setForm({ ...selected })
+    if (selected) {
+      const next = { ...selected }
+      formRef.current = next
+      setForm(next)
+      resetUndo()
+    }
   }, [selectedId, selected?._rowIndex])
+
+  useEffect(() => {
+    const handleEditorShortcut = (event) => {
+      if (!open || !formRef.current) return
+      if (!panelRef.current?.contains(document.activeElement)) return
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      const key = event.key.toLowerCase()
+      if (key === 'z' && undoStackRef.current.length) {
+        event.preventDefault()
+        undo()
+      }
+    }
+    document.addEventListener('keydown', handleEditorShortcut)
+    return () => document.removeEventListener('keydown', handleEditorShortcut)
+  }, [open])
 
   const enroll = async () => {
     if (enrolling || !eligible) return
@@ -198,6 +263,8 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       const first = created[0]
       setSelectedId(first?.['Draft ID'] || '')
       setForm(first ? { ...first } : null)
+      formRef.current = first ? { ...first } : null
+      resetUndo()
       toast?.success(`${created.length} follow-up draft${created.length === 1 ? '' : 's'} prepared`)
     } catch (error) {
       toast?.error(`Could not prepare follow-up drafts: ${error.message}`)
@@ -207,6 +274,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   }
 
   const toggleRecipient = (email) => {
+    rememberForUndo(form)
     setForm((current) => {
       if (!current) return current
       const selected = new Set(parseRecipientEmails(current.To).map((value) => value.toLowerCase()))
@@ -225,6 +293,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       const nextRender = renderRecipientTemplate(next, template, opportunity, nextRecipients)
       if (previousRender && nextRender && clean(current.Body) === clean(previousRender.Body)) next.Body = nextRender.Body
       if (previousRender && nextRender && clean(current.Subject) === clean(previousRender.Subject)) next.Subject = nextRender.Subject
+      formRef.current = next
       return next
     })
   }
@@ -247,6 +316,8 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       const updated = { ...form, ...patch }
       setDrafts((previous) => previous.map((draft) => draft['Draft ID'] === form['Draft ID'] ? updated : draft))
       setForm(updated)
+      formRef.current = updated
+      resetUndo()
       toast?.success(status === 'Skipped' ? 'Follow-up skipped' : 'Draft saved')
     } catch (error) {
       toast?.error(`Could not save draft: ${error.message}`)
@@ -255,21 +326,34 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       setSaving(false)
     }
   }
+  saveRef.current = save
+  useSaveShortcut({
+    enabled: open && Boolean(form) && !saving,
+    label: 'this follow-up email draft',
+    onSave: () => saveRef.current?.(),
+    scopeRef: panelRef,
+  })
 
   const improve = async () => {
     if (!form || improving) return
+    const requestedDraft = { subject: form.Subject || '', body: form.Body || '' }
     setImproving(true)
     try {
       const result = await sendAIMessage({
         promptType: 'email_draft',
-        message: 'Improve the provided draft while preserving its facts, intent, and concise tone. Return only the email body.',
+        message: 'Revise the current email draft in the CRM reference data. Preserve its facts and intent, improve its clarity and professional tone, keep it concise, and return only the revised email body.',
         context: {
           opportunity,
-          currentDraft: { subject: form.Subject, body: form.Body },
+          currentDraft: requestedDraft,
         },
       })
       if (!clean(result?.content)) throw new Error('AI returned an empty draft')
-      setForm((current) => ({ ...current, Body: result.content }))
+      const current = formRef.current
+      if (!current) return
+      rememberForUndo(current)
+      const next = { ...current, Body: result.content }
+      formRef.current = next
+      setForm(next)
     } catch (error) {
       toast?.error(`Could not improve the draft: ${error.message}`)
     } finally {
@@ -278,7 +362,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   }
 
   return (
-    <section className={styles.panel}>
+    <section ref={panelRef} className={styles.panel}>
       <button type="button" className={styles.panelHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className={styles.headerCopy}>
           <span className={styles.title}>RFI follow-up email</span>
@@ -353,16 +437,19 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
 
               <div className={styles.addressRows}>
                 <label><span>From</span><input value="Procurement mailbox · available after mail permissions" readOnly /></label>
-                <label><span>To</span><input value={form.To || ''} onChange={(event) => setForm((current) => ({ ...current, To: event.target.value }))} placeholder="Recipient email" /></label>
-                <label><span>CC</span><input value={form.CC || ''} onChange={(event) => setForm((current) => ({ ...current, CC: event.target.value }))} placeholder="Optional" /></label>
-                <label><span>Subject</span><input value={form.Subject || ''} onChange={(event) => setForm((current) => ({ ...current, Subject: event.target.value }))} /></label>
+                <label><span>To</span><input value={form.To || ''} onChange={(event) => updateField('To', event.target.value)} placeholder="Recipient email" /></label>
+                <label><span>CC</span><input value={form.CC || ''} onChange={(event) => updateField('CC', event.target.value)} placeholder="Optional" /></label>
+                <label><span>Subject</span><input value={form.Subject || ''} onChange={(event) => updateField('Subject', event.target.value)} /></label>
               </div>
 
-              <textarea className={styles.editor} value={form.Body || ''} onChange={(event) => setForm((current) => ({ ...current, Body: event.target.value }))} aria-label="Email body" />
+              <textarea className={styles.editor} value={form.Body || ''} onChange={(event) => updateField('Body', event.target.value)} aria-label="Email body" />
 
               <div className={styles.safety}>
                 <span>Nothing is sent automatically. Release 1 stores editable drafts only.</span>
-                <button type="button" className="btn btn-ghost" onClick={improve} disabled={improving}>{improving ? 'Improving…' : 'Improve with AI'}</button>
+                <div className={styles.editorActions}>
+                  <button type="button" className="btn btn-ghost" onClick={undo} disabled={!undoDepth || improving} title="Undo the latest unsaved change (Ctrl+Z or Cmd+Z)">Undo</button>
+                  <button type="button" className="btn btn-ghost" onClick={improve} disabled={improving}>{improving ? 'Improving…' : 'Improve with AI'}</button>
+                </div>
               </div>
 
               <div className={styles.actions}>
@@ -372,7 +459,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
                 </div>
                 <div>
                   <button type="button" className="btn btn-ghost" onClick={() => save('Skipped')} disabled={saving}>Skip follow-up</button>
-                  <button type="button" className="btn btn-primary" onClick={() => save()} disabled={saving}>{saving ? 'Saving…' : 'Save draft'}</button>
+                  <button type="button" className="btn btn-primary" onClick={() => save()} disabled={saving} title="Save draft (Ctrl+S or Cmd+S)">{saving ? 'Saving…' : 'Save draft'}</button>
                 </div>
               </div>
             </>
