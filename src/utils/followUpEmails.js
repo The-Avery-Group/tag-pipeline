@@ -8,7 +8,6 @@ export function formatRecipientNames(names = []) {
 }
 
 export const FOLLOW_UP_MERGE_FIELDS = [
-  '{{contact_first_name}}',
   '{{contact_first_names}}',
   '{{opportunity_title}}',
   '{{notice_id}}',
