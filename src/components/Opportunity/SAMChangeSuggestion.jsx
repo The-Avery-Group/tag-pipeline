@@ -66,7 +66,7 @@ export default function SAMChangeSuggestion({
           <div className={styles.samSuggestionFooter}>
             <button className="btn text-xs" type="button" disabled={applying} onClick={onKeepCurrent}>Keep current values</button>
             <button className="btn btn-primary text-xs" type="button" disabled={applying} onClick={onApply}>
-              {applying ? 'Updating…' : 'Update pipeline'}
+              {applying ? 'Applying…' : 'Apply to opportunity'}
             </button>
           </div>
         </div>

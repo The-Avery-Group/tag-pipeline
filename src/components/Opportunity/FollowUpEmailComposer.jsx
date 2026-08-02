@@ -387,8 +387,8 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     <section ref={panelRef} className={styles.panel}>
       <button type="button" className={styles.panelHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className={styles.headerCopy}>
-          <span className={styles.title}>RFI follow-up email</span>
-          <span className={styles.hint}>Prepare and review milestone drafts. Nothing is sent automatically.</span>
+          <span className={styles.title}>RFI follow-up emails</span>
+          <span className={styles.hint}>Prepare and review follow-up drafts. Nothing is sent automatically.</span>
         </span>
         {opportunityDrafts.length > 0 && <span className={styles.count}>{opportunityDrafts.length}</span>}
         <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>›</span>
@@ -401,16 +401,16 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
             <div className={styles.notice}>Follow-up email tables are not configured. An administrator can add them using the workbook setup guide.</div>
           )}
           {!loading && configured && !eligible && (
-            <div className={styles.notice}>Email follow-ups become available after this opportunity is marked Submitted RFI and has a submission date.</div>
+            <div className={styles.notice}>Follow-up emails become available after this opportunity is marked Submitted RFI and has a submission date.</div>
           )}
           {!loading && configured && eligible && !opportunityDrafts.length && (
             <div className={styles.empty}>
               <div>
-                <strong>No email follow-ups are enrolled for this RFI</strong>
-                <p>Older RFIs are never enrolled automatically. Enable them here when you are ready.</p>
+                <strong>No follow-up drafts have been prepared for this RFI</strong>
+                <p>Older RFIs are not prepared automatically. Prepare them here when you are ready.</p>
               </div>
               <button type="button" className="btn btn-primary" onClick={enroll} disabled={enrolling}>
-                {enrolling ? 'Preparing…' : 'Enable email follow-ups'}
+                {enrolling ? 'Preparing…' : 'Prepare follow-up drafts'}
               </button>
             </div>
           )}
@@ -441,7 +441,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
 
               {availableRecipients.length > 0 && (
                 <fieldset className={styles.recipientPicker}>
-                  <legend>Linked contact recipients</legend>
+                  <legend>Recipients from linked contacts</legend>
                   <div className={styles.recipientOptions}>
                     {availableRecipients.map((contact) => (
                       <label key={contact.email}>
@@ -458,7 +458,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
               )}
 
               <div className={styles.addressRows}>
-                <label><span>From</span><input value="Procurement mailbox · available after mail permissions" readOnly /></label>
+                <label><span>From</span><input value="Default sender · available after mail permissions" readOnly /></label>
                 <label><span>To</span><input value={form.To || ''} onChange={(event) => updateField('To', event.target.value)} placeholder="Recipient email" /></label>
                 <label><span>CC</span><input value={form.CC || ''} onChange={(event) => updateField('CC', event.target.value)} placeholder="Optional" /></label>
                 <label><span>Subject</span><input value={form.Subject || ''} onChange={(event) => updateField('Subject', event.target.value)} /></label>
@@ -467,7 +467,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
               <RichEmailEditor value={form.Body || ''} onChange={(Body) => updateField('Body', Body)} ariaLabel="Email body" />
 
               <div className={styles.safety}>
-                <span>Nothing is sent automatically. Release 1 stores editable drafts only.</span>
+                <span>Drafts are stored, but sending is not currently enabled.</span>
                 <div className={styles.editorActions}>
                   <button type="button" className="btn btn-ghost" onClick={undo} disabled={!undoDepth || improving} title="Undo the latest unsaved change (Ctrl+Z or Cmd+Z)">Undo</button>
                   <button type="button" className="btn btn-ghost" onClick={improve} disabled={improving}>{improving ? 'Improving…' : 'Improve with AI'}</button>

@@ -51,7 +51,7 @@ export default function AwardLookupPanel({
     if (!link) return
     const existing = cleanLinks(opp[columns.otherLinks])
     if (existing.some((value) => storedLinkUrl(value).toLowerCase() === link.toLowerCase())) {
-      toast?.success('Award Notice link is already in Other Links')
+      toast?.success('Award notice link is already in other links')
       setUpdated(piid, fieldKey)
       return
     }
@@ -59,7 +59,7 @@ export default function AwardLookupPanel({
     try {
       await updateOpp(opp._rowIndex, { [columns.otherLinks]: joinLinks([...existing, link]) }, opp)
       setUpdated(piid, fieldKey)
-      toast?.success('Award Notice link added to Other Links')
+      toast?.success('Award notice link added to other links')
     } catch (error) {
       toast?.error(`Failed to add link: ${error.message}`)
     } finally {
@@ -70,7 +70,7 @@ export default function AwardLookupPanel({
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
       <button onClick={handleToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 16px', background: 'var(--surface)', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font)' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', flex: 1 }}>Award Lookup</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', flex: 1 }}>Contract award lookup</span>
         {loading && <span className="text-xs text-muted">Looking up…</span>}
         <span style={{ fontSize: 18, color: 'var(--gray-400)', lineHeight: 1, transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
       </button>
@@ -113,9 +113,9 @@ export default function AwardLookupPanel({
               renderFieldAction={(fieldKey, field) => {
                 const done = Boolean(updatedFields[piid]?.[fieldKey])
                 const updating = Boolean(updatingFields[piid]?.[fieldKey])
-                if (field.action === 'addOtherLink') return <button className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`} onClick={() => handleAddAwardNoticeLink(piid, fieldKey, field)} disabled={done || updating}>{done ? 'Added' : updating ? 'Adding…' : 'Add to Other Links'}</button>
+                if (field.action === 'addOtherLink') return <button className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`} onClick={() => handleAddAwardNoticeLink(piid, fieldKey, field)} disabled={done || updating}>{done ? 'Added' : updating ? 'Adding…' : 'Add to other links'}</button>
                 if (!field.column) return null
-                return <button className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`} onClick={() => handleUpdateField(piid, fieldKey, field)} disabled={done || updating}>{done ? '✓ Updated' : updating ? 'Updating…' : 'Update pipeline'}</button>
+                return <button className={`${awardStyles.fieldAction} ${done ? awardStyles.fieldActionDone : ''}`} onClick={() => handleUpdateField(piid, fieldKey, field)} disabled={done || updating}>{done ? '✓ Applied' : updating ? 'Applying…' : 'Apply to opportunity'}</button>
               }}
             />
           </div>

@@ -5,6 +5,7 @@ import styles from '@/pages/OpportunityDetail.module.css'
 
 const STATUS_CYCLE = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
 const statusClass = (status) => status === 'To Do' ? 'todo' : status === 'In Progress' ? 'progress' : 'done'
+const statusLabel = (status) => status === 'To Do' ? 'To do' : status === 'In Progress' ? 'In progress' : status
 
 export default function OpportunityTasksSection({
   tasks,
@@ -48,7 +49,7 @@ export default function OpportunityTasksSection({
                   </div>
                   {task.OpportunityNotes && (
                     <button className={styles.refreshCtx} onClick={() => refreshContext(task)}>
-                      ↺ Refresh context
+                      ↺ Refresh opportunity context
                     </button>
                   )}
                 </div>
@@ -64,7 +65,7 @@ export default function OpportunityTasksSection({
                     disabled={updatingTaskId === task.TaskID}
                     title="Click to advance status"
                   >
-                    {updatingTaskId === task.TaskID ? 'Updating…' : task.Status}
+                    {updatingTaskId === task.TaskID ? 'Updating…' : statusLabel(task.Status)}
                   </button>
                   <button type="button" className="btn btn-ghost btn-icon" onClick={() => editTask(task)} aria-label={`Edit ${task.Title}`} title="Edit task" disabled={deletingTaskId === task.TaskID}>
                     <ActionIcon name="edit" />
@@ -79,7 +80,7 @@ export default function OpportunityTasksSection({
       }
       <button className="btn text-sm w-full" style={{ marginTop: 8, justifyContent: 'center' }}
         onClick={addTask}>
-        + Add task
+        + New task
       </button>
     </OpportunitySection>
   )

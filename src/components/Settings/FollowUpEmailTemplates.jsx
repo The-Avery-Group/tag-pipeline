@@ -71,7 +71,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
     const body = sanitizeEmailHtml(form.Body)
     const days = Number(form['Days After Submission'])
     if (!name || !subject || isEmptyEmailHtml(body) || !Number.isInteger(days) || days < 1 || days > 365) {
-      toast?.error('Template name, milestone day, subject, and body are required. Milestone day must be from 1 to 365.')
+      toast?.error('Template name, days after submission, subject, and body are required. Days after submission must be from 1 to 365.')
       return
     }
     savingRef.current = true
@@ -137,7 +137,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
       <aside className={styles.templateList} aria-label="Follow-up templates">
         <button type="button" className={`${styles.templateItem} ${selectedId === 'new' ? styles.selected : ''}`} onClick={() => choose(null)}>
           <span>New template</span>
-          <small>Create a milestone</small>
+          <small>Create a follow-up template</small>
         </button>
         {templates
           .slice()
@@ -189,7 +189,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
           />
         </div>
         <div className={styles.mergeFields}>
-          <span>Available fields</span>
+          <span>Template fields</span>
           {FOLLOW_UP_MERGE_FIELDS.map((field) => (
             <button
               type="button"

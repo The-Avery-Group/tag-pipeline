@@ -138,7 +138,7 @@ function waitForGoogleApi(timeoutMs = 10000) {
 }
 
 function loadGoogleSearchElement() {
-  if (!GOOGLE_SEARCH_ENGINE_ID) return Promise.reject(new Error('Google People Search is not configured'))
+  if (!GOOGLE_SEARCH_ENGINE_ID) return Promise.reject(new Error('Google people search is not configured'))
   if (window.google?.search?.cse?.element) return Promise.resolve()
   if (googleLoaderPromise) return googleLoaderPromise
 
@@ -522,7 +522,7 @@ export default function PeopleSearch({
         item.url !== result.url && next[item.url] !== 'irrelevant'
       )
       setSelectedUrl(nextVisible?.url || '')
-      toast?.success?.('Result excluded. Use Show excluded to restore it.')
+      toast?.success?.('Marked not relevant. Use Show not relevant to restore it.')
     }
   }
 
@@ -730,7 +730,7 @@ export default function PeopleSearch({
               ...suggestionDetails,
             })}
           >
-            Continue in People Search
+            Continue in people search
           </button>
         )}
       </div>
@@ -742,17 +742,17 @@ export default function PeopleSearch({
       <div className={styles.resultsHeader}>
         <div>
           <h3>Public profile results</h3>
-          <p>Review each public result before saving anything to Contacts.</p>
+          <p>Review each public result before saving anything to contacts.</p>
         </div>
         <div className={styles.resultHeaderActions}>
           {excludedCount > 0 && (
             <button type="button" className="btn" onClick={() => setShowExcluded((value) => !value)}>
-              {showExcluded ? 'Hide excluded' : `Show excluded (${excludedCount})`}
+              {showExcluded ? 'Hide not relevant' : `Show not relevant (${excludedCount})`}
             </button>
           )}
           {possibleFormerCount > 0 && (
             <button type="button" className="btn" onClick={() => setShowPossibleFormer((value) => !value)}>
-              {showPossibleFormer ? 'Hide possible former' : `Show possible former (${possibleFormerCount})`}
+              {showPossibleFormer ? 'Hide possibly outdated' : `Show possibly outdated (${possibleFormerCount})`}
             </button>
           )}
           {searched && <span className="badge badge-tracking">{results.length} results</span>}
@@ -766,9 +766,9 @@ export default function PeopleSearch({
           : visibleResults.length === 0
             ? <div className={styles.emptyState}>
                 {possibleFormerCount && !showPossibleFormer
-                  ? 'Only possible former-role results are hidden. Use Show possible former to review them.'
+                  ? 'Only possibly outdated results are hidden. Use Show possibly outdated to review them.'
                   : excludedCount
-                    ? 'All visible results have been excluded.'
+                    ? 'All visible results are marked not relevant.'
                     : 'No embedded results are available. Try the same query with Open in Google.'}
               </div>
             : (
@@ -788,11 +788,11 @@ export default function PeopleSearch({
                         <div className={styles.resultStatuses}>
                           {result.possibleFormerReason && (
                             <span className={styles.possibleFormerBadge} title={result.possibleFormerReason}>
-                              Possible former
+                              Possibly outdated
                             </span>
                           )}
                           <span className={`btn ${styles.reviewStatus}`}>
-                            {decision === 'added' ? 'Added' : decision === 'relevant' ? 'Relevant' : decision === 'irrelevant' ? 'Excluded' : 'Review'}
+                            {decision === 'added' ? 'Added' : decision === 'relevant' ? 'Relevant' : decision === 'irrelevant' ? 'Not relevant' : 'Review'}
                           </span>
                         </div>
                       </div>
@@ -812,7 +812,7 @@ export default function PeopleSearch({
                       <dd>{queries[activeQueryIndex]?.label || 'Edited Google query'}</dd>
                       {selected.possibleFormerReason && (
                         <>
-                          <dt>Current-role check</dt>
+                          <dt>Current employment check</dt>
                           <dd className={styles.currentRoleWarning}>
                             {selected.possibleFormerReason} Verify the person’s current employment before saving.
                           </dd>
@@ -829,9 +829,9 @@ export default function PeopleSearch({
                           </>
                       }
                       {decisions[selected.url] === 'relevant' && (
-                        <button type="button" className="btn btn-primary" onClick={() => beginAddContact(selected)}>Add to Contacts</button>
+                        <button type="button" className="btn btn-primary" onClick={() => beginAddContact(selected)}>Add as contact</button>
                       )}
-                      {decisions[selected.url] === 'added' && <span className="badge badge-done">Added to Contacts</span>}
+                      {decisions[selected.url] === 'added' && <span className="badge badge-done">Contact added</span>}
                     </div>
                   </div>
                 )}
@@ -856,7 +856,7 @@ export default function PeopleSearch({
               aria-expanded={expanded}
             >
               <span>
-                <strong>Find Contacts</strong>
+                <strong>Find contacts</strong>
                 <small>Generate one editable public-profile search from linked research notes.</small>
               </span>
               <span
@@ -899,8 +899,8 @@ export default function PeopleSearch({
             {[
               ['Name', 'Name', true],
               ['Title', 'Title', false],
-              ['Agency', 'Agency / Company', false],
-              ['Organization', 'Department / Organization', false],
+              ['Agency', 'Agency or Company', false],
+              ['Organization', 'Department or Organization', false],
               ['Offices', 'Offices', false],
               ['Email', 'Email', false],
               ['Phone', 'Phone', false],
@@ -916,7 +916,7 @@ export default function PeopleSearch({
               </div>
             ))}
             <div className="form-field">
-              <label className="form-label">Type</label>
+              <label className="form-label">Contact type</label>
               <select
                 className="form-input"
                 value={contactDraft.Type}

@@ -49,14 +49,14 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
     try {
       await onSaveOverride(opportunityId, criteria)
       setEditingCriteria(false)
-      toast?.success('RFI follow-up criteria saved')
+      toast?.success('RFI follow-on criteria saved')
     } catch (error) {
       toast?.error(`Could not save criteria: ${error.message}`)
     } finally { setSavingCriteria(false) }
   }
   useSaveShortcut({
     enabled: editingCriteria && Boolean(criteria) && !savingCriteria,
-    label: 'these RFI follow-up criteria',
+    label: 'these RFI follow-on criteria',
     onSave: saveCriteria,
     scopeRef: panelRef,
   })
@@ -81,9 +81,9 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
     <div ref={panelRef} className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12, scrollMarginTop: 16 }}>
       <button onClick={() => setOpen((value) => !value)} style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%', padding: '12px 16px', border: 'none', background: 'var(--surface)', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font)' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)' }}>RFI Follow-up Checker</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)' }}>RFI follow-on matcher</div>
           <div className="text-xs text-muted" style={{ marginTop: 2 }}>
-            {status?.lastCheckedAt ? `${pending.length} pending result${pending.length === 1 ? '' : 's'} · checked ${formatDate(status.lastCheckedAt)}` : 'Run a targeted SAM.gov follow-up check.'}
+            {status?.lastCheckedAt ? `${pending.length} pending result${pending.length === 1 ? '' : 's'} · checked ${formatDate(status.lastCheckedAt)}` : 'Run a targeted SAM.gov follow-on check.'}
           </div>
         </div>
         <span className="text-xs text-muted">{open ? '⌃' : '⌄'}</span>
@@ -93,7 +93,7 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
           <span className="text-xs text-muted">{ruleSummary}</span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="btn text-xs" onClick={beginCriteriaEdit}>Criteria</button>
-            <button className="btn btn-primary text-xs" onClick={() => monitor.checkOne(opportunityId).catch((error) => toast?.error(`Follow-up check failed: ${error.message}`))} disabled={monitor.checking || !canCheck}>
+            <button className="btn btn-primary text-xs" onClick={() => monitor.checkOne(opportunityId).catch((error) => toast?.error(`Follow-on check failed: ${error.message}`))} disabled={monitor.checking || !canCheck}>
               {monitor.checking ? 'Checking…' : 'Run check'}
             </button>
           </div>
@@ -115,16 +115,16 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
           </>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}><button className="btn text-xs" onClick={() => setEditingCriteria(false)}>Cancel</button><button className="btn btn-primary text-xs" onClick={saveCriteria} disabled={savingCriteria}>{savingCriteria ? 'Saving…' : 'Save criteria'}</button></div>
         </div>}
-        {!effective.rules.monitoringEnabled && <p className="text-sm text-muted">Follow-up monitoring is disabled for this RFI.</p>}
+        {!effective.rules.monitoringEnabled && <p className="text-sm text-muted">Follow-on monitoring is disabled for this RFI.</p>}
         {effective.rules.monitoringEnabled && effective.rules.pocRule === 'Exact' && !effective.pocEmail && <p className="text-sm text-muted">Link a contact with an email address, choose an override, or set the POC rule to Ignore before checking.</p>}
-        {monitor.error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-up check failed: {monitor.error}</p>}
+        {monitor.error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-on check failed: {monitor.error}</p>}
         {!monitor.checking && status?.lastCheckedAt && candidates.length === 0 && <p className="text-sm text-muted">No matching follow-on RFPs or RFQs found.</p>}
         {pending.map((candidate) => {
           const key = candidate.solicitationNumber || candidate.noticeId
           const alreadyLinked = linkedContractNumbers.has(key)
           return <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '10px 0' }}><div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start' }}><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{candidate.title || 'Untitled opportunity'}</div><div className="text-xs text-muted" style={{ marginTop: 3 }}>{candidate.solicitationNumber || candidate.noticeId} · {candidate.type || 'Follow-on'} · {candidate.keywordOverlapPercent}% title overlap</div>{candidate.responseDate && <div className="text-xs text-muted" style={{ marginTop: 2 }}>Response: {formatDate(candidate.responseDate)}</div>}</div><div style={{ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'center' }}><button className="btn btn-ghost btn-icon" title="Approve result" aria-label="Approve result" onClick={() => decide(candidate, 'Approved')}>✓</button><button className="btn btn-ghost btn-icon" title="Reject and remove result" aria-label="Reject and remove result" onClick={() => decide(candidate, 'Rejected')}>✕</button>{candidate.samLink && <a className="btn text-xs" href={safeUrl(candidate.samLink)} target="_blank" rel="noreferrer">SAM.gov ↗</a>}</div></div></div>
         })}
-        {reviewed.length > 0 && <details style={{ marginTop: 8 }}><summary className="text-xs text-muted" style={{ cursor: 'pointer' }}>Reviewed results ({reviewed.length})</summary>{reviewed.map((candidate) => { const key = candidate.solicitationNumber || candidate.noticeId; const approved = candidate.decision === 'Approved'; const alreadyLinked = linkedContractNumbers.has(key); return <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '9px 0', display: 'flex', justifyContent: 'space-between', gap: 8 }}><div><strong className="text-sm">{candidate.title || 'Untitled opportunity'}</strong><div className="text-xs text-muted">{candidate.decision}</div></div><div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>{approved && <button className="btn btn-primary text-xs" onClick={() => add(candidate)} disabled={Boolean(adding) || alreadyLinked}>{alreadyLinked ? 'Linked' : adding === key ? 'Adding…' : 'Add & link'}</button>}<button className="btn btn-ghost btn-icon" title="Reject and remove result" aria-label="Reject and remove result" onClick={() => decide(candidate, 'Rejected')}>✕</button></div></div> })}</details>}
+        {reviewed.length > 0 && <details style={{ marginTop: 8 }}><summary className="text-xs text-muted" style={{ cursor: 'pointer' }}>Reviewed results ({reviewed.length})</summary>{reviewed.map((candidate) => { const key = candidate.solicitationNumber || candidate.noticeId; const approved = candidate.decision === 'Approved'; const alreadyLinked = linkedContractNumbers.has(key); return <div key={candidate.noticeId || key} style={{ borderTop: '0.5px solid var(--gray-100)', padding: '9px 0', display: 'flex', justifyContent: 'space-between', gap: 8 }}><div><strong className="text-sm">{candidate.title || 'Untitled opportunity'}</strong><div className="text-xs text-muted">{candidate.decision}</div></div><div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>{approved && <button className="btn btn-primary text-xs" onClick={() => add(candidate)} disabled={Boolean(adding) || alreadyLinked}>{alreadyLinked ? 'Linked' : adding === key ? 'Adding…' : 'Add and link'}</button>}<button className="btn btn-ghost btn-icon" title="Reject and remove result" aria-label="Reject and remove result" onClick={() => decide(candidate, 'Rejected')}>✕</button></div></div> })}</details>}
       </div>}
     </div>
   )

@@ -44,7 +44,7 @@ export default function AwardRecordCard({
       ? {
           contractLifecycleReason: {
             section: 'Contract status',
-            label: 'Lifecycle Reason for Modification',
+            label: 'Reason for modification',
             value: contractLifecycleAlert.reason,
             fullWidth: true,
             lifecycleAlert: true,
@@ -66,7 +66,7 @@ export default function AwardRecordCard({
     <article className={`card ${styles.recordCard}`}>
       <header className={styles.cardHeader}>
         <div>
-          <div className={styles.eyebrow}>Contract Award Record</div>
+          <div className={styles.eyebrow}>Contract award record</div>
           <h3 className={styles.piid}>{piid || 'Unknown PIID'}</h3>
           <p className={styles.recordType}>
             {isIDV ? 'Contract vehicle (IDV)' : 'Definitive contract or order'}
@@ -75,7 +75,7 @@ export default function AwardRecordCard({
         </div>
         <div className={styles.headerActions}>
           {cacheLabel && <span className={styles.cacheBadge} title={formatCacheTime(cache?.fetchedAt)}>{cacheLabel}</span>}
-          {modificationCount > 1 && <span className={styles.modBadge}>{modificationCount} transactions</span>}
+          {modificationCount > 1 && <span className={styles.modBadge}>{modificationCount} award transactions</span>}
           {onRefresh && (
             <button type="button" className={styles.refreshButton} onClick={onRefresh} disabled={refreshing}>
               {refreshing ? 'Refreshing…' : 'Refresh from SAM.gov'}
@@ -98,7 +98,7 @@ export default function AwardRecordCard({
                   <div className={styles.fieldLabel} title={item.helpText || ''}>{item.label || key}</div>
                   <div className={styles.fieldValueRow}>
                     {item.format === 'link'
-                      ? <a href={item.value} target="_blank" rel="noreferrer" className={styles.inlineLink}>Open Award Notice ↗</a>
+                      ? <a href={item.value} target="_blank" rel="noreferrer" className={styles.inlineLink}>Open award notice ↗</a>
                       : <span className={`${styles.fieldValue} ${lifecycleReason ? styles.lifecycleValue : ''}`} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
                     {renderFieldAction?.(key, item)}
                   </div>

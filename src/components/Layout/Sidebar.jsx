@@ -55,9 +55,9 @@ export default function Sidebar({ onSearchOpen }) {
       </div>
 
       {/* Notion-style search trigger */}
-      <button className={styles.searchTrigger} onClick={onSearchOpen} aria-label="Search">
+      <button className={styles.searchTrigger} onClick={onSearchOpen} aria-label="Search CRM">
         <NavIcon name="search" />
-        <span>Search</span>
+        <span>Search CRM</span>
         <kbd className={styles.kbd}>⌘K</kbd>
       </button>
 
@@ -82,7 +82,6 @@ export default function Sidebar({ onSearchOpen }) {
           <div className={styles.avatar}>{initials}</div>
           <div>
             <div className={styles.userName}>{user?.displayName}</div>
-            <div className={styles.userRole}>Editor</div>
           </div>
         </div>
         <div className={styles.footerActions}>

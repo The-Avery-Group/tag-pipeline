@@ -54,12 +54,12 @@ export default function EntityAwardHistory() {
       <div className={styles.heading}>
         <div>
           <h2>Entity award history</h2>
-          <p>Prime contract activity reported by USAspending.gov over the last five years.</p>
+          <p>Prime contract obligations reported by USAspending.gov over the last five years.</p>
         </div>
       </div>
 
       <form className={styles.controls} onSubmit={submit}>
-        <input className="form-input" value={uei} maxLength={12} placeholder="Company UEI" onChange={(event) => setUEI(event.target.value.toUpperCase())} />
+        <input className="form-input" value={uei} maxLength={12} placeholder="Entity UEI" onChange={(event) => setUEI(event.target.value.toUpperCase())} />
         <button className="btn btn-primary text-sm" type="submit">Load</button>
         <div className={styles.choiceGroup} aria-label="Year type">
           <button type="button" className={yearType === 'calendar' ? styles.choiceActive : styles.choice} onClick={() => setYearType('calendar')}>Calendar year</button>
@@ -78,20 +78,20 @@ export default function EntityAwardHistory() {
           : error ? <p className="text-sm text-danger">Could not load award history: {error}</p>
             : data && <>
               <div className={styles.entityIdentity}>
-                <span>Incumbent</span>
+                <span>Entity</span>
                 <strong>{data.incumbentName || 'Name unavailable from USAspending'}</strong>
                 <small>UEI {data.uei}</small>
               </div>
               <div className={styles.metrics}>
                 <Metric label="Prime contracts" value={data.contractCount} detail="Last five years" />
-                <Metric label="Average award value" value={formatCurrency(data.averageAwardValue)} detail="Award amounts in period" />
-                <Metric label="Award value" value={formatCurrency(data.totalAwardValue)} detail="Last five years" />
-                <Metric label="Near expiration" value={data.expiringAwards} detail="Ends within 6 months" danger={data.expiringAwards > 0} />
+                <Metric label="Average award amount" value={formatCurrency(data.averageAwardValue)} detail="Award amounts in period" />
+                <Metric label="Total award amount" value={formatCurrency(data.totalAwardValue)} detail="Last five years" />
+                <Metric label="Contracts expiring within 6 months" value={data.expiringAwards} detail="Based on contract end dates" danger={data.expiringAwards > 0} />
               </div>
               {data.truncated && <p className="text-xs text-muted">Agency counts cover the first {data.displayedAwardCount} awards. The total contract count remains exact.</p>}
               <div className={styles.charts}>
                 <div>
-                  <h3>Prime contract activity</h3>
+                  <h3>Prime contract obligations</h3>
                   <ResponsiveContainer width="100%" height={240}>
                     <BarChart data={data.series || []} margin={{ top: 18, right: 12, bottom: 4, left: 0 }}>
                       <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
