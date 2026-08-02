@@ -38,6 +38,21 @@ function normalizeLink(value) {
   return /^(?:https?:|mailto:)/i.test(link) ? link : ''
 }
 
+function linkCandidateAtCaret(selection) {
+  if (!selection?.isCollapsed || !selection.rangeCount || selection.anchorNode?.nodeType !== 3) return null
+  const textNode = selection.anchorNode
+  const offset = selection.anchorOffset
+  const beforeCaret = String(textNode.nodeValue || '').slice(0, offset)
+  const match = beforeCaret.match(/((?:https?:\/\/|www\.)[^\s<>]+|[\w.+-]+@[\w.-]+\.[a-z]{2,})$/i)
+  if (!match) return null
+  const raw = match[1]
+  const trailing = raw.match(/[),.;!?]+$/)?.[0] || ''
+  const label = trailing ? raw.slice(0, -trailing.length) : raw
+  const href = normalizeLink(label)
+  if (!href) return null
+  return { textNode, offset, raw, trailing, label, href }
+}
+
 const RichEmailEditor = forwardRef(function RichEmailEditor({
   value,
   onChange,
@@ -270,7 +285,40 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
     emit()
   }
 
+  const autoLinkAtCaret = () => {
+    const selection = window.getSelection()
+    const candidate = linkCandidateAtCaret(selection)
+    if (!candidate) return false
+    const range = document.createRange()
+    range.setStart(candidate.textNode, candidate.offset - candidate.raw.length)
+    range.setEnd(candidate.textNode, candidate.offset - candidate.trailing.length)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.execCommand('createLink', false, candidate.href)
+
+    const linkedNode = selection.anchorNode
+    const linkedElement = linkedNode?.nodeType === 1 ? linkedNode : linkedNode?.parentElement
+    const anchor = linkedElement?.closest?.('a')
+    if (!anchor || !editorRef.current?.contains(anchor)) return false
+    anchor.setAttribute('target', '_blank')
+    anchor.setAttribute('rel', 'noreferrer')
+
+    const caret = document.createRange()
+    const nextNode = anchor.nextSibling
+    if (candidate.trailing && nextNode?.nodeType === 3) {
+      caret.setStart(nextNode, Math.min(candidate.trailing.length, nextNode.nodeValue?.length || 0))
+    } else {
+      caret.setStartAfter(anchor)
+    }
+    caret.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(caret)
+    savedRangeRef.current = caret.cloneRange()
+    return true
+  }
+
   const handleEditorKeyDown = (event) => {
+    if (event.key === ' ' || event.key === 'Enter') autoLinkAtCaret()
     if (event.key !== 'Backspace' && event.key !== 'Delete') return
     const selection = window.getSelection()
     const node = selection?.anchorNode
