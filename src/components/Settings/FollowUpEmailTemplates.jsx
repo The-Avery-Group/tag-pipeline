@@ -177,8 +177,8 @@ export default function FollowUpEmailTemplates({ user, toast }) {
           <span>Subject</span>
           <input className="form-input" value={form.Subject} onChange={(event) => setForm((current) => ({ ...current, Subject: event.target.value }))} placeholder="Following up on {{opportunity_title}}" />
         </label>
-        <label className={styles.fullField}>
-          <span>Email body</span>
+        <div className={styles.fullField}>
+          <span id="follow-up-template-body-label">Email body</span>
           <RichEmailEditor
             ref={richEditorRef}
             value={form.Body}
@@ -187,7 +187,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
             allowSignature
             highlightMergeFields
           />
-        </label>
+        </div>
         <div className={styles.mergeFields}>
           <span>Available fields</span>
           {FOLLOW_UP_MERGE_FIELDS.map((field) => (
