@@ -1,0 +1,90 @@
+.editorShell {
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.editorShell:focus-within { border-color: var(--blue-500); }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 0.5px solid var(--gray-200);
+  background: var(--gray-50);
+  overflow-x: auto;
+}
+
+.toolbar button,
+.tableActions button {
+  min-height: 27px;
+  padding: 4px 7px;
+  border: 0.5px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--gray-700);
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolbar button:hover,
+.tableActions button:hover { border-color: var(--gray-200); background: var(--surface); color: var(--blue-700); }
+.divider { width: 1px; height: 18px; margin: 0 2px; background: var(--gray-200); flex-shrink: 0; }
+
+.tableDialog {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--gray-200);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.tableDialog label { display: flex; flex-direction: column; gap: 3px; color: var(--gray-500); font-size: 9px; font-weight: 650; }
+.tableDialog input[type='number'] { width: 76px; height: 29px; padding: 0 7px; border: 0.5px solid var(--gray-200); border-radius: 5px; background: var(--surface); color: var(--gray-900); }
+.tableDialog .headerChoice { flex-direction: row; align-items: center; min-height: 29px; }
+
+.tableActions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 9px;
+  border-bottom: 0.5px solid var(--gray-100);
+  overflow-x: auto;
+}
+
+.tableActions span { margin-right: 4px; color: var(--gray-400); font-size: 9px; white-space: nowrap; }
+
+.editor {
+  width: 100%;
+  min-height: 230px;
+  height: auto;
+  padding: 15px;
+  outline: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  color: var(--gray-900);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+.editor p { margin: 0 0 10px; }
+.editor p:last-child { margin-bottom: 0; }
+.editor ul, .editor ol { margin: 6px 0 10px; padding-left: 24px; }
+.editor a { color: var(--blue-700); text-decoration: underline; }
+.editor table { width: max-content !important; min-width: 100%; max-width: none !important; margin: 9px 0; border-collapse: collapse; }
+.editor th, .editor td { min-width: 112px; white-space: nowrap; }
+.editor [data-email-signature='true'] { margin-top: 15px; padding-top: 9px; border-top: 0.5px dashed var(--gray-300); }
+.editor [data-email-signature='true']::before { content: 'Signature'; display: block; margin-bottom: 6px; color: var(--gray-400); font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; }
+
+@media (max-width: 700px) {
+  .editor { min-height: 190px; padding: 12px; }
+  .tableActions span { display: none; }
+}
