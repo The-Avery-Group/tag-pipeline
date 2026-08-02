@@ -33,6 +33,7 @@
 
 .toolbar button:hover,
 .tableActions button:hover { border-color: var(--gray-200); background: var(--surface); color: var(--blue-700); }
+.toolbar button:disabled { cursor: not-allowed; opacity: 0.42; }
 .divider { width: 1px; height: 18px; margin: 0 2px; background: var(--gray-200); flex-shrink: 0; }
 
 .tableDialog {
@@ -44,6 +45,20 @@
   background: var(--surface);
   flex-wrap: wrap;
 }
+
+.linkDialog {
+  display: grid;
+  grid-template-columns: minmax(130px, .8fr) minmax(220px, 1.4fr) auto;
+  align-items: end;
+  gap: 9px;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--gray-200);
+  background: var(--surface);
+}
+
+.linkDialog label { display: flex; flex-direction: column; gap: 3px; color: var(--gray-500); font-size: 9px; font-weight: 650; }
+.linkDialog input { width: 100%; height: 29px; padding: 0 7px; border: 0.5px solid var(--gray-200); border-radius: 5px; background: var(--surface); color: var(--gray-900); }
+.dialogActions { display: flex; align-items: center; gap: 5px; }
 
 .tableDialog label { display: flex; flex-direction: column; gap: 3px; color: var(--gray-500); font-size: 9px; font-weight: 650; }
 .tableDialog input[type='number'] { width: 76px; height: 29px; padding: 0 7px; border: 0.5px solid var(--gray-200); border-radius: 5px; background: var(--surface); color: var(--gray-900); }
@@ -68,13 +83,16 @@
   outline: 0;
   overflow-x: auto;
   overflow-y: visible;
+  caret-color: var(--blue-600);
   color: var(--gray-900);
+  cursor: text;
   font-family: var(--font);
   font-size: 12px;
   font-style: normal;
   font-weight: 400;
   line-height: 1.6;
   white-space: normal;
+  user-select: text;
 }
 
 .editor p { margin: 0 0 10px; }
@@ -108,10 +126,14 @@
 }
 .editor table { width: max-content !important; min-width: 100%; max-width: none !important; margin: 9px 0; border-collapse: collapse; }
 .editor th, .editor td { min-width: 112px; white-space: nowrap; }
+.editor th { background: var(--blue-50) !important; color: var(--blue-800) !important; font-weight: 700; }
+.editor td { background: var(--surface) !important; color: var(--gray-900) !important; }
 .editor [data-email-signature='true'] { margin-top: 15px; padding-top: 9px; border-top: 0.5px dashed var(--gray-300); }
 .editor [data-email-signature='true']::before { content: 'Signature'; display: block; margin-bottom: 6px; color: var(--gray-400); font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; }
 
 @media (max-width: 700px) {
   .editor { min-height: 190px; padding: 12px; }
   .tableActions span { display: none; }
+  .linkDialog { grid-template-columns: 1fr; }
+  .dialogActions { justify-content: flex-end; }
 }
