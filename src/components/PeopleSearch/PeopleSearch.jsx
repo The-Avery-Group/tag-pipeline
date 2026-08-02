@@ -9,6 +9,7 @@ import {
 } from '@/services/peopleSearchService'
 import { possibleFormerRoleReason } from '@/utils/peopleSearchResults'
 import styles from './PeopleSearch.module.css'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 const GOOGLE_SEARCH_ENGINE_ID = import.meta.env.VITE_GOOGLE_SEARCH_ENGINE_ID || ''
 const DECISIONS_KEY = 'tag-people-search-decisions-v1'
@@ -575,6 +576,13 @@ export default function PeopleSearch({
       setContactSaveMode('')
     }
   }
+  const contactEditorRef = useRef(null)
+  useSaveShortcut({
+    enabled: Boolean(contactDraft?.Name.trim()) && !savingContact,
+    label: variant === 'opportunity' ? 'this new contact and link' : 'this new contact',
+    onSave: () => saveContact(variant === 'opportunity' ? 'add-link' : 'add'),
+    scopeRef: contactEditorRef,
+  })
 
   const extractedConceptGroups = [
     ['Organization', suggestionDetails.concepts.organization],
@@ -887,7 +895,7 @@ export default function PeopleSearch({
           <p className={styles.contactReviewNote}>
             Google profile information can be incomplete. Review these fields before saving.
           </p>
-          <div className={styles.contactForm}>
+          <div ref={contactEditorRef} className={styles.contactForm}>
             {[
               ['Name', 'Name', true],
               ['Title', 'Title', false],
