@@ -41,7 +41,11 @@ export function mergeTemplate(value, context = {}) {
     days_since_submission: clean(context.daysSinceSubmission),
     sam_url: clean(context.samUrl),
   }
-  return clean(value).replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, key) =>
+  const unwrapped = clean(value).replace(
+    /<span\b[^>]*data-email-merge-field=["']true["'][^>]*>([\s\S]*?)<\/span>/gi,
+    '$1',
+  )
+  return unwrapped.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (match, key) =>
     Object.hasOwn(replacements, key.toLowerCase()) ? replacements[key.toLowerCase()] : match
   )
 }
