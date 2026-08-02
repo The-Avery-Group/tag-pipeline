@@ -8,6 +8,8 @@ import {
 import { FOLLOW_UP_MERGE_FIELDS } from '@/utils/followUpEmails'
 import styles from './FollowUpEmailTemplates.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
+import RichEmailEditor from '@/components/Common/RichEmailEditor'
+import { isEmptyEmailHtml, sanitizeEmailHtml } from '@/utils/emailHtml'
 
 const EMPTY_TEMPLATE = {
   'Template Name': '',
@@ -65,15 +67,15 @@ export default function FollowUpEmailTemplates({ user, toast }) {
     if (savingRef.current) return
     const name = String(form['Template Name'] || '').trim()
     const subject = String(form.Subject || '').trim()
-    const body = String(form.Body || '').trim()
+    const body = sanitizeEmailHtml(form.Body)
     const days = Number(form['Days After Submission'])
-    if (!name || !subject || !body || !Number.isInteger(days) || days < 1 || days > 365) {
+    if (!name || !subject || isEmptyEmailHtml(body) || !Number.isInteger(days) || days < 1 || days > 365) {
       toast?.error('Template name, milestone day, subject, and body are required. Milestone day must be from 1 to 365.')
       return
     }
     savingRef.current = true
     setSaving(true)
-    const payload = { ...form, 'Days After Submission': days }
+    const payload = { ...form, Body: body, 'Days After Submission': days }
     try {
       if (selected) {
         await updateEmailFollowUpTemplate(selected._rowIndex, payload, user?.displayName)
@@ -176,7 +178,12 @@ export default function FollowUpEmailTemplates({ user, toast }) {
         </label>
         <label className={styles.fullField}>
           <span>Email body</span>
-          <textarea className="form-input" rows="9" value={form.Body} onChange={(event) => setForm((current) => ({ ...current, Body: event.target.value }))} />
+          <RichEmailEditor
+            value={form.Body}
+            onChange={(Body) => setForm((current) => ({ ...current, Body }))}
+            ariaLabel="Follow-up email template body"
+            allowSignature
+          />
         </label>
         <div className={styles.mergeFields}>
           <span>Available fields</span>
