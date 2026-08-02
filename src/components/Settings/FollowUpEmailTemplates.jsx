@@ -183,6 +183,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
             onChange={(Body) => setForm((current) => ({ ...current, Body }))}
             ariaLabel="Follow-up email template body"
             allowSignature
+            highlightMergeFields
           />
         </label>
         <div className={styles.mergeFields}>
