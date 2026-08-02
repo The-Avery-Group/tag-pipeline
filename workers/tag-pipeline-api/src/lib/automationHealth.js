@@ -84,29 +84,29 @@ export async function getAutomationHealth(env) {
   const graphConfigured = Boolean(env.MS_TENANT_ID && env.MS_CLIENT_ID && env.MS_CLIENT_SECRET && env.WORKBOOK_ID)
   return [
     healthEntry({
-      id: 'sam_pull', label: 'SAM opportunity pull', schedule: 'Weekdays at 1 PM WAT', run: samPull,
+      id: 'sam_pull', label: 'SAM.gov opportunity pull', schedule: 'Weekdays at 1 PM WAT', run: samPull,
       configured: Boolean(env.SAM_API_KEY && graphConfigured),
-      unavailableMessage: env.SAM_API_KEY && graphConfigured ? null : 'SAM or Microsoft Graph application access is not configured.',
+      unavailableMessage: env.SAM_API_KEY && graphConfigured ? null : 'SAM.gov or Microsoft 365 application access is not configured.',
     }),
     healthEntry({
-      id: 'sam_changes', label: 'SAM change checks', schedule: 'Twice daily', run: samChanges,
+      id: 'sam_changes', label: 'SAM.gov update checks', schedule: 'Twice daily', run: samChanges,
       configured: Boolean(env.SAM_API_KEY),
       unavailableMessage: env.SAM_API_KEY ? null : 'SAM API access is not configured.',
     }),
     healthEntry({
-      id: 'rfi_followups', label: 'RFI follow-up checks', schedule: 'Monday, Wednesday, Friday at 1 PM WAT', run: rfiFollowUps,
+      id: 'rfi_followups', label: 'RFI follow-on checks', schedule: 'Monday, Wednesday, Friday at 1 PM WAT', run: rfiFollowUps,
       configured: Boolean(env.SAM_API_KEY && env.CACHE),
-      unavailableMessage: env.SAM_API_KEY && env.CACHE ? null : 'SAM API access or Worker cache is not configured.',
+      unavailableMessage: env.SAM_API_KEY && env.CACHE ? null : 'SAM.gov access or background storage is not configured.',
     }),
     healthEntry({
       id: 'notifications', label: 'Teams reminders', schedule: 'Daily at 2:01 PM WAT', run: notifications,
       configured: Boolean(env.TEAMS_WEBHOOK_URL && graphConfigured),
-      unavailableMessage: env.TEAMS_WEBHOOK_URL && graphConfigured ? null : 'Teams or Microsoft Graph application access is not configured.',
+      unavailableMessage: env.TEAMS_WEBHOOK_URL && graphConfigured ? null : 'Teams or Microsoft 365 application access is not configured.',
     }),
     healthEntry({
-      id: 'capabilities', label: 'AI capabilities document', schedule: 'Daily source check', run: capabilities,
+      id: 'capabilities', label: 'Capabilities document', schedule: 'Daily source check', run: capabilities,
       configured: Boolean(env.CAPABILITIES_FILE_ID && graphConfigured),
-      unavailableMessage: env.CAPABILITIES_FILE_ID && graphConfigured ? null : 'Capabilities document or Microsoft Graph application access is not configured.',
+      unavailableMessage: env.CAPABILITIES_FILE_ID && graphConfigured ? null : 'Capabilities document or Microsoft 365 application access is not configured.',
     }),
   ]
 }

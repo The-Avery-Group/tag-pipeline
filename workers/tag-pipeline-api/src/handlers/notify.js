@@ -277,16 +277,16 @@ export function cardForType(type, payload, env) {
   switch (type) {
     case 'new_opportunity':
       return buildCard({
-        title: 'New opportunity added',
+        title: 'Opportunity added to pipeline',
         subtitle: 'Pipeline update',
         icon: '✚',
         color: 'good',
         body: [
           textBlock(cardText(payload.title)),
-          detail('Contract / Notice ID', payload.contractNumber),
+          detail('Contract or notice ID', payload.contractNumber),
           detail('Agency', payload.agency),
         ],
-        actions: [action('View in Pipeline', opportunityUrl(base, payload.contractNumber))],
+        actions: [action('View opportunity', opportunityUrl(base, payload.contractNumber))],
       })
 
     case 'phase_change':
@@ -297,7 +297,7 @@ export function cardForType(type, payload, env) {
         color: 'accent',
         body: [
           textBlock(cardText(payload.title)),
-          detail('Contract / Notice ID', payload.contractNumber),
+          detail('Contract or notice ID', payload.contractNumber),
           detail('Previous phase', payload.fromPhase),
           detail('New phase', payload.toPhase),
         ],
@@ -307,7 +307,7 @@ export function cardForType(type, payload, env) {
     case 'task_created': {
       const opportunity = [text(payload.contractTitle), text(payload.contractNumber)].filter(Boolean).join(' · ')
       return buildCard({
-        title: 'New task created',
+        title: 'Task created',
         subtitle: 'Capture activity',
         icon: '✓',
         color: 'accent',
@@ -319,7 +319,7 @@ export function cardForType(type, payload, env) {
           detail('Due date', formatDate(payload.dueDate)),
           detail('Priority', payload.priority),
         ],
-        actions: [action('Open task', `${base}/tag-pipeline/tasks`)],
+        actions: [action('View tasks', `${base}/tag-pipeline/tasks`)],
       })
     }
 
@@ -367,13 +367,13 @@ export function cardForType(type, payload, env) {
           ...rfiRows(payload.items || []),
           ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
         ],
-        actions: [action('View in Pipeline', rfiFollowUpUrl(base, payload.filterIds))],
+        actions: [action('View RFIs', rfiFollowUpUrl(base, payload.filterIds))],
       })
     }
 
     case 'rfi_response_due': {
       const isTomorrow = Number(payload.daysUntil) <= 1
-      const actions = [action('View in Pipeline', opportunityUrl(base, payload.contractNumber))]
+      const actions = [action('View opportunity', opportunityUrl(base, payload.contractNumber))]
       const samUrl = firstUrl(payload.samUrl)
       const recipients = uniqueRecipients(payload.recipients || [])
       const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
@@ -400,7 +400,7 @@ export function cardForType(type, payload, env) {
       const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
       return buildCard({
         title: 'Contact follow-up due',
-        subtitle: 'No interaction logged in 30 days',
+        subtitle: 'No interaction in 30 days',
         icon: '◷',
         color: 'warning',
         recipients,

@@ -389,7 +389,7 @@ function solicitationDedupKey(solicitationNumber, noticeType) {
   return solicitation ? `${normalizedNoticeType(noticeType)}:${solicitation}` : ''
 }
 
-// ── RFI follow-up matcher ────────────────────────────────────────────────
+// ── RFI follow-on matcher ────────────────────────────────────────────────
 // Finds follow-on RFP/RFQ notices for an RFI/Sources-Sought opportunity.
 // The SAM API cannot express every one of our matching rules as a query
 // parameter, so we retrieve recent RFP/RFQ notices and apply the four hard
@@ -821,7 +821,7 @@ async function runSAMPull(
   // depends on existingRows (already read via the Graph API, independent of
   // SAM.gov), so it must still run even when the SAM.gov side fails.
   // Previously a fetch failure threw straight out of this function and
-  // skipped cleanup entirely, which meant expired New Opportunities rows
+  // skipped cleanup entirely, which meant expired SAM opportunity rows
   // stopped getting deleted for as long as SAM.gov was having problems.
   let totalFetched  = 0
   let naicsProcessed = startIndex

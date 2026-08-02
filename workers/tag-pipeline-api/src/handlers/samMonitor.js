@@ -343,7 +343,7 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
           if (fields.length) {
             watch.change = {
               fields,
-              summary: `SAM updated ${fields.map((field) => LABELS[field]).join(', ')}.`,
+              summary: `SAM.gov updated ${fields.map((field) => LABELS[field]).join(', ')}.`,
               changedAt: watch.lastCheckedAt,
               uiLink: nextSnapshot.uiLink,
             }

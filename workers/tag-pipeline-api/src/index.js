@@ -162,7 +162,7 @@ export default {
   },
 
   // All scheduled times are UTC. Nigeria is UTC+1 year-round. SAM pulls run
-  // at 12:00 UTC (1 PM WAT) on weekdays; RFI follow-up checks remain three
+  // at 12:00 UTC (1 PM WAT) on weekdays; RFI follow-on checks remain three
   // times weekly; response-deadline reminders may still run on weekends.
   async scheduled(controller, env, ctx) {
     if (controller.cron === '0 0,12 * * *') {
