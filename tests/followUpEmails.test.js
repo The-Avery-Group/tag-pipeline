@@ -10,6 +10,14 @@ test('merges both singular and plural contact-name fields', () => {
   )
 })
 
+test('removes the template-only merge field highlight from generated drafts', () => {
+  const highlighted = '<p>Hello <span data-email-merge-field="true">{{contact_first_name}}</span>,</p>'
+  assert.equal(
+    mergeFollowUpTemplate(highlighted, { contactFirstName: 'Alex' }),
+    '<p>Hello Alex,</p>',
+  )
+})
+
 test('builds a manual follow-up draft for every selected POC', () => {
   const draft = buildFollowUpDraft({
     opportunity: {
