@@ -23,6 +23,14 @@ test('supports the plural contact first names merge field', () => {
   )
 })
 
+test('removes the template-only merge field highlight from scheduled drafts', () => {
+  const highlighted = '<p>Hello <span data-email-merge-field="true">{{contact_first_name}}</span>,</p>'
+  assert.equal(
+    mergeTemplate(highlighted, { contactFirstName: 'Alex' }),
+    '<p>Hello Alex,</p>',
+  )
+})
+
 test('formats multiple recipient first names naturally', () => {
   assert.equal(formatRecipientNames(['Alex', 'Morgan']), 'Alex and Morgan')
   assert.equal(formatRecipientNames(['Alex', 'Morgan', 'Taylor']), 'Alex, Morgan, and Taylor')
