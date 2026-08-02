@@ -99,23 +99,6 @@
 .addressRows input { min-width: 0; height: 35px; padding: 0 11px; border: 0; outline: 0; background: transparent; color: var(--gray-900); font: inherit; font-size: 11px; }
 .addressRows input[readonly] { color: var(--gray-500); }
 
-.editor {
-  display: block;
-  width: 100%;
-  min-height: 230px;
-  padding: 15px;
-  border: 0.5px solid var(--gray-200);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  outline: 0;
-  resize: vertical;
-  background: var(--surface);
-  color: var(--gray-900);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.editor:focus { border-color: var(--blue-500); }
 .safety { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 2px; color: var(--gray-500); font-size: 10px; }
 .editorActions { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
 .actions, .actions > div { display: flex; align-items: center; gap: 8px; }
