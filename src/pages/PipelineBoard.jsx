@@ -179,7 +179,7 @@ export default function PipelineBoard({ toast }) {
                             <div className={`${styles.row} ${styles.rowHeader}`}>
                               <span className={styles.colTitle}>Opportunity</span>
                               <span className={styles.colAgency}>Agency</span>
-                              <span className={styles.colValue}>Value</span>
+                              <span className={styles.colValue}>Contract value</span>
                               <span className={styles.colActivity}>Activity phase</span>
                               <span className={styles.colMove}>Move to phase</span>
                             </div>

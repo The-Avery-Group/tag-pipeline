@@ -181,15 +181,15 @@ export default function Lookup({ toast }) {
     <>
       <Topbar
         title="Lookup"
-        subtitle1="Search award records, entity history, and public profiles"
+        subtitle1="Search contract awards, entity history, and public profiles"
         showFilter={false}
         showNew={false}
       />
       <div className="page-body">
         <div className={styles.lookupTabs} role="tablist" aria-label="Lookup type">
-          <button type="button" role="tab" aria-selected={lookupView === 'awards'} className={lookupView === 'awards' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('awards')}>Award records</button>
+          <button type="button" role="tab" aria-selected={lookupView === 'awards'} className={lookupView === 'awards' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('awards')}>Contract awards</button>
           <button type="button" role="tab" aria-selected={lookupView === 'entity'} className={lookupView === 'entity' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('entity')}>Entity award history</button>
-          <button type="button" role="tab" aria-selected={lookupView === 'people'} className={lookupView === 'people' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('people')}>People Search</button>
+          <button type="button" role="tab" aria-selected={lookupView === 'people'} className={lookupView === 'people' ? styles.lookupTabActive : styles.lookupTab} onClick={() => changeLookupView('people')}>People search</button>
         </div>
 
         {lookupView === 'entity'
@@ -230,7 +230,7 @@ export default function Lookup({ toast }) {
                 className="btn text-sm"
                 onClick={() => setAwardeeUEI(String(matchedPipelineRecord[C_INCUMBENT_UEI]).toUpperCase())}
               >
-                Use pipeline UEI
+                Use incumbent UEI
               </button>
             )}
           </div>
@@ -248,12 +248,12 @@ export default function Lookup({ toast }) {
         )}
         {resultMeta?.filteredByAwardeeUEI && !loading && !error && (
           <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
-            Showing {resultMeta.totalFamilies} {resultMeta.totalFamilies === 1 ? 'PIID family' : 'PIID families'} matching awardee UEI {resultMeta.filteredByAwardeeUEI} out of {resultMeta.unfilteredFamilies} total PIID families.
+            Showing {resultMeta.totalFamilies} matching contract award {resultMeta.totalFamilies === 1 ? 'record' : 'records'} for awardee UEI {resultMeta.filteredByAwardeeUEI}, out of {resultMeta.unfilteredFamilies} total records.
           </p>
         )}
         {resultMeta?.truncated && !loading && !error && (
           <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
-            Showing the 5 most recently signed award families out of {resultMeta.totalFamilies}. Refine the identifier or incumbent to narrow the results.
+            Showing the 5 most recently signed contract award records out of {resultMeta.totalFamilies}. Refine the identifier or incumbent to narrow the results.
           </p>
         )}
 
@@ -298,7 +298,7 @@ export default function Lookup({ toast }) {
                   ? (
                     <button className="btn text-sm"
                       onClick={() => navigate(`/opportunities/${encodeURIComponent(piid)}`)}>
-                      Already in pipeline — view →
+                      View in pipeline →
                     </button>
                   )
                   : (
@@ -323,7 +323,7 @@ export default function Lookup({ toast }) {
             <>
               <button className="btn" onClick={() => setPendingResult(null)} disabled={adding}>Cancel</button>
               <button className="btn btn-primary" onClick={handleConfirmAdd} disabled={adding}>
-                {adding ? 'Adding…' : 'Confirm & add'}
+                {adding ? 'Adding…' : 'Confirm and add'}
               </button>
             </>
           }

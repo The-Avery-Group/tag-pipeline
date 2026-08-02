@@ -10,8 +10,8 @@ export default function Login() {
         <div className={styles.logo}>
           <div className={styles.logoMark}>TC</div>
           <div>
-            <div className={styles.appName}>TAG Capture</div>
-            <div className={styles.appSub}>Pipeline Manager</div>
+            <div className={styles.appName}>TAG CRM</div>
+            <div className={styles.appSub}>GovCon capture and pipeline management</div>
           </div>
         </div>
 
@@ -31,7 +31,7 @@ export default function Login() {
         </button>
 
         <p className={styles.footer}>
-          Secured by Azure Active Directory · Your credentials never leave Microsoft's servers.
+          Secured by Microsoft Entra ID · Your credentials never leave Microsoft's servers.
         </p>
       </div>
     </div>

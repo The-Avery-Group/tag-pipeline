@@ -53,7 +53,7 @@ const PHASE_BADGE = {
   'Cancelled':        'badge-closed-lost',
 }
 
-// Shared minimal, muted palette for the new categorical charts (Award Type,
+// Shared minimal, muted palette for the categorical charts (contract classification,
 // Vehicle, Sub/Prime) — kept in the same restrained family as PHASE_COLORS
 // rather than reaching for a louder default Recharts palette.
 const CATEGORY_COLORS = [
@@ -80,10 +80,11 @@ function ChartTooltip({ active, payload, formatLabel, formatValue }) {
 
 // ── Sub-components ────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, danger, onClick }) {
+function KpiCard({ label, value, sub, danger, onClick, title }) {
   return (
     <div
       className={styles.kpiCard}
+      title={title}
       onClick={onClick}
       style={onClick ? { cursor: 'pointer' } : undefined}
       role={onClick ? 'button' : undefined}
@@ -130,7 +131,7 @@ function PhaseBarChart({ byPhase, byPhaseValue, onSegmentClick }) {
   )
 }
 
-// RFI Submissions — filled area chart, full card width/height, click a
+// RFI submissions: filled area chart, full card width/height, click a
 // point to navigate to the RFIs tab filtered to that month. XAxis padding
 // keeps the first/last points and labels from clipping against the card edge.
 function RFIChart({ data, onMonthClick }) {
@@ -167,7 +168,7 @@ function RFIChart({ data, onMonthClick }) {
   )
 }
 
-// Compact categorical bar chart — shared shape for Award Type / Contract
+// Compact categorical bar chart shared by contract classification and vehicle
 // Vehicle breakdowns, both of which can have several distinct values.
 function CategoryBarChart({ counts, onSegmentClick }) {
   const data = Object.entries(counts)
@@ -218,7 +219,7 @@ function SubPrimeChart({ counts, onSegmentClick }) {
   )
 }
 
-// Contract by year — recompete timeline, grouped by CALENDAR year using
+// Recompete timeline grouped by calendar year using
 // Contract End Date. Click a bar to navigate filtered to that year.
 function ContractByYearChart({ data, onYearClick }) {
   if (!data || data.every((d) => d.count === 0)) return <p className="text-sm text-muted">No data</p>
@@ -498,10 +499,11 @@ export default function Dashboard({ toast }) {
           <KpiCard
             label="Pipeline value"
             value={initialPLoad ? '—' : kpis.totalValueFormatted}
-            sub="Active opportunities"
+            sub="Open opportunities"
           />
           <KpiCard
-            label="Expiring ≤ 6 months"
+            label="Expiring in 6 months"
+            title="Contracts expiring within 6 months"
             value={initialPLoad ? '—' : expiringBandCounts['0-6']}
             sub={expiringBandCounts['0-6'] > 0 ? 'Review recompetes' : 'None expiring soon'}
             danger={expiringBandCounts['0-6'] > 0}
@@ -528,10 +530,10 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* ── Row 3: RFI Submissions (full width) ── */}
+        {/* Row 3: RFI submissions, full width */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div className={styles.cardTitleRow}>
-            <div className={styles.cardTitle}>RFI Submissions</div>
+            <div className={styles.cardTitle}>RFI submissions</div>
           </div>
           {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} />
@@ -540,11 +542,11 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* ── Row 4: Award Type / Contract Vehicle / Sub-Prime / Contract by year ── */}
+        {/* Row 4: Contract classification, vehicle, prime or sub, and recompete timeline */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div className="card">
             <div className={styles.cardTitleRow}>
-              <div className={styles.cardTitle}>Award Type</div>
+              <div className={styles.cardTitle}>Contract classification</div>
             </div>
             {initialPLoad
               ? <div className={`skeleton ${styles.chartSkeleton}`} />
@@ -554,7 +556,7 @@ export default function Dashboard({ toast }) {
           </div>
           <div className="card">
             <div className={styles.cardTitleRow}>
-              <div className={styles.cardTitle}>Contract Vehicle</div>
+              <div className={styles.cardTitle}>Contract vehicle</div>
             </div>
             {initialPLoad
               ? <div className={`skeleton ${styles.chartSkeleton}`} />
@@ -564,7 +566,7 @@ export default function Dashboard({ toast }) {
           </div>
           <div className="card">
             <div className={styles.cardTitleRow}>
-              <div className={styles.cardTitle}>Sub / Prime</div>
+              <div className={styles.cardTitle}>Prime or sub</div>
             </div>
             {initialPLoad
               ? <div className={`skeleton ${styles.chartSkeleton}`} />
@@ -574,7 +576,7 @@ export default function Dashboard({ toast }) {
           </div>
           <div className="card">
             <div className={styles.cardTitleRow}>
-              <div className={styles.cardTitle}>Contract by year</div>
+              <div className={styles.cardTitle}>Recompete timeline</div>
             </div>
             {initialPLoad
               ? <div className={`skeleton ${styles.chartSkeleton}`} />
@@ -622,7 +624,7 @@ export default function Dashboard({ toast }) {
                 expiringCustom ? { tab: 'Expiring' } : { tab: 'Expiring', endBand: expiringBand }
               )}
             >
-              View in Opportunities →
+              View opportunities →
             </button>
           </div>
           {expiringCustom && (
@@ -691,7 +693,7 @@ export default function Dashboard({ toast }) {
                 className={`${styles.tab} ${taskTab === 'active' ? styles.tabActive : ''}`}
                 onClick={() => setTaskTab('active')}
               >
-                Active
+                Open
                 {activeTasks.length > 0 && (
                   <span className={styles.tabBadge}>{activeTasks.length}</span>
                 )}
@@ -723,7 +725,7 @@ export default function Dashboard({ toast }) {
 
         {/* ── Row 8: Recent opportunities (moved from the top, now collapsible) ── */}
         <CollapsibleCard
-          title="Recent opportunities"
+          title="Recently updated opportunities"
           count={recentOpps.length}
           onViewAll={() => navigate('/opportunities')}
         >

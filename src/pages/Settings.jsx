@@ -29,14 +29,14 @@ const FALLBACKS = {
 }
 
 const SECTIONS = [
-  { key: 'opportunityPhases', label: 'Opportunity Phases (TAG Phase)' },
-  { key: 'activityPhases',    label: 'Activity Phases (Pipeline Activity)' },
-  { key: 'outlooks',          label: 'Opportunity Outlooks' },
-  { key: 'priorities',        label: 'Priority Values' },
-  { key: 'setAsides',         label: 'Set-Aside Values' },
-  { key: 'primeOrSub',        label: 'Prime or Sub Options' },
-  { key: 'bidNoBid',          label: 'Bid / No Bid Options' },
-  { key: 'contactTypes',      label: 'Contact Types' },
+  { key: 'opportunityPhases', label: 'Opportunity phases' },
+  { key: 'activityPhases',    label: 'Activity phases' },
+  { key: 'outlooks',          label: 'Opportunity outlook options' },
+  { key: 'priorities',        label: 'Pursuit priorities' },
+  { key: 'setAsides',         label: 'Set-asides' },
+  { key: 'primeOrSub',        label: 'Prime or sub' },
+  { key: 'bidNoBid',          label: 'Bid decision options' },
+  { key: 'contactTypes',      label: 'Contact types' },
 ]
 
 const AUTOMATION_STATUS = {
@@ -68,7 +68,7 @@ function formatHealthTime(value) {
 function capabilityIntegration(capabilities) {
   const status = CAPABILITIES_STATUS[capabilities?.status || 'checking'] || CAPABILITIES_STATUS.checking
   const details = [
-    capabilities?.message || 'Checking the Worker configuration.',
+    capabilities?.message || 'Checking integration status.',
     capabilities?.fileName,
     capabilities?.lastCheckedAt ? `Checked ${formatHealthTime(capabilities.lastCheckedAt)}` : null,
   ].filter(Boolean).join(' · ')
@@ -83,12 +83,12 @@ function teamsIntegration(notifications) {
     ? { label: 'Needs attention', className: 'integrationError' }
     : scheduled
       ? { label: 'Scheduled', className: 'integrationReady' }
-      : { label: 'Browser fallback', className: 'integrationNotConfigured' }
+      : { label: 'Available while app is open', className: 'integrationNotConfigured' }
   const details = needsAttention
     ? lastRun.message || 'The most recent scheduled reminder run did not complete.'
     : scheduled
-      ? 'Worker delivery is ready. Browser delivery remains available as a fallback.'
-      : 'The browser sends reminders until Worker delivery is available.'
+      ? 'Scheduled delivery is ready. In-app delivery remains available as a backup.'
+      : 'The app can send reminders while it remains open.'
   return {
     status,
     details: lastRun?.timestamp ? `${details} · Last run ${formatHealthTime(lastRun.timestamp)}` : details,
@@ -143,7 +143,7 @@ export default function Settings({ toast }) {
 
   const loadIntegrationStatus = async ({ interactive = false, notify = false } = {}) => {
     if (!WORKER_URL) {
-      setIntegrationStatus({ capabilities: { status: 'unavailable', message: 'Worker URL is not configured.' } })
+      setIntegrationStatus({ capabilities: { status: 'unavailable', message: 'The integration service is not configured.' } })
       return
     }
     setLoadingIntegrations(true)
@@ -159,7 +159,7 @@ export default function Settings({ toast }) {
     } catch (err) {
       const requiresSignIn = isInteractionRequiredError(err)
       const capabilities = requiresSignIn
-        ? { status: 'auth_required', message: 'Sign in again to load Worker integration status.' }
+        ? { status: 'auth_required', message: 'Sign in again to load integration status.' }
         : { status: 'unavailable', message: err.message }
       setIntegrationStatus({ capabilities, automation: null })
       if (notify) {
@@ -174,7 +174,7 @@ export default function Settings({ toast }) {
 
   const handleCapabilitiesRefresh = async () => {
     if (!WORKER_URL) {
-      toast?.error('Worker URL is not configured')
+      toast?.error('The integration service is not configured')
       return
     }
     setRefreshingCapabilities(true)
@@ -224,7 +224,7 @@ export default function Settings({ toast }) {
       ])
       setNaicsCodes(cleanedCodes)
       setSavedSAM(true)
-      toast?.success('SAM.gov settings saved')
+      toast?.success('Discovery settings saved')
     } catch (err) {
       toast?.error(`Failed to save: ${err.message}`)
     } finally {
@@ -238,10 +238,10 @@ export default function Settings({ toast }) {
     try {
       const result = await triggerPull({ force: true, source: 'settings' })   // force=true bypasses 12h throttle
       setTriggerResult({ ok: true, message: result.message || 'Pull started' })
-      toast?.success('SAM pull started')
+      toast?.success('SAM.gov opportunity pull started')
     } catch (err) {
       setTriggerResult({ ok: false, message: err.message })
-      toast?.error(`Trigger failed: ${err.message}`)
+      toast?.error(`Could not start the opportunity pull: ${err.message}`)
     } finally {
       setTriggering(false)
     }
@@ -328,7 +328,7 @@ export default function Settings({ toast }) {
         <div className={styles.themeCard}>
           <div>
             <div className={styles.themeTitle}>Appearance</div>
-            <p className="text-xs text-muted">Choose how the Pipeline Manager looks on this device.</p>
+            <p className="text-xs text-muted">Choose how TAG CRM looks on this device.</p>
           </div>
           <label className={styles.themeControl}>
             <span className="text-xs text-muted">Theme</span>
@@ -344,7 +344,7 @@ export default function Settings({ toast }) {
           <div className={styles.integrationHeader}>
             <div>
               <div className={styles.themeTitle}>Integrations</div>
-              <p className="text-xs text-muted">Worker connections used for scheduled activity and AI context.</p>
+              <p className="text-xs text-muted">Services used for scheduled activity and AI context.</p>
             </div>
             <button className="btn btn-ghost" type="button" onClick={() => loadIntegrationStatus({ interactive: true, notify: true })} disabled={loadingIntegrations}>
               {loadingIntegrations ? 'Checking…' : 'Refresh status'}
@@ -363,12 +363,12 @@ export default function Settings({ toast }) {
               </thead>
               <tbody>
                 <tr>
-                  <td className={styles.integrationName}>AI capabilities document</td>
+                  <td className={styles.integrationName}>Capabilities document</td>
                   <td><span className={`${styles.integrationBadge} ${styles[capabilityIntegrationStatus.status.className]}`}>{capabilityIntegrationStatus.status.label}</span></td>
                   <td className={styles.integrationDetails}>{capabilityIntegrationStatus.details}</td>
                   <td className={styles.integrationAction}>
                     <button className="btn btn-primary" type="button" onClick={handleCapabilitiesRefresh} disabled={refreshingCapabilities}>
-                      {refreshingCapabilities ? 'Checking…' : 'Check document'}
+                      {refreshingCapabilities ? 'Checking…' : 'Check for updates'}
                     </button>
                   </td>
                 </tr>
@@ -376,13 +376,13 @@ export default function Settings({ toast }) {
                   <td className={styles.integrationName}>Teams reminders</td>
                   <td><span className={`${styles.integrationBadge} ${styles[teamsIntegrationStatus.status.className]}`}>{teamsIntegrationStatus.status.label}</span></td>
                   <td className={styles.integrationDetails}>{teamsIntegrationStatus.details}</td>
-                  <td className={styles.integrationAction}><span className="text-xs text-muted">No action</span></td>
+                  <td className={styles.integrationAction}><span className="text-xs text-muted">Automatic</span></td>
                 </tr>
                 <tr>
-                  <td className={styles.integrationName}>Procurement email</td>
+                  <td className={styles.integrationName}>Email sending</td>
                   <td><span className={`${styles.integrationBadge} ${styles.integrationNotConfigured}`}>Draft only</span></td>
                   <td className={styles.integrationDetails}>Templates and editable drafts are available. Sending and Outlook actions remain disabled until Exchange mail permissions are granted.</td>
-                  <td className={styles.integrationAction}><span className="text-xs text-muted">No action</span></td>
+                  <td className={styles.integrationAction}><span className="text-xs text-muted">Automatic</span></td>
                 </tr>
               </tbody>
             </table>
@@ -392,8 +392,8 @@ export default function Settings({ toast }) {
         <div className={styles.collapsible}>
           <button className={styles.collapsibleHeader} onClick={() => toggleSection('health')}>
             <span>
-              <span className={styles.collapsibleTitle}>Automation Health</span>
-              <span className={styles.collapsibleHint}>Scheduled Worker jobs and integration checks</span>
+              <span className={styles.collapsibleTitle}>Automation health</span>
+              <span className={styles.collapsibleHint}>Scheduled automations and integration checks</span>
             </span>
             <span className={`${styles.chevron} ${openSections.health ? styles.chevronOpen : ''}`}>›</span>
           </button>
@@ -445,18 +445,18 @@ export default function Settings({ toast }) {
         <div className={styles.collapsible}>
           <button className={styles.collapsibleHeader} onClick={() => toggleSection('emailTemplates')}>
             <span>
-              <span className={styles.collapsibleTitle}>RFI Follow-up Email Templates</span>
-              <span className={styles.collapsibleHint}>Editable milestone templates for user-approved drafts</span>
+              <span className={styles.collapsibleTitle}>Follow-up email templates</span>
+              <span className={styles.collapsibleHint}>Editable schedules and content for user-approved drafts</span>
             </span>
             <span className={`${styles.chevron} ${openSections.emailTemplates ? styles.chevronOpen : ''}`}>›</span>
           </button>
           {openSections.emailTemplates && <FollowUpEmailTemplates user={user} toast={toast} />}
         </div>
 
-        {/* ── Collapsible: Dropdown Options ── */}
+        {/* ── Collapsible: Dropdown options ── */}
         <div className={styles.collapsible}>
           <button className={styles.collapsibleHeader} onClick={() => toggleSection('dropdowns')}>
-            <span className={styles.collapsibleTitle}>Dropdown Options</span>
+            <span className={styles.collapsibleTitle}>Dropdown options</span>
             <span className={`${styles.chevron} ${openSections.dropdowns ? styles.chevronOpen : ''}`}>›</span>
           </button>
           {openSections.dropdowns && (
@@ -535,16 +535,16 @@ export default function Settings({ toast }) {
           )}
         </div>
 
-        {/* ── Collapsible: SAM.gov API ── */}
+        {/* ── Collapsible: SAM.gov opportunity discovery ── */}
         <div className={styles.collapsible} style={{ marginTop: 10 }}>
           <button className={styles.collapsibleHeader} onClick={() => toggleSection('sam')}>
-            <span className={styles.collapsibleTitle}>SAM.gov API</span>
+            <span className={styles.collapsibleTitle}>SAM.gov opportunity discovery</span>
             <span className={`${styles.chevron} ${openSections.sam ? styles.chevronOpen : ''}`}>›</span>
           </button>
           {openSections.sam && (
             <div ref={samScopeRef} className={styles.collapsibleBody}>
               <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
-                Controls the pull of Sources Sought opportunities from SAM.gov.
+                Controls the pull of RFI, RFP, and RFQ notices from SAM.gov.
               </p>
 
           {!samLoaded
@@ -563,7 +563,7 @@ export default function Settings({ toast }) {
                     }}
                   >
                     <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
-                      NAICS Codes {naicsCodes.length > LONG_LIST_THRESHOLD && <span className="text-xs text-muted">({naicsCodes.length})</span>}
+                      NAICS codes {naicsCodes.length > LONG_LIST_THRESHOLD && <span className="text-xs text-muted">({naicsCodes.length})</span>}
                     </div>
                     {naicsCodes.length > LONG_LIST_THRESHOLD && (
                       <span className={`${styles.chevron} ${(openLists.naics ?? false) ? styles.chevronOpen : ''}`}>›</span>
@@ -604,10 +604,10 @@ export default function Settings({ toast }) {
 
                 {/* Window settings */}
                 <div className="card">
-                  <div className={styles.sectionLabel}>Response Deadline Window</div>
+                  <div className={styles.sectionLabel}>Response deadline window</div>
                   <div className={styles.itemList}>
                     <div className="form-field">
-                      <label className="form-label">Skip Days</label>
+                        <label className="form-label">Minimum days before deadline</label>
                       <input className="form-input" type="number" min={0} max={30}
                         value={skipDays}
                         onChange={(e) => { setSkipDays(e.target.value); setSavedSAM(false) }} />
@@ -616,7 +616,7 @@ export default function Settings({ toast }) {
                       </span>
                     </div>
                     <div className="form-field" style={{ marginTop: 10 }}>
-                      <label className="form-label">Window Days</label>
+                        <label className="form-label">Maximum days before deadline</label>
                       <input className="form-input" type="number" min={7} max={365}
                         value={windowDays}
                         onChange={(e) => { setWindowDays(e.target.value); setSavedSAM(false) }} />
@@ -628,7 +628,7 @@ export default function Settings({ toast }) {
                 </div>
 
                 <div className="card">
-                  <div className={styles.sectionLabel}>RFI Follow-up Matching</div>
+                  <div className={styles.sectionLabel}>RFI follow-on matching</div>
                   <p className="text-xs text-muted" style={{ margin: '4px 0 10px' }}>
                     Defaults for SAM.gov follow-on checks. Individual RFIs can override these rules.
                   </p>
@@ -636,7 +636,7 @@ export default function Settings({ toast }) {
                     <label className="text-sm" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={rfiFollowUp.monitoringEnabled}
                         onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, monitoringEnabled: e.target.checked })); setSavedSAM(false) }} />
-                      Check RFIs in the background
+                      Monitor RFIs for follow-on notices
                     </label>
                     {[
                       ['departmentRule', 'Department match'],
@@ -664,12 +664,12 @@ export default function Settings({ toast }) {
                       </select>
                     </div>
                     <div className="form-field" style={{ marginTop: 8 }}>
-                      <label className="form-label">Post-submission window (days)</label>
+                      <label className="form-label">Search period after submission (days)</label>
                       <input className="form-input" type="number" min={1} max={364} value={rfiFollowUp.submissionWindowDays}
                         onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, submissionWindowDays: e.target.value })); setSavedSAM(false) }} />
                     </div>
                     <div className="form-field" style={{ marginTop: 8 }}>
-                      <label className="form-label">No-submission window (days before / after today)</label>
+                      <label className="form-label">Fallback search period</label>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                         <input className="form-input" aria-label="Days before today" type="number" min={0} max={364} value={rfiFollowUp.noSubmissionLookbackDays}
                           onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, noSubmissionLookbackDays: e.target.value })); setSavedSAM(false) }} />
@@ -686,8 +686,8 @@ export default function Settings({ toast }) {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button className={`btn ${styles.triggerPullBtn}`} onClick={handleTriggerSAM} disabled={triggering}
-                title="Manually run the SAM.gov pull now">
-                {triggering ? '⏳ Running…' : '▶ Trigger pull now'}
+                title="Pull SAM.gov opportunities now">
+                {triggering ? '⏳ Running…' : '▶ Pull opportunities now'}
               </button>
               {triggerResult && (
                 <span style={{ fontSize: 12, color: triggerResult.ok ? 'var(--green-600)' : 'var(--red-600)' }}>
@@ -696,7 +696,7 @@ export default function Settings({ toast }) {
               )}
             </div>
             <button className="btn btn-primary" onClick={handleSaveSAM} disabled={savingSAM}>
-              {savingSAM ? 'Saving…' : savedSAM ? '✓ Saved' : 'Save SAM settings'}
+              {savingSAM ? 'Saving…' : savedSAM ? '✓ Saved' : 'Save discovery settings'}
             </button>
           </div>
 
@@ -708,7 +708,7 @@ export default function Settings({ toast }) {
               }}>
                 <strong style={{ color: 'var(--gray-900)' }}>API key rotation</strong><br />
                 SAM.gov public API keys expire every 90 days. When yours expires, the pull will stop
-                and a warning banner will appear on the New Opportunities tab.<br />
+                and a warning banner will appear on the SAM tab.<br />
                 To rotate: run <code style={{ background: 'var(--gray-200)', padding: '1px 5px', borderRadius: 3 }}>wrangler secret put SAM_API_KEY</code> in your terminal, paste your new key, and deploy.
                 No code changes required.
               </div>

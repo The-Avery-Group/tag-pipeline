@@ -38,7 +38,7 @@ export default function SearchModal({ onClose }) {
     let active = true
     getSAMOpportunities()
       .then((rows) => { if (active) setSamOpportunities(rows) })
-      .catch((error) => console.warn('[Search] Could not load New Opportunities:', error.message))
+      .catch((error) => console.warn('[Search CRM] Could not load SAM opportunities:', error.message))
     return () => { active = false }
   }, [])
 
@@ -189,7 +189,7 @@ export default function SearchModal({ onClose }) {
 
   return (
     <div className={styles.overlay} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div ref={modalRef} className={styles.modal} role="dialog" aria-modal="true" aria-label="Search">
+      <div ref={modalRef} className={styles.modal} role="dialog" aria-modal="true" aria-label="Search CRM">
         {/* Search input */}
         <div className={styles.inputRow}>
           <svg className={styles.searchIcon} width="16" height="16" viewBox="0 0 24 24"
@@ -199,7 +199,7 @@ export default function SearchModal({ onClose }) {
           <input
             ref={inputRef}
             className={styles.input}
-            placeholder="Search all pipeline, SAM, partner, contact, task, note, and interaction fields…"
+            placeholder="Search CRM…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
@@ -214,7 +214,7 @@ export default function SearchModal({ onClose }) {
         <div className={styles.results}>
           {!q && (
             <div className={styles.hint}>
-              Start typing to search every field across pipeline, SAM, partners, contacts, tasks, notes, and interactions.
+              Search opportunities, SAM.gov notices, partners, contacts, tasks, notes, and interactions.
             </div>
           )}
 
@@ -245,7 +245,7 @@ export default function SearchModal({ onClose }) {
 
           {results.samOpportunities.length > 0 && (
             <div className={styles.group}>
-              <div className={styles.groupLabel}>New SAM opportunities</div>
+              <div className={styles.groupLabel}>SAM opportunities</div>
               {results.samOpportunities.map((opportunity, i) => {
                 const index = results.opportunities.length + i
                 const identifier = newOpportunityNoticeId(opportunity)

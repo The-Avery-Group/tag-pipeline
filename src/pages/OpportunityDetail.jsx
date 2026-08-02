@@ -674,7 +674,7 @@ export default function OpportunityDetail({ toast }) {
       ['Find contacts', 'research-contacts'],
     ]],
     ['Follow-up', [
-      ['Email drafts', 'followup-email'],
+      ['Follow-up emails', 'followup-email'],
       ...(isRFI ? [['RFI matcher', 'followup-rfi']] : []),
     ]],
   ]
@@ -1138,7 +1138,7 @@ export default function OpportunityDetail({ toast }) {
       setShowAddTask(false)
       setEditingTask(null)
       setTaskForm({ Title: '', Description: '', AssignedTo: '', DueDate: '', Priority: 'Medium', Status: 'To Do' })
-      toast?.success(editingTask ? 'Task updated' : 'Task added')
+      toast?.success(editingTask ? 'Task updated' : 'Task created')
     } catch (err) {
       toast?.error(`Failed to ${editingTask ? 'update' : 'add'} task: ${err.message}`)
     } finally {
@@ -1168,8 +1168,8 @@ export default function OpportunityDetail({ toast }) {
         showFilter={false}
         showNew={false}
         rightContent={<div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {followUpStatus?.badgeVisible && <button className="badge" style={{ background: followUpStatus.badgeState === 'seen' ? 'var(--gray-100)' : 'var(--blue-50)', border: `0.5px solid ${followUpStatus.badgeState === 'seen' ? 'var(--gray-300)' : 'var(--blue-200)'}`, color: followUpStatus.badgeState === 'seen' ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer' }} onClick={() => { rfiFollowUpMonitor.markSeen(opp[C.contractNum]).catch(() => {}); const next = new URLSearchParams(searchParams); next.set('focus', 'follow-ups'); navigate({ search: `?${next.toString()}` }, { replace: true }) }} title={`${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}>
-            {followUpStatus.badgeState === 'seen' ? 'Follow-ups seen' : `${followUpStatus.pendingCount} possible follow-up${followUpStatus.pendingCount === 1 ? '' : 's'}`}
+          {followUpStatus?.badgeVisible && <button className="badge" style={{ background: followUpStatus.badgeState === 'seen' ? 'var(--gray-100)' : 'var(--blue-50)', border: `0.5px solid ${followUpStatus.badgeState === 'seen' ? 'var(--gray-300)' : 'var(--blue-200)'}`, color: followUpStatus.badgeState === 'seen' ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer' }} onClick={() => { rfiFollowUpMonitor.markSeen(opp[C.contractNum]).catch(() => {}); const next = new URLSearchParams(searchParams); next.set('focus', 'follow-ups'); navigate({ search: `?${next.toString()}` }, { replace: true }) }} title={`${followUpStatus.pendingCount} possible follow-on${followUpStatus.pendingCount === 1 ? '' : 's'}`}>
+            {followUpStatus.badgeState === 'seen' ? 'Follow-ons reviewed' : `${followUpStatus.pendingCount} possible follow-on${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
           {samChangeSuggestion.suggestion && <span className="badge badge-qualify">SAM update available</span>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
@@ -1234,7 +1234,7 @@ export default function OpportunityDetail({ toast }) {
             {/* Assigned To inline edit when editing */}
             {editing && (
               <div className={styles.assignedEditRow}>
-                <label className="form-label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Assigned To</label>
+                <label className="form-label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Assigned to</label>
                 <select
                   className="form-input"
                   style={{ maxWidth: 220 }}
@@ -1271,7 +1271,7 @@ export default function OpportunityDetail({ toast }) {
                 <>
                   <button className="btn btn-ghost" onClick={handleCancel} disabled={saving}>Cancel</button>
                   <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                    {saving ? 'Saving…' : 'Save'}
+                    {saving ? 'Saving…' : 'Save changes'}
                   </button>
                 </>
               )
@@ -1302,57 +1302,57 @@ export default function OpportunityDetail({ toast }) {
           </aside>
           <main className={styles.detailContent}>
         <div className={`${styles.categoryHeading} ${styles.categoryOverview}`}>Overview</div>
-        <Section title="Opportunity Summary" id="overview-summary">
+        <Section title="Opportunity summary" id="overview-summary">
           {editing ? <div ref={opportunityEditRef} className={styles.summaryEditGroups}>
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Capture status</div><div className={styles.fieldGrid}>
-              <Field label="Opportunity Title" value={f(C.title)} editing onChange={set(C.title)} />
-              <Field label="Contract Number / Notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
-              <Field label="Activity Phase" value={f(C.actPhase)} editing onChange={set(C.actPhase)} options={activityPhaseOptions} />
-              <Field label="Priority" value={f(C.priority)} editing onChange={set(C.priority)} options={priorityOptions} />
-              <Field label="Bid / No Bid?" value={f(C.bidNoBid)} editing onChange={set(C.bidNoBid)} options={bidNoBidOptions} />
-              <Field label="Prime or Sub?" value={f(C.primeOrSub)} editing onChange={set(C.primeOrSub)} options={primeOrSubOptions} />
-              <Field label="Partner" value={f(C.partner)} editing onChange={set(C.partner)} />
+              <Field label="Opportunity title" value={f(C.title)} editing onChange={set(C.title)} />
+              <Field label="Contract or notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
+              <Field label="Activity phase" value={f(C.actPhase)} editing onChange={set(C.actPhase)} options={activityPhaseOptions} />
+              <Field label="Pursuit priority" value={f(C.priority)} editing onChange={set(C.priority)} options={priorityOptions} />
+              <Field label="Bid decision" value={f(C.bidNoBid)} editing onChange={set(C.bidNoBid)} options={bidNoBidOptions} />
+              <Field label="Prime or sub" value={f(C.primeOrSub)} editing onChange={set(C.primeOrSub)} options={primeOrSubOptions} />
+              <Field label="Partners" value={f(C.partner)} editing onChange={set(C.partner)} />
             </div></div>
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Customer and requirement</div><div className={styles.fieldGrid}>
               <Field label="Department" value={f(C.department)} editing onChange={set(C.department)} />
               <Field label="Agency" value={f(C.agency)} editing onChange={set(C.agency)} />
               <Field label="Office" value={f(C.office)} editing onChange={set(C.office)} />
-              <Field label="Solicitation Number" value={f(C.solNum)} editing onChange={set(C.solNum)} />
-              <Field label="NAICS Code" value={f(C.naics)} editing onChange={set(C.naics)} raw />
-              <Field label="Set-Aside" value={f(C.setAside)} editing onChange={set(C.setAside)} options={setAsideOptions} />
-              <Field label="Contract Vehicle" value={f(C.vehicle)} editing onChange={set(C.vehicle)} />
-              <Field label="Contract Vehicle Number" value={f(C.vehicleNumber)} editing onChange={set(C.vehicleNumber)} />
-              <Field label="Contract Classification" value={f(C.classification)} editing onChange={set(C.classification)} />
+              <Field label="Solicitation number" value={f(C.solNum)} editing onChange={set(C.solNum)} />
+              <Field label="NAICS code" value={f(C.naics)} editing onChange={set(C.naics)} raw />
+              <Field label="Set-aside" value={f(C.setAside)} editing onChange={set(C.setAside)} options={setAsideOptions} />
+              <Field label="Contract vehicle" value={f(C.vehicle)} editing onChange={set(C.vehicle)} />
+              <Field label="Contract vehicle number" value={f(C.vehicleNumber)} editing onChange={set(C.vehicleNumber)} />
+              <Field label="Contract classification" value={f(C.classification)} editing onChange={set(C.classification)} />
               <Field label="Incumbent" value={f(C.incumbent)} editing onChange={set(C.incumbent)} />
               <Field label="Incumbent UEI" value={f(C.incumbentUEI)} editing onChange={set(C.incumbentUEI)} raw />
             </div></div>
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Dates and contract</div><div className={styles.fieldGrid}>
-              {(isRFI || hasSubmissionDate) && <Field label="RFI Submission Date" value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
-              <Field label="Contract End Date" value={f(C.endDate)} editing onChange={set(C.endDate)} type="date" />
-              <Field label="Anticipated Award Date" value={f(C.awardDate)} editing onChange={set(C.awardDate)} type="date" />
-              <Field label="Fiscal Year" value={f(C.fiscalYear)} editing onChange={set(C.fiscalYear)} raw />
-              <Field label="Total Contract Value ($)" value={f(C.value)} editing onChange={set(C.value)} type="number" />
-              <Field label="Base Year Value ($)" value={f(C.baseValue)} editing onChange={set(C.baseValue)} type="number" />
+              {(isRFI || hasSubmissionDate) && <Field label="RFI submission date" value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
+              <Field label="Contract end date" value={f(C.endDate)} editing onChange={set(C.endDate)} type="date" />
+              <Field label="Anticipated award date" value={f(C.awardDate)} editing onChange={set(C.awardDate)} type="date" />
+              <Field label="Fiscal year" value={f(C.fiscalYear)} editing onChange={set(C.fiscalYear)} raw />
+              <Field label="Total contract value ($)" value={f(C.value)} editing onChange={set(C.value)} type="number" />
+              <Field label="Base year value ($)" value={f(C.baseValue)} editing onChange={set(C.baseValue)} type="number" />
             </div></div>
           </div> : <>
             <SummaryGroup title="Capture status" items={[
               { label: 'Opportunity phase', value: f(C.phase), raw: true }, { label: 'Activity phase', value: f(C.actPhase), raw: true },
-              { label: 'Outlook', value: f(C.outlook), raw: true }, { label: 'Priority', value: f(C.priority), raw: true },
+              { label: 'Outlook', value: f(C.outlook), raw: true }, { label: 'Pursuit priority', value: f(C.priority), raw: true },
               { label: 'Bid decision', value: f(C.bidNoBid), raw: true }, { label: 'Assigned to', value: f(C.assignedTo), raw: true },
-              { label: 'Prime or sub', value: f(C.primeOrSub), raw: true }, { label: 'Partner', value: f(C.partner), raw: true },
+              { label: 'Prime or sub', value: f(C.primeOrSub), raw: true }, { label: 'Partners', value: f(C.partner), raw: true },
             ]} />
             <SummaryGroup title="Customer and requirement" items={[
               { label: 'Department', value: f(C.department), raw: true }, { label: 'Agency', value: f(C.agency), raw: true },
               { label: 'Office', value: f(C.office), raw: true }, { label: 'Solicitation number', value: f(C.solNum), raw: true },
               { label: 'NAICS code', value: f(C.naics), raw: true }, { label: 'Set-aside', value: f(C.setAside), raw: true },
               { label: 'Contract vehicle', value: f(C.vehicle), raw: true }, { label: 'Vehicle number', value: f(C.vehicleNumber), raw: true },
-              { label: 'Classification', value: f(C.classification), raw: true }, { label: 'Incumbent', value: f(C.incumbent), raw: true },
+              { label: 'Contract classification', value: f(C.classification), raw: true }, { label: 'Incumbent', value: f(C.incumbent), raw: true },
               { label: 'Incumbent UEI', value: f(C.incumbentUEI), raw: true },
             ]} />
             <SummaryGroup title="Dates and contract" items={[
               { label: 'RFI submission date', value: (isRFI || hasSubmissionDate) ? f(C.submDate) : '', display: formatDate(f(C.submDate)) },
               { label: 'Contract end date', value: f(C.endDate), display: formatDate(f(C.endDate)) },
-              { label: 'Anticipated award', value: f(C.awardDate), display: formatDate(f(C.awardDate)) },
+              { label: 'Anticipated award date', value: f(C.awardDate), display: formatDate(f(C.awardDate)) },
               { label: 'Fiscal year', value: f(C.fiscalYear), raw: true },
               { label: 'Total contract value', value: f(C.value), display: fmtValue(f(C.value)) },
               { label: 'Base year value', value: f(C.baseValue), display: fmtValue(f(C.baseValue)) },
@@ -1401,7 +1401,7 @@ export default function OpportunityDetail({ toast }) {
             onLink={handleLinkContact}
           />
           <RelatedContactsPanel
-            title="Related to linked contacts"
+            title="Similar contacts"
             hint="Same agency and a similar office to a contact already linked here"
             matches={relatedContactGroups.linkedContactOffice}
             linkingContactId={linkingContactId}
@@ -1503,13 +1503,13 @@ export default function OpportunityDetail({ toast }) {
                 onClick={handleCreateAndLinkContact}
                 disabled={savingContact || !newContactForm.Name.trim()}
               >
-                {savingContact ? 'Adding…' : 'Add & link contact'}
+                {savingContact ? 'Adding…' : 'Add and link contact'}
               </button>
             </div>
           )}
         </Section>
 
-        <Section title="Partners & Links" id="overview-links">
+        <Section title="Partners and links" id="overview-links">
           {incumbentPartnerMatch && <div className={styles.partnerLinkRow}><IncumbentPartnerCallout match={incumbentPartnerMatch} onOpenPartner={() => navigate(`/partners?partner=${encodeURIComponent(String(incumbentPartnerMatch.partner['UEI Number'] || '').trim())}`)} /></div>}
           {editingLinks ? (() => {
             const draft = linkDraft
@@ -1555,7 +1555,7 @@ export default function OpportunityDetail({ toast }) {
         <div className={`${styles.categoryHeading} ${styles.categoryActivity}`}>Activity</div>
         {/* ── Section 7: Notes ── */}
         {relatedOpportunities.length > 0 && (
-          <Section title="Related Opportunities">
+          <Section title="Related opportunities">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {relatedOpportunities.map((related) => (
                 <button
@@ -1667,12 +1667,12 @@ export default function OpportunityDetail({ toast }) {
 
       {/* ── Add task modal ── */}
       {showAddTask && (
-        <Modal title={editingTask ? 'Edit task' : 'Add task'} onClose={() => { if (!savingTask) { setShowAddTask(false); setEditingTask(null) } }}
+        <Modal title={editingTask ? 'Edit task' : 'New task'} onClose={() => { if (!savingTask) { setShowAddTask(false); setEditingTask(null) } }}
           footer={
             <>
               <button className="btn" onClick={() => { setShowAddTask(false); setEditingTask(null) }} disabled={savingTask}>Cancel</button>
               <button className="btn btn-primary" onClick={submitTask} disabled={savingTask} aria-busy={savingTask}>
-                {savingTask ? 'Saving…' : editingTask ? 'Save changes' : 'Add task'}
+                {savingTask ? 'Saving…' : editingTask ? 'Save changes' : 'Create task'}
               </button>
             </>
           }
@@ -1714,7 +1714,7 @@ export default function OpportunityDetail({ toast }) {
                   <label className="form-label">Status</label>
                   <select className="form-input" value={taskForm.Status}
                     onChange={(e) => setTaskForm({ ...taskForm, Status: e.target.value })}>
-                    <option>To Do</option><option>In Progress</option><option>Done</option>
+                    <option value="To Do">To do</option><option value="In Progress">In progress</option><option>Done</option>
                   </select>
                 </div>}
               </div>

@@ -422,7 +422,7 @@ export default function Opportunities({ toast }) {
     setSaving(true)
     try {
       await add(payload)
-      toast?.success('Opportunity added')
+      toast?.success('Opportunity created')
       setShowAdd(false)
       setForm({
         [C.contractNum]: '', [C.title]: '', [C.agency]: '', [C.department]: '',
@@ -516,9 +516,9 @@ export default function Opportunities({ toast }) {
   const handleCheckSAMChanges = async () => {
     try {
       await checkSAMChanges()
-      toast?.success('SAM change check completed')
+      toast?.success('SAM.gov update check completed')
     } catch (error) {
-      toast?.error(`SAM change check failed: ${error.message}`)
+      toast?.error(`SAM.gov update check failed: ${error.message}`)
     }
   }
 
@@ -622,7 +622,7 @@ export default function Opportunities({ toast }) {
     try {
       await dismiss(row._rowIndex)
     } catch (err) {
-      toast?.error('Could not dismiss. Use Retry sync on this row.')
+      toast?.error('Could not dismiss. Use Retry save on this row.')
     } finally {
       setActioningRow(null)
     }
@@ -675,7 +675,7 @@ export default function Opportunities({ toast }) {
     setActioningRow(row._rowIndex)
     try {
       await retryStatus(row._rowIndex)
-      toast?.success('Status synchronized')
+      toast?.success('Status saved')
     } catch (err) {
       toast?.error(`Still unable to save: ${err.message}`)
     } finally {
@@ -762,7 +762,7 @@ export default function Opportunities({ toast }) {
     checkSAMChanges().catch((error) => console.warn('[SAM monitor]', error.message))
   }, [checkSAMChanges, pullProgress])
 
-  // Explain a running pull accurately. Settings and the New Opportunities
+  // Explain a running pull accurately. Settings and the SAM tab
   // tab share browser-local run state, so a Settings-triggered pull is not
   // described as though another user or device started it.
   useEffect(() => {
@@ -783,7 +783,7 @@ export default function Opportunities({ toast }) {
   }, [pullProgress, pullOrigin])
 
   const samStatusBadge = (status) => {
-    if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>Added</span>
+    if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>In pipeline</span>
     if (status === 'tracked')           return <span className="badge badge-proposal" style={{ fontSize: 10 }}>Tracked</span>
     if (status === 'dismissed')         return <span className="badge badge-tracking" style={{ fontSize: 10, opacity: 0.6 }}>Dismissed</span>
     return null
@@ -795,7 +795,7 @@ export default function Opportunities({ toast }) {
     return (
       <button
         className={styles.samUpdatedBadge}
-        title={change.summary || 'SAM has updated this opportunity.'}
+        title={change.summary || 'SAM.gov has updated this opportunity.'}
         onClick={(event) => {
           event.stopPropagation()
           const linked = pipelineByOpportunityKey.get(
@@ -808,9 +808,9 @@ export default function Opportunities({ toast }) {
           markSAMChangeReviewed(opportunity).catch((error) => toast?.error(error.message))
         }}
       >
-        SAM updated
+        SAM.gov updated
         <span className={styles.samUpdatedTooltip}>
-          {change.summary || 'SAM has updated this opportunity.'}<br />
+          {change.summary || 'SAM.gov has updated this opportunity.'}<br />
           <strong>{pipelineByOpportunityKey.get(normalizeOpportunityKey(opportunity['Solicitation Number'] || opportunity['Notice ID']))
             ? 'Click to review pipeline updates'
             : 'Click to mark reviewed'}</strong>
@@ -831,14 +831,14 @@ export default function Opportunities({ toast }) {
           border: `0.5px solid ${seen ? 'var(--gray-300)' : 'var(--blue-200)'}`,
           color: seen ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer', fontSize: 10,
         }}
-        title={`${status.pendingCount} possible follow-up${status.pendingCount === 1 ? '' : 's'}${seen ? ' (seen)' : ''}`}
+        title={`${status.pendingCount} possible follow-on${status.pendingCount === 1 ? '' : 's'}${seen ? ' (reviewed)' : ''}`}
         onClick={async (event) => {
           event.stopPropagation()
           try { await markFollowUpsSeen(opportunity[C.contractNum]) } catch {}
           openOpportunity(opportunity, { focusFollowUps: true })
         }}
       >
-        {seen ? 'Follow-ups seen' : `${status.pendingCount} possible follow-up${status.pendingCount === 1 ? '' : 's'}`}
+        {seen ? 'Follow-ons reviewed' : `${status.pendingCount} possible follow-on${status.pendingCount === 1 ? '' : 's'}`}
       </button>
     )
   }
@@ -888,24 +888,24 @@ export default function Opportunities({ toast }) {
             </select>
           </label>
           {showSyncDetails && <>
-          <button className="btn btn-primary text-xs" style={{ padding: '3px 10px' }}
+          <button className="btn btn-primary text-xs" title="Pull opportunities from SAM.gov" style={{ padding: '3px 10px' }}
             onClick={() => handlePull()} disabled={isPulling}>
-            {isPulling ? '⏳ Pulling…' : '↻ Refresh'}
+            {isPulling ? '⏳ Pulling…' : '↻ Pull'}
           </button>
-          <button className="btn text-xs" style={{ padding: '3px 10px' }}
+          <button className="btn text-xs" title="Check for SAM.gov updates" style={{ padding: '3px 10px' }}
             onClick={handleCheckSAMChanges} disabled={checkingSAMChanges || isPulling}>
-            {checkingSAMChanges ? 'Checking SAM…' : 'Check SAM changes'}
+            {checkingSAMChanges ? 'Checking SAM.gov…' : 'Check updates'}
           </button>
           {checkingSAMChanges && (
             <span className="text-xs" style={{ color: 'var(--blue-600)' }}>
-              Checking SAM changes{samCheckProgress?.total ? `: ${samCheckProgress.checked}/${samCheckProgress.total}` : '…'}
+              Checking SAM.gov updates{samCheckProgress?.total ? `: ${samCheckProgress.checked}/${samCheckProgress.total}` : '…'}
             </span>
           )}
           {!checkingSAMChanges && samCheckError && <span className="text-xs" style={{ color: 'var(--red-600)' }}>{samCheckError}</span>}
           {/* Department filter — controlled multi-select, stays open on selection, always visible */}
           {samDepartments.length > 0 && (
             <div ref={deptFilterRef} style={{ position: 'relative' }}>
-              <button className="btn text-xs" style={{ padding: '3px 10px' }}
+              <button className="btn text-xs" title="Filter by department" style={{ padding: '3px 10px' }}
                 onClick={() => setDeptOpen((v) => !v)}>
                 🏛 Dept{deptFilter.size > 0 ? ` (${deptFilter.size})` : ''}
               </button>
@@ -960,18 +960,18 @@ export default function Opportunities({ toast }) {
               )}
               {samRunStatus?.status === 'partial' && (
                 <span style={{ color: 'var(--blue-600)' }}>
-                  Pull checkpoint saved · {samRunStatus.written || 0} new total · continuing automatically
+                  Progress saved · {samRunStatus.written || 0} new total · continuing automatically
                 </span>
               )}
               {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && (
                 <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
-                  Last run failed: {samRunStatus.error || 'No error detail was recorded.'}
+                  Opportunity pull failed: {samRunStatus.error || 'No error detail was recorded.'}
                 </span>
               )}
-              {samRunStatus?.success == null && 'Not yet pulled'}
+              {samRunStatus?.success == null && 'Opportunity pull has not run yet'}
             </span>
-            <button className={`btn text-xs ${showSyncDetails ? styles.syncDetailsActive : styles.syncDetailsButton}`} style={{ padding: '3px 10px' }} onClick={() => setShowSyncDetails((value) => !value)}>
-              Sync details
+            <button className={`btn text-xs ${showSyncDetails ? styles.syncDetailsActive : styles.syncDetailsButton}`} title="Discovery controls" style={{ padding: '3px 10px' }} onClick={() => setShowSyncDetails((value) => !value)}>
+              Controls
             </button>
             <button className="btn text-xs" style={{ padding: '3px 10px' }} onClick={() => {
               setSelectionMode((value) => !value)
@@ -990,7 +990,7 @@ export default function Opportunities({ toast }) {
       {(isPulling || checkingSAMChanges || bulkProgress) && (
         <div className={styles.discoveryProgress}>
           <div className={styles.discoveryProgressHeader}>
-            <span>{bulkProgress ? `${bulkProgress.kind === 'dismiss' ? 'Dismissing' : bulkProgress.kind === 'track' ? 'Adding to Tracking' : 'Adding to pipeline'} opportunities` : checkingSAMChanges ? 'Checking SAM changes' : pullProgressText || 'Pulling new opportunities'}</span>
+            <span>{bulkProgress ? `${bulkProgress.kind === 'dismiss' ? 'Dismissing' : bulkProgress.kind === 'track' ? 'Adding to tracking' : 'Adding to pipeline'} opportunities` : checkingSAMChanges ? 'Checking SAM.gov updates' : pullProgressText || 'Pulling SAM.gov opportunities'}</span>
             <span>{bulkProgress ? `${bulkProgress.completed} of ${bulkProgress.total}` : checkingSAMChanges && samCheckProgress?.total ? `${samCheckProgress.checked || 0} of ${samCheckProgress.total}` : pullProgress?.naicsTotal ? `${pullProgress.naicsProcessed || 0} of ${pullProgress.naicsTotal}` : ''}</span>
           </div>
           <div className={styles.discoveryProgressTrack}><span style={{ width: `${bulkProgress ? Math.round((bulkProgress.completed / bulkProgress.total) * 100) : checkingSAMChanges ? samCheckPercent : pullProgressPercent}%` }} /></div>
@@ -1014,11 +1014,11 @@ export default function Opportunities({ toast }) {
               <div className={styles.empty}>
                 <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }}>◈</div>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-900)', marginBottom: 4 }}>
-                  {samOpps.length === 0 ? 'No new opportunities yet' : 'Nothing to show'}
+                  {samOpps.length === 0 ? 'No SAM.gov opportunities yet' : 'Nothing to show'}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--gray-400)', maxWidth: 360 }}>
                   {samOpps.length === 0
-                    ? 'Use Refresh to pull opportunities from SAM.gov that match your NAICS codes.'
+                    ? 'Use Pull to find SAM.gov opportunities that match your NAICS codes.'
                     : search.trim()
                       ? 'No opportunity, including dismissed records, matches this search.'
                       : samTypeFilter !== 'All'
@@ -1047,7 +1047,7 @@ export default function Opportunities({ toast }) {
                           title="Select all"
                         />
                       </th>}
-                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Title</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Opportunity</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Agency</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>NAICS</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
@@ -1057,11 +1057,11 @@ export default function Opportunities({ toast }) {
                           onClick={cycleSAMResponseSort}
                           title="Cycle response date sorting"
                         >
-                          Response Date
+                          Due date
                           <span>{samSortMode === 'responseAsc' ? '↑' : samSortMode === 'responseDesc' ? '↓' : '↕'}</span>
                         </button>
                       </th>
-                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>POC</th>
+                      <th title="Contracting point of contact" style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Contracting POC</th>
                       <th style={{ width: 160, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Actions</th>
                     </tr>
                   </thead>
@@ -1104,7 +1104,7 @@ export default function Opportunities({ toast }) {
                               </span>
                               {samStatusBadge(opp.Status)}
                               {samChangeBadge(opp)}
-                              {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Sync failed</span>}
+                              {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Save failed</span>}
                             </div>
                           </td>
                           <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
@@ -1124,7 +1124,7 @@ export default function Opportunities({ toast }) {
                                   {syncFailure && (
                                     <button className={`btn ${styles.newActionSam}`} style={btnSm}
                                       title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
-                                      {isActioning ? '…' : 'Retry sync'}
+                                      {isActioning ? '…' : 'Retry save'}
                                     </button>
                                   )}
                                 </div>
@@ -1134,7 +1134,7 @@ export default function Opportunities({ toast }) {
                                   {!isActioned && !selectionMode && (
                                     <>
                                       {/* Row 1: + Pipeline (green) | Track (amber/white) */}
-                                      <button className={`btn btn-primary ${styles.newActionPipeline}`} style={btnSm}
+                                      <button className={`btn btn-primary ${styles.newActionPipeline}`} style={btnSm} title="Add to pipeline"
                                         disabled={isActioning} onClick={() => handleAddToPipeline(opp, 'New')}>
                                         {isActioning ? '…' : '+ Pipeline'}
                                       </button>
@@ -1152,9 +1152,9 @@ export default function Opportunities({ toast }) {
                                   {isActioned && !selectionMode && (
                                     <>
                                       {linkedOpportunity && (
-                                        <button className={`btn ${styles.newActionPipeline}`} style={btnSm}
+                                        <button className={`btn ${styles.newActionPipeline}`} style={btnSm} title="View in pipeline"
                                           onClick={() => openOpportunity(linkedOpportunity)}>
-                                          View pipeline
+                                          View
                                         </button>
                                       )}
                                       <button className={`${styles.newAction} ${styles.newActionDismiss}`} style={btnSm}
@@ -1166,7 +1166,7 @@ export default function Opportunities({ toast }) {
                                   {syncFailure && !selectionMode && (
                                     <button className={`btn ${styles.newActionSam}`} style={btnSm}
                                       title={syncFailure.message} disabled={isActioning} onClick={() => handleRetryStatus(opp)}>
-                                      {isActioning ? '…' : 'Retry sync'}
+                                      {isActioning ? '…' : 'Retry save'}
                                     </button>
                                   )}
                                   {opp['SAM.gov URL'] && (
@@ -1217,13 +1217,13 @@ export default function Opportunities({ toast }) {
     <table className="data-table">
       <thead>
         <tr>
-          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Title <SortIcon col={C.title} /></th>
-          <th>Contract #</th>
+          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Opportunity <SortIcon col={C.title} /></th>
+          <th title="Contract or notice ID">ID</th>
           <th onClick={() => handleSort(C.phase)} style={{ cursor: 'pointer' }}>Phase <SortIcon col={C.phase} /></th>
           <th onClick={() => handleSort(C.outlook)} style={{ cursor: 'pointer' }}>Outlook <SortIcon col={C.outlook} /></th>
           <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
-          <th onClick={() => handleSort(C.priority)} style={{ cursor: 'pointer' }}>Priority <SortIcon col={C.priority} /></th>
-          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Value <SortIcon col={C.value} /></th>
+          <th onClick={() => handleSort(C.priority)} style={{ cursor: 'pointer' }}>Pursuit priority <SortIcon col={C.priority} /></th>
+          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Contract value <SortIcon col={C.value} /></th>
           <th onClick={() => handleSort(C.lastMod)} style={{ cursor: 'pointer' }}>Last modified <SortIcon col={C.lastMod} /></th>
           <th />
         </tr>
@@ -1269,8 +1269,8 @@ export default function Opportunities({ toast }) {
     <table className="data-table">
       <thead>
         <tr>
-          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Title <SortIcon col={C.title} /></th>
-          <th>Contract #</th>
+          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Opportunity <SortIcon col={C.title} /></th>
+          <th title="Contract or notice ID">ID</th>
           <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
           <th onClick={() => handleSort(C.submDate)} style={{ cursor: 'pointer' }}>Submission date <SortIcon col={C.submDate} /></th>
         </tr>
@@ -1302,10 +1302,10 @@ export default function Opportunities({ toast }) {
     <table className="data-table">
       <thead>
         <tr>
-          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Title <SortIcon col={C.title} /></th>
-          <th>Contract #</th>
+          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Opportunity <SortIcon col={C.title} /></th>
+          <th title="Contract or notice ID">ID</th>
           <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
-          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Value <SortIcon col={C.value} /></th>
+          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Contract value <SortIcon col={C.value} /></th>
           <th onClick={() => handleSort(C.endDate)} style={{ cursor: 'pointer' }}>Contract end date <SortIcon col={C.endDate} /></th>
           <th onClick={() => handleSort(C.lastMod)} style={{ cursor: 'pointer' }}>Last modified <SortIcon col={C.lastMod} /></th>
           <th />
@@ -1344,11 +1344,11 @@ export default function Opportunities({ toast }) {
     <table className="data-table">
       <thead>
         <tr>
-          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Title <SortIcon col={C.title} /></th>
-          <th>Contract #</th>
+          <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Opportunity <SortIcon col={C.title} /></th>
+          <th title="Contract or notice ID">ID</th>
           <th onClick={() => handleSort(C.phase)} style={{ cursor: 'pointer' }}>Phase <SortIcon col={C.phase} /></th>
           <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
-          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Value <SortIcon col={C.value} /></th>
+          <th onClick={() => handleSort(C.value)} style={{ cursor: 'pointer' }}>Contract value <SortIcon col={C.value} /></th>
           <th onClick={() => handleSort(C.lastMod)} style={{ cursor: 'pointer' }}>Last modified <SortIcon col={C.lastMod} /></th>
           <th />
         </tr>
@@ -1406,7 +1406,7 @@ export default function Opportunities({ toast }) {
               className={`${styles.tab} ${activeTab === tab ? styles.tabActive : ''}`}
               onClick={() => handleTabChange(tab)}
             >
-              {tab}
+              <span title={tab === 'New' ? 'SAM opportunities' : undefined}>{tab === 'New' ? 'SAM' : tab}</span>
               {tab !== 'New' && tabCounts[tab] > 0 && (
                 <span className={styles.tabBadge}>{tabCounts[tab]}</span>
               )}
@@ -1446,7 +1446,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Priority</label>
+                <label className="form-label">Pursuit priority</label>
                 <select className="form-input" value={filters.priority}
                   onChange={(e) => setFilters((f) => ({ ...f, priority: e.target.value }))}>
                   <option value="">All</option>
@@ -1454,7 +1454,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Set-Aside</label>
+                <label className="form-label">Set-aside</label>
                 <select className="form-input" value={filters.setAside}
                   onChange={(e) => setFilters((f) => ({ ...f, setAside: e.target.value }))}>
                   <option value="">All</option>
@@ -1462,7 +1462,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Bid / No Bid</label>
+                <label className="form-label">Bid decision</label>
                 <select className="form-input" value={filters.bidNoBid}
                   onChange={(e) => setFilters((f) => ({ ...f, bidNoBid: e.target.value }))}>
                   <option value="">All</option>
@@ -1508,7 +1508,7 @@ export default function Opportunities({ toast }) {
                 )}
               </div>
               <div className="form-field">
-                <label className="form-label">Assigned To</label>
+                <label className="form-label">Assigned to</label>
                 <select className="form-input" value={filters.assignedTo}
                   onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))}>
                   <option value="">All</option>
@@ -1524,7 +1524,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Prime / Sub</label>
+                <label className="form-label">Prime or sub</label>
                 <select className="form-input" value={filters.primeOrSub}
                   onChange={(e) => setFilters((f) => ({ ...f, primeOrSub: e.target.value }))}>
                   <option value="">All</option>
@@ -1532,7 +1532,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Classification</label>
+                <label className="form-label">Contract classification</label>
                 <select className="form-input" value={filters.classification}
                   onChange={(e) => setFilters((f) => ({ ...f, classification: e.target.value }))}>
                   <option value="">All</option>
@@ -1540,7 +1540,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Contract Vehicle</label>
+                <label className="form-label">Contract vehicle</label>
                 <select className="form-input" value={filters.vehicle}
                   onChange={(e) => setFilters((f) => ({ ...f, vehicle: e.target.value }))}>
                   <option value="">All</option>
@@ -1574,7 +1574,7 @@ export default function Opportunities({ toast }) {
           <div className="filter-chips" style={{ marginBottom: 8 }}>
             {rfiFollowUpIds.size > 0 && (
               <button className="filter-chip active" onClick={() => updateParams({ rfiFollowUps: '' })}>
-                RFI follow-ups ✕
+                RFI follow-ons ✕
               </button>
             )}
             {Object.entries(filters).filter(([k, v]) => k === 'agency' ? false : v).map(([key, val]) => (
@@ -1630,7 +1630,7 @@ export default function Opportunities({ toast }) {
             <>
               <button className="btn" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</button>
               <button className="btn btn-primary" onClick={requestAdd} disabled={saving} aria-busy={saving}>
-                {saving ? 'Saving…' : 'Add opportunity'}
+                {saving ? 'Saving…' : 'Create opportunity'}
               </button>
             </>
           }
@@ -1638,19 +1638,19 @@ export default function Opportunities({ toast }) {
           <form onSubmit={handleAdd}>
             <div className={styles.formGrid}>
               <div className="form-field" style={{ gridColumn: '1 / -1' }}>
-                <label className="form-label">Project Title / Description *</label>
+                <label className="form-label">Opportunity title or description *</label>
                 <input className="form-input" required
                   value={form[C.title]}
                   onChange={(e) => setForm({ ...form, [C.title]: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">Contract Number / Notice ID *</label>
+                <label className="form-label">Contract or notice ID *</label>
                 <input className="form-input" required
                   value={form[C.contractNum]}
                   onChange={(e) => setForm({ ...form, [C.contractNum]: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">Solicitation Number</label>
+                <label className="form-label">Solicitation number</label>
                 <input className="form-input"
                   value={form[C.solNum]}
                   onChange={(e) => setForm({ ...form, [C.solNum]: e.target.value })} />
@@ -1668,7 +1668,7 @@ export default function Opportunities({ toast }) {
                   onChange={(e) => setForm({ ...form, [C.agency]: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">TAG Opportunity Phase</label>
+                <label className="form-label">Opportunity phase</label>
                 <select className="form-input"
                   value={form[C.phase]}
                   onChange={(e) => setForm({ ...form, [C.phase]: e.target.value })}>
@@ -1676,7 +1676,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Opportunity Outlook</label>
+                <label className="form-label">Opportunity outlook</label>
                 <select className="form-input"
                   value={form[C.outlook]}
                   onChange={(e) => setForm({ ...form, [C.outlook]: e.target.value })}>
@@ -1684,19 +1684,19 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Total Contract Value ($)</label>
+                <label className="form-label">Total contract value ($)</label>
                 <input className="form-input" type="number"
                   value={form[C.value]}
                   onChange={(e) => setForm({ ...form, [C.value]: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">NAICS Code</label>
+                <label className="form-label">NAICS code</label>
                 <input className="form-input"
                   value={form[C.naics]}
                   onChange={(e) => setForm({ ...form, [C.naics]: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">Assigned To</label>
+                <label className="form-label">Assigned to</label>
                 <select className="form-input"
                   value={form[C.assignedTo]}
                   onChange={(e) => setForm({ ...form, [C.assignedTo]: e.target.value })}>
@@ -1705,7 +1705,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Priority</label>
+                <label className="form-label">Pursuit priority</label>
                 <select className="form-input"
                   value={form[C.priority]}
                   onChange={(e) => setForm({ ...form, [C.priority]: e.target.value })}>
@@ -1713,7 +1713,7 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Set-Aside</label>
+                <label className="form-label">Set-aside</label>
                 <select className="form-input"
                   value={form[C.setAside]}
                   onChange={(e) => setForm({ ...form, [C.setAside]: e.target.value })}>
@@ -1722,7 +1722,7 @@ export default function Opportunities({ toast }) {
               </div>
               {form[C.phase] === 'Identified' && form[C.outlook] === 'New' && (
                 <div className="form-field">
-                  <label className="form-label">RFI Submission Date</label>
+                  <label className="form-label">RFI submission date</label>
                   <input className="form-input" type="date"
                     value={form[C.submDate]}
                     onChange={(e) => setForm({ ...form, [C.submDate]: e.target.value })} />
@@ -1750,7 +1750,7 @@ export default function Opportunities({ toast }) {
             </>
           }
         >
-          <p className="text-sm">An RFI submission date was entered. Update the Activity Phase to Submitted RFI?</p>
+          <p className="text-sm">An RFI submission date was entered. Update the activity phase to Submitted RFI?</p>
         </Modal>
       )}
 

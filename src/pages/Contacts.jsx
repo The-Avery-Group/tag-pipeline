@@ -199,7 +199,7 @@ export default function Contacts({ toast }) {
     setSaving(true)
     try {
       const outcome = await add({ ...form, Type: form.Type || defaultContactType })
-      toast?.success(outcome?.existed ? 'This contact already exists' : 'Contact added')
+      toast?.success(outcome?.existed ? 'This contact already exists' : 'Contact created')
       setShowAdd(false)
       setForm(BLANK)
     } catch (err) {
@@ -299,7 +299,7 @@ export default function Contacts({ toast }) {
         ['Agency',       'Agency / Company (Account)', false],
         ['Title',        'Title',                    false],
         ['Organization', 'Department / Organization', false],
-        ['Offices',      'Offices (comma-separated)', false],
+        ['Offices',      'Offices', false],
         ['Email',        'Email',                    false],
         ['Phone',        'Phone',                    false],
       ].map(([field, label, required]) => (
@@ -308,17 +308,18 @@ export default function Contacts({ toast }) {
           <input className="form-input" required={required}
             value={form[field] ?? ''}
             onChange={(e) => setField(field, e.target.value)} />
+          {field === 'Offices' && <span className="text-xs text-muted">Separate multiple offices with commas.</span>}
         </div>
       ))}
       <div className="form-field">
-        <label className="form-label">Type</label>
+        <label className="form-label">Contact type</label>
         <select className="form-input" value={form.Type || contactTypeOptions[0] || ''}
           onChange={(e) => setField('Type', e.target.value)}>
           {contactTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
       <div className="form-field" style={{ gridColumn: '1 / -1' }}>
-        <label className="form-label">Notes / linked contract #</label>
+        <label className="form-label">Notes</label>
         <textarea className="form-input" rows={2}
           value={form.Notes ?? ''}
           onChange={(e) => setField('Notes', e.target.value)} />
@@ -463,12 +464,12 @@ export default function Contacts({ toast }) {
                                 <p className={styles.interactionHint}>Date and type are required. Notes are required for Event or Other. Leave follow-up blank to schedule it 31 days after this interaction.</p>
                                 <div className={styles.formGrid}>
                                   <div className="form-field"><label className="form-label">Date *</label><input className="form-input" type="date" required value={interactionForm['Interaction Date']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Date': e.target.value })); if (interactionError) setInteractionError('') }} /></div>
-                                  <div className="form-field"><label className="form-label">Type *</label><select className="form-input" required value={interactionForm['Interaction Type']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value })); if (interactionError) setInteractionError('') }}><option value="" disabled>Select type</option><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
+                                  <div className="form-field"><label className="form-label">Interaction type *</label><select className="form-input" required value={interactionForm['Interaction Type']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value })); if (interactionError) setInteractionError('') }}><option value="" disabled>Select type</option><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
                                   <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes{['Other', 'Event'].includes(interactionForm['Interaction Type']) ? ' *' : ''}</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, Notes: e.target.value })); if (interactionError) setInteractionError('') }} /></div>
                                   <div className="form-field"><label className="form-label">Follow-up date</label><input className="form-input" type="date" value={interactionForm['Follow-up Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Follow-up Date': e.target.value }))} /></div>
                                 </div>
                                 {interactionError && <p className={styles.interactionError} role="alert">{interactionError}</p>}
-                                <div className={styles.inlineActions}><button type="button" className="btn btn-primary" onClick={handleAddInteraction} disabled={interactionAction.isLoading} aria-busy={interactionAction.isLoading}>{interactionAction.isLoading ? 'Logging interaction…' : 'Save interaction'}</button><button type="button" className="btn" onClick={() => { setShowInteractionForm(false); setInteractionError('') }} disabled={interactionAction.isLoading}>Cancel</button></div>
+                                <div className={styles.inlineActions}><button type="button" className="btn btn-primary" onClick={handleAddInteraction} disabled={interactionAction.isLoading} aria-busy={interactionAction.isLoading}>{interactionAction.isLoading ? 'Logging interaction…' : 'Log interaction'}</button><button type="button" className="btn" onClick={() => { setShowInteractionForm(false); setInteractionError('') }} disabled={interactionAction.isLoading}>Cancel</button></div>
                               </div>
                             ) : <button type="button" className="btn btn-primary" onClick={() => { setInteractionForm(BLANK_INTERACTION()); setInteractionError(''); setShowInteractionForm(true) }}>{selectedInteractions.length ? 'Log another interaction' : 'Log interaction'}</button>}
                             {selectedInteractions.length === 0
@@ -597,7 +598,7 @@ export default function Contacts({ toast }) {
             <>
               <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={submitAdd} disabled={saving}>
-                {saving ? 'Saving…' : 'Add contact'}
+                {saving ? 'Saving…' : 'Create contact'}
               </button>
             </>
           }

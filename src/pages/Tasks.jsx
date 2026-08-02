@@ -19,6 +19,8 @@ const GROUPS    = ['None', 'Contract', 'Assignee', 'Priority']
 const SORTS     = ['Due Date', 'Priority', 'Assignee', 'Status']
 const PRIORITY_RANK = { High: 3, Medium: 2, Low: 1 }
 const STATUS_NEXT = { 'To Do': 'In Progress', 'In Progress': 'Done', 'Done': 'To Do' }
+const statusLabel = (status) => status === 'To Do' ? 'To do' : status === 'In Progress' ? 'In progress' : status
+const groupLabel = (group) => group === 'Contract' ? 'Opportunity' : group
 
 const BLANK_FORM = {
   ContractNumber: '', Title: '', Description: '',
@@ -40,8 +42,8 @@ function CircleCheck({ status, onClick }) {
     <button
       className={`${styles.circle} ${done ? styles.circleDone : ''}`}
       onClick={(e) => { e.stopPropagation(); onClick() }}
-      aria-label={done ? 'Mark incomplete' : 'Mark complete'}
-      title={done ? 'Mark incomplete' : 'Mark complete'}
+      aria-label={done ? 'Reopen task' : 'Mark complete'}
+      title={done ? 'Reopen task' : 'Mark complete'}
     >
       {done && (
         <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
@@ -128,7 +130,7 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
         <div className={styles.panelBody}>
           {/* Description */}
           <div className={styles.panelSection}>
-            <label className={styles.panelLabel}>Notes</label>
+            <label className={styles.panelLabel}>Description</label>
             <textarea
               className={styles.panelTextarea}
               rows={4}
@@ -143,8 +145,8 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
             <div className={styles.panelField}>
               <label className={styles.panelLabel}>Status</label>
               <select className={styles.panelSelect} value={form.Status} onChange={(e) => setField('Status', e.target.value)}>
-                <option>To Do</option>
-                <option>In Progress</option>
+                <option value="To Do">To do</option>
+                <option value="In Progress">In progress</option>
                 <option>Done</option>
               </select>
             </div>
@@ -223,7 +225,7 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
             )
           }
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       </div>
@@ -436,7 +438,7 @@ export default function Tasks({ toast }) {
         ...taskForm,
         ContractTitle: opp?.['Project Title / Description*'] || taskForm.ContractNumber,
       }, user.displayName)
-      toast?.success('Task added')
+      toast?.success('Task created')
       setShowAdd(false)
       setTaskForm(BLANK_FORM)
     } catch (err) {
@@ -490,7 +492,7 @@ export default function Tasks({ toast }) {
                   {STATUSES.map((s) => (
                     <button key={s} className={`filter-chip ${statusFilter === s ? 'active' : ''}`}
                       onClick={() => setStatusFilter(s)}>
-                      {s}
+                      {statusLabel(s)}
                     </button>
                   ))}
                 </div>
@@ -509,7 +511,7 @@ export default function Tasks({ toast }) {
               <div className={styles.controlGroup}>
                 <span className={styles.controlLabel}>Group</span>
                 <select className={styles.controlSelect} value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Group tasks by">
-                  {GROUPS.map((group) => <option key={group} value={group}>{group}</option>)}
+                  {GROUPS.map((group) => <option key={group} value={group}>{groupLabel(group)}</option>)}
                 </select>
               </div>
               <div className={styles.controlGroup}>
@@ -603,7 +605,7 @@ export default function Tasks({ toast }) {
                         </div>
                       </div>
                       <span className={`${styles.statusPill} ${styles['pill_' + (task.Status === 'To Do' ? 'todo' : task.Status === 'In Progress' ? 'progress' : 'done')]}`}>
-                        {task.Status}
+                        {statusLabel(task.Status)}
                       </span>
                     </div>
                   )
@@ -637,7 +639,7 @@ export default function Tasks({ toast }) {
             <>
               <button className="btn" onClick={() => setShowAdd(false)} disabled={creatingTask}>Cancel</button>
               <button className="btn btn-primary" onClick={submitTask} disabled={creatingTask} aria-busy={creatingTask}>
-                {creatingTask ? 'Creating…' : 'Add task'}
+                {creatingTask ? 'Creating…' : 'Create task'}
               </button>
             </>
           }
@@ -657,7 +659,7 @@ export default function Tasks({ toast }) {
                 onChange={(e) => setFormField('Title', e.target.value)} />
             </div>
             <div className="form-field">
-              <label className="form-label">Notes</label>
+              <label className="form-label">Description</label>
               <textarea className="form-input" rows={3} value={taskForm.Description}
                 onChange={(e) => setFormField('Description', e.target.value)} />
             </div>
