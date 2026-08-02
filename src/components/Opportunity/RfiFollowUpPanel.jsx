@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { effectiveRfiFollowUpCriteria } from '@/hooks/useRfiFollowUpMonitor'
 import { formatDate } from '@/utils/kpiHelpers'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 function safeUrl(url) {
   try { const parsed = new URL(url); return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '' } catch { return '' }
@@ -53,6 +54,12 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
       toast?.error(`Could not save criteria: ${error.message}`)
     } finally { setSavingCriteria(false) }
   }
+  useSaveShortcut({
+    enabled: editingCriteria && Boolean(criteria) && !savingCriteria,
+    label: 'these RFI follow-up criteria',
+    onSave: saveCriteria,
+    scopeRef: panelRef,
+  })
 
   const decide = async (candidate, decision) => {
     monitor.applyDecision(opportunityId, candidate, decision)
