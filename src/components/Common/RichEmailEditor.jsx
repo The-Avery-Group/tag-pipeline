@@ -22,46 +22,6 @@ function setCaretInside(element) {
   selection.addRange(range)
 }
 
-function caretRangeAtPoint(documentNode, x, y) {
-  if (typeof documentNode.caretRangeFromPoint === 'function') {
-    return documentNode.caretRangeFromPoint(x, y)
-  }
-  const position = documentNode.caretPositionFromPoint?.(x, y)
-  if (!position) return null
-  const range = documentNode.createRange()
-  range.setStart(position.offsetNode, position.offset)
-  range.collapse(true)
-  return range
-}
-
-function selectWordAtPoint(editor, x, y) {
-  const selection = window.getSelection()
-  const range = caretRangeAtPoint(editor.ownerDocument, x, y)
-  if (!selection || !range || !editor.contains(range.startContainer)) return false
-  selection.removeAllRanges()
-  selection.addRange(range)
-
-  if (typeof selection.modify === 'function') {
-    selection.modify('move', 'backward', 'word')
-    selection.modify('extend', 'forward', 'word')
-    return true
-  }
-
-  const node = range.startContainer
-  if (node.nodeType !== 3) return false
-  const text = String(node.nodeValue || '')
-  let start = range.startOffset
-  let end = range.startOffset
-  while (start > 0 && !/\s/.test(text[start - 1])) start -= 1
-  while (end < text.length && !/\s/.test(text[end])) end += 1
-  if (start === end) return false
-  range.setStart(node, start)
-  range.setEnd(node, end)
-  selection.removeAllRanges()
-  selection.addRange(range)
-  return true
-}
-
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -104,7 +64,6 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   const shellRef = useRef(null)
   const lastEmittedRef = useRef('')
   const savedRangeRef = useRef(null)
-  const explicitFormatRef = useRef('')
   const [tableDialogOpen, setTableDialogOpen] = useState(false)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkText, setLinkText] = useState('')
@@ -136,18 +95,6 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
     }
     document.addEventListener('selectionchange', rememberSelection)
     return () => document.removeEventListener('selectionchange', rememberSelection)
-  }, [])
-
-  useEffect(() => {
-    const editor = editorRef.current
-    if (!editor) return undefined
-    const preventImplicitBold = (event) => {
-      if (event.inputType === 'formatBold' && explicitFormatRef.current !== 'bold') {
-        event.preventDefault()
-      }
-    }
-    editor.addEventListener('beforeinput', preventImplicitBold, true)
-    return () => editor.removeEventListener('beforeinput', preventImplicitBold, true)
   }, [])
 
   const emit = () => {
@@ -199,12 +146,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
 
   const command = (name, commandValue = null) => {
     restoreSelection()
-    explicitFormatRef.current = name
-    try {
-      document.execCommand(name, false, commandValue)
-    } finally {
-      explicitFormatRef.current = ''
-    }
+    document.execCommand(name, false, commandValue)
     updateTableSelection()
     emit()
   }
@@ -468,22 +410,6 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
     document.execCommand('insertText', false, event.clipboardData.getData('text/plain'))
   }
 
-  const handleEditorDoubleClick = (event) => {
-    event.preventDefault()
-    event.stopPropagation()
-    updateTableSelection()
-  }
-
-  const handleEditorMouseDown = (event) => {
-    if (event.button !== 0 || event.detail !== 2 || !editorRef.current) return
-    event.preventDefault()
-    event.stopPropagation()
-    if (!selectWordAtPoint(editorRef.current, event.clientX, event.clientY)) return
-    const selection = window.getSelection()
-    if (selection?.rangeCount) savedRangeRef.current = selection.getRangeAt(0).cloneRange()
-    updateTableSelection()
-  }
-
   return (
     <div ref={shellRef} className={styles.editorShell}>
       <div className={styles.toolbar} role="toolbar" aria-label="Email formatting">
@@ -541,10 +467,8 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}
-        onMouseDown={handleEditorMouseDown}
         onInput={() => { emit(); updateTableSelection() }}
         onClick={updateTableSelection}
-        onDoubleClick={handleEditorDoubleClick}
         onKeyUp={updateTableSelection}
         onKeyDown={handleEditorKeyDown}
         onBlur={(event) => {
