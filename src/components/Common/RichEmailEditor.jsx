@@ -64,7 +64,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   const shellRef = useRef(null)
   const lastEmittedRef = useRef('')
   const savedRangeRef = useRef(null)
-  const lastDoubleClickRef = useRef(0)
+  const explicitFormatRef = useRef('')
   const [tableDialogOpen, setTableDialogOpen] = useState(false)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkText, setLinkText] = useState('')
@@ -96,6 +96,18 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
     }
     document.addEventListener('selectionchange', rememberSelection)
     return () => document.removeEventListener('selectionchange', rememberSelection)
+  }, [])
+
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return undefined
+    const preventImplicitBold = (event) => {
+      if (event.inputType === 'formatBold' && explicitFormatRef.current !== 'bold') {
+        event.preventDefault()
+      }
+    }
+    editor.addEventListener('beforeinput', preventImplicitBold, true)
+    return () => editor.removeEventListener('beforeinput', preventImplicitBold, true)
   }, [])
 
   const emit = () => {
@@ -147,7 +159,12 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
 
   const command = (name, commandValue = null) => {
     restoreSelection()
-    document.execCommand(name, false, commandValue)
+    explicitFormatRef.current = name
+    try {
+      document.execCommand(name, false, commandValue)
+    } finally {
+      explicitFormatRef.current = ''
+    }
     updateTableSelection()
     emit()
   }
@@ -412,15 +429,8 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
   }
 
   const handleEditorDoubleClick = (event) => {
-    lastDoubleClickRef.current = window.performance.now()
     event.stopPropagation()
     updateTableSelection()
-  }
-
-  const handleBeforeInput = (event) => {
-    const inputType = event.nativeEvent?.inputType || ''
-    const followsDoubleClick = window.performance.now() - lastDoubleClickRef.current < 500
-    if (inputType === 'formatBold' && followsDoubleClick) event.preventDefault()
   }
 
   return (
@@ -480,7 +490,6 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}
-        onBeforeInput={handleBeforeInput}
         onInput={() => { emit(); updateTableSelection() }}
         onClick={updateTableSelection}
         onDoubleClick={handleEditorDoubleClick}
