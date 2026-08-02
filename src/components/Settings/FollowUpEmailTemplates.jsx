@@ -33,6 +33,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
   const [deleting, setDeleting] = useState(false)
   const savingRef = useRef(false)
   const editorRef = useRef(null)
+  const richEditorRef = useRef(null)
 
   const selected = useMemo(
     () => templates.find((item) => item['Template ID'] === selectedId) || null,
@@ -179,6 +180,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
         <label className={styles.fullField}>
           <span>Email body</span>
           <RichEmailEditor
+            ref={richEditorRef}
             value={form.Body}
             onChange={(Body) => setForm((current) => ({ ...current, Body }))}
             ariaLabel="Follow-up email template body"
@@ -188,7 +190,17 @@ export default function FollowUpEmailTemplates({ user, toast }) {
         </label>
         <div className={styles.mergeFields}>
           <span>Available fields</span>
-          {FOLLOW_UP_MERGE_FIELDS.map((field) => <code key={field}>{field}</code>)}
+          {FOLLOW_UP_MERGE_FIELDS.map((field) => (
+            <button
+              type="button"
+              key={field}
+              title={`Insert ${field} at the cursor`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => richEditorRef.current?.insertMergeField(field)}
+            >
+              {field}
+            </button>
+          ))}
         </div>
         <div className={styles.actions}>
           {selected && <button type="button" className="btn btn-danger" onClick={remove} disabled={deleting || saving}>{deleting ? 'Deleting…' : 'Delete'}</button>}
