@@ -22,6 +22,22 @@ function setCaretInside(element) {
   selection.addRange(range)
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function normalizeLink(value) {
+  const link = String(value || '').trim()
+  if (/^\S+@\S+\.\S+$/.test(link)) return `mailto:${link}`
+  if (/^www\./i.test(link)) return `https://${link}`
+  return /^(?:https?:|mailto:)/i.test(link) ? link : ''
+}
+
 export default function RichEmailEditor({
   value,
   onChange,
@@ -30,26 +46,67 @@ export default function RichEmailEditor({
   highlightMergeFields = false,
 }) {
   const editorRef = useRef(null)
+  const shellRef = useRef(null)
   const lastEmittedRef = useRef('')
+  const savedRangeRef = useRef(null)
   const [tableDialogOpen, setTableDialogOpen] = useState(false)
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false)
+  const [linkText, setLinkText] = useState('')
+  const [linkHref, setLinkHref] = useState('')
+  const [editingLink, setEditingLink] = useState(false)
   const [tableRows, setTableRows] = useState(2)
   const [tableColumns, setTableColumns] = useState(2)
   const [headerRow, setHeaderRow] = useState(true)
   const [tableSelected, setTableSelected] = useState(false)
+  const [hasSignature, setHasSignature] = useState(false)
 
   useEffect(() => {
+    if (String(value || '') === lastEmittedRef.current) return
     const sanitized = sanitizeEmailHtml(value)
     const normalized = highlightMergeFields ? decorateEmailMergeFields(sanitized) : sanitized
     if (!editorRef.current || normalized === lastEmittedRef.current) return
     editorRef.current.innerHTML = normalized
     lastEmittedRef.current = normalized
+    setHasSignature(Boolean(editorRef.current.querySelector('[data-email-signature="true"]')))
   }, [highlightMergeFields, value])
+
+  useEffect(() => {
+    const rememberSelection = () => {
+      const selection = window.getSelection()
+      if (!selection?.rangeCount || !editorRef.current) return
+      const range = selection.getRangeAt(0)
+      if (!editorRef.current.contains(range.commonAncestorContainer)) return
+      savedRangeRef.current = range.cloneRange()
+    }
+    document.addEventListener('selectionchange', rememberSelection)
+    return () => document.removeEventListener('selectionchange', rememberSelection)
+  }, [])
 
   const emit = () => {
     if (!editorRef.current) return
-    const html = sanitizeEmailHtml(editorRef.current.innerHTML)
+    const html = editorRef.current.innerHTML
     lastEmittedRef.current = html
+    setHasSignature(Boolean(editorRef.current.querySelector('[data-email-signature="true"]')))
     onChange(html)
+  }
+
+  const restoreSelection = () => {
+    const range = savedRangeRef.current
+    const editor = editorRef.current
+    editor?.focus()
+    const selection = window.getSelection()
+    if (!range || !editor?.contains(range.commonAncestorContainer)) {
+      const fallback = document.createRange()
+      fallback.selectNodeContents(editor)
+      fallback.collapse(false)
+      selection.removeAllRanges()
+      selection.addRange(fallback)
+      savedRangeRef.current = fallback.cloneRange()
+      return true
+    }
+    selection.removeAllRanges()
+    selection.addRange(range)
+    return true
   }
 
   const updateTableSelection = () => {
@@ -59,17 +116,63 @@ export default function RichEmailEditor({
   }
 
   const command = (name, commandValue = null) => {
-    editorRef.current?.focus()
+    restoreSelection()
     document.execCommand(name, false, commandValue)
     emit()
   }
 
-  const insertLink = () => {
-    const href = window.prompt('Enter a web or email link')
-    if (!href) return
-    const normalized = /^\S+@\S+\.\S+$/.test(href) ? `mailto:${href}` : href
-    if (!/^(?:https?:|mailto:)/i.test(normalized)) return
-    command('createLink', normalized)
+  const openLinkDialog = () => {
+    const selection = window.getSelection()
+    if (selection?.rangeCount && editorRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      savedRangeRef.current = selection.getRangeAt(0).cloneRange()
+    }
+    const node = selection?.anchorNode
+    const element = node?.nodeType === 1 ? node : node?.parentElement
+    const anchor = element?.closest?.('a')
+    setEditingLink(Boolean(anchor && editorRef.current?.contains(anchor)))
+    setLinkText(anchor?.textContent || selection?.toString() || '')
+    setLinkHref(anchor?.getAttribute('href') || '')
+    setTableDialogOpen(false)
+    setLinkDialogOpen(true)
+  }
+
+  const applyLink = () => {
+    const href = normalizeLink(linkHref)
+    if (!href || !restoreSelection()) return
+    const selection = window.getSelection()
+    const currentNode = selection?.anchorNode
+    const currentElement = currentNode?.nodeType === 1 ? currentNode : currentNode?.parentElement
+    const anchor = editingLink ? currentElement?.closest?.('a') : null
+    if (anchor && editorRef.current?.contains(anchor)) {
+      const range = document.createRange()
+      range.selectNode(anchor)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    const selectedText = selection?.toString() || ''
+    const label = String(linkText || selectedText || linkHref).trim()
+    document.execCommand('insertHTML', false, `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`)
+    setLinkDialogOpen(false)
+    setEditingLink(false)
+    emit()
+  }
+
+  const removeLink = () => {
+    if (!restoreSelection()) return
+    const selection = window.getSelection()
+    const currentNode = selection?.anchorNode
+    const currentElement = currentNode?.nodeType === 1 ? currentNode : currentNode?.parentElement
+    const anchor = currentElement?.closest?.('a')
+    if (anchor && editorRef.current?.contains(anchor)) {
+      const range = document.createRange()
+      range.selectNodeContents(anchor)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    document.execCommand('unlink')
+    setLinkDialogOpen(false)
+    setEditingLink(false)
+    emit()
   }
 
   const insertTable = () => {
@@ -123,7 +226,45 @@ export default function RichEmailEditor({
   }
 
   const insertSignature = () => {
-    command('insertHTML', '<div data-email-signature="true"><p><br></p></div>')
+    const editor = editorRef.current
+    if (!editor || editor.querySelector('[data-email-signature="true"]')) return
+    editor.focus()
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    savedRangeRef.current = range.cloneRange()
+    document.execCommand('insertHTML', false, '<div data-email-signature="true"><p><br></p></div>')
+    const signature = editor.querySelector('[data-email-signature="true"]')
+    if (signature) setCaretInside(signature)
+    emit()
+  }
+
+  const removeSignature = () => {
+    const editor = editorRef.current
+    const signature = editor?.querySelector('[data-email-signature="true"]')
+    if (!editor || !signature) return
+    editor.focus()
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNode(signature)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.execCommand('delete')
+    emit()
+  }
+
+  const handleEditorKeyDown = (event) => {
+    if (event.key !== 'Backspace' && event.key !== 'Delete') return
+    const selection = window.getSelection()
+    const node = selection?.anchorNode
+    const element = node?.nodeType === 1 ? node : node?.parentElement
+    const signature = element?.closest?.('[data-email-signature="true"]')
+    if (!signature || String(signature.textContent || '').trim()) return
+    event.preventDefault()
+    removeSignature()
   }
 
   const handlePaste = (event) => {
@@ -132,7 +273,7 @@ export default function RichEmailEditor({
   }
 
   return (
-    <div className={styles.editorShell}>
+    <div ref={shellRef} className={styles.editorShell}>
       <div className={styles.toolbar} role="toolbar" aria-label="Email formatting">
         <button type="button" title="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => command('bold')}><strong>B</strong></button>
         <button type="button" title="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => command('italic')}><em>I</em></button>
@@ -141,14 +282,26 @@ export default function RichEmailEditor({
         <button type="button" title="Bulleted list" onMouseDown={(event) => event.preventDefault()} onClick={() => command('insertUnorderedList')}>• List</button>
         <button type="button" title="Numbered list" onMouseDown={(event) => event.preventDefault()} onClick={() => command('insertOrderedList')}>1. List</button>
         <span className={styles.divider} />
-        <button type="button" title="Insert link" onMouseDown={(event) => event.preventDefault()} onClick={insertLink}>Link</button>
-        <button type="button" title="Insert table" onMouseDown={(event) => event.preventDefault()} onClick={() => setTableDialogOpen((open) => !open)}>Table</button>
-        {allowSignature && <button type="button" title="Insert protected signature block" onMouseDown={(event) => event.preventDefault()} onClick={insertSignature}>Signature</button>}
+        <button type="button" title="Insert or edit link" onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
+        <button type="button" title="Insert table" onMouseDown={(event) => event.preventDefault()} onClick={() => { setLinkDialogOpen(false); setTableDialogOpen((open) => !open) }}>Table</button>
+        {allowSignature && <button type="button" title={hasSignature ? 'Remove signature' : 'Add signature at the bottom'} onMouseDown={(event) => event.preventDefault()} onClick={hasSignature ? removeSignature : insertSignature}>{hasSignature ? 'Remove signature' : 'Signature'}</button>}
         <span className={styles.divider} />
         <button type="button" title="Undo" onMouseDown={(event) => event.preventDefault()} onClick={() => command('undo')}>Undo</button>
         <button type="button" title="Redo" onMouseDown={(event) => event.preventDefault()} onClick={() => command('redo')}>Redo</button>
         <button type="button" title="Clear formatting" onMouseDown={(event) => event.preventDefault()} onClick={() => command('removeFormat')}>Clear</button>
       </div>
+
+      {linkDialogOpen && (
+        <div className={styles.linkDialog}>
+          <label>Text<input value={linkText} onChange={(event) => setLinkText(event.target.value)} placeholder="Link text" /></label>
+          <label>Link<input value={linkHref} onChange={(event) => setLinkHref(event.target.value)} placeholder="https://example.com" /></label>
+          <div className={styles.dialogActions}>
+            {editingLink && <button type="button" className="btn btn-ghost text-sm" onClick={removeLink}>Remove link</button>}
+            <button type="button" className="btn btn-ghost text-sm" onClick={() => setLinkDialogOpen(false)}>Cancel</button>
+            <button type="button" className="btn btn-primary text-sm" onClick={applyLink} disabled={!normalizeLink(linkHref)}>Apply</button>
+          </div>
+        </div>
+      )}
 
       {tableDialogOpen && (
         <div className={styles.tableDialog}>
@@ -179,7 +332,9 @@ export default function RichEmailEditor({
         onInput={() => { emit(); updateTableSelection() }}
         onClick={updateTableSelection}
         onKeyUp={updateTableSelection}
-        onBlur={() => {
+        onKeyDown={handleEditorKeyDown}
+        onBlur={(event) => {
+          if (shellRef.current?.contains(event.relatedTarget)) return
           if (!editorRef.current) return
           const html = sanitizeEmailHtml(editorRef.current.innerHTML)
           const displayHtml = highlightMergeFields ? decorateEmailMergeFields(html) : html
