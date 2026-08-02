@@ -10,6 +10,7 @@ import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import { formatDate, isOverdue } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import styles from './Tasks.module.css'
 
 const STATUSES  = ['All', 'Overdue', 'To Do', 'In Progress', 'Done']
@@ -90,6 +91,12 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
       setSaving(false)
     }
   }
+  useSaveShortcut({
+    enabled: !saving,
+    label: 'this task',
+    onSave: handleSave,
+    scopeRef: ref,
+  })
 
   const handleDelete = async () => {
     try {
@@ -439,6 +446,11 @@ export default function Tasks({ toast }) {
       setCreatingTask(false)
     }
   }
+  useSaveShortcut({
+    enabled: showAdd && !creatingTask,
+    label: 'this new task',
+    onSave: submitTask,
+  })
 
   const openCount    = filtered.filter((t) => t.Status !== 'Done').length
   const overdueCount = filtered.filter((t) => isOverdue(t.DueDate) && t.Status !== 'Done').length
