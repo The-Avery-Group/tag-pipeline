@@ -29,7 +29,7 @@ const STALL_THRESHOLD_MS = 3 * 60 * 1000
 // that's stuck for a persistent reason (bad secret, expired key, etc).
 let _resumeAttemptedThisSession = false
 
-// Pulls are initiated from both Settings and the New Opportunities tab. Keep
+// Pulls are initiated from both Settings and the SAM tab. Keep
 // run state outside individual hook instances so navigation (and a second app
 // tab) can immediately render the same Worker-backed progress.
 let _sharedPullProgress = null

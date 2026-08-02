@@ -943,7 +943,7 @@ export async function addOpportunity(data) {
     'Last Modified*': new Date().toISOString().split('T')[0],
   }
   const identifier = String(record['Contract Number / Notice ID'] || '').trim()
-  if (!identifier) throw new Error('Contract Number / Notice ID is required before creating an opportunity')
+  if (!identifier) throw new Error('Contract or notice ID is required before creating an opportunity')
   return createWorkbookRecord({
     tableName: 'PipelineTable',
     operationKey: `opportunity:${identifier.toLowerCase()}`,
@@ -1065,8 +1065,8 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
   const identifierChanged = oldId !== newId
   const titleChanged = oldTitle !== newTitle
 
-  if (!oldId) throw new Error('This opportunity has no Contract Number / Notice ID to update')
-  if (!newId) throw new Error('Contract Number / Notice ID is required')
+  if (!oldId) throw new Error('This opportunity has no contract or notice ID to update')
+  if (!newId) throw new Error('Contract or notice ID is required')
   if (!newTitle) throw new Error('Opportunity title is required')
 
   const duplicate = identifierChanged && pipeline.find((opportunity) =>
@@ -1074,7 +1074,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     normalizedValue(opportunity[OPPORTUNITY_ID_COL]) === normalizedValue(newId)
   )
   if (duplicate) {
-    throw new Error(`Contract Number / Notice ID "${newId}" is already used by another opportunity`)
+    throw new Error(`Contract or notice ID "${newId}" is already used by another opportunity`)
   }
 
   const taskPatches = identifierChanged || titleChanged
@@ -1230,12 +1230,12 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
       rollback: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.rollback, NOTES_HEADERS)),
     })),
     ...plan.overridePatches.map((item) => ({
-      label: 'RFI follow-up override',
+      label: 'RFI follow-on override',
       apply: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
       rollback: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
     })),
     ...plan.followUpDecisionPatches.map((item) => ({
-      label: 'RFI follow-up decision',
+      label: 'RFI follow-on decision',
       apply: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_DECISION_HEADERS)),
       rollback: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_DECISION_HEADERS)),
     })),

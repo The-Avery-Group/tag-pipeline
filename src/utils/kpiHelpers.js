@@ -94,7 +94,7 @@ const C_AGENCY   = 'Agency*'
 const C_OUTLOOK  = 'Opportunity Outlook'
 const C_SUBMDATE = 'Submission Date (Response Date)*'
 const C_PRIMESUB = 'Prime or Sub?'
-// Confirmed exact column header for the "Award Type" concept from the build plan.
+// Confirmed exact column header for the contract classification concept.
 const C_AWARDTYPE = 'Contract Classification*'
 // "Contract Vehicle" already holds the actual vehicle NAME (e.g. "GSA OASIS+"),
 // not an ID — "Contract Vehicle Number" is the separate ID field. Confirmed
@@ -241,9 +241,9 @@ export function computeSubPrimeBreakdown(pipeline = []) {
   return counts
 }
 
-// ── Award Type / Classification breakdown ────────────────────────────────
+// Contract classification breakdown
 
-/** Counts of opportunities grouped by Contract Classification (Award Type). Blank values excluded. */
+/** Counts of opportunities grouped by contract classification. Blank values excluded. */
 export function computeAwardTypeBreakdown(pipeline = []) {
   const counts = {}
   pipeline.forEach((o) => {

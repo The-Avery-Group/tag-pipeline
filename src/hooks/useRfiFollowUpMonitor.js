@@ -93,7 +93,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
   const loadStatus = useCallback(async () => {
     if (!WORKER_URL) return null
     const response = await workerFetch('/sam/follow-up-monitor/status')
-    if (!response.ok) throw new Error('Could not load RFI follow-up status')
+    if (!response.ok) throw new Error('Could not load RFI follow-on status')
     const data = await response.json()
     const next = {}
     ;(data.watches || []).forEach((watch) => { next[normalized(watch.opportunityId)] = watch })
@@ -108,7 +108,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     const response = await workerFetch('/sam/follow-up-monitor/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ watches, replace: forceReplace }),
     })
-    if (!response.ok) throw new Error('Could not synchronize RFI follow-up monitoring')
+    if (!response.ok) throw new Error('Could not refresh RFI follow-on monitoring')
     return watches
   }, [buildWatches, refreshConfiguration, replace])
 
@@ -121,7 +121,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Could not check RFI follow-ups')
+      if (!response.ok) throw new Error(data.error || 'Could not check RFI follow-ons')
       setStatusByOpportunity((previous) => ({ ...previous, [normalized(opportunityId)]: data.watch }))
       return data.watch
     } catch (err) {
@@ -136,7 +136,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId }),
     })
     const data = await response.json()
-    if (!response.ok) throw new Error(data.error || 'Could not mark RFI follow-ups as seen')
+    if (!response.ok) throw new Error(data.error || 'Could not mark RFI follow-ons as reviewed')
     setStatusByOpportunity((previous) => ({ ...previous, [normalized(opportunityId)]: data.watch }))
     return data.watch
   }, [])

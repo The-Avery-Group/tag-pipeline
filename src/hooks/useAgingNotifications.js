@@ -166,7 +166,7 @@ export function useAgingNotifications() {
         // ── Upcoming RFI responses (two days and one day) ─────────────
         // RFIs are the same records shown in the Opportunities RFIs tab.
         // Their response date is copied into Submission Date when they are
-        // added from the New Opportunities list.
+        // added from the SAM opportunities list.
         const responseReminders = allOpps.filter((o) => {
           const isRFI = o['TAG Opportunity Phase'] === 'Identified' && o['Opportunity Outlook'] === 'New'
           const remaining = daysUntil(o['Submission Date (Response Date)*'])
