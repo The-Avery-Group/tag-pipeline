@@ -8,6 +8,14 @@ import {
 import { buildFollowUpDraft, isoDate } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
+import RichEmailEditor from '@/components/Common/RichEmailEditor'
+import {
+  containsGenericEmailPlaceholder,
+  isEmptyEmailHtml,
+  protectEmailHtmlForAI,
+  restoreProtectedEmailHtml,
+  sanitizeEmailHtml,
+} from '@/utils/emailHtml'
 import styles from './FollowUpEmailComposer.module.css'
 
 const clean = (value) => String(value ?? '').trim()
@@ -304,14 +312,14 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       toast?.error('Add a recipient before saving this draft.')
       return
     }
-    if (!clean(form.Subject) || !clean(form.Body)) {
+    if (!clean(form.Subject) || isEmptyEmailHtml(form.Body)) {
       toast?.error('Subject and email body are required.')
       return
     }
     savingRef.current = true
     setSaving(true)
     try {
-      const patch = { To: form.To, CC: form.CC, Subject: form.Subject, Body: form.Body, Status: status }
+      const patch = { To: form.To, CC: form.CC, Subject: form.Subject, Body: sanitizeEmailHtml(form.Body), Status: status }
       await updateEmailFollowUpDraft(form._rowIndex, patch, user?.displayName)
       const updated = { ...form, ...patch }
       setDrafts((previous) => previous.map((draft) => draft['Draft ID'] === form['Draft ID'] ? updated : draft))
@@ -336,22 +344,36 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
 
   const improve = async () => {
     if (!form || improving) return
-    const requestedDraft = { subject: form.Subject || '', body: form.Body || '' }
+    const protectedDraft = protectEmailHtmlForAI(form.Body)
+    const requestedDraft = { subject: form.Subject || '', body: protectedDraft.html }
     setImproving(true)
     try {
-      const result = await sendAIMessage({
-        promptType: 'email_draft',
-        message: 'Revise the current email draft in the CRM reference data. Preserve its facts and intent, improve its clarity and professional tone, keep it concise, and return only the revised email body.',
-        context: {
-          opportunity,
-          currentDraft: requestedDraft,
-        },
-      })
-      if (!clean(result?.content)) throw new Error('AI returned an empty draft')
+      const requestImprovement = (retry = false) => sendAIMessage({
+          promptType: 'email_draft',
+          message: retry
+            ? 'Revise the current HTML email draft again. Return only safe HTML. Preserve every TAG_PROTECTED marker exactly once and do not add placeholders, a new greeting, or a new signature.'
+            : 'Revise the current HTML email draft in the CRM reference data. Preserve its facts and intent, improve clarity and professional tone, and return only safe HTML. Preserve every TAG_PROTECTED marker exactly once and do not add placeholders, a new greeting, or a new signature.',
+          context: { opportunity, currentDraft: requestedDraft },
+        })
+
+      const resolveImprovement = async (retry = false) => {
+        const result = await requestImprovement(retry)
+        if (!clean(result?.content)) throw new Error('AI returned an empty draft')
+        const restored = restoreProtectedEmailHtml(result.content, protectedDraft.fragments)
+        if (containsGenericEmailPlaceholder(restored)) throw new Error('AI added an unsupported placeholder')
+        return restored
+      }
+
+      let improvedBody
+      try {
+        improvedBody = await resolveImprovement(false)
+      } catch {
+        improvedBody = await resolveImprovement(true)
+      }
       const current = formRef.current
       if (!current) return
       rememberForUndo(current)
-      const next = { ...current, Body: result.content }
+      const next = { ...current, Body: improvedBody }
       formRef.current = next
       setForm(next)
     } catch (error) {
@@ -442,7 +464,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
                 <label><span>Subject</span><input value={form.Subject || ''} onChange={(event) => updateField('Subject', event.target.value)} /></label>
               </div>
 
-              <textarea className={styles.editor} value={form.Body || ''} onChange={(event) => updateField('Body', event.target.value)} aria-label="Email body" />
+              <RichEmailEditor value={form.Body || ''} onChange={(Body) => updateField('Body', Body)} ariaLabel="Email body" />
 
               <div className={styles.safety}>
                 <span>Nothing is sent automatically. Release 1 stores editable drafts only.</span>
