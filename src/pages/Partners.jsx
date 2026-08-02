@@ -10,6 +10,7 @@ import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import styles from './Partners.module.css'
+import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 const FIELDS = [
   ['Partner Name', 'Partner name', 'input', true, 'identity'],
@@ -153,6 +154,11 @@ export default function Partners({ toast }) {
       toast?.success(selected ? 'Partner updated' : 'Partner added')
     } catch {}
   }
+  useSaveShortcut({
+    enabled: editing && !saveAction.isLoading,
+    label: selected ? 'these partner changes' : 'this new partner',
+    onSave: save,
+  })
   const deletePartner = async () => {
     try {
       await deleteAction.run(() => remove(deleteTarget._rowIndex, deleteTarget), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
