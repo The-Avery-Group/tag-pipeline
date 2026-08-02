@@ -713,7 +713,7 @@ You are discussing a specific opportunity with a capture-team member. Use the cu
       return `${base}
 
 TASK: EMAIL DRAFTING
-When CURRENT EMAIL DRAFT is present in the CRM reference data, revise that exact draft instead of asking the user to provide it or creating an unrelated email. Preserve its verified facts and intent while improving clarity, flow, and professional tone. Return only the revised email body. Do not include a subject line, commentary, Markdown fence, or explanation. Do not use placeholders or invent a contact, requirement, or past-performance claim; omit an unknown detail instead. Keep it under 200 words.`
+When CURRENT EMAIL DRAFT is present in the CRM reference data, revise that exact draft instead of asking the user to provide it or creating an unrelated email. Preserve its verified facts and intent while improving clarity, flow, and professional tone. The draft may be HTML. Return only safe email-body HTML using the existing basic formatting. Do not include a subject line, commentary, Markdown fence, or explanation. Preserve every [[TAG_PROTECTED_*]] marker exactly once and write naturally around it. Protected markers represent greetings, tables, or signatures that the application restores after the rewrite. Never create or alter a greeting, table, or signature represented by a marker. Never add bracketed placeholders, TBD fields, or generic sender details. Do not invent a contact, requirement, or past-performance claim; omit an unknown detail instead. Keep visible prose under 200 words.`
 
     case 'capability_statement':
       return `${base}
