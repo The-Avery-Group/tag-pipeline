@@ -1,8 +1,10 @@
 const HTML_TAG_PATTERN = /<\/?(?:p|div|br|strong|b|em|i|u|ul|ol|li|a|table|thead|tbody|tr|th|td)\b/i
 const SIGNATURE_PATTERN = /^(?:best|kind|warm) regards\b|^regards\b|^sincerely\b|^respectfully\b/i
 const GREETING_PATTERN = /^(?:dear|hello|hi)\b/i
-const ALLOWED_TAGS = new Set(['P', 'DIV', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'UL', 'OL', 'LI', 'A', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD'])
+const ALLOWED_TAGS = new Set(['P', 'DIV', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'UL', 'OL', 'LI', 'A', 'SPAN', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD'])
 const REMOVE_WITH_CONTENT = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'INPUT', 'BUTTON', 'SVG', 'MATH'])
+const MERGE_FIELD_PATTERN = /^\{\{\s*[a-z_]+\s*\}\}$/i
+const MERGE_FIELD_PARTS_PATTERN = /(\{\{\s*[a-z_]+\s*\}\})/gi
 
 function escapeHtml(value) {
   return String(value || '')
@@ -93,6 +95,9 @@ export function sanitizeEmailHtml(value) {
       }
       const href = child.tagName === 'A' ? safeHref(child.getAttribute('href')) : ''
       const isSignature = child.tagName === 'DIV' && child.getAttribute('data-email-signature') === 'true'
+      const isMergeField = child.tagName === 'SPAN' &&
+        child.getAttribute('data-email-merge-field') === 'true' &&
+        MERGE_FIELD_PATTERN.test(String(child.textContent || '').trim())
       for (const attribute of [...child.attributes]) child.removeAttribute(attribute.name)
       if (href) {
         child.setAttribute('href', href)
@@ -100,6 +105,7 @@ export function sanitizeEmailHtml(value) {
         child.setAttribute('rel', 'noreferrer')
       }
       if (isSignature) child.setAttribute('data-email-signature', 'true')
+      if (isMergeField) child.setAttribute('data-email-merge-field', 'true')
       applyEmailSafeTableStyles(child)
       cleanNode(child)
     }
@@ -107,6 +113,41 @@ export function sanitizeEmailHtml(value) {
   cleanNode(root)
   markDetectedSignature(root)
   return root.innerHTML || '<p><br></p>'
+}
+
+export function decorateEmailMergeFields(value) {
+  const source = sanitizeEmailHtml(value)
+  if (typeof DOMParser === 'undefined') return source
+  const documentNode = new DOMParser().parseFromString(`<div id="email-root">${source}</div>`, 'text/html')
+  const root = documentNode.getElementById('email-root')
+  if (!root) return source
+
+  const decorateNode = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === 3) {
+        if (child.parentElement?.closest?.('[data-email-merge-field="true"]')) continue
+        const parts = String(child.nodeValue || '').split(MERGE_FIELD_PARTS_PATTERN)
+        if (parts.length < 2) continue
+        const fragment = documentNode.createDocumentFragment()
+        parts.forEach((part) => {
+          if (!part) return
+          if (MERGE_FIELD_PATTERN.test(part)) {
+            const token = documentNode.createElement('span')
+            token.setAttribute('data-email-merge-field', 'true')
+            token.textContent = part
+            fragment.appendChild(token)
+          } else {
+            fragment.appendChild(documentNode.createTextNode(part))
+          }
+        })
+        child.replaceWith(fragment)
+        continue
+      }
+      if (child.nodeType === 1) decorateNode(child)
+    }
+  }
+  decorateNode(root)
+  return sanitizeEmailHtml(root.innerHTML)
 }
 
 export function isEmptyEmailHtml(value) {
