@@ -127,7 +127,14 @@
   user-select: all;
 }
 .editor table { width: max-content !important; min-width: 100%; max-width: none !important; margin: 9px 0; border-collapse: collapse; }
-.editor th, .editor td { min-width: 112px; white-space: nowrap; }
+.editor th, .editor td {
+  min-width: 112px;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
 .editor th { background: var(--blue-50) !important; color: var(--blue-800) !important; font-weight: 700; }
 .editor td { background: var(--surface) !important; color: var(--gray-900) !important; }
 .editor [data-email-signature='true'] { margin-top: 15px; padding-top: 9px; border-top: 0.5px dashed var(--gray-300); }
