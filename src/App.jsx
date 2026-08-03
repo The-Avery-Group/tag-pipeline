@@ -37,6 +37,7 @@ const Contacts          = lazy(() => import('@/pages/Contacts'))
 const Partners          = lazy(() => import('@/pages/Partners'))
 const Settings          = lazy(() => import('@/pages/Settings'))
 const Lookup            = lazy(() => import('@/pages/Lookup'))
+const AgencyIntelligence = lazy(() => import('@/pages/AgencyIntelligence'))
 const Login             = lazy(() => import('@/pages/Login'))
 
 function cacheTablesForLocation(location) {
@@ -64,6 +65,7 @@ function cacheTablesForLocation(location) {
       ? ['ContactsTable', 'DataValidationTable']
       : ['PipelineTable', 'DataValidationTable']
   }
+  if (path === '/agency-intelligence') return ['PipelineTable']
   if (path === '/ai-chat') {
     return ['PipelineTable', 'TasksTable', 'ContactsTable', 'NotesTable']
   }
@@ -244,6 +246,7 @@ function AppShell() {
               <Route path="/partners"                      element={<Partners toast={toast} />} />
               <Route path="/settings"                      element={<Settings toast={toast} />} />
               <Route path="/lookup"                         element={<Lookup toast={toast} />} />
+              <Route path="/agency-intelligence"            element={<AgencyIntelligence />} />
               <Route path="*"                              element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
