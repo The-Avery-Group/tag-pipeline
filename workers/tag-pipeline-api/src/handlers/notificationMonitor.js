@@ -325,7 +325,14 @@ async function prepareScheduledEmailDrafts(env, token, pipeline, contacts, today
           template['Template ID'],
         )
         if (existingIds.has(draftId.toLowerCase())) continue
-        const record = buildScheduledDraft({ opportunity, template, recipients, today, now })
+        const record = buildScheduledDraft({
+          opportunity,
+          template,
+          recipients,
+          from: env.FOLLOW_UP_DEFAULT_SENDER,
+          today,
+          now,
+        })
         await appendTableRecord(env, token, drafts, record)
         existingIds.add(draftId.toLowerCase())
         created += 1
