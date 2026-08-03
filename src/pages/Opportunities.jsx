@@ -20,9 +20,16 @@ import {
   samTypeMatches,
   sortSAMOpportunities,
 } from '@/utils/samOpportunityHelpers'
-import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
+import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
+import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
+import {
+  NOTICE_TYPE_VALUES,
+  isRfiWorkflowOpportunity,
+  isRfiWorkflowNoticeType,
+  normalizeNoticeType,
+} from '@/utils/noticeTypes'
 
 // ── Column name constants ─────────────────────────────────────────────────
 const C = {
@@ -52,6 +59,16 @@ const C = {
   govwin:       'GovWin Link*',
   classification: 'Contract Classification*',
   vehicle:      'Contract Vehicle',
+  noticeType:   'Notice Type',
+  office:       'Office*',
+  fiscalYear:   'Fiscal Year',
+  baseValue:    'Base Year Value ($)*',
+  vehicleNumber:'Contract Vehicle Number',
+  questionsDue: 'Questions Due',
+  incumbent:    'Incumbent (Company Name)',
+  incumbentUEI: 'Incumbent (Company UEI)',
+  otherLinks:   'Other Links*',
+  slideDeck:    'Link to Slide Deck',
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
@@ -81,9 +98,7 @@ function getTabRows(pipeline, tab) {
     case 'All':
       return pipeline
     case 'RFIs':
-      return pipeline.filter(
-        (o) => o[C.phase] === 'Identified' && o[C.outlook] === 'New'
-      )
+      return pipeline.filter((opportunity) => isRfiWorkflowOpportunity(opportunity, C))
     case 'Expiring':
       return pipeline.filter((o) => o[C.outlook] === 'Expiring')
     case 'Tracked':
@@ -146,6 +161,7 @@ export default function Opportunities({ toast }) {
   const setAsideOptions       = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
   const bidNoBidOptions       = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
   const phaseOptions          = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const activityPhaseOptions  = pickList(lists, 'TAG Pipeline Activity Phase', ACTIVITY_PHASES)
   const primeOrSubOptions     = pickList(lists, 'Prime or Sub?', ['Prime', 'Sub'])
   const assigneeOptions       = pickList(lists, 'Assignee', ASSIGNEE_VALUES)
 
@@ -271,6 +287,7 @@ export default function Opportunities({ toast }) {
   const creatingOpportunityRef = useRef(false)
   const addingPipelineRowsRef = useRef(new Set())
   const [confirmRfiActivity, setConfirmRfiActivity] = useState(false)
+  const [showMoreOpportunityDetails, setShowMoreOpportunityDetails] = useState(false)
   const [form, setForm] = useState({
     [C.contractNum]: '',
     [C.title]:       '',
@@ -287,6 +304,11 @@ export default function Opportunities({ toast }) {
     [C.priority]:    'Warm',
     [C.setAside]:    '-',
     [C.primeOrSub]:  'Prime',
+    [C.noticeType]:  '',
+    [C.office]: '', [C.fiscalYear]: '', [C.baseValue]: '', [C.vehicleNumber]: '',
+    [C.questionsDue]: '', [C.incumbent]: '', [C.incumbentUEI]: '', [C.otherLinks]: '',
+    [C.slideDeck]: '', [C.classification]: '', [C.vehicle]: '', [C.poc]: '', [C.endDate]: '',
+    [C.bidNoBid]: '', [C.partner]: '', [C.awardDate]: '', [C.folder]: '', [C.govwin]: '',
   })
 
   // ── Tab counts (raw, before search/filters) ───────────────────────────
@@ -424,11 +446,16 @@ export default function Opportunities({ toast }) {
       await add(payload)
       toast?.success('Opportunity created')
       setShowAdd(false)
+      setShowMoreOpportunityDetails(false)
       setForm({
         [C.contractNum]: '', [C.title]: '', [C.agency]: '', [C.department]: '',
         [C.phase]: 'Identified', [C.outlook]: 'New', [C.value]: '',
         [C.assignedTo]: '', [C.solNum]: '', [C.naics]: '', [C.submDate]: '', [C.activityPhase]: '',
         [C.priority]: 'Warm', [C.setAside]: '-', [C.primeOrSub]: 'Prime',
+        [C.noticeType]: '', [C.office]: '', [C.fiscalYear]: '', [C.baseValue]: '', [C.vehicleNumber]: '',
+        [C.questionsDue]: '', [C.incumbent]: '', [C.incumbentUEI]: '', [C.otherLinks]: '',
+        [C.slideDeck]: '', [C.classification]: '', [C.vehicle]: '', [C.poc]: '', [C.endDate]: '',
+        [C.bidNoBid]: '', [C.partner]: '', [C.awardDate]: '', [C.folder]: '', [C.govwin]: '',
       })
     } catch (err) {
       toast?.error(`Failed to add: ${err.message}`)
@@ -439,11 +466,11 @@ export default function Opportunities({ toast }) {
   }
 
   const requestAdd = () => {
-    const needsActivityPrompt =
-      form[C.phase] === 'Identified' &&
-      form[C.outlook] === 'New' &&
-      form[C.submDate] &&
-      !form[C.activityPhase]
+    const needsActivityPrompt = needsRfiActivityPhasePrompt({}, form, {
+      noticeType: C.noticeType,
+      submissionDate: C.submDate,
+      activityPhase: C.activityPhase,
+    })
     if (needsActivityPrompt) {
       setConfirmRfiActivity(true)
       return
@@ -489,7 +516,7 @@ export default function Opportunities({ toast }) {
   const { statusByOpportunity: rfiFollowUpStatus, markSeen: markFollowUpsSeen } = useRfiFollowUpMonitor(pipeline, contacts, { replace: true })
 
   const [showDismissed, setShowDismissed] = useState(false)
-  const [samTypeFilter, setSAMTypeFilter] = useState('RFI')
+  const [samTypeFilter, setSAMTypeFilter] = useState('RFI_MRAS')
   const [samSortMode, setSAMSortMode] = useState('dateAdded')
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
@@ -881,7 +908,9 @@ export default function Opportunities({ toast }) {
               setSAMTypeFilter(event.target.value)
               setSelectedRows(new Set())
             }}>
-              <option value="RFI">RFIs</option>
+              <option value="RFI_MRAS">RFIs and MRAS</option>
+              <option value="RFI">RFIs only</option>
+              <option value="MRAS">MRAS only</option>
               <option value="RFP">RFPs</option>
               <option value="RFQ">RFQs</option>
               <option value="All">All types</option>
@@ -1099,9 +1128,9 @@ export default function Opportunities({ toast }) {
 						  <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
-                              <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
+                              {normalizeSAMNoticeType(opp['Notice Type']) && <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
                                 {normalizeSAMNoticeType(opp['Notice Type'])}
-                              </span>
+                              </span>}
                               {samStatusBadge(opp.Status)}
                               {samChangeBadge(opp)}
                               {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Save failed</span>}
@@ -1205,7 +1234,7 @@ export default function Opportunities({ toast }) {
       ? 'No opportunities match the current filters.'
       : {
           All:      'No opportunities in the pipeline yet.',
-          RFIs:     'No RFIs yet. Opportunities appear here when Phase is Identified and Outlook is New.',
+          RFIs:     'No RFIs or MRAS opportunities yet. Set Notice Type to RFI or MRAS to include an opportunity here.',
           Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
           Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
           New:      '',
@@ -1650,16 +1679,12 @@ export default function Opportunities({ toast }) {
                   onChange={(e) => setForm({ ...form, [C.contractNum]: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">Solicitation number</label>
-                <input className="form-input"
-                  value={form[C.solNum]}
-                  onChange={(e) => setForm({ ...form, [C.solNum]: e.target.value })} />
-              </div>
-              <div className="form-field">
-                <label className="form-label">Department</label>
-                <input className="form-input"
-                  value={form[C.department]}
-                  onChange={(e) => setForm({ ...form, [C.department]: e.target.value })} />
+                <label className="form-label">Notice type *</label>
+                <select className="form-input" required value={form[C.noticeType]}
+                  onChange={(e) => setForm({ ...form, [C.noticeType]: e.target.value })}>
+                  <option value="">Select type</option>
+                  {NOTICE_TYPE_VALUES.map((type) => <option value={type} key={type}>{type}</option>)}
+                </select>
               </div>
               <div className="form-field">
                 <label className="form-label">Agency</label>
@@ -1684,51 +1709,86 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
-                <label className="form-label">Total contract value ($)</label>
-                <input className="form-input" type="number"
-                  value={form[C.value]}
-                  onChange={(e) => setForm({ ...form, [C.value]: e.target.value })} />
-              </div>
-              <div className="form-field">
-                <label className="form-label">NAICS code</label>
-                <input className="form-input"
-                  value={form[C.naics]}
-                  onChange={(e) => setForm({ ...form, [C.naics]: e.target.value })} />
-              </div>
-              <div className="form-field">
                 <label className="form-label">Assigned to</label>
                 <select className="form-input"
                   value={form[C.assignedTo]}
                   onChange={(e) => setForm({ ...form, [C.assignedTo]: e.target.value })}>
-                  <option value="">— Select —</option>
+                  <option value="">Select</option>
                   {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
                 </select>
               </div>
-              <div className="form-field">
-                <label className="form-label">Pursuit priority</label>
-                <select className="form-input"
-                  value={form[C.priority]}
-                  onChange={(e) => setForm({ ...form, [C.priority]: e.target.value })}>
-                  {priorityOptions.map((p) => <option key={p}>{p}</option>)}
-                </select>
-              </div>
-              <div className="form-field">
-                <label className="form-label">Set-aside</label>
-                <select className="form-input"
-                  value={form[C.setAside]}
-                  onChange={(e) => setForm({ ...form, [C.setAside]: e.target.value })}>
-                  {setAsideOptions.map((s) => <option key={s}>{s}</option>)}
-                </select>
-              </div>
-              {form[C.phase] === 'Identified' && form[C.outlook] === 'New' && (
+              {isRfiWorkflowNoticeType(form[C.noticeType]) && (
                 <div className="form-field">
-                  <label className="form-label">RFI submission date</label>
+                  <label className="form-label">{normalizeNoticeType(form[C.noticeType])} submission date</label>
                   <input className="form-input" type="date"
                     value={form[C.submDate]}
                     onChange={(e) => setForm({ ...form, [C.submDate]: e.target.value })} />
                 </div>
               )}
             </div>
+
+            <button
+              type="button"
+              className={styles.moreDetailsToggle}
+              aria-expanded={showMoreOpportunityDetails}
+              onClick={() => setShowMoreOpportunityDetails((open) => !open)}
+            >
+              <span>{showMoreOpportunityDetails ? 'Hide opportunity details' : 'More opportunity details'}</span>
+              <span aria-hidden="true">{showMoreOpportunityDetails ? '⌃' : '⌄'}</span>
+            </button>
+
+            {showMoreOpportunityDetails && <div className={styles.moreDetailsPanel}>
+              <div className={styles.addFormGroup}>
+                <div className={styles.addFormGroupTitle}>Customer and requirement</div>
+                <div className={styles.formGrid}>
+                  <div className="form-field"><label className="form-label">Department</label><input className="form-input" value={form[C.department]} onChange={(e) => setForm({ ...form, [C.department]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Office</label><input className="form-input" value={form[C.office]} onChange={(e) => setForm({ ...form, [C.office]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Solicitation number</label><input className="form-input" value={form[C.solNum]} onChange={(e) => setForm({ ...form, [C.solNum]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">NAICS code</label><input className="form-input" value={form[C.naics]} onChange={(e) => setForm({ ...form, [C.naics]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Set-aside</label><select className="form-input" value={form[C.setAside]} onChange={(e) => setForm({ ...form, [C.setAside]: e.target.value })}>{setAsideOptions.map((value) => <option key={value}>{value}</option>)}</select></div>
+                  <div className="form-field"><label className="form-label">Contract classification</label><input className="form-input" value={form[C.classification]} onChange={(e) => setForm({ ...form, [C.classification]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Contract vehicle</label><input className="form-input" value={form[C.vehicle]} onChange={(e) => setForm({ ...form, [C.vehicle]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Vehicle number</label><input className="form-input" value={form[C.vehicleNumber]} onChange={(e) => setForm({ ...form, [C.vehicleNumber]: e.target.value })} /></div>
+                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Contracting officer or specialist</label><input className="form-input" value={form[C.poc]} onChange={(e) => setForm({ ...form, [C.poc]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Incumbent</label><input className="form-input" value={form[C.incumbent]} onChange={(e) => setForm({ ...form, [C.incumbent]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Incumbent UEI</label><input className="form-input" value={form[C.incumbentUEI]} onChange={(e) => setForm({ ...form, [C.incumbentUEI]: e.target.value })} /></div>
+                </div>
+              </div>
+
+              <div className={styles.addFormGroup}>
+                <div className={styles.addFormGroupTitle}>Dates and value</div>
+                <div className={styles.formGrid}>
+                  {!isRfiWorkflowNoticeType(form[C.noticeType]) && <div className="form-field"><label className="form-label">Response date</label><input className="form-input" type="date" value={form[C.submDate]} onChange={(e) => setForm({ ...form, [C.submDate]: e.target.value })} /></div>}
+                  <div className="form-field"><label className="form-label">Questions due</label><input className="form-input" type="date" value={form[C.questionsDue]} onChange={(e) => setForm({ ...form, [C.questionsDue]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Contract end date</label><input className="form-input" type="date" value={form[C.endDate]} onChange={(e) => setForm({ ...form, [C.endDate]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Anticipated award date</label><input className="form-input" type="date" value={form[C.awardDate]} onChange={(e) => setForm({ ...form, [C.awardDate]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Fiscal year</label><input className="form-input" inputMode="numeric" value={form[C.fiscalYear]} onChange={(e) => setForm({ ...form, [C.fiscalYear]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Total contract value ($)</label><input className="form-input" type="number" value={form[C.value]} onChange={(e) => setForm({ ...form, [C.value]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Base year value ($)</label><input className="form-input" type="number" value={form[C.baseValue]} onChange={(e) => setForm({ ...form, [C.baseValue]: e.target.value })} /></div>
+                </div>
+              </div>
+
+              <div className={styles.addFormGroup}>
+                <div className={styles.addFormGroupTitle}>Pursuit and relationships</div>
+                <div className={styles.formGrid}>
+                  <div className="form-field"><label className="form-label">Activity phase</label><select className="form-input" value={form[C.activityPhase]} onChange={(e) => setForm({ ...form, [C.activityPhase]: e.target.value })}><option value="">Select</option>{activityPhaseOptions.map((value) => <option key={value}>{value}</option>)}</select></div>
+                  <div className="form-field"><label className="form-label">Pursuit priority</label><select className="form-input" value={form[C.priority]} onChange={(e) => setForm({ ...form, [C.priority]: e.target.value })}>{priorityOptions.map((value) => <option key={value}>{value}</option>)}</select></div>
+                  <div className="form-field"><label className="form-label">Bid decision</label><select className="form-input" value={form[C.bidNoBid]} onChange={(e) => setForm({ ...form, [C.bidNoBid]: e.target.value })}><option value="">Select</option>{bidNoBidOptions.map((value) => <option key={value}>{value}</option>)}</select></div>
+                  <div className="form-field"><label className="form-label">Prime or sub</label><select className="form-input" value={form[C.primeOrSub]} onChange={(e) => setForm({ ...form, [C.primeOrSub]: e.target.value })}>{primeOrSubOptions.map((value) => <option key={value}>{value}</option>)}</select></div>
+                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Partners</label><input className="form-input" value={form[C.partner]} onChange={(e) => setForm({ ...form, [C.partner]: e.target.value })} /></div>
+                </div>
+              </div>
+
+              <div className={styles.addFormGroup}>
+                <div className={styles.addFormGroupTitle}>Links</div>
+                <div className={styles.formGrid}>
+                  <div className="form-field"><label className="form-label">Folder</label><input className="form-input" type="url" value={form[C.folder]} onChange={(e) => setForm({ ...form, [C.folder]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Slide deck</label><input className="form-input" type="url" value={form[C.slideDeck]} onChange={(e) => setForm({ ...form, [C.slideDeck]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">GovWin</label><input className="form-input" type="url" value={form[C.govwin]} onChange={(e) => setForm({ ...form, [C.govwin]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Other links</label><textarea className="form-input" rows="2" value={form[C.otherLinks]} onChange={(e) => setForm({ ...form, [C.otherLinks]: e.target.value })} /></div>
+                </div>
+              </div>
+            </div>}
           </form>
         </Modal>
       )}
@@ -1750,7 +1810,7 @@ export default function Opportunities({ toast }) {
             </>
           }
         >
-          <p className="text-sm">An RFI submission date was entered. Update the activity phase to Submitted RFI?</p>
+          <p className="text-sm">An RFI or MRAS submission date was entered. Update the activity phase to Submitted RFI?</p>
         </Modal>
       )}
 
