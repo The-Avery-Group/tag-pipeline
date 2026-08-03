@@ -35,6 +35,8 @@ jobs:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
           # Google Programmable Search Engine ID for public LinkedIn profile results
           VITE_GOOGLE_SEARCH_ENGINE_ID: ${{ secrets.VITE_GOOGLE_SEARCH_ENGINE_ID }}
+          # Public configuration value for the default follow-up sender.
+          VITE_PROCUREMENT_EMAIL: ${{ vars.VITE_PROCUREMENT_EMAIL }}
           # NOTE: VITE_TEAMS_WEBHOOK_URL and VITE_GROQ_API_KEY have been moved
           # to Cloudflare Worker secrets. Remove them from GitHub secrets
           # once the Worker is deployed and confirmed working.
