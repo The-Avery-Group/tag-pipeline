@@ -12,6 +12,7 @@ import {
 import { retryIdempotent } from '@/services/workbookMutations'
 import { notifyNewOpportunity } from '@/services/notifyService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
+import { normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
 
 
 // How often to poll /sam/run-status while a pull is actively running.
@@ -305,6 +306,7 @@ export function useSAMOpportunities() {
 
     const opportunity = {
       'TAG Opportunity Phase':                   'Identified',
+      'Notice Type':                            normalizeSAMNoticeType(row['Notice Type']),
       'Opportunity Outlook':                     outlook,
       'Contract Number / Notice ID':             row['Solicitation Number'] || row['Notice ID'] || '',
       'Project Title / Description*':            row['Title']               || '',
