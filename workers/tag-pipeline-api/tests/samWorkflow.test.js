@@ -177,6 +177,8 @@ test('SAM discovery classifies compact and descriptive procurement types consist
   assert.equal(normalizeDiscoveryNoticeType('r'), 'RFI')
   assert.equal(normalizeDiscoveryNoticeType('o'), 'RFP')
   assert.equal(normalizeDiscoveryNoticeType('k'), 'RFQ')
+  assert.equal(normalizeDiscoveryNoticeType('MRAS'), 'MRAS')
+  assert.equal(normalizeDiscoveryNoticeType('Market Research Notice'), 'MRAS')
   assert.equal(normalizeDiscoveryNoticeType('Solicitation'), 'RFP')
   assert.equal(normalizeDiscoveryNoticeType('Combined Synopsis/Solicitation'), 'RFQ')
   assert.equal(
