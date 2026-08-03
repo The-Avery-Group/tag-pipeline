@@ -105,6 +105,23 @@ async function getTableHeaders(tableName, { force = false } = {}) {
   return headers
 }
 
+export async function ensureTableColumns(tableName, columnNames = []) {
+  let headers = await getTableHeaders(tableName, { force: true })
+  const added = []
+  for (const name of columnNames) {
+    if (headers.includes(name)) continue
+    await graphFetch(`/tables/${tableName}/columns`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    })
+    added.push(name)
+    headerCache.delete(tableName)
+    headers = await getTableHeaders(tableName, { force: true })
+  }
+  if (added.length) invalidate(tableName)
+  return { headers, added }
+}
+
 // ── Token helper ───────────────────────────────────────────────────────────
 export function isInteractionRequiredError(error) {
   return error instanceof InteractionRequiredAuthError ||
@@ -479,6 +496,8 @@ export const PIPELINE_HEADERS = [
   'Qualification PWIN',               // [39] col AN
   'RFI Notified',                     // [40] col AO — date notification was sent, blank = not yet sent
   'Notice Type',                      // RFI / MRAS / RFP / RFQ
+  'Department ID',
+  'Agency ID',
 ]
 
 export const TASKS_HEADERS = [
@@ -599,6 +618,8 @@ export const COL = {
   qualPWIN:       'Qualification PWIN',
   rfiNotified:    'RFI Notified',
   noticeType:     'Notice Type',
+  departmentId:   'Department ID',
+  agencyId:       'Agency ID',
 }
 
 // ── Phase / enum constants from real data ─────────────────────────────────
