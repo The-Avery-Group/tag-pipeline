@@ -10,7 +10,7 @@ export function RfiActivityPhaseModal({ pendingSave, activityPhaseColumn, onClos
       <button className="btn btn-primary" onClick={() => onSave({ ...pendingSave, [activityPhaseColumn]: 'Submitted RFI' })}>Set to Submitted RFI</button>
     </>}
   >
-    <p className="text-sm">An RFI submission date was added. Update this opportunity's activity phase to Submitted RFI?</p>
+    <p className="text-sm">An RFI or MRAS submission date was added. Update this opportunity's activity phase to Submitted RFI?</p>
   </Modal>
 }
 
