@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getRFIFollowUpDecisions, getRFIFollowUpOverrides, getSAMSettings } from '@/services/graphService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
+import { isRfiWorkflowOpportunity } from '@/utils/noticeTypes'
 
 const C = {
   phase: 'TAG Opportunity Phase', outlook: 'Opportunity Outlook', contractNumber: 'Contract Number / Notice ID',
   title: 'Project Title / Description*', department: 'Department*', agency: 'Agency*',
   poc: 'Contracting Officer / Specialist (POC)*', solicitation: 'Solicitation Number', submissionDate: 'Submission Date (Response Date)*',
+  noticeType: 'Notice Type', activityPhase: 'TAG Pipeline Activity Phase',
 }
 
 const DEFAULT_RULES = {
@@ -25,7 +27,7 @@ function number(value, fallback, min, max) {
 }
 
 export function isRfiOpportunity(opportunity) {
-  return opportunity?.[C.phase] === 'Identified' && opportunity?.[C.outlook] === 'New'
+  return isRfiWorkflowOpportunity(opportunity, C)
 }
 
 export function findRfiPocEmail(opportunity, contacts = []) {
