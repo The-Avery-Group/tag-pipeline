@@ -134,6 +134,54 @@
 }
 .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+.moreDetailsToggle {
+  align-items: center;
+  background: var(--surface);
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  color: var(--blue-700);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.moreDetailsToggle:hover { background: var(--blue-50); }
+
+.moreDetailsPanel {
+  border-top: 0.5px solid var(--gray-200);
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 14px;
+}
+
+.addFormGroup {
+  background: var(--surface);
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+}
+
+.addFormGroupTitle {
+  color: var(--blue-700);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 640px) {
+  .formGrid { grid-template-columns: 1fr; }
+  .formGrid > * { grid-column: 1 !important; }
+}
+
 /* Compact SAM discovery actions use dedicated dark-mode fills instead of the
    lighter general accents used for text and status treatments. */
 .newAction,
@@ -215,6 +263,11 @@
 .noticeTypeRFI {
   background: var(--blue-50);
   color: var(--blue-700);
+}
+
+.noticeTypeMRAS {
+  background: var(--purple-50, var(--blue-50));
+  color: var(--purple-700, var(--blue-700));
 }
 
 .noticeTypeRFP {
