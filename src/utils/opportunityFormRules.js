@@ -1,7 +1,8 @@
+import { isRfiWorkflowNoticeType } from './noticeTypes.js'
+
 export function needsRfiActivityPhasePrompt(existing, next, columns) {
-  return next[columns.phase] === 'Identified' &&
-    next[columns.outlook] === 'New' &&
-    !existing[columns.submissionDate] &&
+  return isRfiWorkflowNoticeType(next[columns.noticeType]) &&
     Boolean(next[columns.submissionDate]) &&
-    !next[columns.activityPhase]
+    !next[columns.activityPhase] &&
+    (!isRfiWorkflowNoticeType(existing[columns.noticeType]) || !existing[columns.submissionDate])
 }
