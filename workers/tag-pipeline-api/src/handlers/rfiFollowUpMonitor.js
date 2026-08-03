@@ -1,6 +1,7 @@
 import { findRFIFollowUps } from './sam.js'
 import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
+import { isRfiWorkflowOpportunity } from '../lib/noticeTypes.js'
 
 const WATCH_PREFIX = 'rfi_followup_watch:'
 const RUN_KEY = 'rfi_followup_monitor_run'
@@ -299,7 +300,7 @@ async function syncFromWorkbook(env) {
     graphRows(env, token, 'RFIFollowUpOverridesTable'), graphRows(env, token, 'RFIFollowUpDecisionsTable'),
   ])
   const globalRules = appSettings(settingsRows)
-  const watches = pipeline.filter((item) => clean(item['TAG Opportunity Phase']) === 'Identified' && clean(item['Opportunity Outlook']) === 'New').map((item) => {
+  const watches = pipeline.filter(isRfiWorkflowOpportunity).map((item) => {
     const opportunityId = clean(item['Contract Number / Notice ID'])
     const override = overrides.find((row) => normalized(row['Opportunity ID']) === normalized(opportunityId))
     const names = clean(item['Contracting Officer / Specialist (POC)*']).split(',').map(clean)
