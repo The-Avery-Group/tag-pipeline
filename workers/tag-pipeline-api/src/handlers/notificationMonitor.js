@@ -10,6 +10,7 @@ import { sendTeamsNotification } from './notify.js'
 import { getAppOnlyGraphToken as appOnlyToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
 import { buildScheduledDraft, deterministicDraftId, normalizedDate as followUpDate } from '../lib/followUpEmails.js'
+import { isRfiWorkflowOpportunity, normalizeNoticeType } from '../lib/noticeTypes.js'
 
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const NOTIFICATION_LOG_TABLE = 'DataValidationTable'
@@ -312,6 +313,7 @@ async function prepareScheduledEmailDrafts(env, token, pipeline, contacts, today
     for (const opportunity of pipeline.rows) {
       const submissionDate = normalizedDate(opportunity['Submission Date (Response Date)*'])
       if (
+        !isRfiWorkflowOpportunity(opportunity) ||
         clean(opportunity['TAG Pipeline Activity Phase']) !== 'Submitted RFI' ||
         !submissionDate ||
         submissionDate < activationDate ||
@@ -419,15 +421,15 @@ export async function runScheduledNotifications(env) {
     // Response-date reminders are the one scheduled category intentionally
     // allowed on weekends. All other reminders wait until Monday.
     for (const opportunity of pipeline.rows) {
-      const isNewRfi = clean(opportunity['TAG Opportunity Phase']) === 'Identified' && clean(opportunity['Opportunity Outlook']) === 'New'
       const remaining = daysFromToday(opportunity['Submission Date (Response Date)*'], today)
-      if (!isNewRfi || ![1, 2].includes(remaining)) continue
+      if (!isRfiWorkflowOpportunity(opportunity) || ![1, 2].includes(remaining)) continue
       await sendAndLog('rfi_response_due', {
         title: clean(opportunity['Project Title / Description*']),
         contractNumber: clean(opportunity['Contract Number / Notice ID']),
         agency: clean(opportunity['Agency*']),
         responseDate: normalizedDate(opportunity['Submission Date (Response Date)*']),
         samUrl: clean(opportunity['Other Links*']), daysUntil: remaining, recipients: everyone,
+        noticeType: normalizeNoticeType(opportunity['Notice Type']),
       }, responseReminderKey(opportunity, remaining))
     }
 
@@ -453,7 +455,7 @@ export async function runScheduledNotifications(env) {
       }
 
       const rfiDue = pipeline.rows.filter((opportunity) =>
-        clean(opportunity['TAG Pipeline Activity Phase']) === 'Submitted RFI' && !clean(opportunity['RFI Notified']) &&
+        isRfiWorkflowOpportunity(opportunity) && clean(opportunity['TAG Pipeline Activity Phase']) === 'Submitted RFI' && !clean(opportunity['RFI Notified']) &&
         (daysAgo(opportunity['Submission Date (Response Date)*'], today) ?? -1) >= 21
       )
       if (rfiDue.length) {
@@ -463,6 +465,7 @@ export async function runScheduledNotifications(env) {
           items: rfiDue.slice(0, 5).map((item) => ({
             title: clean(item['Project Title / Description*']), contractNumber: clean(item['Contract Number / Notice ID']),
             submissionDate: normalizedDate(item['Submission Date (Response Date)*']),
+            noticeType: normalizeNoticeType(item['Notice Type']),
           })),
           remainingCount: Math.max(0, rfiDue.length - 5),
         })
