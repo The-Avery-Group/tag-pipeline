@@ -81,6 +81,18 @@ export function mapAgencyResult(result) {
   }
 }
 
+export function mapTopTierReference(result) {
+  return {
+    id: result?.agency_id ?? null,
+    tier: 'toptier',
+    name: clean(result?.agency_name),
+    abbreviation: clean(result?.abbreviation),
+    toptierCode: clean(result?.toptier_code),
+    parentName: clean(result?.agency_name),
+    parentAbbreviation: clean(result?.abbreviation),
+  }
+}
+
 export function mapVehicleRecord(record) {
   const naics = record?.NAICS || {}
   const psc = record?.PSC || {}
@@ -151,13 +163,14 @@ async function fetchUSAspending(path, { method = 'GET', body, attempts = 2 } = {
     try {
       const response = await fetch(`${USASPENDING_BASE}${path}`, {
         method,
-        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        headers: body
+          ? { Accept: 'application/json', 'Content-Type': 'application/json' }
+          : { Accept: 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       })
       if (response.ok) return response.json()
-      const detail = await response.text().catch(() => '')
-      lastError = new Error(`USAspending returned ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ''}`)
+      lastError = new Error(`USAspending returned ${response.status}`)
       if (![429, 502, 503, 504, 525].includes(response.status)) break
     } catch (error) {
       lastError = error?.name === 'AbortError'
@@ -219,13 +232,31 @@ async function searchAgencies(req, ctx) {
   const limit = Math.min(20, Math.max(5, number(url.searchParams.get('limit')) || 12))
   try {
     const payload = await cachedJSON(req, `agency_search:${normalized(query)}:${limit}`, SEARCH_CACHE_SECONDS, false, async () => {
-      const response = await fetchUSAspending('/autocomplete/awarding_agency/', {
-        method: 'POST',
-        body: { search_text: query, limit },
-      })
+      let response
+      let searchSource = 'autocomplete'
+      try {
+        response = await fetchUSAspending('/autocomplete/awarding_agency/', {
+          method: 'POST',
+          body: { search_text: query, limit },
+        })
+      } catch (autocompleteError) {
+        console.warn('[Agency Intelligence] Autocomplete unavailable, using top-tier references', {
+          query,
+          error: autocompleteError.message,
+        })
+        const references = await fetchUSAspending('/references/toptier_agencies/')
+        response = {
+          results: (references?.results || [])
+            .map(mapTopTierReference)
+            .filter((agency) => matchScore(query, agency) > 0)
+            .sort((a, b) => matchScore(query, b) - matchScore(query, a) || a.name.localeCompare(b.name))
+            .slice(0, limit),
+        }
+        searchSource = 'top-tier references fallback'
+      }
       const seen = new Set()
       const agencies = (response?.results || [])
-        .map(mapAgencyResult)
+        .map((result) => result?.tier ? result : mapAgencyResult(result))
         .filter((agency) => {
           const key = `${agency.tier}:${agency.toptierCode}:${normalized(agency.name)}`
           if (!agency.name || seen.has(key)) return false
@@ -233,7 +264,7 @@ async function searchAgencies(req, ctx) {
           return true
         })
         .sort((a, b) => matchScore(query, b) - matchScore(query, a) || a.name.localeCompare(b.name))
-      return { agencies, query, fetchedAt: new Date().toISOString(), source: 'USAspending.gov' }
+      return { agencies, query, fetchedAt: new Date().toISOString(), source: 'USAspending.gov', searchSource }
     }, ctx)
     return json(payload)
   } catch (error) {
