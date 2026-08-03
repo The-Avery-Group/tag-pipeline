@@ -544,7 +544,7 @@ export default function Settings({ toast }) {
           {openSections.sam && (
             <div ref={samScopeRef} className={styles.collapsibleBody}>
               <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
-                Controls the pull of RFI, RFP, and RFQ notices from SAM.gov.
+                Controls the pull of RFI, MRAS, RFP, and RFQ notices from SAM.gov.
               </p>
 
           {!samLoaded
@@ -628,15 +628,15 @@ export default function Settings({ toast }) {
                 </div>
 
                 <div className="card">
-                  <div className={styles.sectionLabel}>RFI follow-on matching</div>
+                  <div className={styles.sectionLabel}>RFI and MRAS follow-on matching</div>
                   <p className="text-xs text-muted" style={{ margin: '4px 0 10px' }}>
-                    Defaults for SAM.gov follow-on checks. Individual RFIs can override these rules.
+                    Defaults for SAM.gov follow-on checks. Individual RFI or MRAS opportunities can override these rules.
                   </p>
                   <div className={styles.itemList}>
                     <label className="text-sm" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={rfiFollowUp.monitoringEnabled}
                         onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, monitoringEnabled: e.target.checked })); setSavedSAM(false) }} />
-                      Monitor RFIs for follow-on notices
+                      Monitor RFI and MRAS opportunities for follow-on notices
                     </label>
                     {[
                       ['departmentRule', 'Department match'],
