@@ -534,6 +534,7 @@ export const EMAIL_FOLLOW_UP_DRAFT_HEADERS = [
   'Template Name',
   'Milestone Days',
   'Due Date',
+  'From',
   'To',
   'CC',
   'Subject',
