@@ -7,6 +7,7 @@ import {
 } from '@/services/graphService'
 import { buildFollowUpDraft, isoDate } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
+import { upsertOutlookDraft } from '@/services/outlookService'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import RichEmailEditor from '@/components/Common/RichEmailEditor'
 import {
@@ -19,6 +20,7 @@ import {
 import styles from './FollowUpEmailComposer.module.css'
 
 const clean = (value) => String(value ?? '').trim()
+const PROCUREMENT_EMAIL = clean(import.meta.env.VITE_PROCUREMENT_EMAIL)
 
 function contactRecipients(contacts) {
   const seen = new Set()
@@ -93,6 +95,7 @@ function samLink(opportunity) {
 
 function statusTone(status) {
   if (status === 'Ready for review') return styles.ready
+  if (status === 'Opened in Outlook') return styles.outlook
   if (status === 'Recipient needed') return styles.needsRecipient
   if (status === 'Skipped') return styles.skipped
   return styles.scheduled
@@ -110,6 +113,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   const [saving, setSaving] = useState(false)
   const [enrolling, setEnrolling] = useState(false)
   const [improving, setImproving] = useState(false)
+  const [openingOutlook, setOpeningOutlook] = useState(false)
   const [undoDepth, setUndoDepth] = useState(0)
   const savingRef = useRef(false)
   const saveRef = useRef(null)
@@ -118,6 +122,18 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   const lastUndoGroupRef = useRef({ key: '', at: 0 })
   const opportunityId = clean(opportunity?.['Contract Number / Notice ID'])
   const availableRecipients = useMemo(() => contactRecipients(linkedContacts), [linkedContacts])
+  const defaultSender = PROCUREMENT_EMAIL || clean(user?.email)
+  const senderOptions = useMemo(() => {
+    const options = [
+      ...(PROCUREMENT_EMAIL ? [{ value: PROCUREMENT_EMAIL, label: 'Procurement mailbox' }] : []),
+      ...(clean(user?.email) ? [{ value: clean(user.email), label: 'My work email' }] : []),
+    ]
+    const current = clean(form?.From)
+    if (current && !options.some((option) => option.value.toLowerCase() === current.toLowerCase())) {
+      options.push({ value: current, label: current })
+    }
+    return options
+  }, [form?.From, user?.email])
   const submissionDate = isoDate(opportunity?.['Submission Date (Response Date)*'])
   const eligible = clean(opportunity?.['TAG Pipeline Activity Phase']) === 'Submitted RFI' && Boolean(submissionDate)
 
@@ -179,7 +195,10 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
         opportunity,
         availableRecipients,
       ))
-      const loadedDrafts = reconciled.map((item) => item.draft)
+      const loadedDrafts = reconciled.map((item) => ({
+        ...item.draft,
+        From: clean(item.draft.From) || defaultSender,
+      }))
       setTemplates(loadedTemplates)
       setDrafts(loadedDrafts)
       const repairs = reconciled.filter((item) => item.patch && Number.isInteger(item.draft._rowIndex))
@@ -218,7 +237,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
 
   useEffect(() => {
     if (selected) {
-      const next = { ...selected }
+      const next = { ...selected, From: clean(selected.From) || defaultSender }
       formRef.current = next
       setForm(next)
       resetUndo()
@@ -259,6 +278,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
           opportunity: sourceOpportunity,
           template,
           recipients: availableRecipients,
+          from: defaultSender,
           user: user?.displayName,
           source: 'Manual',
         })
@@ -319,7 +339,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     savingRef.current = true
     setSaving(true)
     try {
-      const patch = { To: form.To, CC: form.CC, Subject: form.Subject, Body: sanitizeEmailHtml(form.Body), Status: status }
+      const patch = { From: form.From, To: form.To, CC: form.CC, Subject: form.Subject, Body: sanitizeEmailHtml(form.Body), Status: status }
       await updateEmailFollowUpDraft(form._rowIndex, patch, user?.displayName)
       const updated = { ...form, ...patch }
       setDrafts((previous) => previous.map((draft) => draft['Draft ID'] === form['Draft ID'] ? updated : draft))
@@ -380,6 +400,76 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       toast?.error(`Could not improve the draft: ${error.message}`)
     } finally {
       setImproving(false)
+    }
+  }
+
+  const openInOutlook = async () => {
+    if (!form || openingOutlook) return
+    if (!clean(form.From)) {
+      toast?.error('Select a From address before opening Outlook.')
+      return
+    }
+    if (containsGenericEmailPlaceholder(`${form.Subject || ''} ${form.Body || ''}`)) {
+      toast?.error('Resolve the remaining email placeholders before opening Outlook.')
+      return
+    }
+
+    // Reserve a user-initiated window before token acquisition. This avoids a
+    // browser popup blocker after an incremental Microsoft consent prompt.
+    const outlookWindow = window.open('', 'tag-crm-outlook-draft')
+    if (outlookWindow) {
+      outlookWindow.document.title = 'Preparing Outlook draft'
+      outlookWindow.document.body.style.cssText = 'margin:0;display:grid;place-items:center;min-height:100vh;background:#f8fafc;color:#334155;font:14px system-ui,sans-serif'
+      outlookWindow.document.body.textContent = 'Preparing Outlook draft…'
+    }
+
+    setOpeningOutlook(true)
+    try {
+      const sanitizedBody = sanitizeEmailHtml(form.Body)
+      const currentDraft = { ...form, Body: sanitizedBody }
+      const outlookDraft = await upsertOutlookDraft({
+        draft: currentDraft,
+        from: currentDraft.From,
+        userEmail: user?.email,
+      })
+      if (!outlookDraft?.id || !outlookDraft?.webLink) {
+        throw new Error('Outlook created the draft but did not return a link to open it.')
+      }
+
+      if (outlookWindow && !outlookWindow.closed) outlookWindow.location.replace(outlookDraft.webLink)
+      else {
+        const opened = window.open(outlookDraft.webLink, '_blank', 'noopener,noreferrer')
+        if (!opened) throw new Error('The Outlook draft was created, but the browser blocked the new window. Allow pop-ups and try again.')
+      }
+
+      const patch = {
+        From: currentDraft.From,
+        To: currentDraft.To,
+        CC: currentDraft.CC,
+        Subject: currentDraft.Subject,
+        Body: sanitizedBody,
+        Status: 'Opened in Outlook',
+        'Outlook Draft ID': outlookDraft.id,
+        'Outlook Web Link': outlookDraft.webLink,
+        'Last Error': '',
+      }
+      const updated = { ...currentDraft, ...patch }
+      formRef.current = updated
+      setForm(updated)
+      setDrafts((previous) => previous.map((draft) => draft['Draft ID'] === updated['Draft ID'] ? updated : draft))
+      resetUndo()
+
+      try {
+        await updateEmailFollowUpDraft(updated._rowIndex, patch, user?.displayName)
+        toast?.success(outlookDraft.created ? 'Outlook draft created' : 'Outlook draft updated')
+      } catch (error) {
+        toast?.info(`Outlook opened, but the CRM could not save its draft link: ${error.message}`)
+      }
+    } catch (error) {
+      if (outlookWindow && !outlookWindow.closed) outlookWindow.close()
+      toast?.error(`Could not open the Outlook draft: ${error.message}`)
+    } finally {
+      setOpeningOutlook(false)
     }
   }
 
@@ -458,7 +548,15 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
               )}
 
               <div className={styles.addressRows}>
-                <label><span>From</span><input value="Default sender · available after mail permissions" readOnly /></label>
+                <label>
+                  <span>From</span>
+                  <select value={form.From || ''} onChange={(event) => updateField('From', event.target.value)}>
+                    {!senderOptions.length && <option value="">Sender not configured</option>}
+                    {senderOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label} · {option.value}</option>
+                    ))}
+                  </select>
+                </label>
                 <label><span>To</span><input value={form.To || ''} onChange={(event) => updateField('To', event.target.value)} placeholder="Recipient email" /></label>
                 <label><span>CC</span><input value={form.CC || ''} onChange={(event) => updateField('CC', event.target.value)} placeholder="Optional" /></label>
                 <label><span>Subject</span><input value={form.Subject || ''} onChange={(event) => updateField('Subject', event.target.value)} /></label>
@@ -467,7 +565,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
               <RichEmailEditor value={form.Body || ''} onChange={(Body) => updateField('Body', Body)} ariaLabel="Email body" />
 
               <div className={styles.safety}>
-                <span>Drafts are stored, but sending is not currently enabled.</span>
+                <span>Open in Outlook creates or updates an editable draft. Nothing is sent automatically.</span>
                 <div className={styles.editorActions}>
                   <button type="button" className="btn btn-ghost" onClick={undo} disabled={!undoDepth || improving} title="Undo the latest unsaved change (Ctrl+Z or Cmd+Z)">Undo</button>
                   <button type="button" className="btn btn-ghost" onClick={improve} disabled={improving}>{improving ? 'Improving…' : 'Improve with AI'}</button>
@@ -476,8 +574,10 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
 
               <div className={styles.actions}>
                 <div className={styles.disabledActions}>
-                  <button type="button" className="btn btn-primary" disabled title="Available after Exchange mail permissions">Send from CRM</button>
-                  <button type="button" className="btn" disabled title="Available after Outlook integration">Open in Outlook</button>
+                  <button type="button" className="btn" disabled title="Direct sending is reserved for Release 3">Send from CRM</button>
+                  <button type="button" className="btn btn-primary" onClick={openInOutlook} disabled={openingOutlook || saving} title="Create or update this draft in Outlook">
+                    {openingOutlook ? 'Opening…' : 'Open in Outlook'}
+                  </button>
                 </div>
                 <div>
                   <button type="button" className="btn btn-ghost" onClick={() => save('Skipped')} disabled={saving}>Skip follow-up</button>
