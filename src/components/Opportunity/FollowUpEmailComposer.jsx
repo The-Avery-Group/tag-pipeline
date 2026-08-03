@@ -18,6 +18,7 @@ import {
   sanitizeEmailHtml,
 } from '@/utils/emailHtml'
 import styles from './FollowUpEmailComposer.module.css'
+import { isRfiWorkflowOpportunity, normalizeNoticeType } from '@/utils/noticeTypes'
 
 const clean = (value) => String(value ?? '').trim()
 const PROCUREMENT_EMAIL = clean(import.meta.env.VITE_PROCUREMENT_EMAIL)
@@ -135,7 +136,9 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     return options
   }, [form?.From, user?.email])
   const submissionDate = isoDate(opportunity?.['Submission Date (Response Date)*'])
-  const eligible = clean(opportunity?.['TAG Pipeline Activity Phase']) === 'Submitted RFI' && Boolean(submissionDate)
+  const noticeType = normalizeNoticeType(opportunity?.['Notice Type'])
+  const workflowLabel = noticeType === 'MRAS' ? 'MRAS' : 'RFI'
+  const eligible = isRfiWorkflowOpportunity(opportunity) && clean(opportunity?.['TAG Pipeline Activity Phase']) === 'Submitted RFI' && Boolean(submissionDate)
 
   const opportunityDrafts = useMemo(
     () => drafts
@@ -477,7 +480,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     <section ref={panelRef} className={styles.panel}>
       <button type="button" className={styles.panelHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className={styles.headerCopy}>
-          <span className={styles.title}>RFI follow-up emails</span>
+          <span className={styles.title}>{workflowLabel} follow-up emails</span>
           <span className={styles.hint}>Prepare and review follow-up drafts. Nothing is sent automatically.</span>
         </span>
         {opportunityDrafts.length > 0 && <span className={styles.count}>{opportunityDrafts.length}</span>}
@@ -491,13 +494,13 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
             <div className={styles.notice}>Follow-up email tables are not configured. An administrator can add them using the workbook setup guide.</div>
           )}
           {!loading && configured && !eligible && (
-            <div className={styles.notice}>Follow-up emails become available after this opportunity is marked Submitted RFI and has a submission date.</div>
+            <div className={styles.notice}>Follow-up emails become available after this RFI or MRAS opportunity is submitted and has a submission date.</div>
           )}
           {!loading && configured && eligible && !opportunityDrafts.length && (
             <div className={styles.empty}>
               <div>
-                <strong>No follow-up drafts have been prepared for this RFI</strong>
-                <p>Older RFIs are not prepared automatically. Prepare them here when you are ready.</p>
+                <strong>No follow-up drafts have been prepared for this {workflowLabel}</strong>
+                <p>Older RFI and MRAS opportunities are not prepared automatically. Prepare them here when you are ready.</p>
               </div>
               <button type="button" className="btn btn-primary" onClick={enroll} disabled={enrolling}>
                 {enrolling ? 'Preparing…' : 'Prepare follow-up drafts'}
