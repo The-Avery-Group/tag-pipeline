@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeDiscoveryNoticeType, startScheduledSAMPull } from '../src/handlers/sam.js'
+import { normalizeDiscoveryNoticeType, parseOrg, startScheduledSAMPull } from '../src/handlers/sam.js'
 import { runSAMPullWorkflowCheckpoint } from '../src/workflows/samPullChain.js'
 
 test('scheduled SAM pulls create one idempotent workflow instance per day', async () => {
@@ -184,5 +184,22 @@ test('SAM discovery classifies compact and descriptive procurement types consist
   assert.equal(
     normalizeDiscoveryNoticeType('Solicitation', 'Combined Synopsis/Solicitation'),
     'RFQ',
+  )
+})
+
+test('SAM hierarchy names and identifiers stay aligned by level', () => {
+  assert.deepEqual(
+    parseOrg(
+      'DEPT OF DEFENSE.DEPT OF THE ARMY.W6QM MICC-FT KNOX',
+      '097.2100.W9124D',
+    ),
+    {
+      department: 'DEPT OF DEFENSE',
+      agency: 'DEPT OF THE ARMY',
+      office: 'W6QM MICC-FT KNOX',
+      departmentId: '097',
+      agencyId: '2100',
+      officeId: 'W9124D',
+    },
   )
 })
