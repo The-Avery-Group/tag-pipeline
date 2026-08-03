@@ -39,6 +39,11 @@ import {
 } from '@/services/graphService'
 import styles from './OpportunityDetail.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
+import {
+  NOTICE_TYPE_VALUES,
+  isRfiWorkflowOpportunity,
+  normalizeNoticeType,
+} from '@/utils/noticeTypes'
 
 // ── Column constants ──────────────────────────────────────────────────────
 const C = {
@@ -76,6 +81,7 @@ const C = {
   vehicleNumber:  'Contract Vehicle Number',
   vehicle:        'Contract Vehicle',
   classification: 'Contract Classification*',
+  noticeType:     'Notice Type',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -663,7 +669,9 @@ export default function OpportunityDetail({ toast }) {
 
   const f = (key) => cur[key]
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
-  const isRFI = opp[C.phase] === 'Identified' && opp[C.outlook] === 'New'
+  const isRfiWorkflow = isRfiWorkflowOpportunity(cur, C)
+  const noticeType = normalizeNoticeType(f(C.noticeType))
+  const submissionDateLabel = noticeType === 'MRAS' ? 'MRAS submission date' : noticeType === 'RFI' ? 'RFI submission date' : 'Response date'
   const hasIncumbentHistory = /^[A-Z0-9]{12}$/.test(String(opp[C.incumbentUEI] || '').trim().toUpperCase())
   const sectionGroups = [
     ['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]],
@@ -675,7 +683,7 @@ export default function OpportunityDetail({ toast }) {
     ]],
     ['Follow-up', [
       ['Follow-up emails', 'followup-email'],
-      ...(isRFI ? [['RFI matcher', 'followup-rfi']] : []),
+      ...(isRfiWorkflow ? [[noticeType === 'MRAS' ? 'MRAS matcher' : 'RFI matcher', 'followup-rfi']] : []),
     ]],
   ]
   const hasSubmissionDate = !Number.isNaN(localDate(opp[C.submDate]).getTime())
@@ -827,8 +835,7 @@ export default function OpportunityDetail({ toast }) {
   const handleSave = () => {
     const cleanedForm = { ...form, [C.otherLinks]: joinLinks(cleanLinks(form[C.otherLinks])) }
     const needsActivityPrompt = needsRfiActivityPhasePrompt(opp, cleanedForm, {
-      phase: C.phase,
-      outlook: C.outlook,
+      noticeType: C.noticeType,
       submissionDate: C.submDate,
       activityPhase: C.actPhase,
     })
@@ -1212,12 +1219,22 @@ export default function OpportunityDetail({ toast }) {
                     >
                       {outlookOptions.map((o) => <option key={o}>{o}</option>)}
                     </select>
+                    <select
+                      className={styles.badgeSelect}
+                      value={f(C.noticeType) || ''}
+                      onChange={(e) => set(C.noticeType)(e.target.value)}
+                      aria-label="Notice type"
+                    >
+                      <option value="">Notice type</option>
+                      {NOTICE_TYPE_VALUES.map((type) => <option key={type}>{type}</option>)}
+                    </select>
                   </>
                 )
                 : (
                   <>
                     <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
                     {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
+                    {normalizeNoticeType(opp[C.noticeType]) && <span className={`badge ${normalizeNoticeType(opp[C.noticeType]) === 'MRAS' ? 'badge-qualify' : normalizeNoticeType(opp[C.noticeType]) === 'RFI' ? 'badge-tracking' : 'badge-proposal'}`}>{normalizeNoticeType(opp[C.noticeType])}</span>}
                   </>
                 )
               }
@@ -1307,6 +1324,7 @@ export default function OpportunityDetail({ toast }) {
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Capture status</div><div className={styles.fieldGrid}>
               <Field label="Opportunity title" value={f(C.title)} editing onChange={set(C.title)} />
               <Field label="Contract or notice ID" value={f(C.contractNum)} editing onChange={set(C.contractNum)} raw />
+              <Field label="Notice type" value={f(C.noticeType)} editing onChange={set(C.noticeType)} options={NOTICE_TYPE_VALUES} />
               <Field label="Activity phase" value={f(C.actPhase)} editing onChange={set(C.actPhase)} options={activityPhaseOptions} />
               <Field label="Pursuit priority" value={f(C.priority)} editing onChange={set(C.priority)} options={priorityOptions} />
               <Field label="Bid decision" value={f(C.bidNoBid)} editing onChange={set(C.bidNoBid)} options={bidNoBidOptions} />
@@ -1327,7 +1345,7 @@ export default function OpportunityDetail({ toast }) {
               <Field label="Incumbent UEI" value={f(C.incumbentUEI)} editing onChange={set(C.incumbentUEI)} raw />
             </div></div>
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Dates and contract</div><div className={styles.fieldGrid}>
-              {(isRFI || hasSubmissionDate) && <Field label="RFI submission date" value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
+              {(isRfiWorkflow || hasSubmissionDate) && <Field label={submissionDateLabel} value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
               <Field label="Contract end date" value={f(C.endDate)} editing onChange={set(C.endDate)} type="date" />
               <Field label="Anticipated award date" value={f(C.awardDate)} editing onChange={set(C.awardDate)} type="date" />
               <Field label="Fiscal year" value={f(C.fiscalYear)} editing onChange={set(C.fiscalYear)} raw />
@@ -1337,6 +1355,7 @@ export default function OpportunityDetail({ toast }) {
           </div> : <>
             <SummaryGroup title="Capture status" items={[
               { label: 'Opportunity phase', value: f(C.phase), raw: true }, { label: 'Activity phase', value: f(C.actPhase), raw: true },
+              { label: 'Notice type', value: f(C.noticeType), raw: true },
               { label: 'Outlook', value: f(C.outlook), raw: true }, { label: 'Pursuit priority', value: f(C.priority), raw: true },
               { label: 'Bid decision', value: f(C.bidNoBid), raw: true }, { label: 'Assigned to', value: f(C.assignedTo), raw: true },
               { label: 'Prime or sub', value: f(C.primeOrSub), raw: true }, { label: 'Partners', value: f(C.partner), raw: true },
@@ -1350,7 +1369,7 @@ export default function OpportunityDetail({ toast }) {
               { label: 'Incumbent UEI', value: f(C.incumbentUEI), raw: true },
             ]} />
             <SummaryGroup title="Dates and contract" items={[
-              { label: 'RFI submission date', value: (isRFI || hasSubmissionDate) ? f(C.submDate) : '', display: formatDate(f(C.submDate)) },
+              { label: submissionDateLabel, value: (isRfiWorkflow || hasSubmissionDate) ? f(C.submDate) : '', display: formatDate(f(C.submDate)) },
               { label: 'Contract end date', value: f(C.endDate), display: formatDate(f(C.endDate)) },
               { label: 'Anticipated award date', value: f(C.awardDate), display: formatDate(f(C.awardDate)) },
               { label: 'Fiscal year', value: f(C.fiscalYear), raw: true },
@@ -1646,7 +1665,7 @@ export default function OpportunityDetail({ toast }) {
           user={user}
           toast={toast}
         /></div>
-        {isRFI && (
+        {isRfiWorkflow && (
           <div id="followup-rfi" className={styles.sectionAnchor}><RfiFollowUpPanel
             opp={opp}
             contacts={contacts}
