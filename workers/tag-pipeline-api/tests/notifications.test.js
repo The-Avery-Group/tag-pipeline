@@ -72,6 +72,20 @@ test('scheduled cards still render when no mention identity is configured', () =
   assert.match(JSON.stringify(content.body), /@Ayomide/)
 })
 
+test('MRAS uses the existing RFI reminder card workflow with an accurate label', () => {
+  const card = cardForType('rfi_response_due', {
+    title: 'Example market research notice',
+    contractNumber: 'MRAS-123',
+    agency: 'Example Agency',
+    responseDate: '2026-08-05',
+    daysUntil: 2,
+    noticeType: 'MRAS',
+    recipients: [],
+  }, { ALLOWED_ORIGIN: 'https://example.com' })
+
+  assert.match(JSON.stringify(card.attachments[0].content.body), /MRAS response due in two days/)
+})
+
 test('task summaries share one daily dedupe key per reminder category', () => {
   const date = '2026-07-28'
 
