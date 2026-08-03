@@ -1,16 +1,18 @@
-const NOTICE_TYPES = new Set(['RFI', 'RFP', 'RFQ'])
+import { isRfiWorkflowNoticeType, normalizeNoticeType } from './noticeTypes.js'
+
+const NOTICE_TYPES = new Set(['RFI', 'MRAS', 'RFP', 'RFQ'])
 
 export function normalizeSAMNoticeType(value) {
   const values = (Array.isArray(value) ? value : [value])
     .map((item) => String(item || '').trim().toUpperCase())
     .filter(Boolean)
   const combined = values.join(' ')
+  if (values.includes('MRAS') || combined.includes('MARKET RESEARCH')) return 'MRAS'
   if (values.includes('K') || values.includes('RFQ') || combined.includes('COMBINED')) return 'RFQ'
   if (values.includes('O') || values.includes('RFP') || combined.includes('SOLICITATION')) return 'RFP'
   if (values.includes('R') || values.includes('RFI') || (combined.includes('SOURCE') && combined.includes('SOUGHT'))) return 'RFI'
   if (values.some((type) => NOTICE_TYPES.has(type))) return values.find((type) => NOTICE_TYPES.has(type))
-  // Rows pulled before Notice Type was introduced were all Sources Sought.
-  return 'RFI'
+  return ''
 }
 
 function parseOrganization(value) {
@@ -40,7 +42,7 @@ export function applySAMSnapshot(row, snapshot) {
     'Notice ID': snapshot.noticeId || row['Notice ID'],
     'Solicitation Number': snapshot.solicitationNumber || row['Solicitation Number'],
     Title: snapshot.title || row.Title,
-    'Notice Type': normalizeSAMNoticeType([snapshot.type, snapshot.baseType, row['Notice Type']]),
+    'Notice Type': normalizeSAMNoticeType([snapshot.type, snapshot.baseType, snapshot.title, row['Notice Type']]),
     'Set-Aside Type': snapshot.setAside || row['Set-Aside Type'],
     Department: organization.department || row.Department,
     Agency: organization.agency || row.Agency,
@@ -81,7 +83,10 @@ export function sortSAMOpportunities(rows, mode = 'dateAdded') {
 }
 
 export function samTypeMatches(row, selectedType) {
-  return selectedType === 'All' || normalizeSAMNoticeType(row['Notice Type']) === selectedType
+  if (selectedType === 'All') return true
+  const noticeType = normalizeSAMNoticeType(row['Notice Type'])
+  if (selectedType === 'RFI_MRAS') return isRfiWorkflowNoticeType(noticeType)
+  return noticeType === normalizeNoticeType(selectedType)
 }
 
 function normalizedIdentity(value) {
@@ -142,6 +147,7 @@ export function buildSAMOpportunityPatch(opportunity, snapshot, columns) {
   const currentLinks = cleanLinks(opportunity[columns.otherLinks])
   const nextLinks = samLink && !currentLinks.includes(samLink) ? [...currentLinks, samLink] : currentLinks
   const candidates = [
+    [columns.noticeType, normalizeSAMNoticeType([snapshot.type, snapshot.baseType, snapshot.title])],
     [columns.title, snapshot.title],
     [columns.solNum, snapshot.solicitationNumber],
     [columns.setAside, snapshot.setAside],
@@ -156,6 +162,7 @@ export function buildSAMOpportunityPatch(opportunity, snapshot, columns) {
   const patch = {}
   const changes = []
   candidates.forEach(([column, incoming]) => {
+    if (!column) return
     const next = String(incoming || '').trim()
     const current = String(opportunity[column] || '').trim()
     if (!next || next === current) return
