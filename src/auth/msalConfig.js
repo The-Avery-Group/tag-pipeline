@@ -33,6 +33,13 @@ export const loginRequest = {
   scopes: ['User.Read', 'Files.ReadWrite', 'Sites.ReadWrite.All'],
 }
 
+// Requested incrementally only when a user explicitly opens an email draft
+// in Outlook. Keeping mail access out of the normal login request prevents a
+// missing mail consent from interrupting the rest of the CRM.
+export const mailDraftRequest = {
+  scopes: ['Mail.ReadWrite'],
+}
+
 export const graphConfig = {
   graphMeEndpoint: 'https://graph.microsoft.com/v1.0/me',
   graphFilesEndpoint: 'https://graph.microsoft.com/v1.0/me/drive/items',
