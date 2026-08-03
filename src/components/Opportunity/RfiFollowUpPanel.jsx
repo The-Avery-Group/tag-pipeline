@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { effectiveRfiFollowUpCriteria } from '@/hooks/useRfiFollowUpMonitor'
 import { formatDate } from '@/utils/kpiHelpers'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
+import { normalizeNoticeType } from '@/utils/noticeTypes'
 
 function safeUrl(url) {
   try { const parsed = new URL(url); return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '' } catch { return '' }
@@ -20,6 +21,7 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
   const candidates = status?.candidates || []
   const pending = candidates.filter((candidate) => !candidate.decision)
   const reviewed = candidates.filter((candidate) => candidate.decision)
+  const workflowLabel = normalizeNoticeType(opp?.[columns.noticeType]) === 'MRAS' ? 'MRAS' : 'RFI'
 
   useEffect(() => {
     if (!focusRequested) return
@@ -49,14 +51,14 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
     try {
       await onSaveOverride(opportunityId, criteria)
       setEditingCriteria(false)
-      toast?.success('RFI follow-on criteria saved')
+      toast?.success(`${workflowLabel} follow-on criteria saved`)
     } catch (error) {
       toast?.error(`Could not save criteria: ${error.message}`)
     } finally { setSavingCriteria(false) }
   }
   useSaveShortcut({
     enabled: editingCriteria && Boolean(criteria) && !savingCriteria,
-    label: 'these RFI follow-on criteria',
+    label: `these ${workflowLabel} follow-on criteria`,
     onSave: saveCriteria,
     scopeRef: panelRef,
   })
@@ -81,7 +83,7 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
     <div ref={panelRef} className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12, scrollMarginTop: 16 }}>
       <button onClick={() => setOpen((value) => !value)} style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%', padding: '12px 16px', border: 'none', background: 'var(--surface)', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font)' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)' }}>RFI follow-on matcher</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)' }}>{workflowLabel} follow-on matcher</div>
           <div className="text-xs text-muted" style={{ marginTop: 2 }}>
             {status?.lastCheckedAt ? `${pending.length} pending result${pending.length === 1 ? '' : 's'} · checked ${formatDate(status.lastCheckedAt)}` : 'Run a targeted SAM.gov follow-on check.'}
           </div>
@@ -115,7 +117,7 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
           </>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}><button className="btn text-xs" onClick={() => setEditingCriteria(false)}>Cancel</button><button className="btn btn-primary text-xs" onClick={saveCriteria} disabled={savingCriteria}>{savingCriteria ? 'Saving…' : 'Save criteria'}</button></div>
         </div>}
-        {!effective.rules.monitoringEnabled && <p className="text-sm text-muted">Follow-on monitoring is disabled for this RFI.</p>}
+        {!effective.rules.monitoringEnabled && <p className="text-sm text-muted">Follow-on monitoring is disabled for this {workflowLabel}.</p>}
         {effective.rules.monitoringEnabled && effective.rules.pocRule === 'Exact' && !effective.pocEmail && <p className="text-sm text-muted">Link a contact with an email address, choose an override, or set the POC rule to Ignore before checking.</p>}
         {monitor.error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-on check failed: {monitor.error}</p>}
         {!monitor.checking && status?.lastCheckedAt && candidates.length === 0 && <p className="text-sm text-muted">No matching follow-on RFPs or RFQs found.</p>}
