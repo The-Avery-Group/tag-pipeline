@@ -53,10 +53,12 @@ test('builds a ready draft when its due date has arrived', () => {
       Body: 'Hello {{contact_first_name}}',
     },
     recipient: { name: 'Alex Person', email: 'alex@example.gov' },
+    from: 'procurement@example.com',
     today: '2026-07-30',
     now: '2026-07-30T12:00:00.000Z',
   })
   assert.equal(draft.Status, 'Ready for review')
+  assert.equal(draft.From, 'procurement@example.com')
   assert.equal(draft['Due Date'], '2026-07-22')
   assert.equal(draft.To, 'alex@example.gov')
 })
