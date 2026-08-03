@@ -142,12 +142,16 @@ function parsePOC(pocList) {
   return [name, email, phone].filter(Boolean).join(' | ')
 }
 
-function parseOrg(fullParentPathName) {
+export function parseOrg(fullParentPathName, fullParentPathCode = '') {
   const parts = String(fullParentPathName || '').split('.').map((s) => s.trim()).filter(Boolean)
+  const codes = String(fullParentPathCode || '').split('.').map((s) => s.trim()).filter(Boolean)
   return {
     department: parts[0] || '',
     agency:     parts[1] || parts[0] || '',
     office:     parts[2] || '',
+    departmentId: codes[0] || '',
+    agencyId: codes[1] || codes[0] || '',
+    officeId: codes[2] || '',
   }
 }
 
@@ -283,6 +287,7 @@ const NEW_OPP_HEADERS = [
   'Department', 'Agency', 'Office', 'Response Date', 'Point of Contact',
   'NAICS Code', 'Posted Date', 'SAM.gov URL', 'Date Added', 'Status',
   'Notice Type',
+  'Department ID', 'Agency ID',
 ]
 
 async function appendOpportunity(env, token, data, headers = NEW_OPP_HEADERS) {
@@ -361,7 +366,7 @@ export function normalizeDiscoveryNoticeType(...values) {
 }
 
 function mapRecord(raw, naicsCode) {
-  const org = parseOrg(raw.fullParentPathName)
+  const org = parseOrg(raw.fullParentPathName, raw.fullParentPathCode)
   const noticeType = normalizeDiscoveryNoticeType(raw.type, raw.baseType, raw.title)
   return {
     'Notice ID':           String(raw.noticeId || '').trim(),
@@ -371,6 +376,8 @@ function mapRecord(raw, naicsCode) {
     'Department':          org.department,
     'Agency':              org.agency,
     'Office':              org.office,
+    'Department ID':       org.departmentId,
+    'Agency ID':           org.agencyId,
     'Response Date':       parseResponseDate(raw.responseDeadLine),
     'Point of Contact':    parsePOC(raw.pointOfContact),
     'NAICS Code':          naicsCode,
@@ -484,7 +491,7 @@ function followUpCandidate(raw, source) {
   // A follow-on must be posted strictly AFTER the RFI was submitted. This
   // guards against a broad API response ever admitting an older notice.
   if (sourceSubmission && (!candidatePosted || candidatePosted <= sourceSubmission)) return null
-  const org = parseOrg(raw.fullParentPathName)
+  const org = parseOrg(raw.fullParentPathName, raw.fullParentPathCode)
   if (rules.departmentRule === 'Exact' && normalized(org.department) !== normalized(source.department)) return null
   if (rules.agencyRule === 'Exact' && normalized(org.agency) !== normalized(source.agency)) return null
   const poc = rules.pocRule === 'Exact' ? matchingPOC(raw, source.pocEmail) : null
@@ -876,13 +883,18 @@ async function runSAMPull(
           // Rows written before compact SAM ptype codes were supported may
           // have been labelled RFI. Repair only the type and preserve every
           // user-controlled field, including Status.
-          if (
-            hasNoticeTypeColumn &&
-            normalizedNoticeType(existing['Notice Type']) !== mapped['Notice Type']
-          ) {
+          const needsTypeRepair = hasNoticeTypeColumn && normalizedNoticeType(existing['Notice Type']) !== mapped['Notice Type']
+          const needsDepartmentIdRepair = existingHeaders.includes('Department ID') && String(existing['Department ID'] || '') !== mapped['Department ID']
+          const needsAgencyIdRepair = existingHeaders.includes('Agency ID') && String(existing['Agency ID'] || '') !== mapped['Agency ID']
+          if (needsTypeRepair || needsDepartmentIdRepair || needsAgencyIdRepair) {
             typeRepairs.push({
               rowIndex: existing._rowIndex,
-              row: { ...existing, 'Notice Type': mapped['Notice Type'] },
+              row: {
+                ...existing,
+                ...(needsTypeRepair ? { 'Notice Type': mapped['Notice Type'] } : {}),
+                ...(needsDepartmentIdRepair ? { 'Department ID': mapped['Department ID'] } : {}),
+                ...(needsAgencyIdRepair ? { 'Agency ID': mapped['Agency ID'] } : {}),
+              },
             })
           }
           continue
