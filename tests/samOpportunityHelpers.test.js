@@ -16,8 +16,10 @@ test('normalizes current and legacy SAM notice types', () => {
   assert.equal(normalizeSAMNoticeType('r'), 'RFI')
   assert.equal(normalizeSAMNoticeType('o'), 'RFP')
   assert.equal(normalizeSAMNoticeType('k'), 'RFQ')
+  assert.equal(normalizeSAMNoticeType('MRAS'), 'MRAS')
+  assert.equal(normalizeSAMNoticeType('Market Research Notice'), 'MRAS')
   assert.equal(normalizeSAMNoticeType(['Solicitation', 'Combined Synopsis/Solicitation']), 'RFQ')
-  assert.equal(normalizeSAMNoticeType(''), 'RFI')
+  assert.equal(normalizeSAMNoticeType(''), '')
 })
 
 test('applies a fresh SAM snapshot before displaying or adding an opportunity', () => {
@@ -42,8 +44,10 @@ test('sorts discovery rows by newest date added and cycles response-date modes s
   assert.deepEqual(sortSAMOpportunities(rows, 'responseDesc').map((row) => row._rowIndex), [2, 1])
 })
 
-test('defaults legacy discovery rows to the RFI filter', () => {
-  assert.equal(samTypeMatches({}, 'RFI'), true)
+test('filters RFI and MRAS together without misclassifying unknown rows', () => {
+  assert.equal(samTypeMatches({}, 'RFI'), false)
+  assert.equal(samTypeMatches({ 'Notice Type': 'RFI' }, 'RFI_MRAS'), true)
+  assert.equal(samTypeMatches({ 'Notice Type': 'MRAS' }, 'RFI_MRAS'), true)
   assert.equal(samTypeMatches({ 'Notice Type': 'RFP' }, 'RFI'), false)
   assert.equal(samTypeMatches({ 'Notice Type': 'RFQ' }, 'All'), true)
 })
@@ -61,6 +65,7 @@ test('collapses duplicate discovery rows without merging an RFI into its RFP fol
 
 test('builds a reviewable pipeline patch without replacing the contract identifier', () => {
   const columns = {
+    noticeType: 'Notice Type',
     contractNum: 'Contract',
     title: 'Title',
     solNum: 'Solicitation',
@@ -83,5 +88,6 @@ test('builds a reviewable pipeline patch without replacing the contract identifi
   }, columns)
   assert.equal(result.patch.Contract, undefined)
   assert.equal(result.patch.Title, 'New')
+  assert.equal(result.patch['Notice Type'], undefined)
   assert.match(result.patch.Links, /sam\.gov/)
 })
