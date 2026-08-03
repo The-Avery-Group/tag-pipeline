@@ -4,6 +4,9 @@
 .agencySearch { background: var(--gray-50); border-bottom: 0.5px solid var(--gray-200); display: grid; gap: 6px; padding: 14px; position: sticky; top: 0; z-index: 2; }
 .agencySearch label { color: var(--gray-700); font-size: 11px; font-weight: 650; }
 .agencySearch small { color: var(--gray-500); font-size: 10px; line-height: 1.4; }
+.identifierSync { align-items: center; border-top: 0.5px solid var(--gray-200); display: grid; gap: 5px; margin-top: 3px; padding-top: 9px; }
+.identifierSync button { justify-self: start; }
+.identifierSync span { color: var(--gray-500); font-size: 9px; line-height: 1.35; }
 .agencyList { display: grid; }
 .listHeading { align-items: center; color: var(--gray-500); display: flex; font-size: 10px; font-weight: 700; justify-content: space-between; letter-spacing: .07em; padding: 12px 14px 7px; text-transform: uppercase; }
 .listHeading small { font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; }
