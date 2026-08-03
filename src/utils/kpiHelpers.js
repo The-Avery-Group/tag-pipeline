@@ -8,6 +8,7 @@
  *    timezones this shifts to the previous calendar day when displayed locally.
  *  - Fix: append 'T00:00:00' (no Z) so the browser parses as LOCAL midnight.
  */
+import { isRfiWorkflowOpportunity } from './noticeTypes.js'
 
 // ── Date helpers ──────────────────────────────────────────────────────────
 
@@ -157,7 +158,7 @@ export function computeExpiringBands(pipeline = []) {
 /**
  * Returns the last `monthsBack` calendar months (including current) as an
  * array of { year, month, label, monthKey, count } objects, zero-filled for
- * empty months. Counts every opportunity with a submission date, using
+ * empty months. Counts RFI and MRAS opportunities with a submission date, using
  * Submission Date (Response Date)* as the month reference. monthKey is a
  * stable 'YYYY-MM' identifier for filtering/URL use.
  */
@@ -182,7 +183,7 @@ export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
     })
   }
 
-  pipeline.forEach((o) => {
+  pipeline.filter(isRfiWorkflowOpportunity).forEach((o) => {
     const d = parseLocalDate(o[C_SUBMDATE])
     if (isNaN(d.getTime())) return
     const bucket = months.find(
