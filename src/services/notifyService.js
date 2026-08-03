@@ -172,6 +172,7 @@ export async function notifyRFIFollowUp(opportunities) {
       title: text(opportunity['Project Title / Description*']),
       contractNumber: text(opportunity['Contract Number / Notice ID']),
       submissionDate: text(opportunity['Submission Date (Response Date)*']),
+      noticeType: text(opportunity['Notice Type']),
     })),
     remainingCount: Math.max(0, opportunities.length - 5),
   })
@@ -186,6 +187,7 @@ export async function notifyRFIResponseReminder(opportunity, daysUntil) {
     responseDate: text(opportunity['Submission Date (Response Date)*']),
     samUrl: text(opportunity['Other Links*']),
     daysUntil,
+    noticeType: text(opportunity['Notice Type']),
     recipients,
   })
 }
