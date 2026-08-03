@@ -217,6 +217,15 @@ function rfiRows(items) {
   return [header, ...rows]
 }
 
+function marketResearchLabel(items = [], fallback = '') {
+  const types = new Set(items.map((item) => String(item?.noticeType || '').trim().toUpperCase()).filter(Boolean))
+  if (!types.size && fallback) types.add(String(fallback).trim().toUpperCase())
+  if (!types.size) return 'RFI'
+  if (types.size === 1 && types.has('MRAS')) return 'MRAS'
+  if (types.size === 1 && types.has('RFI')) return 'RFI'
+  return 'RFI and MRAS'
+}
+
 function contactRows(items) {
   return items.map((item) => textBlock(
     `**${cardText(item.name)}**${item.agency ? ` · ${cardText(item.agency)}` : ''}\nLast interaction: ${formatDate(item.lastInteraction)}`,
@@ -356,18 +365,19 @@ export function cardForType(type, payload, env) {
     case 'rfi_followup': {
       const recipients = uniqueRecipients(payload.recipients || [])
       const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
+      const workflowLabel = marketResearchLabel(payload.items)
       return buildCard({
-        title: 'RFI follow-up due',
+        title: `${workflowLabel} follow-up due`,
         subtitle: '21 days since submission',
         icon: '↻',
         color: 'warning',
         recipients,
         body: [
-          ...(recipientText ? [textBlock(`Hello ${recipientText}, it has been 21 days since the RFIs below were submitted. Please follow up as appropriate.`)] : []),
+          ...(recipientText ? [textBlock(`Hello ${recipientText}, it has been 21 days since the ${workflowLabel} opportunities below were submitted. Please follow up as appropriate.`)] : []),
           ...rfiRows(payload.items || []),
           ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
         ],
-        actions: [action('View RFIs', rfiFollowUpUrl(base, payload.filterIds))],
+        actions: [action(`View ${workflowLabel}`, rfiFollowUpUrl(base, payload.filterIds))],
       })
     }
 
@@ -377,16 +387,17 @@ export function cardForType(type, payload, env) {
       const samUrl = firstUrl(payload.samUrl)
       const recipients = uniqueRecipients(payload.recipients || [])
       const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
+      const workflowLabel = marketResearchLabel([], payload.noticeType)
       if (samUrl) actions.push(action('View on SAM.gov', samUrl))
       return buildCard({
-        title: isTomorrow ? 'RFI response due tomorrow' : 'RFI response due in two days',
+        title: isTomorrow ? `${workflowLabel} response due tomorrow` : `${workflowLabel} response due in two days`,
         subtitle: 'Response reminder',
         icon: '!',
         color: isTomorrow ? 'attention' : 'warning',
         noWrapTitle: true,
         recipients,
         body: [
-          ...(recipientText ? [textBlock(`Hello ${recipientText}, please note that this RFI response is due ${isTomorrow ? 'tomorrow' : 'in two days'}.`)] : []),
+          ...(recipientText ? [textBlock(`Hello ${recipientText}, please note that this ${workflowLabel} response is due ${isTomorrow ? 'tomorrow' : 'in two days'}.`)] : []),
           textBlock(cardText(payload.title)),
           detail('Agency', payload.agency),
           detail('Response date', formatDate(payload.responseDate)),
