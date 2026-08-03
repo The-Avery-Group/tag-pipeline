@@ -29,6 +29,7 @@
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
+import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances delegated pulls while it remains open. Autonomous pulls use a
 // Cloudflare Workflow so every unit gets its own retryable durable step.
@@ -352,15 +353,16 @@ export function normalizeDiscoveryNoticeType(...values) {
     .map((value) => String(value || '').trim().toUpperCase())
     .filter(Boolean)
   const combined = types.join(' ')
+  if (types.includes('MRAS') || combined.includes('MARKET RESEARCH')) return 'MRAS'
   if (types.includes('K') || types.includes('RFQ') || combined.includes('COMBINED')) return 'RFQ'
   if (types.includes('O') || types.includes('RFP') || combined.includes('SOLICITATION')) return 'RFP'
   if (types.includes('R') || types.includes('RFI') || (combined.includes('SOURCE') && combined.includes('SOUGHT'))) return 'RFI'
-  return 'RFI'
+  return ''
 }
 
 function mapRecord(raw, naicsCode) {
   const org = parseOrg(raw.fullParentPathName)
-  const noticeType = normalizeDiscoveryNoticeType(raw.type, raw.baseType)
+  const noticeType = normalizeDiscoveryNoticeType(raw.type, raw.baseType, raw.title)
   return {
     'Notice ID':           String(raw.noticeId || '').trim(),
     'Solicitation Number': String(raw.solicitationNumber || '').trim(),
@@ -797,7 +799,7 @@ async function runSAMPull(
     // stored RFI label to delete another existing row by solicitation number
     // until SAM has revalidated and repaired that row's type. Exact Notice ID
     // duplicate cleanup above remains safe.
-    if (normalizedNoticeType(r['Notice Type']) === 'RFI') return
+    if (isRfiWorkflowNoticeType(normalizedNoticeType(r['Notice Type']))) return
     const solKey = solicitationDedupKey(r['Solicitation Number'], r['Notice Type'])
     if (!solKey) return
     const postedDate = String(r['Posted Date'] || '')
@@ -830,7 +832,7 @@ async function runSAMPull(
   const hasNoticeTypeColumn = existingHeaders.includes('Notice Type')
   const naicsErrors = hasNoticeTypeColumn
     ? []
-    : ['NewOpportunitiesTable is missing the Notice Type column. RFP and RFQ results were skipped until that column is added.']
+    : ['NewOpportunitiesTable is missing the Notice Type column. MRAS, RFP, and RFQ results were skipped until that column is added.']
   const candidates  = []   // { mapped, noticeId, noticeKey, solKey }
   const typeRepairs = []
   let fatalError = null
