@@ -12,6 +12,7 @@ import {
   notifyStaleContacts,
   scheduledNotificationsArePrimary,
 } from '@/services/notifyService'
+import { isRfiWorkflowOpportunity } from '@/utils/noticeTypes'
 
 const TODAY = () => {
   const now = new Date()
@@ -144,6 +145,7 @@ export function useAgingNotifications() {
         // ── RFI follow-up (per-opportunity, truly one-time) ───────────
         // No daily gate — check every session but only notify each opp once
         const rfiDue = allOpps.filter((o) => {
+          if (!isRfiWorkflowOpportunity(o)) return false
           if (o['TAG Pipeline Activity Phase'] !== 'Submitted RFI') return false
           if (o['RFI Notified']) return false           // already notified
           return daysAgo(o['Submission Date (Response Date)*']) >= 21
@@ -168,9 +170,8 @@ export function useAgingNotifications() {
         // Their response date is copied into Submission Date when they are
         // added from the SAM opportunities list.
         const responseReminders = allOpps.filter((o) => {
-          const isRFI = o['TAG Opportunity Phase'] === 'Identified' && o['Opportunity Outlook'] === 'New'
           const remaining = daysUntil(o['Submission Date (Response Date)*'])
-          return isRFI && (remaining === 1 || remaining === 2)
+          return isRfiWorkflowOpportunity(o) && (remaining === 1 || remaining === 2)
         })
 
         for (const opportunity of responseReminders) {
