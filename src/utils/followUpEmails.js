@@ -67,7 +67,7 @@ export function mergeFollowUpTemplate(value, context = {}) {
   )
 }
 
-export function buildFollowUpDraft({ opportunity, template, recipient = '', recipients, cc = '', user = '', source = 'Manual' }) {
+export function buildFollowUpDraft({ opportunity, template, recipient = '', recipients, from = '', cc = '', user = '', source = 'Manual' }) {
   const opportunityId = clean(opportunity['Contract Number / Notice ID'])
   const templateId = clean(template['Template ID'])
   const milestoneDays = Number(template['Days After Submission'] || 0)
@@ -97,6 +97,7 @@ export function buildFollowUpDraft({ opportunity, template, recipient = '', reci
     'Template Name': clean(template['Template Name']),
     'Milestone Days': milestoneDays,
     'Due Date': dueDate,
+    From: clean(from),
     To: recipientEmails.join('; '),
     CC: clean(cc),
     Subject: mergeFollowUpTemplate(template.Subject, context),
