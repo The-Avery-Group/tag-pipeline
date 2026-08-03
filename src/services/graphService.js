@@ -478,6 +478,7 @@ export const PIPELINE_HEADERS = [
   'Identification PWIN',              // [38] col AM
   'Qualification PWIN',               // [39] col AN
   'RFI Notified',                     // [40] col AO — date notification was sent, blank = not yet sent
+  'Notice Type',                      // RFI / MRAS / RFP / RFQ
 ]
 
 export const TASKS_HEADERS = [
@@ -597,6 +598,7 @@ export const COL = {
   idPWIN:         'Identification PWIN',
   qualPWIN:       'Qualification PWIN',
   rfiNotified:    'RFI Notified',
+  noticeType:     'Notice Type',
 }
 
 // ── Phase / enum constants from real data ─────────────────────────────────
@@ -945,13 +947,14 @@ export async function addOpportunity(data) {
   }
   const identifier = String(record['Contract Number / Notice ID'] || '').trim()
   if (!identifier) throw new Error('Contract or notice ID is required before creating an opportunity')
+  const headers = await getTableHeaders('PipelineTable')
   return createWorkbookRecord({
     tableName: 'PipelineTable',
     operationKey: `opportunity:${identifier.toLowerCase()}`,
     idColumn: 'Contract Number / Notice ID',
     idValue: identifier,
     record,
-    append: () => appendRow('PipelineTable', record, PIPELINE_HEADERS),
+    append: () => appendRow('PipelineTable', record, headers),
     readRows: async () => {
       invalidate('PipelineTable')
       return getPipeline()
