@@ -50,7 +50,7 @@ export function mergeTemplate(value, context = {}) {
   )
 }
 
-export function buildScheduledDraft({ opportunity, template, recipient = '', recipients, today, now }) {
+export function buildScheduledDraft({ opportunity, template, recipient = '', recipients, from = '', today, now }) {
   const opportunityId = clean(opportunity['Contract Number / Notice ID'])
   const templateId = clean(template['Template ID'])
   const milestoneDays = Number(template['Days After Submission'] || 0)
@@ -77,6 +77,7 @@ export function buildScheduledDraft({ opportunity, template, recipient = '', rec
     'Template Name': clean(template['Template Name']),
     'Milestone Days': milestoneDays,
     'Due Date': dueDate,
+    From: clean(from),
     To: recipientEmails.join('; '),
     CC: '',
     Subject: mergeTemplate(template.Subject, context),
