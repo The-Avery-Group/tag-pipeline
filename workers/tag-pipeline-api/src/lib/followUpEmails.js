@@ -1,3 +1,3 @@
-// Compatibility entry point for older tests and imports. The maintained
-// implementation remains in utils so there is only one source of behavior.
+// Compatibility entry point for existing Worker imports and tests. The
+// maintained implementation lives in utils so both historical paths resolve.
 export * from '../utils/followUpEmails.js'
