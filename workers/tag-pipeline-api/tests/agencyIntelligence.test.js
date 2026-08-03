@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mapAgencyResult,
+  mapTopTierReference,
   mapVehicleRecord,
   summarizeVehicleActivity,
 } from '../src/handlers/agencyIntelligence.js'
@@ -32,6 +33,23 @@ test('maps top-tier and sub-tier USAspending agency records', () => {
   assert.equal(sub.tier, 'subtier')
   assert.equal(sub.name, 'Defense Advanced Research Projects Agency')
   assert.equal(sub.parentName, 'Department of Defense')
+})
+
+test('maps the top-tier reference fallback to the agency search shape', () => {
+  assert.deepEqual(mapTopTierReference({
+    agency_id: 1173,
+    toptier_code: '097',
+    abbreviation: 'DOD',
+    agency_name: 'Department of Defense',
+  }), {
+    id: 1173,
+    tier: 'toptier',
+    name: 'Department of Defense',
+    abbreviation: 'DOD',
+    toptierCode: '097',
+    parentName: 'Department of Defense',
+    parentAbbreviation: 'DOD',
+  })
 })
 
 test('maps vehicle fields without relabeling award amount as obligations', () => {
