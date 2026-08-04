@@ -1,12 +1,72 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  aggregateVehicleOrders,
+  currentFiveFiscalYears,
+  finalizeVehicleUsage,
   handleAgencyIntelligence,
   mapAgencyResult,
   mapTopTierReference,
   mapVehicleRecord,
+  parentAwardIdFromRecord,
   summarizeVehicleActivity,
 } from '../src/handlers/agencyIntelligence.js'
+
+test('builds a five fiscal year window from the current fiscal year', () => {
+  assert.deepEqual(currentFiveFiscalYears(new Date('2026-08-04T00:00:00Z')), {
+    firstFiscalYear: 2022,
+    lastFiscalYear: 2026,
+    startDate: '2021-10-01',
+    endDate: '2026-08-04',
+  })
+})
+
+test('derives a parent vehicle from the generated contract award identifier', () => {
+  assert.equal(parentAwardIdFromRecord({
+    'Award ID': '75D30121F10650',
+    generated_internal_id: 'CONT_AWD_75D30121F10650_7523_HHSN316201200025W_7529',
+  }), 'HHSN316201200025W')
+  assert.equal(parentAwardIdFromRecord({
+    'Award ID': 'DIRECT1',
+    generated_internal_id: 'CONT_AWD_DIRECT1_7523_-NONE-_-NONE-',
+  }), '')
+})
+
+test('aggregates order awards by parent vehicle without double counting an order', () => {
+  const records = [
+    {
+      'Award ID': 'ORDER1',
+      'Recipient Name': 'Vendor One',
+      'Recipient UEI': 'UEI1',
+      'Award Amount': 125,
+      'Last Modified Date': '2026-07-01',
+      NAICS: { code: '541512' },
+      PSC: { code: 'DA01' },
+      generated_internal_id: 'CONT_AWD_ORDER1_1234_PARENT1_9999',
+    },
+    {
+      'Award ID': 'ORDER2',
+      'Recipient Name': 'Vendor Two',
+      'Recipient UEI': 'UEI2',
+      'Award Amount': 75,
+      'Last Modified Date': '2026-07-12',
+      NAICS: { code: '541512' },
+      PSC: { code: 'R499' },
+      generated_internal_id: 'CONT_AWD_ORDER2_1234_PARENT1_9999',
+    },
+  ]
+  const result = finalizeVehicleUsage(aggregateVehicleOrders(records), {
+    PARENT1: { description: 'Example Governmentwide Vehicle', generatedId: 'CONT_IDV_PARENT1_9999' },
+  })
+
+  assert.equal(result.totals.vehicles, 1)
+  assert.equal(result.totals.orders, 2)
+  assert.equal(result.totals.contractors, 2)
+  assert.equal(result.totals.obligations, 200)
+  assert.equal(result.vehicles[0].vehicleName, 'Example Governmentwide Vehicle')
+  assert.equal(result.vehicles[0].topNaics, '541512')
+  assert.equal(result.vehicles[0].lastUsed, '2026-07-12')
+})
 
 function response(data, status = 200) {
   return new Response(JSON.stringify(data), {
