@@ -1,4 +1,4 @@
-import { PublicClientApplication, LogLevel } from '@azure/msal-browser'
+import { CacheLookupPolicy, PublicClientApplication, LogLevel } from '@azure/msal-browser'
 
 // Keep every Entra redirect on the deployed app URL. In particular, GitHub
 // Pages needs its repository path here rather than just window.location.origin.
@@ -31,6 +31,15 @@ export const msalConfig = {
 
 export const loginRequest = {
   scopes: ['User.Read', 'Files.ReadWrite', 'Sites.ReadWrite.All'],
+}
+
+// Use cached access and refresh tokens without falling through to MSAL's
+// hidden authorization iframe. When the 24-hour SPA refresh token expires,
+// the existing session-refresh modal provides an explicit popup recovery.
+// This avoids third-party-cookie and sandbox warnings in privacy-focused
+// browsers while retaining silent renewal during the normal token lifetime.
+export const silentTokenOptions = {
+  cacheLookupPolicy: CacheLookupPolicy.AccessTokenAndRefreshToken,
 }
 
 // Requested incrementally only when a user explicitly opens an email draft
