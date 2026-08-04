@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import { usePipeline } from '@/hooks/usePipeline'
-import { ensureTableColumns, getSAMOpportunities, updateRow } from '@/services/graphService'
+import { ensureTableColumns, getSAMOpportunities, updateRowWithReconciliation } from '@/services/graphService'
 import { agencyIdPatch, buildSAMAgencyIdReference } from '@/lib/agencyIntelligence'
 import {
   getAgencyVehicles,
@@ -180,6 +180,7 @@ export default function AgencyIntelligence() {
   const [hasNext, setHasNext] = useState(false)
   const [vehicleLoading, setVehicleLoading] = useState(false)
   const [vehicleError, setVehicleError] = useState('')
+  const [vehicleWarning, setVehicleWarning] = useState('')
   const [cacheState, setCacheState] = useState('')
   const [fetchedAt, setFetchedAt] = useState('')
   const [vehicleFilter, setVehicleFilter] = useState('')
@@ -298,6 +299,7 @@ export default function AgencyIntelligence() {
     const controller = new AbortController()
     setVehicleLoading(true)
     setVehicleError('')
+    setVehicleWarning('')
     setSelectedVehicle(null)
     setVehicleDetail(null)
     try {
@@ -307,6 +309,7 @@ export default function AgencyIntelligence() {
       setHasNext(Boolean(result.hasNext))
       setCacheState(result.cache || '')
       setFetchedAt(result.fetchedAt || '')
+      setVehicleWarning(result.warning || '')
     } catch (error) {
       if (error.name !== 'AbortError') setVehicleError(error.message)
     } finally {
@@ -321,6 +324,7 @@ export default function AgencyIntelligence() {
     const controller = new AbortController()
     setVehicleLoading(true)
     setVehicleError('')
+    setVehicleWarning('')
     setSelectedVehicle(null)
     setVehicleDetail(null)
     getAgencyVehicles(selectedAgency, { page, limit: 50, signal: controller.signal })
@@ -331,6 +335,7 @@ export default function AgencyIntelligence() {
         setHasNext(Boolean(result.hasNext))
         setCacheState(result.cache || '')
         setFetchedAt(result.fetchedAt || '')
+        setVehicleWarning(result.warning || '')
       })
       .catch((error) => { if (active && error.name !== 'AbortError') setVehicleError(error.message) })
       .finally(() => { if (active) setVehicleLoading(false) })
@@ -365,12 +370,23 @@ export default function AgencyIntelligence() {
       const reference = buildSAMAgencyIdReference(pulled)
       let updated = 0
       let unresolved = 0
+      let failed = 0
       for (let index = 0; index < pipeline.length; index += 1) {
         const opportunity = pipeline[index]
         const patch = agencyIdPatch(opportunity, reference)
         if (Object.keys(patch).length) {
-          await updateRow('PipelineTable', opportunity._rowIndex, patch)
-          updated += 1
+          try {
+            await updateRowWithReconciliation('PipelineTable', opportunity._rowIndex, patch)
+            updated += 1
+          } catch (error) {
+            failed += 1
+            console.warn('[Agency Intelligence] Agency ID row could not be synchronized', {
+              opportunity: opportunity['Contract Number / Notice ID'] || opportunity.Title || opportunity._rowIndex,
+              rowIndex: opportunity._rowIndex,
+              status: error?.status || null,
+              message: error?.message || 'Unknown error',
+            })
+          }
         } else if (!opportunity['Department ID'] || !opportunity['Agency ID']) {
           unresolved += 1
         }
@@ -381,7 +397,7 @@ export default function AgencyIntelligence() {
       setIdSync({
         running: false,
         message: hasReferenceIds
-          ? `${updated} updated${unresolved ? ` · ${unresolved} need a matching SAM hierarchy` : ''}`
+          ? `${updated} updated${unresolved ? ` · ${unresolved} need a matching SAM hierarchy` : ''}${failed ? ` · ${failed} could not be saved` : ''}`
           : 'Columns are ready. Run a SAM pull, then sync again to backfill existing opportunities.',
       })
     } catch (error) {
@@ -477,11 +493,15 @@ export default function AgencyIntelligence() {
                         <input className="form-input" value={vehicleFilter} onChange={(event) => setVehicleFilter(event.target.value)} placeholder="Filter these 50 records" />
                       </div>
                       <div className={styles.sourceRow}>
-                        <span>USAspending.gov · {cacheState === 'cache' ? 'cached' : 'live'}{fetchedAt ? ` · Updated ${date(fetchedAt)}` : ''}</span>
+                        <span>USAspending.gov · {cacheState === 'stale' ? 'saved copy' : cacheState === 'cache' ? 'cached' : 'live'}{fetchedAt ? ` · Updated ${date(fetchedAt)}` : ''}</span>
                         <span>{filteredVehicles.length} shown</span>
                       </div>
+                      {vehicleWarning && <div className={styles.vehicleWarning}>{vehicleWarning}</div>}
                       {vehicleLoading ? (
-                        <div className={styles.loadingRows}>{[1, 2, 3, 4].map((item) => <div className="skeleton" key={item} />)}</div>
+                        <div className={styles.loadingRows}>
+                          <p>USAspending is preparing vehicle records. The first uncached load for a large agency can take up to two minutes.</p>
+                          {[1, 2, 3, 4].map((item) => <div className="skeleton" key={item} />)}
+                        </div>
                       ) : vehicles.length === 0 ? (
                         <div className={styles.noVehicles}>No IDV records were returned for this agency.</div>
                       ) : filteredVehicles.length === 0 ? (
