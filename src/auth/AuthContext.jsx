@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { useMsal } from '@azure/msal-react'
 import { InteractionStatus } from '@azure/msal-browser'
-import { appUrl, loginRequest, graphConfig } from './msalConfig'
+import { appUrl, loginRequest, graphConfig, silentTokenOptions } from './msalConfig'
 import { stopPolling } from '@/services/dataCache'
 
 const AuthContext = createContext(null)
@@ -31,7 +31,7 @@ export function AuthProvider({ children }) {
     const account = accounts[0]
     instance
       .initialize()
-      .then(() => instance.acquireTokenSilent({ ...loginRequest, account }))
+      .then(() => instance.acquireTokenSilent({ ...loginRequest, ...silentTokenOptions, account }))
       .then((response) =>
         fetch(graphConfig.graphMeEndpoint, {
           headers: { Authorization: `Bearer ${response.accessToken}` },
