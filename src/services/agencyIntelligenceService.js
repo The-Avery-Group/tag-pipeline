@@ -26,7 +26,7 @@ const VEHICLE_FIELDS = [
 ]
 const agencySearchCache = new Map()
 const AGENCY_SEARCH_CACHE_MS = 24 * 60 * 60 * 1000
-const VEHICLE_CACHE_MS = 14 * 24 * 60 * 60 * 1000
+const VEHICLE_CACHE_MS = 30 * 24 * 60 * 60 * 1000
 const VEHICLE_REQUEST_TIMEOUT_MS = 150_000
 
 function queryString(values) {
@@ -231,6 +231,23 @@ export async function searchOfficialAgencies(query, { signal, limit = 12 } = {})
       throw new Error('Agency search is temporarily unavailable. Please try again.')
     }
   }
+}
+
+export function getOfficialAgencyMapping(candidate, { signal } = {}) {
+  return workerJson(`/agency-intelligence/resolve?${queryString({
+    name: candidate?.name,
+    parent: candidate?.parentName,
+    departmentId: candidate?.departmentId,
+    agencyId: candidate?.agencyId,
+  })}`, { signal })
+}
+
+export function saveOfficialAgencyMapping(candidate, agency) {
+  return workerJson('/agency-intelligence/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidate, agency }),
+  })
 }
 
 export async function getAgencyVehicles(agency, { page = 1, limit = 50, forceRefresh = false, signal } = {}) {
