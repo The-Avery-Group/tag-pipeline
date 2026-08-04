@@ -9,6 +9,7 @@ import {
   mapTopTierReference,
   mapVehicleRecord,
   parentAwardIdFromRecord,
+  samTopTierCode,
   summarizeVehicleActivity,
 } from '../src/handlers/agencyIntelligence.js'
 
@@ -19,6 +20,12 @@ test('builds a five fiscal year window from the current fiscal year', () => {
     startDate: '2021-10-01',
     endDate: '2026-08-04',
   })
+})
+
+test('derives a USAspending top-tier code from a SAM department hierarchy ID', () => {
+  assert.equal(samTopTierCode('7500'), '075')
+  assert.equal(samTopTierCode('9700'), '097')
+  assert.equal(samTopTierCode('75D3'), '')
 })
 
 test('derives a parent vehicle from the generated contract award identifier', () => {
@@ -202,4 +209,44 @@ test('reports the upstream USAspending status when vehicle rows fail', async (t)
   assert.equal(result.status, 502)
   assert.equal(payload.code, 'USASPENDING_400')
   assert.equal(payload.error, 'Vehicle data is temporarily unavailable')
+})
+
+test('shares a confirmed SAM to USAspending agency crosswalk through KV', async () => {
+  const entries = new Map()
+  const env = {
+    CACHE: {
+      async get(key, type) {
+        const value = entries.get(key)
+        return type === 'json' && value ? JSON.parse(value) : value || null
+      },
+      async put(key, value) { entries.set(key, value) },
+    },
+  }
+  const candidate = {
+    name: 'Centers for Disease Control and Prevention',
+    parentName: 'Department of Health and Human Services',
+    departmentId: '7500',
+    agencyId: '7523',
+  }
+  const agency = {
+    id: 824,
+    tier: 'subtier',
+    name: 'Centers for Disease Control and Prevention',
+    abbreviation: 'CDC',
+    toptierCode: '075',
+    parentName: 'Department of Health and Human Services',
+  }
+
+  const saveResponse = await handleAgencyIntelligence(new Request('https://example.com/agency-intelligence/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidate, agency }),
+  }), env)
+  assert.equal(saveResponse.status, 200)
+
+  const readResponse = await handleAgencyIntelligence(new Request('https://example.com/agency-intelligence/resolve?name=CDC&parent=HHS&departmentId=7500&agencyId=7523'), env)
+  const payload = await readResponse.json()
+  assert.equal(payload.cache, 'crosswalk')
+  assert.equal(payload.agency.id, 824)
+  assert.equal(payload.agency.samAgencyId, '7523')
 })
