@@ -23,6 +23,10 @@ const VEHICLE_FIELDS = [
 const CACHE_SECONDS = 7 * 24 * 60 * 60
 const SEARCH_CACHE_SECONDS = 24 * 60 * 60
 const REQUEST_TIMEOUT_MS = 20_000
+// Broad IDV searches can legitimately take close to two minutes on
+// USAspending. Keep the shorter timeout for autocomplete and detail calls,
+// but do not abort a valid vehicle search before the upstream API responds.
+const VEHICLE_REQUEST_TIMEOUT_MS = 150_000
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -155,11 +159,16 @@ export function summarizeVehicleActivity(amounts = {}, activity = {}) {
   }
 }
 
-async function fetchUSAspending(path, { method = 'GET', body, attempts = 2 } = {}) {
+async function fetchUSAspending(path, {
+  method = 'GET',
+  body,
+  attempts = 2,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+} = {}) {
   let lastError
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(`${USASPENDING_BASE}${path}`, {
         method,
@@ -290,10 +299,12 @@ async function getVehicles(req, ctx) {
   try {
     const payload = await cachedJSON(req, key, CACHE_SECONDS, forceRefresh, async () => {
       const filters = vehicleFilters(agency)
-      const [countResponse, resultResponse] = await Promise.all([
+      const [countResult, vehiclesResult] = await Promise.allSettled([
         fetchUSAspending('/search/spending_by_award_count/', {
           method: 'POST',
           body: { filters, spending_level: 'awards', subawards: false },
+          attempts: 1,
+          timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
         }),
         fetchUSAspending('/search/spending_by_award/', {
           method: 'POST',
@@ -306,13 +317,24 @@ async function getVehicles(req, ctx) {
             order: 'desc',
             subawards: false,
           },
+          attempts: 1,
+          timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
         }),
       ])
+      if (vehiclesResult.status === 'rejected') throw vehiclesResult.reason
+      const resultResponse = vehiclesResult.value
+      const countResponse = countResult.status === 'fulfilled' ? countResult.value : null
+      if (countResult.status === 'rejected') {
+        console.warn('[Agency Intelligence] Vehicle count unavailable; returning vehicle rows', {
+          agency: agency.name,
+          error: countResult.reason?.message || 'Unknown error',
+        })
+      }
       const vehicles = (resultResponse?.results || []).map(mapVehicleRecord)
       return {
         agency,
         vehicles,
-        totalVehicles: number(countResponse?.results?.idvs),
+        totalVehicles: countResponse ? number(countResponse?.results?.idvs) : null,
         page,
         limit,
         hasNext: Boolean(resultResponse?.page_metadata?.hasNext),
@@ -323,7 +345,13 @@ async function getVehicles(req, ctx) {
     return json(payload)
   } catch (error) {
     console.error('[Agency Intelligence] Vehicle lookup failed', { agency: agency.name, page, error: error.message })
-    return json({ error: 'Vehicle data is temporarily unavailable' }, 502)
+    const timedOut = /timed out/i.test(error?.message || '')
+    return json({
+      error: timedOut
+        ? 'USAspending took too long to return vehicle data. Please try again.'
+        : 'Vehicle data is temporarily unavailable',
+      code: timedOut ? 'USASPENDING_TIMEOUT' : 'USASPENDING_UNAVAILABLE',
+    }, 502)
   }
 }
 
