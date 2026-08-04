@@ -4,6 +4,7 @@ import {
   aggregateVehicleOrders,
   currentFiveFiscalYears,
   finalizeVehicleUsage,
+  hasMoreAgencyUsagePages,
   handleAgencyIntelligence,
   mapAgencyResult,
   mapTopTierReference,
@@ -73,6 +74,12 @@ test('aggregates order awards by parent vehicle without double counting an order
   assert.equal(result.vehicles[0].vehicleName, 'Example Governmentwide Vehicle')
   assert.equal(result.vehicles[0].topNaics, '541512')
   assert.equal(result.vehicles[0].lastUsed, '2026-07-12')
+})
+
+test('uses USAspending page metadata instead of a separate aggregate count', () => {
+  assert.equal(hasMoreAgencyUsagePages({ results: [{ id: 1 }], page_metadata: { hasNext: true } }), true)
+  assert.equal(hasMoreAgencyUsagePages({ results: [{ id: 1 }], page_metadata: { hasNext: false } }), false)
+  assert.equal(hasMoreAgencyUsagePages({ results: [], page_metadata: { hasNext: true } }), false)
 })
 
 function response(data, status = 200) {
