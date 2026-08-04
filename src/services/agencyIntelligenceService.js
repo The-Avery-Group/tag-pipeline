@@ -81,7 +81,7 @@ function vehicleCountCacheKey(agency) {
 }
 
 function usageCacheKey(agency, scope) {
-  return `tag_agency_vehicle_usage:v3:${scope === 'awarding' ? 'awarding' : 'funding'}:${agency?.tier || 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
+  return `tag_agency_vehicle_usage:v4:${scope === 'awarding' ? 'awarding' : 'funding'}:${agency?.tier || 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
 }
 
 function vehicleFilters(agency) {
