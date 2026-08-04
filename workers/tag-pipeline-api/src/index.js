@@ -147,7 +147,7 @@ export default {
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
 
-      } else if (path.startsWith('/agency-intelligence/') && req.method === 'GET') {
+      } else if (path.startsWith('/agency-intelligence/') && ['GET', 'POST'].includes(req.method)) {
         response = await handleAgencyIntelligence(req, env, ctx)
 
       } else {
