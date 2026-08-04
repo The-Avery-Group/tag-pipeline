@@ -8,6 +8,66 @@ import {
   mapOfficialAgencyResults,
   pipelineAgencySearchTerms,
 } from '../src/lib/agencyIntelligence.js'
+import {
+  agencyUsageFilters,
+  aggregateVehicleOrders,
+  currentFiveFiscalYears,
+  finalizeVehicleUsage,
+  parentAwardIdFromRecord,
+} from '../src/lib/agencyVehicleUsage.js'
+
+test('builds the browser-direct five fiscal year usage filter', () => {
+  const now = new Date('2026-08-04T00:00:00Z')
+  assert.deepEqual(currentFiveFiscalYears(now), {
+    firstFiscalYear: 2022,
+    lastFiscalYear: 2026,
+    startDate: '2021-10-01',
+    endDate: '2026-08-04',
+  })
+  assert.deepEqual(agencyUsageFilters({
+    name: 'Defense Counterintelligence and Security Agency',
+    tier: 'subtier',
+    parentName: 'Department of Defense',
+  }, 'awarding', now).agencies, [{
+    type: 'awarding',
+    tier: 'subtier',
+    name: 'Defense Counterintelligence and Security Agency',
+    toptier_name: 'Department of Defense',
+  }])
+})
+
+test('aggregates browser-direct order pages by parent vehicle', () => {
+  const records = [{
+    'Award ID': 'ORDER1',
+    'Recipient Name': 'Vendor One',
+    'Recipient UEI': 'UEI1',
+    'Award Amount': 125,
+    'Last Modified Date': '2026-07-01',
+    NAICS: { code: '541512' },
+    PSC: { code: 'DA01' },
+    generated_internal_id: 'CONT_AWD_ORDER1_1234_PARENT1_9999',
+  }, {
+    'Award ID': 'ORDER2',
+    'Recipient Name': 'Vendor Two',
+    'Recipient UEI': 'UEI2',
+    'Award Amount': 75,
+    'Last Modified Date': '2026-07-12',
+    NAICS: { code: '541512' },
+    PSC: { code: 'R499' },
+    generated_internal_id: 'CONT_AWD_ORDER2_1234_PARENT1_9999',
+  }]
+  assert.equal(parentAwardIdFromRecord(records[0]), 'PARENT1')
+  const result = finalizeVehicleUsage(aggregateVehicleOrders(records), {
+    PARENT1: { description: 'Example Governmentwide Vehicle', generatedId: 'CONT_IDV_PARENT1_9999' },
+  })
+  assert.equal(result.totals.vehicles, 1)
+  assert.equal(result.totals.orders, 2)
+  assert.equal(result.totals.contractors, 2)
+  assert.equal(result.totals.obligations, 200)
+  assert.equal(result.vehicles[0].vehicleName, 'Example Governmentwide Vehicle')
+  assert.equal(result.vehicles[0].topNaics, '541512')
+  assert.equal(result.vehicles[0].lastUsed, '2026-07-12')
+})
 
 test('maps and deduplicates direct USAspending agency search results', () => {
   const source = {
