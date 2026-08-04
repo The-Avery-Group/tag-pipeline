@@ -69,6 +69,11 @@
 .progressBlock > div:first-child { color: var(--blue-800); display: flex; font-size: 10px; justify-content: space-between; }
 .progressTrack { background: color-mix(in srgb, var(--blue-600) 16%, transparent); border-radius: 999px; height: 4px; overflow: hidden; }
 .progressTrack span { background: var(--blue-600); border-radius: inherit; display: block; height: 100%; min-width: 8%; transition: width .25s ease; }
+.progressTrackIndeterminate span { animation: agency-progress 1.15s ease-in-out infinite; min-width: 0; width: 34%; }
+@keyframes agency-progress {
+  0% { transform: translateX(-105%); }
+  100% { transform: translateX(300%); }
+}
 
 .drawerBackdrop { background: color-mix(in srgb, var(--gray-950) 22%, transparent); inset: 0; position: absolute; z-index: 12; }
 .vehicleDrawer { background: var(--surface-raised); border-left: .5px solid var(--gray-300); box-shadow: -12px 0 32px color-mix(in srgb, var(--gray-950) 18%, transparent); height: 100%; max-width: min(460px, 88vw); overflow-y: auto; position: absolute; right: 0; top: 0; width: 43%; }
