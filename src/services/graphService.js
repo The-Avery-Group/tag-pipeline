@@ -1,5 +1,5 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
-import { msalInstance, loginRequest } from '@/auth/msalConfig'
+import { msalInstance, loginRequest, silentTokenOptions } from '@/auth/msalConfig'
 import { externallyChangedPatchedFields, recordIdentity } from '@/utils/recordConflict'
 import {
   appendWithReconciliation,
@@ -34,6 +34,7 @@ const pendingSheetReads = new Map()
 const headerCache = new Map()
 const sessionRefreshListeners = new Set()
 let sessionRefreshRequired = false
+let silentTokenRequest = null
 
 /**
  * Lets the application present one consistent recovery action when Entra can
@@ -136,10 +137,16 @@ export async function getToken({ interactive = false } = {}) {
     throw error
   }
   try {
-    const response = await msalInstance.acquireTokenSilent({
-      ...loginRequest,
-      account,
-    })
+    if (!silentTokenRequest) {
+      silentTokenRequest = msalInstance.acquireTokenSilent({
+        ...loginRequest,
+        ...silentTokenOptions,
+        account,
+      }).finally(() => {
+        silentTokenRequest = null
+      })
+    }
+    const response = await silentTokenRequest
     return response.accessToken
   } catch (error) {
     // Background reads must not unexpectedly open a sign-in window. An
