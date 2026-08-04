@@ -46,7 +46,9 @@
 .pagination { align-items: center; border-top: 0.5px solid var(--gray-200); display: flex; gap: 10px; justify-content: flex-end; padding: 9px 12px; }
 .pagination span { color: var(--gray-500); font-size: 10px; min-width: 50px; text-align: center; }
 .loadingRows { display: grid; gap: 8px; padding: 14px; }
+.loadingRows p { color: var(--gray-500); font-size: 10px; line-height: 1.45; margin: 0 0 3px; }
 .loadingRows > div { height: 38px; }
+.vehicleWarning { background: var(--amber-50); border-bottom: 0.5px solid var(--amber-600); color: var(--amber-700); font-size: 10px; line-height: 1.45; padding: 8px 12px; }
 .noVehicles, .detailLoading { color: var(--gray-500); font-size: 11px; padding: 28px 16px; text-align: center; }
 .vehicleDetail { gap: 14px; padding: 15px; overflow: visible; }
 .vehicleDetailHeader { padding-bottom: 12px; }
