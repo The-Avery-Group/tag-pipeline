@@ -1,11 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  handleAgencyIntelligence,
   mapAgencyResult,
   mapTopTierReference,
   mapVehicleRecord,
   summarizeVehicleActivity,
 } from '../src/handlers/agencyIntelligence.js'
+
+function response(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
 
 test('maps top-tier and sub-tier USAspending agency records', () => {
   const top = mapAgencyResult({
@@ -95,4 +103,29 @@ test('summarizes direct and nested IDV order activity', () => {
   assert.ok(Math.abs(result.totalPotentialValue - 604250.08) < 0.001)
   assert.equal(result.displayedContractors, 2)
   assert.equal(result.activityTruncated, true)
+})
+
+test('returns vehicle rows when the optional USAspending count is unavailable', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('spending_by_award_count')) return response({ detail: 'Unavailable' }, 503)
+    return response({
+      results: [{
+        'Award ID': '75D30125D00195',
+        'Recipient Name': 'Example Inc.',
+        generated_internal_id: 'CONT_IDV_75D30125D00195_7523',
+      }],
+      page_metadata: { hasNext: false },
+    })
+  }
+
+  const request = new Request('https://example.com/agency-intelligence/vehicles?name=CDC&tier=subtier&parent=HHS')
+  const result = await handleAgencyIntelligence(request)
+  const payload = await result.json()
+
+  assert.equal(result.status, 200)
+  assert.equal(payload.totalVehicles, null)
+  assert.equal(payload.vehicles.length, 1)
+  assert.equal(payload.vehicles[0].awardId, '75D30125D00195')
 })
