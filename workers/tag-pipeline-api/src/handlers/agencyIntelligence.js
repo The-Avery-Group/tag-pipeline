@@ -28,6 +28,7 @@ const REQUEST_TIMEOUT_MS = 20_000
 // USAspending. Keep the shorter timeout for autocomplete and detail calls,
 // but do not abort a valid vehicle search before the upstream API responds.
 const VEHICLE_REQUEST_TIMEOUT_MS = 150_000
+const USAGE_REQUEST_TIMEOUT_MS = 45_000
 const USAGE_CACHE_SECONDS = 30 * 24 * 60 * 60
 const ORDER_CODES = ['A', 'C']
 const ORDER_FIELDS = [
@@ -135,7 +136,7 @@ export function currentFiveFiscalYears(now = new Date()) {
 
 export function agencyUsageKey(agency, scope = 'funding') {
   const type = scope === 'awarding' ? 'awarding' : 'funding'
-  return `agency_vehicle_usage:v3:${type}:${agency?.tier === 'subtier' ? 'subtier' : 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
+  return `agency_vehicle_usage:v4:${type}:${agency?.tier === 'subtier' ? 'subtier' : 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
 }
 
 export function usageFilters(agency, scope = 'funding', now = new Date()) {
@@ -480,8 +481,10 @@ export async function fetchAgencyUsagePage(agency, scope, page, now = new Date()
       order: 'desc',
       subawards: false,
     },
-    attempts: 3,
-    timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
+    // Workflow step retries provide the delay and backoff. Keeping this to
+    // one fetch makes each free-plan invocation's subrequest use predictable.
+    attempts: 1,
+    timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
   })
 }
 
@@ -495,39 +498,23 @@ export async function resolveVehicleAwards(parentAwardIds = []) {
   const chunks = []
   for (let offset = 0; offset < unique.length; offset += 75) chunks.push({ offset, awardIds: unique.slice(offset, offset + 75) })
 
-  for (let batchStart = 0; batchStart < chunks.length; batchStart += 6) {
-    const batch = chunks.slice(batchStart, batchStart + 6)
-    const results = await Promise.all(batch.map(async ({ offset, awardIds }) => {
-      try {
-        const response = await fetchUSAspending('/search/spending_by_award/', {
-          method: 'POST',
-          body: {
-            filters: { award_ids: awardIds.map((awardId) => `"${awardId}"`), award_type_codes: IDV_CODES },
-            fields: VEHICLE_RESOLUTION_FIELDS,
-            page: 1,
-            limit: 100,
-            sort: 'Last Modified Date',
-            order: 'desc',
-            subawards: false,
-          },
-          attempts: 2,
-          timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
-        })
-        return response?.results || []
-      } catch (error) {
-        // A parent award may belong to another agency and may not resolve
-        // through the search endpoint. Keep the PIID usable instead of
-        // failing the full agency aggregate.
-        console.warn('[Agency Intelligence] Some vehicle names could not be resolved', {
-          offset,
-          count: awardIds.length,
-          error: error.message,
-        })
-        return []
-      }
-    }))
+  for (const { awardIds } of chunks) {
+    const response = await fetchUSAspending('/search/spending_by_award/', {
+      method: 'POST',
+      body: {
+        filters: { award_ids: awardIds.map((awardId) => `"${awardId}"`), award_type_codes: IDV_CODES },
+        fields: VEHICLE_RESOLUTION_FIELDS,
+        page: 1,
+        limit: 100,
+        sort: 'Last Modified Date',
+        order: 'desc',
+        subawards: false,
+      },
+      attempts: 1,
+      timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
+    })
 
-    for (const record of results.flat()) {
+    for (const record of response?.results || []) {
       const awardId = clean(record?.['Award ID']).toUpperCase()
       if (!awardId || resolutions[awardId]) continue
       resolutions[awardId] = {
@@ -545,6 +532,34 @@ export async function resolveVehicleAwards(parentAwardIds = []) {
 export async function writeAgencyUsageRun(env, key, value) {
   if (!env?.CACHE) return
   await env.CACHE.put(`${key}:run`, JSON.stringify(value), { expirationTtl: 24 * 60 * 60 })
+}
+
+export async function readAgencyUsageCheckpoint(env, key) {
+  if (!env?.CACHE) return {}
+  return (await env.CACHE.get(`${key}:aggregate`, 'json')) || {}
+}
+
+export async function writeAgencyUsageCheckpoint(env, key, value) {
+  if (!env?.CACHE) return
+  await env.CACHE.put(`${key}:aggregate`, JSON.stringify(value || {}), { expirationTtl: 24 * 60 * 60 })
+}
+
+export async function readAgencyUsageResolutions(env, key) {
+  if (!env?.CACHE) return {}
+  return (await env.CACHE.get(`${key}:resolutions`, 'json')) || {}
+}
+
+export async function writeAgencyUsageResolutions(env, key, value) {
+  if (!env?.CACHE) return
+  await env.CACHE.put(`${key}:resolutions`, JSON.stringify(value || {}), { expirationTtl: 24 * 60 * 60 })
+}
+
+export async function clearAgencyUsageWorkingState(env, key) {
+  if (!env?.CACHE) return
+  await Promise.all([
+    env.CACHE.delete(`${key}:aggregate`),
+    env.CACHE.delete(`${key}:resolutions`),
+  ])
 }
 
 export async function writeAgencyUsageResult(env, key, value) {
@@ -790,16 +805,34 @@ async function getVehicleDetail(req, ctx) {
 
   try {
     const payload = await cachedJSON(req, key, CACHE_SECONDS, forceRefresh, async () => {
-      const [amounts, activity] = await Promise.all([
-        fetchUSAspending(`/idvs/amounts/${encodeURIComponent(awardId)}/`),
-        fetchUSAspending('/idvs/activity/', {
-          method: 'POST',
-          body: { award_id: awardId, page: 1, limit: 50, hide_edge_cases: false },
-        }),
-      ])
+      const amounts = await fetchUSAspending(`/idvs/amounts/${encodeURIComponent(awardId)}/`, {
+        attempts: 2,
+        timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
+      })
+      const reportedOrders = number(amounts?.child_award_count) + number(amounts?.grandchild_award_count)
+      let activity = { results: [], page_metadata: { total: reportedOrders, hasNext: false } }
+      let warning = ''
+      if (reportedOrders > 0) {
+        try {
+          activity = await fetchUSAspending('/idvs/activity/', {
+            method: 'POST',
+            body: { award_id: awardId, page: 1, limit: 50, hide_edge_cases: false },
+            attempts: 2,
+            timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
+          })
+        } catch (error) {
+          warning = 'Order totals are available, but USAspending could not return the individual order list.'
+          console.warn(JSON.stringify({
+            event: 'agency_vehicle_activity_partial',
+            awardId,
+            message: error?.message || 'Unknown error',
+          }))
+        }
+      }
       return {
         awardId,
         ...summarizeVehicleActivity(amounts, activity),
+        warning,
         fetchedAt: new Date().toISOString(),
         source: 'USAspending.gov',
       }
@@ -852,6 +885,7 @@ async function getAgencyUsage(req, env) {
     totalOrders: null,
     startedAt: new Date().toISOString(),
   }
+  await clearAgencyUsageWorkingState(env, key)
   await writeAgencyUsageRun(env, key, run)
   try {
     await env.AGENCY_VEHICLE_WORKFLOW.create({
