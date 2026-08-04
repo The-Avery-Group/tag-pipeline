@@ -28,6 +28,7 @@ export function useSAMChangeMonitor(opportunities) {
   const [checkError, setCheckError] = useState(null)
   const lastSyncFingerprint = useRef('')
   const automaticallyChecked = useRef(false)
+  const locallyReviewed = useRef(new Map())
 
   const monitored = useMemo(() => (opportunities || []).filter(eligible), [opportunities])
   const dismissedRowIndices = useMemo(() => (opportunities || [])
@@ -41,7 +42,16 @@ export function useSAMChangeMonitor(opportunities) {
     if (!response.ok) throw new Error('Could not load SAM change status')
     const data = await response.json()
     const next = {}
-    ;(data.watches || []).forEach((watch) => { next[watch.rowIndex] = watch })
+    ;(data.watches || []).forEach((watch) => {
+      const local = locallyReviewed.current.get(Number(watch.rowIndex))
+      const changedAt = watch?.change?.changedAt || ''
+      if (local && changedAt && local.changedAt === changedAt && !watch.change.reviewedAt) {
+        next[watch.rowIndex] = { ...watch, change: { ...watch.change, reviewedAt: local.reviewedAt } }
+      } else {
+        if (local && (!changedAt || local.changedAt !== changedAt || watch?.change?.reviewedAt)) locallyReviewed.current.delete(Number(watch.rowIndex))
+        next[watch.rowIndex] = watch
+      }
+    })
     setChangesByRow(next)
     setRun(data.run || null)
     return data
@@ -90,8 +100,19 @@ export function useSAMChangeMonitor(opportunities) {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(opportunity)),
     })
     if (!response.ok) throw new Error('Could not mark this SAM update as reviewed')
-    await loadStatus()
-  }, [loadStatus])
+    const result = await response.json().catch(() => ({}))
+    const rowIndex = Number(opportunity._rowIndex)
+    const reviewedAt = result?.watch?.change?.reviewedAt || new Date().toISOString()
+    const changedAt = result?.watch?.change?.changedAt || changesByRow[rowIndex]?.change?.changedAt || ''
+    locallyReviewed.current.set(rowIndex, { changedAt, reviewedAt })
+    setChangesByRow((current) => ({
+      ...current,
+      [rowIndex]: result?.watch || {
+        ...current[rowIndex],
+        change: { ...current[rowIndex]?.change, reviewedAt },
+      },
+    }))
+  }, [changesByRow])
 
   // Sync exactly when the monitored list changes. New rows are not marked as
   // changed until a later SAM response differs from their first baseline.
