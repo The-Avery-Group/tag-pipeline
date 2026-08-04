@@ -20,14 +20,15 @@ const VEHICLE_FIELDS = [
   'PSC',
   'generated_internal_id',
 ]
-const CACHE_SECONDS = 14 * 24 * 60 * 60
+const CACHE_SECONDS = 30 * 24 * 60 * 60
 const SEARCH_CACHE_SECONDS = 24 * 60 * 60
+const AGENCY_CROSSWALK_SECONDS = 30 * 24 * 60 * 60
 const REQUEST_TIMEOUT_MS = 20_000
 // Broad IDV searches can legitimately take close to two minutes on
 // USAspending. Keep the shorter timeout for autocomplete and detail calls,
 // but do not abort a valid vehicle search before the upstream API responds.
 const VEHICLE_REQUEST_TIMEOUT_MS = 150_000
-const USAGE_CACHE_SECONDS = 14 * 24 * 60 * 60
+const USAGE_CACHE_SECONDS = 30 * 24 * 60 * 60
 const ORDER_CODES = ['A', 'C']
 const ORDER_FIELDS = [
   'Award ID',
@@ -75,6 +76,50 @@ function normalized(value) {
     .replace(/\b(the|department|agency|administration|office|bureau|of|and)\b/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
+}
+
+function identity(value) {
+  return clean(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\bdept\b/g, 'department')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\bthe\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function samTopTierCode(departmentId) {
+  const value = clean(departmentId)
+  if (!/^\d{4}$/.test(value) || !value.endsWith('00')) return ''
+  return value.slice(0, 2).padStart(3, '0')
+}
+
+function agencyCrosswalkKey(candidate = {}) {
+  const departmentId = clean(candidate.departmentId)
+  const agencyId = clean(candidate.agencyId)
+  return departmentId && agencyId ? `agency_crosswalk:v1:${departmentId}:${agencyId}` : ''
+}
+
+function pipelineAgencyTerms(candidate = {}) {
+  const name = clean(candidate.name)
+  const withoutParenthetical = name.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  const parenthetical = [...name.matchAll(/\(([^)]+)\)/g)].map((match) => clean(match[1]))
+  return [...new Set([name, withoutParenthetical, ...parenthetical].filter(Boolean))]
+}
+
+function exactAgencyMatch(candidate, agencies = []) {
+  const aliases = pipelineAgencyTerms(candidate).map(identity)
+  const parent = identity(candidate.parentName)
+  const isSubtier = parent && !aliases.includes(parent)
+  return agencies.find((agency) => {
+    if (isSubtier && agency.tier !== 'subtier') return false
+    if (!isSubtier && agency.tier !== 'toptier') return false
+    if (isSubtier && parent && identity(agency.parentName) !== parent) return false
+    return aliases.includes(identity(agency.name)) || aliases.includes(identity(agency.abbreviation))
+  }) || null
 }
 
 export function currentFiveFiscalYears(now = new Date()) {
@@ -249,6 +294,82 @@ export function mapTopTierReference(result) {
   }
 }
 
+function mapSubagencyReference(result, parent, toptierCode) {
+  return {
+    id: null,
+    tier: 'subtier',
+    name: clean(result?.name),
+    abbreviation: clean(result?.abbreviation),
+    toptierCode: clean(toptierCode),
+    parentName: clean(parent?.name),
+    parentAbbreviation: clean(parent?.abbreviation),
+  }
+}
+
+async function resolveAgencyCandidate(candidate) {
+  const topCode = samTopTierCode(candidate.departmentId)
+  let topAgencies = []
+  if (topCode) {
+    try {
+      const references = await fetchUSAspending('/references/toptier_agencies/')
+      topAgencies = (references?.results || []).map(mapTopTierReference)
+      const exactTop = topAgencies.find((agency) => agency.toptierCode === topCode)
+      const isTopTier = !candidate.parentName || identity(candidate.name) === identity(candidate.parentName) || clean(candidate.agencyId) === clean(candidate.departmentId)
+      if (exactTop && isTopTier) return exactTop
+    } catch (error) {
+      console.warn('[Agency Intelligence] Top-tier agency references unavailable during resolution', {
+        departmentId: candidate.departmentId,
+        error: error.message,
+      })
+    }
+  }
+
+  const autocompleteMatches = []
+  const seen = new Set()
+  for (const term of pipelineAgencyTerms(candidate)) {
+    try {
+      const response = await fetchUSAspending('/autocomplete/awarding_agency/', {
+        method: 'POST',
+        body: { search_text: term, limit: 20 },
+      })
+      for (const result of response?.results || []) {
+        const agency = mapAgencyResult(result)
+        const key = `${agency.tier}:${agency.id}:${identity(agency.name)}`
+        if (!seen.has(key)) { seen.add(key); autocompleteMatches.push(agency) }
+      }
+    } catch (error) {
+      console.warn('[Agency Intelligence] Agency autocomplete term failed during resolution', {
+        term,
+        error: error.message,
+      })
+    }
+  }
+  const autocompleteMatch = exactAgencyMatch(candidate, autocompleteMatches)
+  if (autocompleteMatch) return autocompleteMatch
+
+  if (topCode) {
+    const parent = topAgencies.find((agency) => agency.toptierCode === topCode) || {
+      name: candidate.parentName,
+      abbreviation: '',
+    }
+    const now = new Date()
+    const fiscalYear = now.getUTCMonth() >= 9 ? now.getUTCFullYear() + 1 : now.getUTCFullYear()
+    try {
+      const response = await fetchUSAspending(`/agency/${encodeURIComponent(topCode)}/sub_agency/?fiscal_year=${fiscalYear}&page=1&limit=100`)
+      const subagencies = (response?.results || []).map((result) => mapSubagencyReference(result, parent, topCode))
+      const referenceMatch = exactAgencyMatch(candidate, subagencies)
+      if (referenceMatch) return referenceMatch
+    } catch (error) {
+      console.warn('[Agency Intelligence] Sub-agency references unavailable during resolution', {
+        departmentId: candidate.departmentId,
+        agencyId: candidate.agencyId,
+        error: error.message,
+      })
+    }
+  }
+  return null
+}
+
 export function mapVehicleRecord(record) {
   const naics = record?.NAICS || {}
   const psc = record?.PSC || {}
@@ -377,43 +498,51 @@ export async function fetchAgencyUsageCount(agency, scope, now = new Date()) {
 export async function resolveVehicleAwards(parentAwardIds = []) {
   const resolutions = {}
   const unique = [...new Set(parentAwardIds.map((value) => clean(value).toUpperCase()).filter(Boolean))]
-  for (let offset = 0; offset < unique.length; offset += 75) {
-    const awardIds = unique.slice(offset, offset + 75)
-    try {
-      const response = await fetchUSAspending('/search/spending_by_award/', {
-        method: 'POST',
-        body: {
-          filters: { award_ids: awardIds.map((awardId) => `"${awardId}"`), award_type_codes: IDV_CODES },
-          fields: VEHICLE_RESOLUTION_FIELDS,
-          page: 1,
-          limit: 100,
-          sort: 'Last Modified Date',
-          order: 'desc',
-          subawards: false,
-        },
-        attempts: 2,
-        timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
-      })
-      for (const record of response?.results || []) {
-        const awardId = clean(record?.['Award ID']).toUpperCase()
-        if (!awardId || resolutions[awardId]) continue
-        resolutions[awardId] = {
-          description: clean(record?.Description),
-          vehicleType: clean(record?.['Contract Award Type']),
-          generatedId: clean(record?.generated_internal_id),
-          ceiling: number(record?.['Potential Award Amount']),
-          lastDateToOrder: clean(record?.['Last Date to Order']),
-        }
+  const chunks = []
+  for (let offset = 0; offset < unique.length; offset += 75) chunks.push({ offset, awardIds: unique.slice(offset, offset + 75) })
+
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += 6) {
+    const batch = chunks.slice(batchStart, batchStart + 6)
+    const results = await Promise.all(batch.map(async ({ offset, awardIds }) => {
+      try {
+        const response = await fetchUSAspending('/search/spending_by_award/', {
+          method: 'POST',
+          body: {
+            filters: { award_ids: awardIds.map((awardId) => `"${awardId}"`), award_type_codes: IDV_CODES },
+            fields: VEHICLE_RESOLUTION_FIELDS,
+            page: 1,
+            limit: 100,
+            sort: 'Last Modified Date',
+            order: 'desc',
+            subawards: false,
+          },
+          attempts: 2,
+          timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
+        })
+        return response?.results || []
+      } catch (error) {
+        // A parent award may belong to another agency and may not resolve
+        // through the search endpoint. Keep the PIID usable instead of
+        // failing the full agency aggregate.
+        console.warn('[Agency Intelligence] Some vehicle names could not be resolved', {
+          offset,
+          count: awardIds.length,
+          error: error.message,
+        })
+        return []
       }
-    } catch (error) {
-      // A parent award may belong to another agency and may not resolve through
-      // the search endpoint. Keep the PIID usable instead of failing the full
-      // agency aggregate.
-      console.warn('[Agency Intelligence] Some vehicle names could not be resolved', {
-        offset,
-        count: awardIds.length,
-        error: error.message,
-      })
+    }))
+
+    for (const record of results.flat()) {
+      const awardId = clean(record?.['Award ID']).toUpperCase()
+      if (!awardId || resolutions[awardId]) continue
+      resolutions[awardId] = {
+        description: clean(record?.Description),
+        vehicleType: clean(record?.['Contract Award Type']),
+        generatedId: clean(record?.generated_internal_id),
+        ceiling: number(record?.['Potential Award Amount']),
+        lastDateToOrder: clean(record?.['Last Date to Order']),
+      }
     }
   }
   return resolutions
@@ -470,6 +599,62 @@ function vehicleFilters(agency) {
   }
   if (agency.tier === 'subtier' && agency.parentName) selected.toptier_name = agency.parentName
   return { agencies: [selected], award_type_codes: IDV_CODES }
+}
+
+function candidateFromSearchParams(url) {
+  return {
+    name: clean(url.searchParams.get('name')),
+    parentName: clean(url.searchParams.get('parent')),
+    departmentId: clean(url.searchParams.get('departmentId')),
+    agencyId: clean(url.searchParams.get('agencyId')),
+  }
+}
+
+function validAgencyMapping(agency) {
+  return agency && ['toptier', 'subtier'].includes(agency.tier) && clean(agency.name)
+}
+
+async function resolveAgency(req, env) {
+  if (!env?.CACHE) return json({ error: 'Agency crosswalk cache is not configured' }, 503)
+
+  if (req.method === 'POST') {
+    const body = await req.json().catch(() => ({}))
+    const candidate = body?.candidate || {}
+    const agency = body?.agency || null
+    const key = agencyCrosswalkKey(candidate)
+    if (!key) return json({ error: 'SAM Department ID and Agency ID are required to remember a match' }, 400)
+    if (!validAgencyMapping(agency)) return json({ error: 'A valid official USAspending agency is required' }, 400)
+    const stored = {
+      ...agency,
+      samDepartmentId: clean(candidate.departmentId),
+      samAgencyId: clean(candidate.agencyId),
+      matchedAt: new Date().toISOString(),
+      matchSource: 'confirmed',
+    }
+    await env.CACHE.put(key, JSON.stringify(stored), { expirationTtl: AGENCY_CROSSWALK_SECONDS })
+    return json({ agency: stored, cache: 'saved' })
+  }
+
+  const url = new URL(req.url)
+  const candidate = candidateFromSearchParams(url)
+  if (!candidate.name) return json({ error: 'Agency name is required' }, 400)
+  const key = agencyCrosswalkKey(candidate)
+  if (key) {
+    const remembered = await env.CACHE.get(key, 'json')
+    if (validAgencyMapping(remembered)) return json({ agency: remembered, cache: 'crosswalk' })
+  }
+
+  const agency = await resolveAgencyCandidate(candidate)
+  if (!agency) return json({ agency: null, cache: 'miss' })
+  const resolved = {
+    ...agency,
+    samDepartmentId: candidate.departmentId,
+    samAgencyId: candidate.agencyId,
+    matchedAt: new Date().toISOString(),
+    matchSource: 'official',
+  }
+  if (key) await env.CACHE.put(key, JSON.stringify(resolved), { expirationTtl: AGENCY_CROSSWALK_SECONDS })
+  return json({ agency: resolved, cache: 'resolved' })
 }
 
 async function searchAgencies(req, ctx) {
@@ -703,6 +888,7 @@ async function getAgencyUsageStatus(req, env) {
 export async function handleAgencyIntelligence(req, env, ctx) {
   const path = new URL(req.url).pathname
   if (path === '/agency-intelligence/agencies' && req.method === 'GET') return searchAgencies(req, ctx)
+  if (path === '/agency-intelligence/resolve' && ['GET', 'POST'].includes(req.method)) return resolveAgency(req, env)
   if (path === '/agency-intelligence/usage' && req.method === 'GET') return getAgencyUsage(req, env)
   if (path === '/agency-intelligence/usage/status' && req.method === 'GET') return getAgencyUsageStatus(req, env)
   if (path === '/agency-intelligence/vehicles' && req.method === 'GET') return getVehicles(req, ctx)
