@@ -20,7 +20,7 @@ const VEHICLE_FIELDS = [
   'PSC',
   'generated_internal_id',
 ]
-const CACHE_SECONDS = 7 * 24 * 60 * 60
+const CACHE_SECONDS = 14 * 24 * 60 * 60
 const SEARCH_CACHE_SECONDS = 24 * 60 * 60
 const REQUEST_TIMEOUT_MS = 20_000
 // Broad IDV searches can legitimately take close to two minutes on
@@ -179,7 +179,10 @@ async function fetchUSAspending(path, {
         signal: controller.signal,
       })
       if (response.ok) return response.json()
-      lastError = new Error(`USAspending returned ${response.status}`)
+      const upstreamError = new Error(`USAspending returned ${response.status}`)
+      upstreamError.status = response.status
+      lastError = upstreamError
+      await response.body?.cancel().catch(() => {})
       if (![429, 502, 503, 504, 525].includes(response.status)) break
     } catch (error) {
       lastError = error?.name === 'AbortError'
@@ -344,13 +347,22 @@ async function getVehicles(req, ctx) {
     }, ctx)
     return json(payload)
   } catch (error) {
-    console.error('[Agency Intelligence] Vehicle lookup failed', { agency: agency.name, page, error: error.message })
+    console.error(JSON.stringify({
+      event: 'agency_vehicle_lookup_failed',
+      agency: agency.name,
+      agencyTier: agency.tier,
+      parentAgency: agency.parentName,
+      page,
+      upstreamStatus: error?.status || null,
+      message: error?.message || 'Unknown error',
+    }))
     const timedOut = /timed out/i.test(error?.message || '')
+    const upstreamStatus = Number(error?.status) || null
     return json({
       error: timedOut
         ? 'USAspending took too long to return vehicle data. Please try again.'
         : 'Vehicle data is temporarily unavailable',
-      code: timedOut ? 'USASPENDING_TIMEOUT' : 'USASPENDING_UNAVAILABLE',
+      code: timedOut ? 'USASPENDING_TIMEOUT' : upstreamStatus ? `USASPENDING_${upstreamStatus}` : 'USASPENDING_UNAVAILABLE',
     }, 502)
   }
 }
