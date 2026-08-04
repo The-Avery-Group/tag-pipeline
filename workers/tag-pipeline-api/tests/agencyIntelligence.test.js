@@ -129,3 +129,17 @@ test('returns vehicle rows when the optional USAspending count is unavailable', 
   assert.equal(payload.vehicles.length, 1)
   assert.equal(payload.vehicles[0].awardId, '75D30125D00195')
 })
+
+test('reports the upstream USAspending status when vehicle rows fail', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async () => response({ detail: 'Invalid filter' }, 400)
+
+  const request = new Request('https://example.com/agency-intelligence/vehicles?name=CDC&tier=subtier&parent=HHS')
+  const result = await handleAgencyIntelligence(request)
+  const payload = await result.json()
+
+  assert.equal(result.status, 502)
+  assert.equal(payload.code, 'USASPENDING_400')
+  assert.equal(payload.error, 'Vehicle data is temporarily unavailable')
+})
