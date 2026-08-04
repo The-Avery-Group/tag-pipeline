@@ -2,9 +2,9 @@ import { WorkflowEntrypoint } from 'cloudflare:workers'
 import {
   aggregateVehicleOrders,
   currentFiveFiscalYears,
-  fetchAgencyUsageCount,
   fetchAgencyUsagePage,
   finalizeVehicleUsage,
+  hasMoreAgencyUsagePages,
   resolveVehicleAwards,
   writeAgencyUsageResult,
   writeAgencyUsageRun,
@@ -56,33 +56,24 @@ export class AgencyVehicleUsageWorkflow extends WorkflowEntrypoint {
     let processedOrders = Math.max(0, Number(payload.processedOrders) || 0)
     let aggregate = payload.aggregate || {}
     let totalOrders = Number(payload.totalOrders) || null
+    let reachedEnd = false
+    const startedAt = payload.startedAt || new Date().toISOString()
     const finalPage = page + PAGES_PER_INSTANCE - 1
-
-    if (totalOrders === null) {
-      totalOrders = await step.do(
-        'Count agency task and delivery orders',
-        {
-          retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
-          timeout: '3 minutes',
-        },
-        async () => fetchAgencyUsageCount(agency, scope),
-      )
-    }
 
     await step.do('Record agency vehicle aggregation start', async () => {
       await writeAgencyUsageRun(this.env, key, {
         status: 'running',
+        phase: resolveOnly ? 'resolving' : 'loading',
         instanceId: event.instanceId,
         processedOrders,
         totalOrders,
-        page,
-        startedAt: payload.startedAt || new Date().toISOString(),
+        page: Math.max(0, page - 1),
+        startedAt,
       })
     })
 
-    const totalPages = Math.ceil(totalOrders / 100)
-    while (!resolveOnly && page <= finalPage && page <= totalPages) {
-      const batchEnd = Math.min(page + PAGE_BATCH_SIZE - 1, finalPage, totalPages)
+    while (!resolveOnly && page <= finalPage && !reachedEnd) {
+      const batchEnd = Math.min(page + PAGE_BATCH_SIZE - 1, finalPage)
       const batchPages = Array.from({ length: batchEnd - page + 1 }, (_, index) => page + index)
       const responses = await Promise.all(batchPages.map((currentPage) => step.do(
         `Load agency order page ${currentPage}`,
@@ -93,41 +84,53 @@ export class AgencyVehicleUsageWorkflow extends WorkflowEntrypoint {
         async () => fetchAgencyUsagePage(agency, scope, currentPage),
       )))
 
-      responses.forEach((response) => {
+      let lastProcessedPage = page - 1
+      for (let index = 0; index < responses.length; index += 1) {
+        const response = responses[index]
         const rows = response?.results || []
         aggregate = aggregateVehicleOrders(rows, aggregate)
         processedOrders += rows.length
-      })
-      page = batchEnd + 1
+        lastProcessedPage = batchPages[index]
+        if (!hasMoreAgencyUsagePages(response)) {
+          reachedEnd = true
+          break
+        }
+      }
+      page = lastProcessedPage + 1
+      if (reachedEnd) totalOrders = processedOrders
 
-      await step.do(`Record agency vehicle progress ${batchEnd}`, async () => {
+      await step.do(`Record agency vehicle progress ${lastProcessedPage}`, async () => {
         await writeAgencyUsageRun(this.env, key, {
           status: 'running',
+          phase: 'loading',
           instanceId: event.instanceId,
           processedOrders,
           totalOrders,
-          page: batchEnd,
-          totalPages,
+          page: lastProcessedPage,
+          totalPages: reachedEnd ? lastProcessedPage : null,
+          startedAt,
         })
       })
     }
 
-    const hasNext = !resolveOnly && page <= totalPages
+    const hasNext = !resolveOnly && !reachedEnd
     if (hasNext) {
       const nextInstanceId = continuationId()
       await step.do('Continue agency vehicle aggregation', async () => {
         await this.env.AGENCY_VEHICLE_WORKFLOW.create({
           id: nextInstanceId,
-          params: { agency, scope, key, page, aggregate, processedOrders, totalOrders },
+          params: { agency, scope, key, page, aggregate, processedOrders, totalOrders, startedAt },
           retention: { successRetention: '1 day', errorRetention: '3 days' },
         })
         await writeAgencyUsageRun(this.env, key, {
           status: 'running',
+          phase: 'loading',
           instanceId: nextInstanceId,
           processedOrders,
           totalOrders,
           page: page - 1,
-          totalPages: totalOrders ? Math.ceil(totalOrders / 100) : null,
+          totalPages: null,
+          startedAt,
         })
       })
       return { status: 'continuing', nextInstanceId, processedOrders, totalOrders }
@@ -138,7 +141,7 @@ export class AgencyVehicleUsageWorkflow extends WorkflowEntrypoint {
       await step.do('Schedule parent vehicle resolution', async () => {
         await this.env.AGENCY_VEHICLE_WORKFLOW.create({
           id: nextInstanceId,
-          params: { agency, scope, key, aggregate, processedOrders, totalOrders, resolveOnly: true },
+          params: { agency, scope, key, aggregate, processedOrders, totalOrders: processedOrders, resolveOnly: true, startedAt },
           retention: { successRetention: '1 day', errorRetention: '3 days' },
         })
         await writeAgencyUsageRun(this.env, key, {
@@ -146,10 +149,11 @@ export class AgencyVehicleUsageWorkflow extends WorkflowEntrypoint {
           phase: 'resolving',
           instanceId: nextInstanceId,
           processedOrders,
-          totalOrders,
+          totalOrders: processedOrders,
+          startedAt,
         })
       })
-      return { status: 'resolving', nextInstanceId, processedOrders, totalOrders }
+      return { status: 'resolving', nextInstanceId, processedOrders, totalOrders: processedOrders }
     }
 
     const resolutions = await step.do(
