@@ -148,7 +148,7 @@ export default {
         response = await handleEntityEightA(req, env)
 
       } else if (path.startsWith('/agency-intelligence/') && req.method === 'GET') {
-        response = await handleAgencyIntelligence(req, ctx)
+        response = await handleAgencyIntelligence(req, env, ctx)
 
       } else {
         response = json({ error: 'Not found' }, 404)
@@ -199,3 +199,4 @@ export default {
 }
 
 export { SAMPullWorkflow } from './workflows/samPull.js'
+export { AgencyVehicleUsageWorkflow } from './workflows/agencyVehicleUsage.js'
