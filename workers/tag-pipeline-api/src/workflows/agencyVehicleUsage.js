@@ -13,6 +13,7 @@ import {
 // Leave enough of the Free-plan subrequest budget for progress writes,
 // continuation, and parent-IDV name resolution in the final instance.
 const PAGES_PER_INSTANCE = 25
+const PAGE_BATCH_SIZE = 5
 
 function continuationId() {
   return `agency-vehicles-${crypto.randomUUID()}`
@@ -55,7 +56,6 @@ export class AgencyVehicleUsageWorkflow extends WorkflowEntrypoint {
     let processedOrders = Math.max(0, Number(payload.processedOrders) || 0)
     let aggregate = payload.aggregate || {}
     let totalOrders = Number(payload.totalOrders) || null
-    let hasNext = !resolveOnly
     const finalPage = page + PAGES_PER_INSTANCE - 1
 
     if (totalOrders === null) {
@@ -80,36 +80,39 @@ export class AgencyVehicleUsageWorkflow extends WorkflowEntrypoint {
       })
     })
 
-    while (hasNext && page <= finalPage) {
-      const currentPage = page
-      const response = await step.do(
+    const totalPages = Math.ceil(totalOrders / 100)
+    while (!resolveOnly && page <= finalPage && page <= totalPages) {
+      const batchEnd = Math.min(page + PAGE_BATCH_SIZE - 1, finalPage, totalPages)
+      const batchPages = Array.from({ length: batchEnd - page + 1 }, (_, index) => page + index)
+      const responses = await Promise.all(batchPages.map((currentPage) => step.do(
         `Load agency order page ${currentPage}`,
         {
           retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
           timeout: '3 minutes',
         },
         async () => fetchAgencyUsagePage(agency, scope, currentPage),
-      )
-      const rows = response?.results || []
-      aggregate = aggregateVehicleOrders(rows, aggregate)
-      processedOrders += rows.length
-      hasNext = Boolean(response?.page_metadata?.hasNext)
-      page += 1
+      )))
 
-      if (!hasNext || currentPage % 5 === 0) {
-        await step.do(`Record agency vehicle progress ${currentPage}`, async () => {
-          await writeAgencyUsageRun(this.env, key, {
-            status: 'running',
-            instanceId: event.instanceId,
-            processedOrders,
-            totalOrders,
-            page: currentPage,
-            totalPages: totalOrders ? Math.ceil(totalOrders / 100) : null,
-          })
+      responses.forEach((response) => {
+        const rows = response?.results || []
+        aggregate = aggregateVehicleOrders(rows, aggregate)
+        processedOrders += rows.length
+      })
+      page = batchEnd + 1
+
+      await step.do(`Record agency vehicle progress ${batchEnd}`, async () => {
+        await writeAgencyUsageRun(this.env, key, {
+          status: 'running',
+          instanceId: event.instanceId,
+          processedOrders,
+          totalOrders,
+          page: batchEnd,
+          totalPages,
         })
-      }
+      })
     }
 
+    const hasNext = !resolveOnly && page <= totalPages
     if (hasNext) {
       const nextInstanceId = continuationId()
       await step.do('Continue agency vehicle aggregation', async () => {
