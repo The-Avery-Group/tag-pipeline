@@ -27,11 +27,6 @@ name = "sam-opportunity-pull"
 binding = "SAM_PULL_WORKFLOW"
 class_name = "SAMPullWorkflow"
 
-[[workflows]]
-name = "agency-vehicle-usage"
-binding = "AGENCY_VEHICLE_WORKFLOW"
-class_name = "AgencyVehicleUsageWorkflow"
-
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
