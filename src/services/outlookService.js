@@ -1,5 +1,5 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
-import { mailDraftRequest, msalInstance } from '@/auth/msalConfig'
+import { mailDraftRequest, msalInstance, silentTokenOptions } from '@/auth/msalConfig'
 import { buildOutlookDraftPayload, outlookPopoutUrl } from '@/utils/outlookDrafts'
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
@@ -14,7 +14,7 @@ async function mailToken() {
   const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0]
   if (!account) throw new Error('Your Microsoft session is unavailable. Refresh the CRM and try again.')
   try {
-    const response = await msalInstance.acquireTokenSilent({ ...mailDraftRequest, account })
+    const response = await msalInstance.acquireTokenSilent({ ...mailDraftRequest, ...silentTokenOptions, account })
     return response.accessToken
   } catch (error) {
     if (!interactionRequired(error)) throw error
