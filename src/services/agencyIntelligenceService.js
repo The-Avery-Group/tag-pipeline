@@ -80,6 +80,10 @@ function vehicleCountCacheKey(agency) {
   return `tag_agency_vehicle_count:v2:${agency?.tier || 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
 }
 
+function usageCacheKey(agency, scope) {
+  return `tag_agency_vehicle_usage:v2:${scope === 'awarding' ? 'awarding' : 'funding'}:${agency?.tier || 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
+}
+
 function vehicleFilters(agency) {
   const selected = {
     type: 'awarding',
@@ -277,4 +281,36 @@ export function getVehicleActivity(awardId, { forceRefresh = false, signal } = {
     awardId,
     refresh: forceRefresh ? 1 : '',
   })}`, { signal })
+}
+
+export async function getAgencyVehicleUsage(agency, {
+  scope = 'funding',
+  forceRefresh = false,
+  signal,
+} = {}) {
+  const cacheKey = usageCacheKey(agency, scope)
+  const cached = forceRefresh ? null : readVehicleCache(cacheKey)
+  if (cached) return { status: 'ready', result: cached, cache: 'browser' }
+  const response = await workerJson(`/agency-intelligence/usage?${queryString({
+    name: agency?.name,
+    tier: agency?.tier,
+    parent: agency?.parentName,
+    code: agency?.toptierCode,
+    scope,
+    refresh: forceRefresh ? 1 : '',
+  })}`, { signal })
+  if (response.status === 'ready' && response.result) writeVehicleCache(cacheKey, response.result)
+  return response
+}
+
+export async function getAgencyVehicleUsageStatus(agency, { scope = 'funding', signal } = {}) {
+  const response = await workerJson(`/agency-intelligence/usage/status?${queryString({
+    name: agency?.name,
+    tier: agency?.tier,
+    parent: agency?.parentName,
+    code: agency?.toptierCode,
+    scope,
+  })}`, { signal })
+  if (response.status === 'ready' && response.result) writeVehicleCache(usageCacheKey(agency, scope), response.result)
+  return response
 }
