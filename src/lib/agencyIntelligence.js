@@ -49,6 +49,37 @@ export function findExactAgencyMatch(query, agencies = [], { tier, parentName } 
   }) || null
 }
 
+export function pipelineAgencySearchTerms(candidate = {}) {
+  const name = clean(candidate.name)
+  const parentName = clean(candidate.parentName)
+  if (!name && !parentName) return []
+  const withoutParenthetical = name.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  const parenthetical = [...name.matchAll(/\(([^)]+)\)/g)].map((match) => clean(match[1]))
+  return [...new Set([name, withoutParenthetical, ...parenthetical, parentName].filter(Boolean))]
+}
+
+/**
+ * Match a pipeline agency to an official USAspending agency without treating
+ * SAM hierarchy identifiers as USAspending codes. The two systems use
+ * different identifier namespaces, so names, abbreviations, tier, and parent
+ * agency are the safe common identity fields.
+ */
+export function findPipelineAgencyMatch(candidate = {}, agencies = []) {
+  const name = clean(candidate.name)
+  const parentName = clean(candidate.parentName)
+  const isSubtier = Boolean(parentName) && normalizeAgencyIdentity(name) !== normalizeAgencyIdentity(parentName)
+  const aliases = pipelineAgencySearchTerms({ name }).filter((term) => term !== parentName)
+
+  for (const alias of aliases) {
+    const match = findExactAgencyMatch(alias, agencies, {
+      tier: isSubtier ? 'subtier' : 'toptier',
+      parentName: isSubtier ? parentName : '',
+    })
+    if (match) return match
+  }
+  return null
+}
+
 function uniqueValue(map, key, value) {
   if (!key || !value) return
   const values = map.get(key) || new Set()
