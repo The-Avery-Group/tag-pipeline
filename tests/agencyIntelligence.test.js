@@ -13,8 +13,16 @@ import {
   aggregateVehicleOrders,
   currentFiveFiscalYears,
   finalizeVehicleUsage,
+  normalizeAwardIds,
   parentAwardIdFromRecord,
 } from '../src/lib/agencyVehicleUsage.js'
+
+test('sends raw parent award IDs to USAspending without embedded quotes', () => {
+  assert.deepEqual(
+    normalizeAwardIds([' hs002123d0001 ', 'HS002123D0001', 'HS002126AE002']),
+    ['HS002123D0001', 'HS002126AE002'],
+  )
+})
 
 test('builds the browser-direct five fiscal year usage filter', () => {
   const now = new Date('2026-08-04T00:00:00Z')
