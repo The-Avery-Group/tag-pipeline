@@ -4,7 +4,9 @@ import {
   agencyIdPatch,
   buildSAMAgencyIdReference,
   findExactAgencyMatch,
+  findPipelineAgencyMatch,
   mapOfficialAgencyResults,
+  pipelineAgencySearchTerms,
 } from '../src/lib/agencyIntelligence.js'
 
 test('maps and deduplicates direct USAspending agency search results', () => {
@@ -67,4 +69,29 @@ test('resolves only an exact agency name or abbreviation under the expected depa
   assert.equal(findExactAgencyMatch('CDC', agencies, { parentName: 'Department of Health and Human Services' })?.id, 824)
   assert.equal(findExactAgencyMatch('Disease Control', agencies), null)
   assert.equal(findExactAgencyMatch('CDC', agencies, { parentName: 'Department of Defense' }), null)
+})
+
+test('matches a pipeline agency without comparing SAM IDs to USAspending codes', () => {
+  const agencies = mapOfficialAgencyResults([
+    {
+      id: 824,
+      toptier_flag: false,
+      toptier_agency: { toptier_code: '075', abbreviation: 'HHS', name: 'Department of Health and Human Services' },
+      subtier_agency: { abbreviation: 'CDC', name: 'Centers for Disease Control and Prevention' },
+    },
+  ])
+
+  const match = findPipelineAgencyMatch({
+    name: 'Centers for Disease Control and Prevention (CDC)',
+    parentName: 'DEPT OF HEALTH AND HUMAN SERVICES',
+    departmentId: '7500',
+    agencyId: '7523',
+  }, agencies)
+
+  assert.equal(match?.id, 824)
+  assert.deepEqual(
+    pipelineAgencySearchTerms({ name: 'Centers for Disease Control and Prevention (CDC)' }),
+    ['Centers for Disease Control and Prevention (CDC)', 'Centers for Disease Control and Prevention', 'CDC'],
+  )
+  assert.deepEqual(pipelineAgencySearchTerms(), [])
 })
