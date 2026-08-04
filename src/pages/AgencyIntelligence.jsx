@@ -303,7 +303,7 @@ export default function AgencyIntelligence() {
     try {
       const result = await getAgencyVehicles(selectedAgency, { page, limit: 50, forceRefresh, signal: controller.signal })
       setVehicles(result.vehicles || [])
-      setTotalVehicles(result.totalVehicles || 0)
+      setTotalVehicles(result.totalVehicles ?? null)
       setHasNext(Boolean(result.hasNext))
       setCacheState(result.cache || '')
       setFetchedAt(result.fetchedAt || '')
@@ -327,7 +327,7 @@ export default function AgencyIntelligence() {
       .then((result) => {
         if (!active) return
         setVehicles(result.vehicles || [])
-        setTotalVehicles(result.totalVehicles || 0)
+        setTotalVehicles(result.totalVehicles ?? null)
         setHasNext(Boolean(result.hasNext))
         setCacheState(result.cache || '')
         setFetchedAt(result.fetchedAt || '')
@@ -465,7 +465,7 @@ export default function AgencyIntelligence() {
                 ) : (
                   <>
                     <section className={styles.summaryCards}>
-                      <div><span>Vehicle records</span><strong>{vehicleLoading ? '…' : totalVehicles.toLocaleString()}</strong><small>Official IDV count</small></div>
+                      <div><span>Vehicle records</span><strong>{vehicleLoading ? '…' : totalVehicles === null ? 'Not available' : totalVehicles.toLocaleString()}</strong><small>{totalVehicles === null ? 'Vehicle rows are still available' : 'Official IDV count'}</small></div>
                       <div><span>Shown</span><strong>{vehicleLoading ? '…' : vehicles.length.toLocaleString()}</strong><small>Page {page}</small></div>
                       <div><span>Active shown</span><strong>{vehicleLoading ? '…' : activeOnPage.toLocaleString()}</strong><small>Last order date has not passed</small></div>
                       <div><span>Contractors shown</span><strong>{vehicleLoading ? '…' : contractorsOnPage.toLocaleString()}</strong><small>Unique recipients on this page</small></div>
