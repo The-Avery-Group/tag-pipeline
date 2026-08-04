@@ -11,7 +11,6 @@ import {
 } from '@/lib/agencyIntelligence'
 import {
   getAgencyVehicleUsage,
-  getAgencyVehicleUsageStatus,
   getAgencyVehicles,
   getOfficialAgencyMapping,
   getVehicleActivity,
@@ -45,12 +44,6 @@ function date(value) {
   if (!value) return 'Not reported'
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-function wait(milliseconds, signal) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds)
-    signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')) }, { once: true })
-  })
 }
 function pipelineAgencies(pipeline) {
   const grouped = new Map()
@@ -265,16 +258,15 @@ export default function AgencyIntelligence() {
     const load = async () => {
       setUsageLoading(true); setUsageError(''); setUsageRun(null); setSelectedUsage(null)
       try {
-        let response = await getAgencyVehicleUsage(selectedAgency, { scope, forceRefresh: forceUsageRefresh.current, signal: controller.signal })
+        const response = await getAgencyVehicleUsage(selectedAgency, {
+          scope,
+          forceRefresh: forceUsageRefresh.current,
+          signal: controller.signal,
+          onProgress: (progress) => { if (active && progress.phase !== 'complete') setUsageRun(progress) },
+        })
         forceUsageRefresh.current = false
-        while (active && ['queued', 'running'].includes(response.status)) {
-          setUsageRun(response)
-          await wait(2500, controller.signal)
-          response = await getAgencyVehicleUsageStatus(selectedAgency, { scope, signal: controller.signal })
-        }
         if (!active) return
         if (response.status === 'ready') { setUsage(response.result); setUsageRun(null) }
-        else if (response.status === 'error') throw new Error(response.error || 'Vehicle usage could not be prepared')
         else throw new Error('Vehicle usage did not finish loading')
       } catch (error) { if (error.name !== 'AbortError' && active) setUsageError(error.message) }
       finally { if (active) setUsageLoading(false) }
