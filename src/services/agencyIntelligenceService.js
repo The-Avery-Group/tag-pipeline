@@ -6,6 +6,7 @@ import {
   aggregateVehicleOrders,
   currentFiveFiscalYears,
   finalizeVehicleUsage,
+  normalizeAwardIds,
 } from '@/lib/agencyVehicleUsage'
 
 const USASPENDING_BASE = 'https://api.usaspending.gov/api/v2'
@@ -468,9 +469,8 @@ async function loadUsagePage(agency, scope, page, signal) {
 
 async function resolveParentVehicles(parentAwardIds, existing, onProgress, signal) {
   const resolutions = { ...(existing || {}) }
-  const unresolved = [...new Set(parentAwardIds
-    .map((value) => clean(value).toUpperCase())
-    .filter((value) => value && !resolutions[value]))]
+  const unresolved = normalizeAwardIds(parentAwardIds)
+    .filter((value) => !resolutions[value])
   let resolvedCount = parentAwardIds.length - unresolved.length
   const chunks = []
   for (let offset = 0; offset < unresolved.length; offset += RESOLUTION_CHUNK_SIZE) {
@@ -489,7 +489,9 @@ async function resolveParentVehicles(parentAwardIds, existing, onProgress, signa
     const responses = await Promise.all(currentChunks.map((awardIds) =>
       postUSAspending('/search/spending_by_award/', {
         filters: {
-          award_ids: awardIds.map((awardId) => `"${awardId}"`),
+          // USAspending expects raw PIIDs. Embedding quotation marks inside
+          // each JSON string causes this endpoint to return 503.
+          award_ids: awardIds,
           award_type_codes: IDV_CODES,
         },
         fields: VEHICLE_RESOLUTION_FIELDS,
