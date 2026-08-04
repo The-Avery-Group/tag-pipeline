@@ -13,7 +13,9 @@ import {
   getAgencyVehicleUsage,
   getAgencyVehicleUsageStatus,
   getAgencyVehicles,
+  getOfficialAgencyMapping,
   getVehicleActivity,
+  saveOfficialAgencyMapping,
   searchOfficialAgencies,
 } from '@/services/agencyIntelligenceService'
 import styles from './AgencyIntelligence.module.css'
@@ -206,7 +208,12 @@ export default function AgencyIntelligence() {
 
   const chooseAgency = (agency) => {
     const nextAgency = pendingCandidate ? { ...agency, departmentId: pendingCandidate.departmentId, agencyId: pendingCandidate.agencyId } : agency
-    if (pendingCandidate) rememberAgency(pendingCandidate, nextAgency)
+    if (pendingCandidate) {
+      rememberAgency(pendingCandidate, nextAgency)
+      saveOfficialAgencyMapping(pendingCandidate, nextAgency).catch((error) => {
+        console.warn('[Agency Intelligence] Shared agency match could not be saved', { error: error.message })
+      })
+    }
     setPendingCandidate(null); setSelectedAgency(nextAgency); setPage(1); setUsagePage(1); setVehicleFilter(''); setUsageFilter(''); setSelectedVehicle(null); setSelectedUsage(null)
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
@@ -221,6 +228,17 @@ export default function AgencyIntelligence() {
     if (remembered) { chooseAgency({ ...remembered, departmentId: candidate.departmentId, agencyId: candidate.agencyId }); return }
     setResolving(candidate.name); setSearchError('')
     try {
+      let resolved = null
+      try {
+        resolved = await getOfficialAgencyMapping(candidate)
+      } catch (error) {
+        console.warn('[Agency Intelligence] Shared agency resolver unavailable; continuing with direct search', { error: error.message })
+      }
+      if (resolved?.agency) {
+        rememberAgency(candidate, resolved.agency)
+        chooseAgency({ ...resolved.agency, departmentId: candidate.departmentId, agencyId: candidate.agencyId })
+        return
+      }
       const agencies = []; const seen = new Set(); let match = null
       for (const term of pipelineAgencySearchTerms(candidate)) {
         const result = await searchOfficialAgencies(term)
@@ -233,6 +251,9 @@ export default function AgencyIntelligence() {
         throw new Error(agencies.length ? 'Select the matching official agency from the results.' : 'No official USAspending agency match was found. Search and select the correct agency once to remember it.')
       }
       rememberAgency(candidate, match)
+      saveOfficialAgencyMapping(candidate, match).catch((error) => {
+        console.warn('[Agency Intelligence] Shared agency match could not be saved', { error: error.message })
+      })
       chooseAgency({ ...match, departmentId: candidate.departmentId, agencyId: candidate.agencyId })
     } catch (error) { setSearchError(error.message) } finally { setResolving('') }
   }
