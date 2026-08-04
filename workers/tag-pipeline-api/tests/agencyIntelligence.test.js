@@ -179,6 +179,54 @@ test('summarizes direct and nested IDV order activity', () => {
   assert.equal(result.activityTruncated, true)
 })
 
+test('vehicle detail skips the activity request when USAspending reports no orders', async (t) => {
+  const originalFetch = globalThis.fetch
+  let requests = 0
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async () => {
+    requests += 1
+    return response({
+      child_idv_count: 0,
+      child_award_count: 0,
+      grandchild_award_count: 0,
+      child_award_total_obligation: 0,
+      grandchild_award_total_obligation: 0,
+    })
+  }
+
+  const result = await handleAgencyIntelligence(new Request('https://example.com/agency-intelligence/vehicle?awardId=CONT_IDV_HS002126AE002_9700'))
+  const payload = await result.json()
+
+  assert.equal(result.status, 200)
+  assert.equal(payload.totalOrderCount, 0)
+  assert.equal(requests, 1)
+})
+
+test('vehicle detail returns totals when only the individual activity list fails', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/idvs/amounts/')) {
+      return response({
+        child_idv_count: 0,
+        child_award_count: 2,
+        grandchild_award_count: 1,
+        child_award_total_obligation: 125,
+        grandchild_award_total_obligation: 75,
+      })
+    }
+    return response({ detail: 'Unavailable' }, 503)
+  }
+
+  const result = await handleAgencyIntelligence(new Request('https://example.com/agency-intelligence/vehicle?awardId=CONT_IDV_HS002123D0001_9700'))
+  const payload = await result.json()
+
+  assert.equal(result.status, 200)
+  assert.equal(payload.totalOrderCount, 3)
+  assert.equal(payload.totalObligations, 200)
+  assert.match(payload.warning, /individual order list/i)
+})
+
 test('returns vehicle rows when the optional USAspending count is unavailable', async (t) => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })
