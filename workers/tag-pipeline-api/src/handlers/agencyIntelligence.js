@@ -30,28 +30,6 @@ const REQUEST_TIMEOUT_MS = 20_000
 const VEHICLE_REQUEST_TIMEOUT_MS = 150_000
 const USAGE_REQUEST_TIMEOUT_MS = 45_000
 const USAGE_CACHE_SECONDS = 30 * 24 * 60 * 60
-const ORDER_CODES = ['A', 'C']
-const ORDER_FIELDS = [
-  'Award ID',
-  'Recipient Name',
-  'Recipient UEI',
-  'Award Amount',
-  'Description',
-  'Last Modified Date',
-  'Base Obligation Date',
-  'NAICS',
-  'PSC',
-  'generated_internal_id',
-]
-const VEHICLE_RESOLUTION_FIELDS = [
-  'Award ID',
-  'Description',
-  'Contract Award Type',
-  'Potential Award Amount',
-  'Last Date to Order',
-  'Last Modified Date',
-  'generated_internal_id',
-]
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -123,133 +101,9 @@ function exactAgencyMatch(candidate, agencies = []) {
   }) || null
 }
 
-export function currentFiveFiscalYears(now = new Date()) {
-  const year = now.getUTCFullYear()
-  const currentFiscalYear = now.getUTCMonth() >= 9 ? year + 1 : year
-  return {
-    firstFiscalYear: currentFiscalYear - 4,
-    lastFiscalYear: currentFiscalYear,
-    startDate: `${currentFiscalYear - 5}-10-01`,
-    endDate: now.toISOString().slice(0, 10),
-  }
-}
-
 export function agencyUsageKey(agency, scope = 'funding') {
   const type = scope === 'awarding' ? 'awarding' : 'funding'
   return `agency_vehicle_usage:v4:${type}:${agency?.tier === 'subtier' ? 'subtier' : 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
-}
-
-export function usageFilters(agency, scope = 'funding', now = new Date()) {
-  const selected = {
-    type: scope === 'awarding' ? 'awarding' : 'funding',
-    tier: agency?.tier === 'subtier' ? 'subtier' : 'toptier',
-    name: clean(agency?.name),
-  }
-  if (selected.tier === 'subtier' && agency?.parentName) selected.toptier_name = clean(agency.parentName)
-  const period = currentFiveFiscalYears(now)
-  return {
-    agencies: [selected],
-    award_type_codes: ORDER_CODES,
-    time_period: [{ start_date: period.startDate, end_date: period.endDate }],
-  }
-}
-
-function codeValue(value) {
-  if (value && typeof value === 'object') return clean(value.code)
-  return clean(value)
-}
-
-function incrementCount(target, value) {
-  const key = codeValue(value)
-  if (key) target[key] = (target[key] || 0) + 1
-}
-
-function mostCommon(counts = {}) {
-  return Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || ''
-}
-
-export function parentAwardIdFromRecord(record) {
-  const awardId = clean(record?.['Award ID'])
-  const generatedId = clean(record?.generated_internal_id)
-  const prefix = `CONT_AWD_${awardId}_`
-  if (!awardId || !generatedId.toUpperCase().startsWith(prefix.toUpperCase())) return ''
-  const parts = generatedId.slice(prefix.length).split('_')
-  if (parts.length < 3) return ''
-  const parentAwardId = clean(parts.slice(1, -1).join('_')).toUpperCase()
-  return parentAwardId && !/^[-]?NONE[-]?$/i.test(parentAwardId) ? parentAwardId : ''
-}
-
-export function aggregateVehicleOrders(records = [], seed = {}) {
-  const aggregate = { ...seed }
-  for (const record of records) {
-    const parentAwardId = clean(record?.['Parent Award ID']).toUpperCase() || parentAwardIdFromRecord(record)
-    if (!parentAwardId) continue
-    const orderId = clean(record?.['Award ID']).toUpperCase()
-    const contractor = clean(record?.['Recipient Name'])
-    const contractorKey = clean(record?.['Recipient UEI']) || normalized(contractor)
-    const signedDate = clean(record?.['Last Modified Date']) || clean(record?.['Base Obligation Date'])
-    const current = aggregate[parentAwardId] || {
-      parentAwardId,
-      orderIds: {},
-      contractors: {},
-      obligations: 0,
-      lastUsed: '',
-      naics: {},
-      psc: {},
-      samples: [],
-    }
-    if (!orderId || !current.orderIds[orderId]) {
-      if (orderId) current.orderIds[orderId] = true
-      current.obligations += number(record?.['Award Amount'])
-      if (contractorKey) current.contractors[contractorKey] = contractor || contractorKey
-      incrementCount(current.naics, record?.NAICS)
-      incrementCount(current.psc, record?.PSC)
-      if (signedDate && (!current.lastUsed || signedDate > current.lastUsed)) current.lastUsed = signedDate
-      if (current.samples.length < 8) {
-        current.samples.push({
-          awardId: orderId,
-          generatedId: clean(record?.generated_internal_id),
-          contractor,
-          obligation: number(record?.['Award Amount']),
-          signedDate,
-          description: clean(record?.Description),
-        })
-      }
-    }
-    aggregate[parentAwardId] = current
-  }
-  return aggregate
-}
-
-export function finalizeVehicleUsage(aggregate = {}, resolutions = {}) {
-  const vehicles = Object.values(aggregate).map((item) => {
-    const resolved = resolutions[item.parentAwardId] || {}
-    return {
-      parentAwardId: item.parentAwardId,
-      vehicleName: clean(resolved.description),
-      vehicleType: clean(resolved.vehicleType),
-      generatedId: clean(resolved.generatedId),
-      ceiling: number(resolved.ceiling),
-      lastDateToOrder: clean(resolved.lastDateToOrder),
-      orders: Object.keys(item.orderIds || {}).length || item.samples?.length || 0,
-      contractors: Object.keys(item.contractors || {}).length,
-      obligations: number(item.obligations),
-      lastUsed: clean(item.lastUsed),
-      topNaics: mostCommon(item.naics),
-      topPsc: mostCommon(item.psc),
-      sampleOrders: item.samples || [],
-    }
-  }).sort((a, b) => b.orders - a.orders || b.obligations - a.obligations || a.parentAwardId.localeCompare(b.parentAwardId))
-
-  return {
-    vehicles,
-    totals: {
-      vehicles: vehicles.length,
-      orders: vehicles.reduce((sum, item) => sum + item.orders, 0),
-      contractors: new Set(Object.values(aggregate).flatMap((item) => Object.keys(item.contractors || {}))).size,
-      obligations: vehicles.reduce((sum, item) => sum + item.obligations, 0),
-    },
-  }
 }
 
 function matchScore(query, agency) {
@@ -467,105 +321,6 @@ export async function fetchUSAspending(path, {
     }
   }
   throw lastError || new Error('USAspending is temporarily unavailable')
-}
-
-export async function fetchAgencyUsagePage(agency, scope, page, now = new Date()) {
-  return fetchUSAspending('/search/spending_by_award/', {
-    method: 'POST',
-    body: {
-      filters: usageFilters(agency, scope, now),
-      fields: ORDER_FIELDS,
-      page,
-      limit: 100,
-      sort: 'Last Modified Date',
-      order: 'desc',
-      subawards: false,
-    },
-    // Workflow step retries provide the delay and backoff. Keeping this to
-    // one fetch makes each free-plan invocation's subrequest use predictable.
-    attempts: 1,
-    timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
-  })
-}
-
-export function hasMoreAgencyUsagePages(response) {
-  return Boolean(response?.page_metadata?.hasNext) && Array.isArray(response?.results) && response.results.length > 0
-}
-
-export async function resolveVehicleAwards(parentAwardIds = []) {
-  const resolutions = {}
-  const unique = [...new Set(parentAwardIds.map((value) => clean(value).toUpperCase()).filter(Boolean))]
-  const chunks = []
-  for (let offset = 0; offset < unique.length; offset += 75) chunks.push({ offset, awardIds: unique.slice(offset, offset + 75) })
-
-  for (const { awardIds } of chunks) {
-    const response = await fetchUSAspending('/search/spending_by_award/', {
-      method: 'POST',
-      body: {
-        filters: { award_ids: awardIds.map((awardId) => `"${awardId}"`), award_type_codes: IDV_CODES },
-        fields: VEHICLE_RESOLUTION_FIELDS,
-        page: 1,
-        limit: 100,
-        sort: 'Last Modified Date',
-        order: 'desc',
-        subawards: false,
-      },
-      attempts: 1,
-      timeoutMs: USAGE_REQUEST_TIMEOUT_MS,
-    })
-
-    for (const record of response?.results || []) {
-      const awardId = clean(record?.['Award ID']).toUpperCase()
-      if (!awardId || resolutions[awardId]) continue
-      resolutions[awardId] = {
-        description: clean(record?.Description),
-        vehicleType: clean(record?.['Contract Award Type']),
-        generatedId: clean(record?.generated_internal_id),
-        ceiling: number(record?.['Potential Award Amount']),
-        lastDateToOrder: clean(record?.['Last Date to Order']),
-      }
-    }
-  }
-  return resolutions
-}
-
-export async function writeAgencyUsageRun(env, key, value) {
-  if (!env?.CACHE) return
-  await env.CACHE.put(`${key}:run`, JSON.stringify(value), { expirationTtl: 24 * 60 * 60 })
-}
-
-export async function readAgencyUsageCheckpoint(env, key) {
-  if (!env?.CACHE) return {}
-  return (await env.CACHE.get(`${key}:aggregate`, 'json')) || {}
-}
-
-export async function writeAgencyUsageCheckpoint(env, key, value) {
-  if (!env?.CACHE) return
-  await env.CACHE.put(`${key}:aggregate`, JSON.stringify(value || {}), { expirationTtl: 24 * 60 * 60 })
-}
-
-export async function readAgencyUsageResolutions(env, key) {
-  if (!env?.CACHE) return {}
-  return (await env.CACHE.get(`${key}:resolutions`, 'json')) || {}
-}
-
-export async function writeAgencyUsageResolutions(env, key, value) {
-  if (!env?.CACHE) return
-  await env.CACHE.put(`${key}:resolutions`, JSON.stringify(value || {}), { expirationTtl: 24 * 60 * 60 })
-}
-
-export async function clearAgencyUsageWorkingState(env, key) {
-  if (!env?.CACHE) return
-  await Promise.all([
-    env.CACHE.delete(`${key}:aggregate`),
-    env.CACHE.delete(`${key}:resolutions`),
-  ])
-}
-
-export async function writeAgencyUsageResult(env, key, value) {
-  if (!env?.CACHE) return
-  await env.CACHE.put(key, JSON.stringify(value), { expirationTtl: USAGE_CACHE_SECONDS })
-  await writeAgencyUsageRun(env, key, { status: 'ready', fetchedAt: value.fetchedAt })
 }
 
 function cacheRequest(req, key) {
@@ -859,58 +614,110 @@ function usageRequest(req) {
 }
 
 async function getAgencyUsage(req, env) {
-  const { agency, scope, forceRefresh } = usageRequest(req)
-  if (!agency.name) return json({ error: 'Agency name is required' }, 400)
-  if (!env?.CACHE) return json({ error: 'Agency vehicle usage cache is not configured' }, 503)
-  const key = agencyUsageKey(agency, scope)
-
-  if (!forceRefresh) {
-    const result = await env.CACHE.get(key, 'json')
-    if (result) return json({ status: 'ready', result, cache: 'cache' })
-    const existing = await env.CACHE.get(`${key}:run`, 'json')
-    if (existing && ['queued', 'running'].includes(existing.status)) return json(existing, 202)
-  } else {
-    await env.CACHE.delete(key)
-  }
-
-  if (!env.AGENCY_VEHICLE_WORKFLOW?.create) {
-    return json({ error: 'Agency vehicle aggregation workflow is unavailable' }, 503)
-  }
-
-  const instanceId = `agency-vehicles-${crypto.randomUUID()}`
-  const run = {
-    status: 'queued',
-    instanceId,
-    processedOrders: 0,
-    totalOrders: null,
-    startedAt: new Date().toISOString(),
-  }
-  await clearAgencyUsageWorkingState(env, key)
-  await writeAgencyUsageRun(env, key, run)
-  try {
-    await env.AGENCY_VEHICLE_WORKFLOW.create({
-      id: instanceId,
-      params: { agency, scope, key, page: 1, aggregate: {}, processedOrders: 0 },
-      retention: { successRetention: '1 day', errorRetention: '3 days' },
-    })
-    return json(run, 202)
-  } catch (error) {
-    const failed = { ...run, status: 'error', error: 'Vehicle usage could not be started' }
-    await writeAgencyUsageRun(env, key, failed)
-    console.error('[Agency Intelligence] Usage workflow could not start', { agency: agency.name, error: error.message })
-    return json(failed, 502)
-  }
-}
-
-async function getAgencyUsageStatus(req, env) {
   const { agency, scope } = usageRequest(req)
   if (!agency.name) return json({ error: 'Agency name is required' }, 400)
   if (!env?.CACHE) return json({ error: 'Agency vehicle usage cache is not configured' }, 503)
   const key = agencyUsageKey(agency, scope)
   const result = await env.CACHE.get(key, 'json')
-  if (result) return json({ status: 'ready', result, cache: 'cache' })
-  const run = await env.CACHE.get(`${key}:run`, 'json')
-  return json(run || { status: 'idle', processedOrders: 0, totalOrders: null })
+  return json(result
+    ? { status: 'ready', result, cache: 'shared' }
+    : { status: 'miss', cache: 'shared' })
+}
+
+function sanitizeUsageVehicle(vehicle = {}) {
+  const parentAwardId = clean(vehicle.parentAwardId).toUpperCase().slice(0, 180)
+  if (!parentAwardId) return null
+  return {
+    parentAwardId,
+    vehicleName: clean(vehicle.vehicleName).slice(0, 1000),
+    vehicleType: clean(vehicle.vehicleType).slice(0, 250),
+    generatedId: clean(vehicle.generatedId).slice(0, 300),
+    ceiling: number(vehicle.ceiling),
+    lastDateToOrder: clean(vehicle.lastDateToOrder).slice(0, 50),
+    orders: Math.max(0, Math.trunc(number(vehicle.orders))),
+    contractors: Math.max(0, Math.trunc(number(vehicle.contractors))),
+    obligations: number(vehicle.obligations),
+    lastUsed: clean(vehicle.lastUsed).slice(0, 50),
+    topNaics: clean(vehicle.topNaics).slice(0, 30),
+    topPsc: clean(vehicle.topPsc).slice(0, 30),
+    sampleOrders: (Array.isArray(vehicle.sampleOrders) ? vehicle.sampleOrders : []).slice(0, 8).map((order) => ({
+      awardId: clean(order?.awardId).slice(0, 180),
+      generatedId: clean(order?.generatedId).slice(0, 300),
+      contractor: clean(order?.contractor).slice(0, 500),
+      obligation: number(order?.obligation),
+      signedDate: clean(order?.signedDate).slice(0, 50),
+      description: clean(order?.description).slice(0, 1000),
+    })),
+  }
+}
+
+function sanitizeUsageResult(result, agency, scope) {
+  if (!result || typeof result !== 'object' || !Array.isArray(result.vehicles)) {
+    throw new Error('A completed vehicle usage result is required')
+  }
+  if (result.vehicles.length > 50_000) throw new Error('Vehicle usage result is too large')
+  if (identity(result?.agency?.name) !== identity(agency.name)) {
+    throw new Error('Vehicle usage agency does not match the cache request')
+  }
+  if ((result.scope === 'awarding' ? 'awarding' : 'funding') !== scope) {
+    throw new Error('Vehicle usage scope does not match the cache request')
+  }
+
+  const vehicles = result.vehicles.map(sanitizeUsageVehicle).filter(Boolean)
+  const totals = {
+    vehicles: vehicles.length,
+    orders: vehicles.reduce((sum, vehicle) => sum + vehicle.orders, 0),
+    contractors: Math.max(0, Math.trunc(number(result?.totals?.contractors))),
+    obligations: vehicles.reduce((sum, vehicle) => sum + vehicle.obligations, 0),
+  }
+  return {
+    agency: {
+      name: agency.name,
+      tier: agency.tier,
+      parentName: agency.parentName,
+      toptierCode: agency.toptierCode,
+    },
+    scope,
+    period: {
+      firstFiscalYear: Math.trunc(number(result?.period?.firstFiscalYear)),
+      lastFiscalYear: Math.trunc(number(result?.period?.lastFiscalYear)),
+      startDate: clean(result?.period?.startDate).slice(0, 20),
+      endDate: clean(result?.period?.endDate).slice(0, 20),
+    },
+    vehicles,
+    totals,
+    processedOrders: Math.max(totals.orders, Math.trunc(number(result.processedOrders))),
+    unlinkedOrders: Math.max(0, Math.trunc(number(result.unlinkedOrders))),
+    fetchedAt: clean(result.fetchedAt).slice(0, 50) || new Date().toISOString(),
+    source: 'USAspending.gov',
+    transport: 'browser',
+  }
+}
+
+async function saveAgencyUsage(req, env) {
+  const { agency, scope } = usageRequest(req)
+  if (!agency.name) return json({ error: 'Agency name is required' }, 400)
+  if (!env?.CACHE) return json({ error: 'Agency vehicle usage cache is not configured' }, 503)
+  const contentLength = Number(req.headers.get('content-length') || 0)
+  if (contentLength > 20_000_000) return json({ error: 'Vehicle usage result is too large' }, 413)
+  try {
+    const body = await req.json()
+    const result = sanitizeUsageResult(body?.result, agency, scope)
+    const serialized = JSON.stringify(result)
+    if (new TextEncoder().encode(serialized).byteLength > 20_000_000) {
+      return json({ error: 'Vehicle usage result is too large' }, 413)
+    }
+    await env.CACHE.put(agencyUsageKey(agency, scope), serialized, { expirationTtl: USAGE_CACHE_SECONDS })
+    return json({ status: 'saved', fetchedAt: result.fetchedAt })
+  } catch (error) {
+    return json({ error: error?.message || 'Vehicle usage result is invalid' }, 400)
+  }
+}
+
+async function getAgencyUsageStatus(req, env) {
+  // Compatibility for older frontend bundles. Status polling no longer starts
+  // or advances work, and simply reads the shared completed-result cache.
+  return getAgencyUsage(req, env)
 }
 
 export async function handleAgencyIntelligence(req, env, ctx) {
@@ -918,6 +725,7 @@ export async function handleAgencyIntelligence(req, env, ctx) {
   if (path === '/agency-intelligence/agencies' && req.method === 'GET') return searchAgencies(req, ctx)
   if (path === '/agency-intelligence/resolve' && ['GET', 'POST'].includes(req.method)) return resolveAgency(req, env)
   if (path === '/agency-intelligence/usage' && req.method === 'GET') return getAgencyUsage(req, env)
+  if (path === '/agency-intelligence/usage' && req.method === 'POST') return saveAgencyUsage(req, env)
   if (path === '/agency-intelligence/usage/status' && req.method === 'GET') return getAgencyUsageStatus(req, env)
   if (path === '/agency-intelligence/vehicles' && req.method === 'GET') return getVehicles(req, ctx)
   if (path === '/agency-intelligence/vehicle' && req.method === 'GET') return getVehicleDetail(req, ctx)
