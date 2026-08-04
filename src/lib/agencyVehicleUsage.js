@@ -69,6 +69,12 @@ export function agencyUsageIdentity(agency, scope = 'funding') {
   ].join(':')
 }
 
+export function normalizeAwardIds(values = []) {
+  return [...new Set(values
+    .map((value) => clean(value).toUpperCase())
+    .filter(Boolean))]
+}
+
 export function parentAwardIdFromRecord(record) {
   const awardId = clean(record?.['Award ID'])
   const generatedId = clean(record?.generated_internal_id)
