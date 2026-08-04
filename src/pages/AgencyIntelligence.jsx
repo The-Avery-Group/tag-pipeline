@@ -112,6 +112,7 @@ function RawVehicleDetails({ vehicle, detail, loading, error, onClose }) {
     </div>
     {vehicle.generatedId && <a className="btn text-sm" href={`https://www.usaspending.gov/award/${encodeURIComponent(vehicle.generatedId)}`} target="_blank" rel="noreferrer">View on USAspending.gov</a>}
     {loading ? <div className={styles.detailLoading}>Loading order activity…</div> : error ? <div className={styles.inlineError}>{error}</div> : detail ? <>
+      {detail.warning && <div className={styles.vehicleWarning}>{detail.warning}</div>}
       <div className={styles.activityMetrics}>
         <div><span>Orders</span><strong>{detail.totalOrderCount.toLocaleString()}</strong></div>
         <div title={fullMoney(detail.totalObligations)}><span>Obligations</span><strong>{money(detail.totalObligations)}</strong></div>
@@ -331,12 +332,16 @@ export default function AgencyIntelligence() {
   const usageRows = filteredUsage.slice((usagePage - 1) * USAGE_PAGE_SIZE, usagePage * USAGE_PAGE_SIZE)
   const filteredVehicles = useMemo(() => { const value = normalized(vehicleFilter); return vehicles.filter((vehicle) => !value || [vehicle.awardId, vehicle.description, vehicle.contractor, vehicle.vehicleType, vehicle.naicsCode, vehicle.pscCode].some((field) => normalized(field).includes(value))) }, [vehicles, vehicleFilter])
   const rawPages = totalVehicles === null ? (hasNext ? page + 1 : page) : Math.max(1, Math.ceil(totalVehicles / RAW_PAGE_SIZE))
-  const progressPercent = usageRun?.totalOrders ? Math.min(100, Math.round((Number(usageRun.processedOrders || 0) / usageRun.totalOrders) * 100)) : null
+  const progressPercent = usageRun?.phase === 'resolving' && Number(usageRun?.totalVehicles || 0) > 0
+    ? Math.min(100, Math.round((Number(usageRun.resolvedVehicles || 0) / usageRun.totalVehicles) * 100))
+    : null
   const progressDetail = usageRun?.phase === 'resolving'
-    ? `${Number(usageRun.processedOrders || 0).toLocaleString()} orders grouped`
+    ? Number(usageRun?.totalVehicles || 0) > 0
+      ? `${Number(usageRun.resolvedVehicles || 0).toLocaleString()} of ${Number(usageRun.totalVehicles).toLocaleString()} vehicle names`
+      : `${Number(usageRun.processedOrders || 0).toLocaleString()} orders grouped`
     : Number(usageRun?.processedOrders || 0) > 0
-      ? `${Number(usageRun.processedOrders).toLocaleString()} orders checked${usageRun.page ? ` · Page ${usageRun.page}` : ''}`
-      : 'Loading the first order page'
+      ? `${Number(usageRun.processedOrders).toLocaleString()} orders checked${usageRun.activePage ? ` · Loading page ${usageRun.activePage}` : usageRun.page ? ` · Page ${usageRun.page}` : ''}`
+      : `Loading order page ${Number(usageRun?.activePage || 1)}`
 
   return <>
     <Topbar title="Agency Intelligence" subtitle1="Federal contract vehicles" subtitle2="USAspending.gov" showFilter={false} />
