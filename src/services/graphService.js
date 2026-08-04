@@ -191,7 +191,10 @@ async function graphFetch(path, options = {}) {
     const fallback = [502, 503, 504].includes(res.status)
       ? `Microsoft Graph is temporarily unavailable (${res.status}). Please retry.`
       : `Graph API error: ${res.status}`
-    throw new Error(err?.error?.message || fallback)
+    const graphError = new Error(err?.error?.message || fallback)
+    graphError.status = res.status
+    graphError.code = err?.error?.code || ''
+    throw graphError
   }
 }
 
@@ -436,6 +439,45 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
         : cachedRow
     ))
   }
+}
+
+/**
+ * Retry an idempotent row patch after transient Graph failures. A PATCH can
+ * succeed even when Graph returns an ambiguous 5xx response, so each retry
+ * first reloads the table and checks whether the requested values already
+ * reached the workbook. Stable record identity prevents retrying against a
+ * different row after workbook sorting or row insertion.
+ */
+export async function updateRowWithReconciliation(tableName, rowIndex, patch, headers, { attempts = 3 } = {}) {
+  const original = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+  const identity = recordIdentity(tableName, original)
+  let targetRowIndex = rowIndex
+  let lastError
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await updateRow(tableName, targetRowIndex, patch, headers)
+      return { reconciled: false, attempts: attempt + 1 }
+    } catch (error) {
+      lastError = error
+      const transient = [429, 502, 503, 504].includes(Number(error?.status))
+      if (!transient || !identity || attempt >= attempts - 1) throw error
+
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+      invalidate(tableName)
+      const freshRows = await getSheetRows(tableName)
+      const current = freshRows.find((row) => recordIdentity(tableName, row) === identity)
+      if (!current) throw new Error('This record moved in the workbook and could not be located during retry.')
+
+      const applied = Object.entries(patch).every(([field, value]) =>
+        String(current?.[field] ?? '').trim() === String(value ?? '').trim()
+      )
+      if (applied) return { reconciled: true, attempts: attempt + 1 }
+      targetRowIndex = current._rowIndex
+    }
+  }
+
+  throw lastError
 }
 
 /**
