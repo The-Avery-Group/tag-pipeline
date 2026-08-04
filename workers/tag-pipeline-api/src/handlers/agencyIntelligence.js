@@ -135,7 +135,7 @@ export function currentFiveFiscalYears(now = new Date()) {
 
 export function agencyUsageKey(agency, scope = 'funding') {
   const type = scope === 'awarding' ? 'awarding' : 'funding'
-  return `agency_vehicle_usage:v2:${type}:${agency?.tier === 'subtier' ? 'subtier' : 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
+  return `agency_vehicle_usage:v3:${type}:${agency?.tier === 'subtier' ? 'subtier' : 'toptier'}:${normalized(agency?.parentName)}:${normalized(agency?.name)}`
 }
 
 export function usageFilters(agency, scope = 'funding', now = new Date()) {
@@ -485,14 +485,8 @@ export async function fetchAgencyUsagePage(agency, scope, page, now = new Date()
   })
 }
 
-export async function fetchAgencyUsageCount(agency, scope, now = new Date()) {
-  const response = await fetchUSAspending('/search/spending_by_award_count/', {
-    method: 'POST',
-    body: { filters: usageFilters(agency, scope, now), spending_level: 'awards', subawards: false },
-    attempts: 3,
-    timeoutMs: VEHICLE_REQUEST_TIMEOUT_MS,
-  })
-  return number(response?.results?.contracts)
+export function hasMoreAgencyUsagePages(response) {
+  return Boolean(response?.page_metadata?.hasNext) && Array.isArray(response?.results) && response.results.length > 0
 }
 
 export async function resolveVehicleAwards(parentAwardIds = []) {
