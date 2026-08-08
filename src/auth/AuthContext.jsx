@@ -3,6 +3,7 @@ import { useMsal } from '@azure/msal-react'
 import { InteractionStatus } from '@azure/msal-browser'
 import { appUrl, loginRequest, graphConfig, silentTokenOptions } from './msalConfig'
 import { stopPolling } from '@/services/dataCache'
+import { requestSessionRefresh } from '@/services/graphService'
 
 const AuthContext = createContext(null)
 
@@ -50,6 +51,9 @@ export function AuthProvider({ children }) {
       .catch((err) => {
         if (signingOutRef.current) return
         console.error('Failed to load user profile:', err)
+        if (/refresh_token_expired|interaction_required|login_required/i.test(`${err?.errorCode || ''} ${err?.message || ''}`)) {
+          requestSessionRefresh(err)
+        }
         setUser({
           displayName: account.name,
           firstName:   account.name.split(' ')[0],
