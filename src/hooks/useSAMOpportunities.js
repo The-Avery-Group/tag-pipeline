@@ -137,6 +137,9 @@ export function useSAMOpportunities() {
   const [loading, setLoading]             = useState(true)
   const [error, setError]                 = useState(null)
   const [failedStatuses, setFailedStatuses] = useState({})
+  const opportunitiesRef = useRef([])
+
+  useEffect(() => { opportunitiesRef.current = opportunities }, [opportunities])
 
   // Tracks status changes that have been written locally but not yet
   // confirmed by a server read. Without this, the background poll (or any
@@ -196,11 +199,12 @@ export function useSAMOpportunities() {
     try {
       const rows = await getSAMOpportunities()
       const reconciled = rows.map((row) => {
-        const pending = pendingStatus.current.get(row._rowIndex)
+        const identity = String(row['Notice ID'] || row['Solicitation Number'] || '').trim()
+        const pending = pendingStatus.current.get(identity)
         if (pending === undefined) return row
         if (row.Status === pending) {
           // Server has caught up with the optimistic change — stop tracking it
-          pendingStatus.current.delete(row._rowIndex)
+          pendingStatus.current.delete(identity)
           return row
         }
         // Server hasn't caught up yet — keep showing the optimistic status
@@ -272,12 +276,14 @@ export function useSAMOpportunities() {
   // No rollback on failure — visual state stays changed for smooth UX.
   // Retries 3 times silently; throws after that so caller can toast.
   const updateStatus = useCallback(async (rowIndex, status) => {
-    pendingStatus.current.set(rowIndex, status)
+    const original = opportunitiesRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+    const identity = String(original?.['Notice ID'] || original?.['Solicitation Number'] || '').trim()
+    if (identity) pendingStatus.current.set(identity, status)
     setOpportunities((prev) =>
       prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
     )
     try {
-      await retryIdempotent(() => updateSAMOpportunity(rowIndex, { Status: status }))
+      await retryIdempotent(() => updateSAMOpportunity(rowIndex, { Status: status }, original))
       setFailedStatuses((previous) => {
         if (!previous[rowIndex]) return previous
         const next = { ...previous }
