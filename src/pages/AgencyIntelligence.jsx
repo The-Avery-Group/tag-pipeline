@@ -3,33 +3,20 @@ import { useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import { usePipeline } from '@/hooks/usePipeline'
 import { ensureTableColumns, getSAMOpportunities, updateRowWithReconciliation } from '@/services/graphService'
-import {
-  agencyIdPatch,
-  buildSAMAgencyIdReference,
-  findPipelineAgencyMatch,
-  pipelineAgencySearchTerms,
-} from '@/lib/agencyIntelligence'
-import {
-  getAgencyVehicleUsage,
-  getAgencyVehicles,
-  getOfficialAgencyMapping,
-  getVehicleActivity,
-  saveOfficialAgencyMapping,
-  searchOfficialAgencies,
-} from '@/services/agencyIntelligenceService'
+import { agencyIdPatch, buildSAMAgencyIdReference, normalizeAgencyIdentity } from '@/lib/agencyIntelligence'
+import { getAgencyVehicleReport } from '@/services/agencyIntelligenceService'
+import { TARGET_AGENCY_GROUPS } from '@/config/targetAgencies'
+import { exportAgencyVehicleDocument } from '@/utils/agencyIntelligenceExport'
 import styles from './AgencyIntelligence.module.css'
 
 const DEPARTMENT = 'Department*'
 const AGENCY = 'Agency*'
 const OFFICE = 'Office*'
 const AGENCY_ID_COLUMNS = ['Department ID', 'Agency ID']
-const RAW_PAGE_SIZE = 50
-const USAGE_PAGE_SIZE = 25
+const PAGE_SIZE = 25
 
-function clean(value) { return String(value || '').trim() }
-function normalized(value) {
-  return clean(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-}
+function clean(value) { return String(value ?? '').trim() }
+function normalized(value) { return normalizeAgencyIdentity(value) }
 function money(value) {
   const amount = Number(value || 0)
   if (Math.abs(amount) >= 1_000_000_000) return `$${(amount / 1_000_000_000).toFixed(1)}B`
@@ -45,6 +32,11 @@ function date(value) {
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
+function join(values, fallback = 'Not reported') {
+  const cleaned = [...new Set((values || []).map(clean).filter(Boolean))]
+  return cleaned.length ? cleaned.join('; ') : fallback
+}
+
 function pipelineAgencies(pipeline) {
   const grouped = new Map()
   pipeline.forEach((opportunity) => {
@@ -53,326 +45,277 @@ function pipelineAgencies(pipeline) {
     const office = clean(opportunity[OFFICE])
     const name = agency || department
     if (!name) return
-    const parentName = agency && normalized(agency) !== normalized(department) ? department : ''
+    const isSubtier = agency && normalized(agency) !== normalized(department)
+    const parentName = isSubtier ? department : name
     const departmentId = clean(opportunity['Department ID'])
-    const agencyId = clean(opportunity['Agency ID'])
+    const agencyId = clean(opportunity['Agency ID'] || departmentId)
     const key = `${departmentId || normalized(parentName)}:${agencyId || normalized(name)}`
-    const current = grouped.get(key) || { name, parentName, departmentId, agencyId, count: 0, offices: new Set() }
+    const current = grouped.get(key) || {
+      name,
+      parentName,
+      departmentId,
+      agencyId,
+      tier: isSubtier ? 'subtier' : 'department',
+      count: 0,
+      offices: new Set(),
+    }
     current.count += 1
     if (office) current.offices.add(office)
     grouped.set(key, current)
   })
-  return [...grouped.values()].map((item) => ({ ...item, offices: [...item.offices] })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  return [...grouped.values()]
+    .map((item) => ({ ...item, offices: [...item.offices] }))
+    .sort((left, right) => left.parentName.localeCompare(right.parentName) || left.name.localeCompare(right.name))
 }
+
 function agencyFromParams(params) {
   const name = clean(params.get('agency'))
-  return name ? {
+  if (!name) return null
+  return {
     name,
-    tier: params.get('tier') === 'subtier' ? 'subtier' : 'toptier',
-    parentName: clean(params.get('parent')),
-    abbreviation: clean(params.get('abbr')),
-    toptierCode: clean(params.get('code')),
-    id: clean(params.get('id')) || null,
+    tier: params.get('tier') === 'department' ? 'department' : 'subtier',
+    parentName: clean(params.get('parent')) || name,
     departmentId: clean(params.get('departmentId')),
     agencyId: clean(params.get('agencyId')),
-  } : null
-}
-function agencyLabel(agency) {
-  return agency?.abbreviation && normalized(agency.abbreviation) !== normalized(agency.name)
-    ? `${agency.name} (${agency.abbreviation})`
-    : agency?.name || ''
-}
-function mappingKey(candidate) { return `tag_agency_match:v1:${normalized(candidate?.parentName)}:${normalized(candidate?.name)}` }
-function readRememberedAgency(candidate) {
-  try { return JSON.parse(localStorage.getItem(mappingKey(candidate)) || 'null') } catch { return null }
-}
-function rememberAgency(candidate, agency) {
-  try { localStorage.setItem(mappingKey(candidate), JSON.stringify(agency)) } catch { /* optional convenience cache */ }
+  }
 }
 
-function RawVehicleDetails({ vehicle, detail, loading, error, onClose }) {
-  if (!vehicle) return null
-  return <div className={styles.drawerContent}>
-    <div className={styles.drawerHeader}><div><span className={styles.eyebrow}>IDV record</span><h3>{vehicle.awardId || 'Vehicle record'}</h3></div><button className={styles.closeButton} type="button" onClick={onClose} aria-label="Close vehicle details">×</button></div>
-    <p className={styles.drawerDescription}>{vehicle.description || 'No description reported by USAspending.'}</p>
-    <div className={styles.vehicleFacts}>
-      <div><span>Contractor</span><strong>{vehicle.contractor || 'Not reported'}</strong><small>{vehicle.contractorUEI ? `UEI ${vehicle.contractorUEI}` : ''}</small></div>
-      <div><span>Vehicle type</span><strong>{vehicle.vehicleType || 'Not reported'}</strong></div>
-      <div><span>NAICS</span><strong>{vehicle.naicsCode || 'Not reported'}</strong><small>{vehicle.naicsDescription}</small></div>
-      <div><span>PSC</span><strong>{vehicle.pscCode || 'Not reported'}</strong><small>{vehicle.pscDescription}</small></div>
-      <div><span>Start date</span><strong>{date(vehicle.startDate)}</strong></div>
-      <div><span>Last date to order</span><strong>{date(vehicle.lastDateToOrder)}</strong></div>
-    </div>
-    {vehicle.generatedId && <a className="btn text-sm" href={`https://www.usaspending.gov/award/${encodeURIComponent(vehicle.generatedId)}`} target="_blank" rel="noreferrer">View on USAspending.gov</a>}
-    {loading ? <div className={styles.detailLoading}>Loading order activity…</div> : error ? <div className={styles.inlineError}>{error}</div> : detail ? <>
-      {detail.warning && <div className={styles.vehicleWarning}>{detail.warning}</div>}
-      <div className={styles.activityMetrics}>
-        <div><span>Orders</span><strong>{detail.totalOrderCount.toLocaleString()}</strong></div>
-        <div title={fullMoney(detail.totalObligations)}><span>Obligations</span><strong>{money(detail.totalObligations)}</strong></div>
-      </div>
-      {detail.displayedOrders.length > 0 && <div className={styles.drawerOrders}>{detail.displayedOrders.slice(0, 12).map((order) => <div key={order.generatedId || `${order.awardId}:${order.contractor}`}><strong>{order.awardId || 'Order'}</strong><span>{order.contractor || 'Contractor not reported'}</span><b>{money(order.obligatedAmount)}</b></div>)}</div>}
-    </> : null}
-  </div>
+function agencyKey(agency) {
+  return `${agency?.tier}:${clean(agency?.departmentId)}:${clean(agency?.agencyId)}:${normalized(agency?.name)}`
 }
 
-function UsageVehicleDetails({ vehicle, onClose }) {
+function targetAgencyGroups(pipelineAgencyList) {
+  return TARGET_AGENCY_GROUPS.map((group) => ({
+    ...group,
+    agencies: group.agencies.map((target) => {
+      const targetName = normalized(target.searchName || target.name)
+      const targetParent = normalized(target.parentName)
+      const pipelineMatch = pipelineAgencyList.find((candidate) => {
+        const candidateName = normalized(candidate.name)
+        const candidateParent = normalized(candidate.parentName)
+        return (candidateName === targetName || candidateName.includes(targetName) || targetName.includes(candidateName)) &&
+          (!targetParent || candidateParent === targetParent || candidateParent.includes(targetParent) || targetParent.includes(candidateParent))
+      })
+      return {
+        ...target,
+        departmentLabel: group.department,
+        departmentId: pipelineMatch?.departmentId || target.departmentId || '',
+        agencyId: pipelineMatch?.agencyId || target.agencyId || '',
+        count: pipelineMatch?.count || 0,
+      }
+    }),
+  }))
+}
+
+function VehicleDetails({ vehicle, onClose }) {
   if (!vehicle) return null
   return <div className={styles.drawerContent}>
-    <div className={styles.drawerHeader}><div><span className={styles.eyebrow}>Vehicle usage</span><h3>{vehicle.vehicleName || vehicle.parentAwardId}</h3></div><button className={styles.closeButton} type="button" onClick={onClose} aria-label="Close vehicle details">×</button></div>
-    {vehicle.vehicleName && <p className={styles.drawerDescription}>Parent award {vehicle.parentAwardId}</p>}
-    <div className={styles.activityMetrics}>
-      <div><span>Orders</span><strong>{vehicle.orders.toLocaleString()}</strong></div>
-      <div><span>Contractors</span><strong>{vehicle.contractors.toLocaleString()}</strong></div>
-      <div title={fullMoney(vehicle.obligations)}><span>Obligations</span><strong>{money(vehicle.obligations)}</strong></div>
-      <div><span>Last used</span><strong>{date(vehicle.lastUsed)}</strong></div>
+    <div className={styles.drawerHeader}>
+      <div><span className={styles.eyebrow}>Vehicle or category</span><h3>{vehicle.vehicleName}</h3></div>
+      <button className={styles.closeButton} type="button" onClick={onClose} aria-label="Close vehicle details">×</button>
     </div>
-    <div className={styles.vehicleFacts}>
-      <div><span>Common NAICS</span><strong>{vehicle.topNaics || 'Not reported'}</strong></div>
-      <div><span>Common PSC</span><strong>{vehicle.topPsc || 'Not reported'}</strong></div>
-      <div><span>Vehicle type</span><strong>{vehicle.vehicleType || 'Not reported'}</strong></div>
-      <div><span>Last date to order</span><strong>{date(vehicle.lastDateToOrder)}</strong></div>
+    <div className={styles.drawerMetrics}>
+      <div><span>Records</span><strong>{vehicle.recordCount.toLocaleString()}</strong></div>
+      <div><span>Identifiers</span><strong>{vehicle.identifierCount.toLocaleString()}</strong></div>
+      <div title={fullMoney(vehicle.totalContractValue)}><span>Total contract value</span><strong>{money(vehicle.totalContractValue)}</strong></div>
     </div>
-    {vehicle.generatedId && <a className="btn text-sm" href={`https://www.usaspending.gov/award/${encodeURIComponent(vehicle.generatedId)}`} target="_blank" rel="noreferrer">View on USAspending.gov</a>}
-    {vehicle.sampleOrders?.length > 0 && <section><h4 className={styles.drawerSectionTitle}>Recent matching orders</h4><div className={styles.drawerOrders}>{vehicle.sampleOrders.map((order) => <div key={order.generatedId || order.awardId}><strong>{order.awardId || 'Order'}</strong><span>{order.contractor || 'Contractor not reported'}</span><b>{money(order.obligation)}</b></div>)}</div></section>}
+    <section className={styles.drawerSection}>
+      <div className={styles.drawerSectionHeader}><div><h4>Vehicle identifiers</h4><p>The parent IDVs used by the contracting agency.</p></div></div>
+      <div className={styles.drawerTableScroll}><table className="data-table"><thead><tr><th>Identifier</th><th>Issuing agency code</th><th>Type</th><th>Issuing department</th><th>Last date to order</th><th className={styles.moneyCell}>IDV value</th></tr></thead><tbody>
+        {vehicle.identifiers.map((identifier) => <tr key={`${identifier.agencyId}:${identifier.piid}`}><td><strong>{identifier.piid}</strong></td><td>{identifier.agencyId || 'Not reported'}</td><td>{identifier.type || 'Not reported'}</td><td>{identifier.issuingDepartment || 'Not reported'}</td><td>{date(identifier.lastDateToOrder)}</td><td className={styles.moneyCell} title={fullMoney(identifier.contractValue)}>{money(identifier.contractValue)}</td></tr>)}
+      </tbody></table></div>
+    </section>
+    <section className={styles.drawerSection}>
+      <div className={styles.drawerSectionHeader}><div><h4>Contracts using this vehicle</h4><p>Each contract is shown with its own base-and-all-options value.</p></div><span>{vehicle.contracts.length.toLocaleString()} records</span></div>
+      <div className={styles.drawerTableScroll}><table className="data-table"><thead><tr><th>Contract</th><th>Requirement</th><th>Awardee</th><th>Award or order type</th><th>Date signed</th><th className={styles.moneyCell}>Total contract value</th></tr></thead><tbody>
+        {vehicle.contracts.map((contract) => <tr key={`${contract.awardId}:${contract.parentAwardId}`}><td><strong>{contract.awardId}</strong></td><td>{contract.title || 'Not reported'}</td><td>{contract.contractor || 'Not reported'}</td><td>{contract.awardType || 'Not reported'}</td><td>{date(contract.dateSigned)}</td><td className={styles.moneyCell} title={fullMoney(contract.totalContractValue)}>{money(contract.totalContractValue)}</td></tr>)}
+      </tbody></table></div>
+    </section>
   </div>
 }
 
 export default function AgencyIntelligence() {
   const { pipeline, refresh: refreshPipeline } = usePipeline()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [query, setQuery] = useState('')
-  const [searchResults, setSearchResults] = useState([])
-  const [searching, setSearching] = useState(false)
-  const [searchError, setSearchError] = useState('')
-  const [resolving, setResolving] = useState('')
-  const [pendingCandidate, setPendingCandidate] = useState(null)
-  const [selectedAgency, setSelectedAgency] = useState(() => agencyFromParams(searchParams))
+  const requestedAgency = useMemo(() => agencyFromParams(searchParams), [searchParams])
+  const [selectedAgency, setSelectedAgency] = useState(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [viewMode, setViewMode] = useState('usage')
-  const [scope, setScope] = useState('funding')
-  const [usage, setUsage] = useState(null)
-  const [usageRun, setUsageRun] = useState(null)
-  const [usageLoading, setUsageLoading] = useState(false)
-  const [usageError, setUsageError] = useState('')
-  const [usageFilter, setUsageFilter] = useState('')
-  const [usagePage, setUsagePage] = useState(1)
-  const [usageRefresh, setUsageRefresh] = useState(0)
-  const forceUsageRefresh = useRef(false)
-  const [selectedUsage, setSelectedUsage] = useState(null)
-  const [vehicles, setVehicles] = useState([])
-  const [totalVehicles, setTotalVehicles] = useState(null)
+  const [report, setReport] = useState(null)
+  const [reportCache, setReportCache] = useState('')
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportError, setReportError] = useState('')
+  const [progress, setProgress] = useState(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const forceRefresh = useRef(false)
+  const [filter, setFilter] = useState('')
   const [page, setPage] = useState(1)
-  const [hasNext, setHasNext] = useState(false)
-  const [vehicleLoading, setVehicleLoading] = useState(false)
-  const [vehicleError, setVehicleError] = useState('')
-  const [vehicleWarning, setVehicleWarning] = useState('')
-  const [cacheState, setCacheState] = useState('')
-  const [fetchedAt, setFetchedAt] = useState('')
-  const [vehicleFilter, setVehicleFilter] = useState('')
   const [selectedVehicle, setSelectedVehicle] = useState(null)
-  const [vehicleDetail, setVehicleDetail] = useState(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detailError, setDetailError] = useState('')
   const [idSync, setIdSync] = useState({ running: false, message: '' })
-  const searchRequest = useRef(0)
+  const [exporting, setExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState('')
+  const [exportError, setExportError] = useState('')
   const pipelineAgencyList = useMemo(() => pipelineAgencies(pipeline), [pipeline])
-
-  const pipelineMatch = useMemo(() => selectedAgency ? pipelineAgencyList.find((item) => {
-    if (selectedAgency.departmentId && selectedAgency.agencyId && item.departmentId === selectedAgency.departmentId && item.agencyId === selectedAgency.agencyId) return true
-    const names = [selectedAgency.name, selectedAgency.parentName].map(normalized).filter(Boolean)
-    return names.includes(normalized(item.name)) || names.includes(normalized(item.parentName))
-  }) || null : null, [pipelineAgencyList, selectedAgency])
-
-  useEffect(() => {
-    const text = query.trim()
-    if (text.length < 2) { setSearchResults([]); setSearchError(''); setSearching(false); return undefined }
-    const requestId = ++searchRequest.current
-    const controller = new AbortController()
-    const timer = setTimeout(async () => {
-      setSearching(true); setSearchError('')
-      try {
-        const result = await searchOfficialAgencies(text, { signal: controller.signal })
-        if (requestId === searchRequest.current) setSearchResults(result.agencies || [])
-      } catch (error) {
-        if (error.name !== 'AbortError' && requestId === searchRequest.current) { setSearchError(error.message); setSearchResults([]) }
-      } finally { if (requestId === searchRequest.current) setSearching(false) }
-    }, 300)
-    return () => { clearTimeout(timer); controller.abort() }
-  }, [query])
+  const targetGroups = useMemo(() => targetAgencyGroups(pipelineAgencyList), [pipelineAgencyList])
+  const targetList = useMemo(() => targetGroups.flatMap((group) => group.agencies), [targetGroups])
 
   const chooseAgency = (agency) => {
-    const nextAgency = pendingCandidate ? { ...agency, departmentId: pendingCandidate.departmentId, agencyId: pendingCandidate.agencyId } : agency
-    if (pendingCandidate) {
-      rememberAgency(pendingCandidate, nextAgency)
-      saveOfficialAgencyMapping(pendingCandidate, nextAgency).catch((error) => {
-        console.warn('[Agency Intelligence] Shared agency match could not be saved', { error: error.message })
-      })
-    }
-    setPendingCandidate(null); setSelectedAgency(nextAgency); setPage(1); setUsagePage(1); setVehicleFilter(''); setUsageFilter(''); setSelectedVehicle(null); setSelectedUsage(null)
+    setSelectedAgency(agency)
+    setFilter('')
+    setPage(1)
+    setSelectedVehicle(null)
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
-      ;[['agency', nextAgency.name], ['tier', nextAgency.tier], ['parent', nextAgency.parentName], ['abbr', nextAgency.abbreviation], ['code', nextAgency.toptierCode], ['id', nextAgency.id], ['departmentId', nextAgency.departmentId], ['agencyId', nextAgency.agencyId]].forEach(([key, value]) => { if (value !== null && value !== undefined && value !== '') next.set(key, value); else next.delete(key) })
+      ;[['agency', agency.name], ['tier', agency.tier], ['parent', agency.parentName], ['departmentId', agency.departmentId], ['agencyId', agency.agencyId]].forEach(([key, value]) => {
+        if (value) next.set(key, value)
+        else next.delete(key)
+      })
       return next
     }, { replace: true })
   }
 
-  const resolvePipelineAgency = async (candidate) => {
-    if (resolving) return
-    const remembered = readRememberedAgency(candidate)
-    if (remembered) { chooseAgency({ ...remembered, departmentId: candidate.departmentId, agencyId: candidate.agencyId }); return }
-    setResolving(candidate.name); setSearchError('')
-    try {
-      let resolved = null
-      try {
-        resolved = await getOfficialAgencyMapping(candidate)
-      } catch (error) {
-        console.warn('[Agency Intelligence] Shared agency resolver unavailable; continuing with direct search', { error: error.message })
-      }
-      if (resolved?.agency) {
-        rememberAgency(candidate, resolved.agency)
-        chooseAgency({ ...resolved.agency, departmentId: candidate.departmentId, agencyId: candidate.agencyId })
-        return
-      }
-      const agencies = []; const seen = new Set(); let match = null
-      for (const term of pipelineAgencySearchTerms(candidate)) {
-        const result = await searchOfficialAgencies(term)
-        for (const agency of result.agencies || []) { const key = `${agency.id}:${agency.tier}:${normalized(agency.name)}`; if (!seen.has(key)) { seen.add(key); agencies.push(agency) } }
-        match = findPipelineAgencyMatch(candidate, agencies)
-        if (match) break
-      }
-      if (!match) {
-        setPendingCandidate(candidate); setQuery(candidate.name); setSearchResults(agencies)
-        throw new Error(agencies.length ? 'Select the matching official agency from the results.' : 'No official USAspending agency match was found. Search and select the correct agency once to remember it.')
-      }
-      rememberAgency(candidate, match)
-      saveOfficialAgencyMapping(candidate, match).catch((error) => {
-        console.warn('[Agency Intelligence] Shared agency match could not be saved', { error: error.message })
-      })
-      chooseAgency({ ...match, departmentId: candidate.departmentId, agencyId: candidate.agencyId })
-    } catch (error) { setSearchError(error.message) } finally { setResolving('') }
-  }
-
   useEffect(() => {
-    if (!selectedAgency || viewMode !== 'usage') return undefined
-    const controller = new AbortController(); let active = true
-    const load = async () => {
-      setUsageLoading(true); setUsageError(''); setUsageRun(null); setSelectedUsage(null)
-      try {
-        const response = await getAgencyVehicleUsage(selectedAgency, {
-          scope,
-          forceRefresh: forceUsageRefresh.current,
-          signal: controller.signal,
-          onProgress: (progress) => { if (active && progress.phase !== 'complete') setUsageRun(progress) },
-        })
-        forceUsageRefresh.current = false
-        if (!active) return
-        if (response.status === 'ready') { setUsage(response.result); setUsageRun(null) }
-        else throw new Error('Vehicle usage did not finish loading')
-      } catch (error) { if (error.name !== 'AbortError' && active) setUsageError(error.message) }
-      finally { if (active) setUsageLoading(false) }
+    const requestedName = selectedAgency?.name || requestedAgency?.name
+    if (!requestedName) return
+    const current = targetList.find((agency) => normalized(agency.name) === normalized(requestedName))
+    if (!current) {
+      if (selectedAgency) setSelectedAgency(null)
+      return
     }
-    load()
-    return () => { active = false; controller.abort() }
-  }, [selectedAgency, scope, usageRefresh, viewMode])
+    if (!selectedAgency || agencyKey(current) !== agencyKey(selectedAgency)) setSelectedAgency(current)
+  }, [requestedAgency, selectedAgency, targetList])
 
   useEffect(() => {
-    if (!selectedAgency || viewMode !== 'browse') return undefined
-    const controller = new AbortController(); let active = true
-    setVehicleLoading(true); setVehicleError(''); setVehicleWarning(''); setSelectedVehicle(null); setVehicleDetail(null)
-    getAgencyVehicles(selectedAgency, { page, limit: RAW_PAGE_SIZE, signal: controller.signal }).then((result) => {
+    if (!selectedAgency) return undefined
+    const controller = new AbortController()
+    let active = true
+    setReportLoading(true); setReportError(''); setProgress(null); setSelectedVehicle(null)
+    getAgencyVehicleReport(selectedAgency, {
+      forceRefresh: forceRefresh.current,
+      signal: controller.signal,
+      onProgress: (next) => { if (active && next.phase !== 'complete') setProgress(next) },
+    }).then((response) => {
       if (!active) return
-      setVehicles(result.vehicles || []); setTotalVehicles(result.totalVehicles ?? null); setHasNext(Boolean(result.hasNext)); setCacheState(result.cache || ''); setFetchedAt(result.fetchedAt || ''); setVehicleWarning(result.warning || '')
-    }).catch((error) => { if (active && error.name !== 'AbortError') setVehicleError(error.message) }).finally(() => { if (active) setVehicleLoading(false) })
+      forceRefresh.current = false
+      setReport(response.result)
+      setReportCache(response.cache || '')
+      setProgress(null)
+    }).catch((error) => {
+      if (active && error.name !== 'AbortError') setReportError(error.message)
+    }).finally(() => { if (active) setReportLoading(false) })
     return () => { active = false; controller.abort() }
-  }, [selectedAgency, page, viewMode])
+  }, [selectedAgency, refreshVersion])
 
   const refreshCurrent = () => {
-    if (viewMode === 'usage') { forceUsageRefresh.current = true; setUsageRefresh((value) => value + 1) }
-    else { setPage((value) => value); setVehicleLoading(true); getAgencyVehicles(selectedAgency, { page, limit: RAW_PAGE_SIZE, forceRefresh: true }).then((result) => { setVehicles(result.vehicles || []); setTotalVehicles(result.totalVehicles ?? null); setHasNext(Boolean(result.hasNext)); setCacheState(result.cache || ''); setFetchedAt(result.fetchedAt || '') }).catch((error) => setVehicleError(error.message)).finally(() => setVehicleLoading(false)) }
+    forceRefresh.current = true
+    setRefreshVersion((value) => value + 1)
   }
 
-  const selectRawVehicle = async (vehicle) => {
-    setSelectedVehicle(vehicle); setVehicleDetail(null); setDetailError(''); setDetailLoading(true)
-    try { if (!vehicle.generatedId) throw new Error('USAspending did not provide the identifier needed for order activity.'); setVehicleDetail(await getVehicleActivity(vehicle.generatedId)) }
-    catch (error) { setDetailError(error.message) } finally { setDetailLoading(false) }
+  const exportAll = async () => {
+    if (exporting) return
+    setExporting(true); setExportError('')
+    try {
+      const reports = new Map()
+      for (let index = 0; index < targetList.length; index += 1) {
+        const agency = targetList[index]
+        setExportProgress(`Preparing ${index + 1} of ${targetList.length}: ${agency.name}`)
+        const response = await getAgencyVehicleReport(agency)
+        reports.set(agency.name, response.result)
+      }
+      exportAgencyVehicleDocument(TARGET_AGENCY_GROUPS, reports)
+      setExportProgress('Export ready')
+    } catch (error) {
+      setExportError(`Export could not finish: ${error.message}`)
+    } finally {
+      setExporting(false)
+    }
   }
 
   const syncAgencyIds = async () => {
     if (idSync.running || pipeline.length === 0) return
     setIdSync({ running: true, message: 'Preparing ID columns…' })
     try {
-      await ensureTableColumns('PipelineTable', AGENCY_ID_COLUMNS); await ensureTableColumns('NewOpportunitiesTable', AGENCY_ID_COLUMNS)
-      const pulled = await getSAMOpportunities(); const reference = buildSAMAgencyIdReference(pulled)
+      await ensureTableColumns('PipelineTable', AGENCY_ID_COLUMNS)
+      await ensureTableColumns('NewOpportunitiesTable', AGENCY_ID_COLUMNS)
+      const pulled = await getSAMOpportunities()
+      const reference = buildSAMAgencyIdReference(pulled)
       let updated = 0; let unresolved = 0; let failed = 0
       for (let index = 0; index < pipeline.length; index += 1) {
-        const opportunity = pipeline[index]; const patch = agencyIdPatch(opportunity, reference)
-        if (Object.keys(patch).length) { try { await updateRowWithReconciliation('PipelineTable', opportunity._rowIndex, patch); updated += 1 } catch { failed += 1 } }
-        else if (!opportunity['Department ID'] || !opportunity['Agency ID']) unresolved += 1
+        const opportunity = pipeline[index]
+        const patch = agencyIdPatch(opportunity, reference)
+        if (Object.keys(patch).length) {
+          try { await updateRowWithReconciliation('PipelineTable', opportunity._rowIndex, patch); updated += 1 } catch { failed += 1 }
+        } else if (!opportunity['Department ID'] || !opportunity['Agency ID']) unresolved += 1
         setIdSync({ running: true, message: `Checking ${index + 1} of ${pipeline.length}…` })
       }
       await refreshPipeline()
-      const hasIds = pulled.some((row) => row['Department ID'] || row['Agency ID'])
-      setIdSync({ running: false, message: hasIds ? `${updated} updated${unresolved ? ` · ${unresolved} unresolved` : ''}${failed ? ` · ${failed} could not be saved` : ''}` : 'Columns are ready. Run a SAM pull, then sync again.' })
-    } catch (error) { setIdSync({ running: false, message: `ID sync failed: ${error.message}` }) }
+      setIdSync({ running: false, message: `${updated} updated${unresolved ? ` · ${unresolved} unresolved` : ''}${failed ? ` · ${failed} could not be saved` : ''}` })
+    } catch (error) {
+      setIdSync({ running: false, message: `ID sync failed: ${error.message}` })
+    }
   }
 
-  const filteredUsage = useMemo(() => {
-    const value = normalized(usageFilter)
-    return (usage?.vehicles || []).filter((vehicle) => !value || [vehicle.vehicleName, vehicle.parentAwardId, vehicle.vehicleType, vehicle.topNaics, vehicle.topPsc].some((field) => normalized(field).includes(value)))
-  }, [usage, usageFilter])
-  const usagePages = Math.max(1, Math.ceil(filteredUsage.length / USAGE_PAGE_SIZE))
-  const usageRows = filteredUsage.slice((usagePage - 1) * USAGE_PAGE_SIZE, usagePage * USAGE_PAGE_SIZE)
-  const filteredVehicles = useMemo(() => { const value = normalized(vehicleFilter); return vehicles.filter((vehicle) => !value || [vehicle.awardId, vehicle.description, vehicle.contractor, vehicle.vehicleType, vehicle.naicsCode, vehicle.pscCode].some((field) => normalized(field).includes(value))) }, [vehicles, vehicleFilter])
-  const rawPages = totalVehicles === null ? (hasNext ? page + 1 : page) : Math.max(1, Math.ceil(totalVehicles / RAW_PAGE_SIZE))
-  const progressPercent = usageRun?.phase === 'resolving' && Number(usageRun?.totalVehicles || 0) > 0
-    ? Math.min(100, Math.round((Number(usageRun.resolvedVehicles || 0) / usageRun.totalVehicles) * 100))
+  const filteredVehicles = useMemo(() => {
+    const value = normalized(filter)
+    return (report?.vehicles || []).filter((vehicle) => !value || [
+      vehicle.vehicleName,
+      ...(vehicle.issuingDepartments || []),
+      ...(vehicle.vehicleTypes || []),
+      ...(vehicle.setAsides || []),
+      ...(vehicle.awardTypes || []),
+      ...(vehicle.identifiers || []).flatMap((identifier) => [identifier.piid, identifier.agencyId]),
+    ].some((field) => normalized(field).includes(value)))
+  }, [report, filter])
+  const pages = Math.max(1, Math.ceil(filteredVehicles.length / PAGE_SIZE))
+  const rows = filteredVehicles.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const progressPercent = progress?.total > 0
+    ? Math.min(100, Math.round(((progress.phase === 'vehicles' ? progress.resolved : progress.loaded) / progress.total) * 100))
     : null
-  const progressDetail = usageRun?.phase === 'resolving'
-    ? Number(usageRun?.totalVehicles || 0) > 0
-      ? `${Number(usageRun.resolvedVehicles || 0).toLocaleString()} of ${Number(usageRun.totalVehicles).toLocaleString()} vehicle names`
-      : `${Number(usageRun.processedOrders || 0).toLocaleString()} orders grouped`
-    : Number(usageRun?.processedOrders || 0) > 0
-      ? `${Number(usageRun.processedOrders).toLocaleString()} orders checked${usageRun.activePage ? ` · Loading page ${usageRun.activePage}` : usageRun.page ? ` · Page ${usageRun.page}` : ''}`
-      : `Loading order page ${Number(usageRun?.activePage || 1)}`
+  const progressText = progress?.phase === 'vehicles'
+    ? `Resolving ${Number(progress.resolved || 0).toLocaleString()} of ${Number(progress.total || 0).toLocaleString()} vehicle identifiers`
+    : `${Number(progress?.loaded || 0).toLocaleString()} of ${Number(progress?.total || 0).toLocaleString()} contract records loaded`
 
   return <>
-    <Topbar title="Agency Intelligence" subtitle1="Federal contract vehicles" subtitle2="USAspending.gov" showFilter={false} />
-    <div className={`page-body ${styles.page}`}><div className={`card ${styles.workspace} ${sidebarCollapsed ? styles.workspaceCollapsed : ''}`}>
-      <aside className={`${styles.agencyPanel} ${sidebarCollapsed ? styles.agencyPanelCollapsed : ''}`}>
-        <button className={styles.panelToggle} type="button" onClick={() => setSidebarCollapsed((value) => !value)} title={sidebarCollapsed ? 'Open agency list' : 'Close agency list'} aria-label={sidebarCollapsed ? 'Open agency list' : 'Close agency list'}>{sidebarCollapsed ? '›' : '‹'}</button>
-        {!sidebarCollapsed && <div className={styles.agencyPanelBody}>
-          <div className={styles.agencySearch}><label htmlFor="agency-search">Find an agency</label><input id="agency-search" className="form-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, abbreviation, or component" /><small>Search official USAspending names. A manual match is remembered for future use.</small><div className={styles.identifierSync}><button className="btn text-sm" type="button" onClick={syncAgencyIds} disabled={idSync.running || pipeline.length === 0}>{idSync.running ? 'Syncing IDs…' : 'Sync agency IDs'}</button><span>{idSync.message || 'Backfill Department ID and Agency ID from pulled SAM hierarchies.'}</span></div></div>
-          {searchError && <div className={styles.searchError}>{searchError}</div>}
-          <div className={styles.agencyList}><div className={styles.listHeading}><span>{query.trim().length >= 2 ? 'Official matches' : 'In your pipeline'}</span><small>{query.trim().length >= 2 ? (searching ? 'Searching…' : searchResults.length) : pipelineAgencyList.length}</small></div>
-            {query.trim().length >= 2 ? (!searching && searchResults.length === 0 ? <p className={styles.emptyList}>No agency matches found.</p> : searchResults.map((agency) => <button key={`${agency.id}:${agency.tier}:${agency.name}`} type="button" className={`${styles.agencyItem} ${selectedAgency?.name === agency.name && selectedAgency?.tier === agency.tier ? styles.agencyItemActive : ''}`} onClick={() => chooseAgency(agency)}><strong>{agency.name}</strong><span>{agency.tier === 'subtier' ? `${agency.parentName} · ID ${agency.id ?? 'not reported'}` : `${agency.abbreviation || 'Federal agency'} · Code ${agency.toptierCode || 'not reported'}`}</span></button>)) : (pipelineAgencyList.length === 0 ? <p className={styles.emptyList}>No agency names are available in the pipeline.</p> : pipelineAgencyList.map((agency) => <button key={`${agency.parentName}:${agency.name}`} type="button" className={styles.agencyItem} disabled={Boolean(resolving)} onClick={() => resolvePipelineAgency(agency)}><strong>{agency.name}</strong><span>{resolving === agency.name ? 'Resolving official agency…' : `${agency.count} ${agency.count === 1 ? 'opportunity' : 'opportunities'}${agency.parentName ? ` · ${agency.parentName}` : ''}`}</span></button>))}
-          </div>
-        </div>}
-      </aside>
-      <main className={styles.detailPanel}>
-        {!selectedAgency ? <div className={styles.emptyDetail}><strong>Select an agency</strong><span>Choose an agency from the pipeline or search USAspending to review the contract vehicles it uses.</span></div> : <>
-          <div className={styles.fixedSummary}>
-            <header className={styles.detailHeader}><div><span className={styles.eyebrow}>{selectedAgency.tier === 'subtier' ? 'Subagency' : 'Federal agency'}</span><h2>{agencyLabel(selectedAgency)}</h2><p>{selectedAgency.tier === 'subtier' ? `${selectedAgency.parentName} · USAspending ID ${selectedAgency.id ?? 'not reported'} · Parent code ${selectedAgency.toptierCode || 'not reported'}` : `Agency code ${selectedAgency.toptierCode || 'not reported'} · USAspending ID ${selectedAgency.id ?? 'not reported'}`}{pipelineMatch ? ` · ${pipelineMatch.count} pipeline ${pipelineMatch.count === 1 ? 'opportunity' : 'opportunities'}` : ''}</p></div><button className="btn text-sm" type="button" onClick={refreshCurrent} disabled={usageLoading || vehicleLoading}>{usageLoading || vehicleLoading ? 'Refreshing…' : 'Refresh data'}</button></header>
-            <div className={styles.viewControls}><div className={styles.segmented}><button type="button" className={viewMode === 'usage' ? styles.segmentActive : ''} onClick={() => setViewMode('usage')}>Vehicle usage</button><button type="button" className={viewMode === 'browse' ? styles.segmentActive : ''} onClick={() => setViewMode('browse')}>Browse IDV records</button></div>{viewMode === 'usage' && <div className={styles.segmented}><button type="button" className={scope === 'funding' ? styles.segmentActive : ''} onClick={() => { setScope('funding'); setUsagePage(1) }}>Funded by agency</button><button type="button" className={scope === 'awarding' ? styles.segmentActive : ''} onClick={() => { setScope('awarding'); setUsagePage(1) }}>Awarded by agency</button></div>}</div>
-            {viewMode === 'usage' && <section className={styles.summaryCards}><div><span>Vehicles used</span><strong>{usageLoading && !usage ? '…' : (usage?.totals?.vehicles || 0).toLocaleString()}</strong><small>Distinct parent awards</small></div><div><span>Orders</span><strong>{usageLoading && !usage ? '…' : (usage?.totals?.orders || 0).toLocaleString()}</strong><small>Task and delivery orders</small></div><div title={fullMoney(usage?.totals?.obligations)}><span>Obligations</span><strong>{usageLoading && !usage ? '…' : money(usage?.totals?.obligations)}</strong><small>Across the full result</small></div></section>}
-          </div>
-          <div className={styles.resultsScroll}>
-            {viewMode === 'usage' ? <section className={styles.vehicleSection}>
-              <div className={styles.vehicleToolbar}><div><h3>Contract vehicles used to buy</h3><p>{scope === 'funding' ? 'Orders funded by this agency' : 'Orders awarded by this agency'} · Last five fiscal years</p></div><input className="form-input" value={usageFilter} onChange={(event) => { setUsageFilter(event.target.value); setUsagePage(1) }} placeholder="Filter vehicle, NAICS, or PSC" /></div>
-              {usageRun && <div className={styles.progressBlock}><div><span>{usageRun.phase === 'resolving' ? 'Resolving contract vehicle names' : 'Building the agency-wide vehicle aggregate'}</span><b>{progressDetail}</b></div><div className={`${styles.progressTrack} ${progressPercent === null ? styles.progressTrackIndeterminate : ''}`}><span style={progressPercent === null ? undefined : { width: `${progressPercent}%` }} /></div></div>}
-              {usageError ? <div className={styles.errorState}><strong>Vehicle usage could not load</strong><span>{usageError}</span><button className="btn" type="button" onClick={() => setUsageRefresh((value) => value + 1)}>Try again</button></div> : usageLoading && !usage ? <div className={styles.loadingRows}>{[1, 2, 3, 4].map((item) => <div className="skeleton" key={item} />)}</div> : usageRows.length === 0 ? <div className={styles.noVehicles}>No task or delivery orders with a parent vehicle were found for this agency.</div> : <div className={styles.tableScroll}><table className="data-table"><thead><tr><th>Vehicle</th><th>Orders</th><th>Contractors</th><th className={styles.moneyCell}>Obligations</th><th>Last used</th><th>Common NAICS</th><th>Common PSC</th></tr></thead><tbody>{usageRows.map((vehicle) => <tr key={vehicle.parentAwardId} className={selectedUsage?.parentAwardId === vehicle.parentAwardId ? styles.selectedRow : ''} onClick={() => setSelectedUsage(vehicle)}><td><div className={styles.vehicleIdentity}><strong>{vehicle.vehicleName || vehicle.parentAwardId}</strong>{vehicle.vehicleName && <span>{vehicle.parentAwardId}</span>}</div></td><td>{vehicle.orders.toLocaleString()}</td><td>{vehicle.contractors.toLocaleString()}</td><td className={styles.moneyCell} title={fullMoney(vehicle.obligations)}>{money(vehicle.obligations)}</td><td>{date(vehicle.lastUsed)}</td><td>{vehicle.topNaics || 'Not reported'}</td><td>{vehicle.topPsc || 'Not reported'}</td></tr>)}</tbody></table></div>}
-              <div className={styles.sourceRow}><span>USAspending.gov · {usage?.period ? `FY ${usage.period.firstFiscalYear} to FY ${usage.period.lastFiscalYear}` : 'Last five fiscal years'}{usage?.fetchedAt ? ` · Updated ${date(usage.fetchedAt)}` : ''}</span>{usage?.unlinkedOrders > 0 && <span>{usage.unlinkedOrders.toLocaleString()} direct awards without a parent vehicle excluded</span>}</div>
-              <div className={styles.pagination}><button className="btn" type="button" disabled={usagePage <= 1} onClick={() => setUsagePage((value) => value - 1)}>Previous</button><span>Page {usagePage} of {usagePages}</span><button className="btn" type="button" disabled={usagePage >= usagePages} onClick={() => setUsagePage((value) => value + 1)}>Next</button></div>
-            </section> : <section className={styles.vehicleSection}>
-              <div className={styles.vehicleToolbar}><div><h3>Browse IDV records</h3><p>Inspect individual vehicle awards reported by USAspending.</p></div><input className="form-input" value={vehicleFilter} onChange={(event) => setVehicleFilter(event.target.value)} placeholder="Filter this page" /></div>
-              {vehicleWarning && <div className={styles.vehicleWarning}>{vehicleWarning}</div>}
-              {vehicleError ? <div className={styles.errorState}><strong>Vehicle records could not load</strong><span>{vehicleError}</span></div> : vehicleLoading ? <div className={styles.loadingRows}>{[1, 2, 3, 4].map((item) => <div className="skeleton" key={item} />)}</div> : filteredVehicles.length === 0 ? <div className={styles.noVehicles}>No IDV records were returned.</div> : <div className={styles.tableScroll}><table className="data-table"><thead><tr><th>Vehicle</th><th>Contractor</th><th>Type</th><th>Awarding component</th><th>Last date to order</th><th className={styles.moneyCell}>Award amount</th></tr></thead><tbody>{filteredVehicles.map((vehicle) => <tr key={vehicle.generatedId || vehicle.awardId} className={selectedVehicle?.generatedId === vehicle.generatedId ? styles.selectedRow : ''} onClick={() => selectRawVehicle(vehicle)}><td><div className={styles.vehicleIdentity}><strong>{vehicle.awardId || 'No award ID'}</strong><span>{vehicle.description || 'No description reported'}</span></div></td><td>{vehicle.contractor || 'Not reported'}</td><td>{vehicle.vehicleType || 'Not reported'}</td><td>{vehicle.awardingSubAgency || vehicle.awardingAgency || 'Not reported'}</td><td>{date(vehicle.lastDateToOrder)}</td><td className={styles.moneyCell}>{money(vehicle.awardAmount)}</td></tr>)}</tbody></table></div>}
-              <div className={styles.sourceRow}><span>USAspending.gov · {cacheState === 'stale' ? 'saved copy' : cacheState === 'cache' ? 'cached' : 'live'}{fetchedAt ? ` · Updated ${date(fetchedAt)}` : ''}</span><span>{totalVehicles === null ? `${filteredVehicles.length} shown` : `${totalVehicles.toLocaleString()} total records`}</span></div>
-              <div className={styles.pagination}><button className="btn" type="button" disabled={page <= 1 || vehicleLoading} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button><span>Page {page} of {rawPages}</span><button className="btn" type="button" disabled={!hasNext || vehicleLoading} onClick={() => setPage((value) => value + 1)}>Next</button></div>
-            </section>}
-          </div>
-          {(selectedUsage || selectedVehicle) && <div className={styles.drawerBackdrop} onClick={() => { setSelectedUsage(null); setSelectedVehicle(null) }}><aside className={styles.vehicleDrawer} onClick={(event) => event.stopPropagation()}>{selectedUsage ? <UsageVehicleDetails vehicle={selectedUsage} onClose={() => setSelectedUsage(null)} /> : <RawVehicleDetails vehicle={selectedVehicle} detail={vehicleDetail} loading={detailLoading} error={detailError} onClose={() => setSelectedVehicle(null)} />}</aside></div>}
-        </>}
-      </main>
-    </div></div>
+    <Topbar title="Agency Intelligence" subtitle1="Contract vehicle report" subtitle2="SAM.gov" showFilter={false} />
+    <div className={`page-body ${styles.page}`}>
+      <div className={`card ${styles.workspace} ${sidebarCollapsed ? styles.workspaceCollapsed : ''}`}>
+        <aside className={`${styles.agencyPanel} ${sidebarCollapsed ? styles.agencyPanelCollapsed : ''}`}>
+          <button className={styles.panelToggle} type="button" onClick={() => setSidebarCollapsed((value) => !value)} title={sidebarCollapsed ? 'Open agency list' : 'Close agency list'} aria-label={sidebarCollapsed ? 'Open agency list' : 'Close agency list'}>{sidebarCollapsed ? '›' : '‹'}</button>
+          {!sidebarCollapsed && <div className={styles.agencyPanelBody}>
+            <div className={styles.agencySearch}>
+              <label>Target agencies</label>
+              <small>This maintained list matches the target-agency report. New agencies can be added to the catalog when needed.</small>
+              <div className={styles.identifierSync}><button className="btn text-sm" type="button" onClick={syncAgencyIds} disabled={idSync.running || pipeline.length === 0}>{idSync.running ? 'Syncing IDs…' : 'Sync agency IDs'}</button><span>{idSync.message || 'Backfill the existing Department ID and Agency ID columns from pulled SAM records.'}</span></div>
+            </div>
+            <div className={styles.agencyList}>
+              <div className={styles.listHeading}><span>Included agencies</span><small>{targetList.length}</small></div>
+              {targetGroups.map((group) => <section className={styles.agencyGroup} key={group.department}><h4>{group.department}</h4>{group.agencies.map((agency) => <button key={agencyKey(agency)} type="button" className={`${styles.agencyItem} ${normalized(selectedAgency?.name) === normalized(agency.name) ? styles.agencyItemActive : ''}`} onClick={() => chooseAgency(agency)}><strong>{agency.name}</strong><span>{agency.count ? `${agency.count} pipeline ${agency.count === 1 ? 'opportunity' : 'opportunities'}` : 'No pipeline opportunities'}{agency.agencyId ? ` · ${agency.agencyId}` : ''}</span></button>)}</section>)}
+            </div>
+          </div>}
+        </aside>
+        <main className={styles.detailPanel}>
+          {!selectedAgency ? <div className={styles.emptyDetail}><strong>Select a target agency</strong><span>Choose an agency from the maintained list to review its named contract vehicles.</span></div> : <>
+            <div className={styles.fixedSummary}>
+              <header className={styles.detailHeader}><div><span className={styles.eyebrow}>{selectedAgency.tier === 'subtier' ? 'Contracting agency' : 'Contracting department'}</span><h2>{selectedAgency.name}</h2><p>{selectedAgency.tier === 'subtier' ? `${selectedAgency.parentName} · Agency ID ${selectedAgency.agencyId || 'resolved by SAM.gov name'}` : `Department ID ${selectedAgency.departmentId || 'resolved by SAM.gov name'}`}</p></div><div className={styles.headerActions}><button className="btn text-sm" type="button" onClick={exportAll} disabled={exporting}>{exporting ? 'Preparing export…' : 'Export report'}</button><button className="btn text-sm" type="button" onClick={refreshCurrent} disabled={reportLoading}>{reportLoading ? 'Refreshing…' : 'Refresh data'}</button></div></header>
+              {(exportProgress || exportError) && <div className={`${styles.exportStatus} ${exportError ? styles.exportError : ''}`}>{exportError || exportProgress}</div>}
+              <section className={styles.summaryCards}>
+                <div><span>Named vehicles</span><strong>{reportLoading && !report ? '…' : (report?.totals?.vehicleFamilies || 0).toLocaleString()}</strong><small>Consolidated categories</small></div>
+                <div><span>Contract records</span><strong>{reportLoading && !report ? '…' : (report?.totals?.contracts || 0).toLocaleString()}</strong><small>Orders with a resolved IDV</small></div>
+                <div title={fullMoney(report?.totals?.totalContractValue)}><span>Total contract value</span><strong>{reportLoading && !report ? '…' : money(report?.totals?.totalContractValue)}</strong><small>Base and all options</small></div>
+              </section>
+            </div>
+            <div className={styles.resultsScroll}>
+              <section className={styles.vehicleSection}>
+                <div className={styles.vehicleToolbar}><div><h3>Contract vehicles by contracting agency</h3><p>Named vehicles only, ordered by matching contract record count.</p></div><input className="form-input" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1) }} placeholder="Filter vehicle, type, set-aside, or identifier" /></div>
+                {progress && <div className={styles.progressBlock}><div><span>{progress.phase === 'vehicles' ? 'Resolving vehicle names' : 'Loading SAM.gov contract records'}</span><b>{progressText}</b></div><div className={`${styles.progressTrack} ${progressPercent === null ? styles.progressTrackIndeterminate : ''}`}><span style={progressPercent === null ? undefined : { width: `${progressPercent}%` }} /></div></div>}
+                {reportError ? <div className={styles.errorState}><strong>Contract vehicle report could not load</strong><span>{reportError}</span><button className="btn" type="button" onClick={() => setRefreshVersion((value) => value + 1)}>Try again</button></div> : reportLoading && !report ? <div className={styles.loadingRows}>{[1, 2, 3, 4].map((item) => <div className="skeleton" key={item} />)}</div> : rows.length === 0 ? <div className={styles.noVehicles}>No named contract vehicles were resolved for this agency in the selected five-year period.</div> : <div className={styles.tableScroll}><table className="data-table"><thead><tr><th>#</th><th>Vehicle or category</th><th>Records</th><th>Issuing department</th><th>Vehicle or IDV type(s)</th><th>Set-aside(s)</th><th>Award or order type(s)</th><th className={styles.moneyCell}>Total contract value</th></tr></thead><tbody>{rows.map((vehicle, index) => <tr key={vehicle.vehicleName} className={selectedVehicle?.vehicleName === vehicle.vehicleName ? styles.selectedRow : ''} onClick={() => setSelectedVehicle(vehicle)}><td>{(page - 1) * PAGE_SIZE + index + 1}</td><td><div className={styles.vehicleIdentity}><strong>{vehicle.vehicleName}</strong><span>{vehicle.identifierCount} {vehicle.identifierCount === 1 ? 'identifier' : 'identifiers'}</span></div></td><td>{vehicle.recordCount.toLocaleString()}</td><td>{join(vehicle.issuingDepartments)}</td><td>{join(vehicle.vehicleTypes)}</td><td>{join(vehicle.setAsides, 'Not stated')}</td><td>{join(vehicle.awardTypes)}</td><td className={styles.moneyCell} title={fullMoney(vehicle.totalContractValue)}>{money(vehicle.totalContractValue)}</td></tr>)}</tbody></table></div>}
+                <div className={styles.sourceRow}><span>SAM.gov Contract Awards API · {report?.period ? `${report.period.firstYear} to ${report.period.lastYear}` : 'Last five years'} · {reportCache === 'shared' || reportCache === 'browser' ? 'quarterly cache' : 'live'}{report?.fetchedAt ? ` · Updated ${date(report.fetchedAt)}` : ''}</span>{report?.excludedContracts > 0 && <span>{report.excludedContracts.toLocaleString()} unnamed or non-IDV records excluded</span>}</div>
+                <div className={styles.pagination}><button className="btn" type="button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pages}</span><button className="btn" type="button" disabled={page >= pages} onClick={() => setPage((value) => value + 1)}>Next</button></div>
+              </section>
+            </div>
+            {selectedVehicle && <div className={styles.drawerBackdrop} onClick={() => setSelectedVehicle(null)}><aside className={styles.vehicleDrawer} onClick={(event) => event.stopPropagation()}><VehicleDetails vehicle={selectedVehicle} onClose={() => setSelectedVehicle(null)} /></aside></div>}
+          </>}
+        </main>
+      </div>
+    </div>
   </>
 }
