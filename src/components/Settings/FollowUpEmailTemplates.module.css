@@ -12,6 +12,16 @@
   overflow-y: auto;
 }
 
+.listTools {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 0.5px solid var(--gray-200);
+}
+
+.listTools input { min-width: 0; }
+.listTools button { justify-content: center; }
+
 .templateItem {
   display: flex;
   flex-direction: column;
