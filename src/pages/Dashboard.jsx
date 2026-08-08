@@ -11,7 +11,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import {
-  computeKPIs, computeRFIByMonth, computeExpiringBands, computeContractByYear,
+  computeKPIs, computeSubmissionsByMonth, computeExpiringBands, computeContractByYear,
   computeAwardTypeBreakdown, computeVehicleBreakdown, computeSubPrimeBreakdown,
   getGreeting, formatDate, isOverdue, formatCurrency, getEndDateBand, EXPIRING_BANDS,
 } from '@/utils/kpiHelpers'
@@ -131,10 +131,34 @@ function PhaseBarChart({ byPhase, byPhaseValue, onSegmentClick }) {
   )
 }
 
-// RFI submissions: filled area chart, full card width/height, click a
-// point to navigate to the RFIs tab filtered to that month. XAxis padding
+function SubmissionTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const item = payload[0].payload
+  const typeRows = ['RFI', 'MRAS', 'RFP', 'RFQ', 'Unclassified']
+    .filter((type) => Number(item.types?.[type] || 0) > 0)
+  return (
+    <div style={{
+      minWidth: 170, background: 'var(--surface-raised)', border: '0.5px solid var(--gray-200)',
+      borderRadius: 8, padding: '8px 10px', fontSize: 12, boxShadow: '0 2px 8px var(--shadow-color)',
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--gray-900)', marginBottom: 5 }}>{item.label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 18, color: 'var(--gray-800)', fontWeight: 600 }}>
+        <span>Total submitted</span><span>{item.count}</span>
+      </div>
+      {typeRows.map((type) => (
+        <div key={type} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, color: 'var(--gray-600)', marginTop: 3 }}>
+          <span>{type}</span><span>{item.types[type]}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Submissions: one total line, with the notice-type mix in the tooltip. Click
+// a point to navigate to the Responses tab filtered to that submitted month.
+// XAxis padding
 // keeps the first/last points and labels from clipping against the card edge.
-function RFIChart({ data, onMonthClick }) {
+function SubmissionChart({ data, onMonthClick }) {
   if (!data || data.length === 0) return <p className="text-sm text-muted">No data</p>
 
   return (
@@ -152,7 +176,7 @@ function RFIChart({ data, onMonthClick }) {
         <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false}
           padding={{ left: 16, right: 16 }} />
         <YAxis hide allowDecimals={false} />
-        <Tooltip content={<ChartTooltip formatValue={(d) => `${d.count} RFI or MRAS submission${d.count === 1 ? '' : 's'}`} />} />
+        <Tooltip content={<SubmissionTooltip />} />
         <Area
           type="monotone" dataKey="count" cursor="pointer"
           stroke="var(--blue-600)" strokeWidth={2.5} fill="url(#rfiGrad)"
@@ -394,7 +418,7 @@ export default function Dashboard({ toast }) {
     navigate(`/opportunities${qs ? `?${qs}` : ''}`)
   }, [navigate])
 
-  const rfiData            = useMemo(() => computeRFIByMonth(pipeline, 10), [pipeline])
+  const submissionData     = useMemo(() => computeSubmissionsByMonth(pipeline, 10), [pipeline])
   const contractByYearData = useMemo(() => computeContractByYear(pipeline), [pipeline])
   const awardTypeCounts    = useMemo(() => computeAwardTypeBreakdown(pipeline), [pipeline])
   const vehicleCounts      = useMemo(() => computeVehicleBreakdown(pipeline), [pipeline])
@@ -530,15 +554,15 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* Row 3: RFI submissions, full width */}
+        {/* Row 3: submissions, full width */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div className={styles.cardTitleRow}>
-            <div className={styles.cardTitle}>RFI and MRAS submissions</div>
+            <div className={styles.cardTitle}>Submissions by month</div>
           </div>
           {initialPLoad
             ? <div className={`skeleton ${styles.chartSkeleton}`} />
-            : <RFIChart data={rfiData}
-                onMonthClick={(m) => goToOpportunities({ tab: 'All', rfiMonth: m.monthKey })} />
+            : <SubmissionChart data={submissionData}
+                onMonthClick={(m) => goToOpportunities({ tab: 'Responses', rfiMonth: m.monthKey })} />
           }
         </div>
 
