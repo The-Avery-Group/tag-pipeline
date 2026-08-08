@@ -10,6 +10,7 @@ import styles from './FollowUpEmailTemplates.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import RichEmailEditor from '@/components/Common/RichEmailEditor'
 import { isEmptyEmailHtml, sanitizeEmailHtml } from '@/utils/emailHtml'
+import { onCacheRefresh, forceRefreshCache } from '@/services/dataCache'
 
 const EMPTY_TEMPLATE = {
   'Template Name': '',
@@ -31,6 +32,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
   const [configured, setConfigured] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [dirty, setDirty] = useState(false)
   const savingRef = useRef(false)
   const editorRef = useRef(null)
   const richEditorRef = useRef(null)
@@ -40,15 +42,24 @@ export default function FollowUpEmailTemplates({ user, toast }) {
     [selectedId, templates],
   )
 
-  const load = async () => {
+  const [search, setSearch] = useState('')
+
+  const load = async ({ force = false, preserveSelection = false } = {}) => {
     setLoading(true)
     try {
-      const rows = await getEmailFollowUpTemplates()
+      const rows = await getEmailFollowUpTemplates({ force })
       setConfigured(rows !== null)
       setTemplates(rows || [])
-      if (rows?.length && selectedId === 'new') {
-        setSelectedId(rows[0]['Template ID'])
-        setForm(normalizeTemplate(rows[0]))
+      if (rows?.length && (!preserveSelection || selectedId === 'new')) {
+        const current = preserveSelection
+          ? rows.find((item) => item['Template ID'] === selectedId)
+          : null
+        const next = current || rows[0]
+        setSelectedId(next['Template ID'])
+        if (!dirty) setForm(normalizeTemplate(next))
+      } else if (preserveSelection && selectedId !== 'new') {
+        const current = rows?.find((item) => item['Template ID'] === selectedId)
+        if (current && !dirty) setForm(normalizeTemplate(current))
       }
     } catch (error) {
       toast?.error(`Could not load follow-up templates: ${error.message}`)
@@ -59,9 +70,14 @@ export default function FollowUpEmailTemplates({ user, toast }) {
 
   useEffect(() => { load() }, [])
 
+  useEffect(() => onCacheRefresh((tables) => {
+    if (tables.includes('EmailFollowUpTemplatesTable')) void load({ preserveSelection: true })
+  }), [selectedId, dirty])
+
   const choose = (template) => {
     setSelectedId(template?.['Template ID'] || 'new')
     setForm(normalizeTemplate(template || EMPTY_TEMPLATE))
+    setDirty(false)
   }
 
   const save = async () => {
@@ -79,17 +95,21 @@ export default function FollowUpEmailTemplates({ user, toast }) {
     const payload = { ...form, Body: body, 'Days After Submission': days }
     try {
       if (selected) {
-        await updateEmailFollowUpTemplate(selected._rowIndex, payload, user?.displayName)
+        await updateEmailFollowUpTemplate(selected._rowIndex, payload, user?.displayName, selected['Template ID'])
         setTemplates((previous) => previous.map((item) =>
           item['Template ID'] === selected['Template ID'] ? { ...item, ...payload } : item
         ))
       } else {
         const created = await addEmailFollowUpTemplate(payload, user?.displayName)
-        setTemplates((previous) => [...previous, created])
-        setSelectedId(created['Template ID'])
-        setForm(normalizeTemplate(created))
+        const refreshed = await getEmailFollowUpTemplates({ force: true })
+        const canonical = refreshed?.find((item) => item['Template ID'] === created['Template ID']) || created
+        if (refreshed) setTemplates(refreshed)
+        else setTemplates((previous) => [...previous, canonical])
+        setSelectedId(canonical['Template ID'])
+        setForm(normalizeTemplate(canonical))
       }
       toast?.success('Follow-up template saved')
+      setDirty(false)
     } catch (error) {
       toast?.error(`Could not save template: ${error.message}`)
     } finally {
@@ -135,12 +155,31 @@ export default function FollowUpEmailTemplates({ user, toast }) {
   return (
     <div className={styles.layout}>
       <aside className={styles.templateList} aria-label="Follow-up templates">
+        <div className={styles.listTools}>
+          <input
+            className="form-input"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search templates"
+            aria-label="Search follow-up email templates"
+          />
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => forceRefreshCache(['EmailFollowUpTemplatesTable'])}
+            disabled={loading}
+          >
+            Refresh
+          </button>
+        </div>
         <button type="button" className={`${styles.templateItem} ${selectedId === 'new' ? styles.selected : ''}`} onClick={() => choose(null)}>
           <span>New template</span>
           <small>Create a follow-up template</small>
         </button>
         {templates
           .slice()
+          .filter((template) => !search.trim() || `${template['Template Name']} ${template.Subject}`.toLowerCase().includes(search.trim().toLowerCase()))
           .sort((a, b) => Number(a['Days After Submission']) - Number(b['Days After Submission']))
           .map((template) => (
             <button
@@ -159,15 +198,15 @@ export default function FollowUpEmailTemplates({ user, toast }) {
         <div className={styles.editorGrid}>
           <label>
             <span>Template name</span>
-            <input className="form-input" value={form['Template Name']} onChange={(event) => setForm((current) => ({ ...current, 'Template Name': event.target.value }))} />
+            <input className="form-input" value={form['Template Name']} onChange={(event) => { setDirty(true); setForm((current) => ({ ...current, 'Template Name': event.target.value })) }} />
           </label>
           <label>
             <span>Days after submission</span>
-            <input className="form-input" type="number" min="1" max="365" value={form['Days After Submission']} onChange={(event) => setForm((current) => ({ ...current, 'Days After Submission': event.target.value }))} />
+            <input className="form-input" type="number" min="1" max="365" value={form['Days After Submission']} onChange={(event) => { setDirty(true); setForm((current) => ({ ...current, 'Days After Submission': event.target.value })) }} />
           </label>
           <label>
             <span>Status</span>
-            <select className="form-input" value={form.Active} onChange={(event) => setForm((current) => ({ ...current, Active: event.target.value }))}>
+            <select className="form-input" value={form.Active} onChange={(event) => { setDirty(true); setForm((current) => ({ ...current, Active: event.target.value })) }}>
               <option value="Yes">Active</option>
               <option value="No">Inactive</option>
             </select>
@@ -175,14 +214,14 @@ export default function FollowUpEmailTemplates({ user, toast }) {
         </div>
         <label className={styles.fullField}>
           <span>Subject</span>
-          <input className="form-input" value={form.Subject} onChange={(event) => setForm((current) => ({ ...current, Subject: event.target.value }))} placeholder="Following up on {{opportunity_title}}" />
+          <input className="form-input" value={form.Subject} onChange={(event) => { setDirty(true); setForm((current) => ({ ...current, Subject: event.target.value })) }} placeholder="Following up on {{opportunity_title}}" />
         </label>
         <div className={styles.fullField}>
           <span id="follow-up-template-body-label">Email body</span>
           <RichEmailEditor
             ref={richEditorRef}
             value={form.Body}
-            onChange={(Body) => setForm((current) => ({ ...current, Body }))}
+            onChange={(Body) => { setDirty(true); setForm((current) => ({ ...current, Body })) }}
             ariaLabel="Follow-up email template body"
             allowSignature
             highlightMergeFields
