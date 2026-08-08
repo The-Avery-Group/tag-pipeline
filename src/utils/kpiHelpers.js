@@ -8,7 +8,7 @@
  *    timezones this shifts to the previous calendar day when displayed locally.
  *  - Fix: append 'T00:00:00' (no Z) so the browser parses as LOCAL midnight.
  */
-import { isRfiWorkflowOpportunity } from './noticeTypes.js'
+import { isSubmittedOpportunity, submittedOpportunityNoticeType } from './noticeTypes.js'
 
 // ── Date helpers ──────────────────────────────────────────────────────────
 
@@ -153,16 +153,15 @@ export function computeExpiringBands(pipeline = []) {
   return counts
 }
 
-// ── RFI by month ──────────────────────────────────────────────────────────
+// ── Submissions by month ──────────────────────────────────────────────────
 
 /**
  * Returns the last `monthsBack` calendar months (including current) as an
- * array of { year, month, label, monthKey, count } objects, zero-filled for
- * empty months. Counts RFI and MRAS opportunities with a submission date, using
- * Submission Date (Response Date)* as the month reference. monthKey is a
- * stable 'YYYY-MM' identifier for filtering/URL use.
+ * array of monthly buckets, zero-filled for empty months. A response date by
+ * itself is not evidence of submission, so only submitted workflow phases are
+ * counted. `types` supports the tooltip while `count` remains one chart line.
  */
-export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
+export function computeSubmissionsByMonth(pipeline = [], monthsBack = 10) {
   const months = []
   const now = new Date()
   const currentYear = now.getFullYear()
@@ -180,20 +179,28 @@ export function computeRFIByMonth(pipeline = [], monthsBack = 10) {
       label,
       monthKey: `${year}-${String(d.getMonth() + 1).padStart(2, '0')}`,
       count: 0,
+      types: {},
     })
   }
 
-  pipeline.filter(isRfiWorkflowOpportunity).forEach((o) => {
+  pipeline.filter(isSubmittedOpportunity).forEach((o) => {
     const d = parseLocalDate(o[C_SUBMDATE])
     if (isNaN(d.getTime())) return
     const bucket = months.find(
       (m) => m.year === d.getFullYear() && m.month === d.getMonth()
     )
-    if (bucket) bucket.count++
+    if (bucket) {
+      const noticeType = submittedOpportunityNoticeType(o) || 'Unclassified'
+      bucket.count++
+      bucket.types[noticeType] = (bucket.types[noticeType] || 0) + 1
+    }
   })
 
   return months
 }
+
+// Retain the old export for extensions or saved builds that still import it.
+export const computeRFIByMonth = computeSubmissionsByMonth
 
 // ── Contract-by-year (recompete timeline) ──────────────────────────────────
 
