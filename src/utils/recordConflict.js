@@ -5,12 +5,18 @@ const TABLE_IDENTITY_COLUMNS = {
   ContactsTable: 'ContactID',
   PartnersTable: 'UEI Number',
   ContactInteractionsTable: 'InteractionID',
-  NewOpportunitiesTable: 'Notice ID',
+  NewOpportunitiesTable: ['Notice ID', 'Solicitation Number'],
+  EmailFollowUpTemplatesTable: 'Template ID',
+  EmailFollowUpDraftsTable: 'Draft ID',
+  SAMSettingsTable: 'Setting',
+  RFIFollowUpOverridesTable: 'Opportunity ID',
 }
 
 export function recordIdentity(tableName, row) {
   if (!row) return ''
-  const column = TABLE_IDENTITY_COLUMNS[tableName]
+  const configured = TABLE_IDENTITY_COLUMNS[tableName]
+  const columns = Array.isArray(configured) ? configured : [configured]
+  const column = columns.find((candidate) => candidate && String(row[candidate] || '').trim())
   return column ? String(row[column] || '').trim() : ''
 }
 
