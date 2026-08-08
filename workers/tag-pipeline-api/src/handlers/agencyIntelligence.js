@@ -1,8 +1,9 @@
 const SAM_AWARDS_BASE = 'https://api.sam.gov/contract-awards/v1/search'
 const PAGE_SIZE = 100
 const SEARCH_LIMIT = 100
-const RESOLUTION_BATCH_LIMIT = 8
+const RESOLUTION_BATCH_LIMIT = 4
 const UPSTREAM_TIMEOUT_MS = 25_000
+const UPSTREAM_ATTEMPTS = 2
 const CACHE_TTL_SECONDS = 90 * 24 * 60 * 60
 const REPORT_CACHE_VERSION = 1
 
@@ -55,27 +56,37 @@ function abortAfter(timeoutMs = UPSTREAM_TIMEOUT_MS) {
   return { signal: controller.signal, cancel: () => clearTimeout(timer) }
 }
 
-async function fetchSAM(env, params, { timeoutMs = UPSTREAM_TIMEOUT_MS } = {}) {
+async function fetchSAM(env, params, { timeoutMs = UPSTREAM_TIMEOUT_MS, attempts = UPSTREAM_ATTEMPTS } = {}) {
   if (!env?.SAM_API_KEY) throw new Error('SAM_API_KEY is not configured')
   const query = new URLSearchParams({ api_key: env.SAM_API_KEY, ...params })
-  const timeout = abortAfter(timeoutMs)
-  try {
-    const response = await fetch(`${SAM_AWARDS_BASE}?${query}`, {
-      headers: { Accept: 'application/json' },
-      signal: timeout.signal,
-    })
-    if (response.status === 204) return { awardSummary: [], totalRecords: 0, limit: params.limit, offset: params.offset }
-    if (!response.ok) {
-      const body = await response.text()
-      throw new Error(`SAM.gov Contract Awards API returned ${response.status}${body ? `: ${body.slice(0, 180)}` : ''}`)
+  let lastError
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const timeout = abortAfter(timeoutMs)
+    try {
+      const response = await fetch(`${SAM_AWARDS_BASE}?${query}`, {
+        headers: { Accept: 'application/json' },
+        signal: timeout.signal,
+      })
+      if (response.status === 204) return { awardSummary: [], totalRecords: 0, limit: params.limit, offset: params.offset }
+      if (!response.ok) {
+        const body = await response.text()
+        const error = new Error(`SAM.gov Contract Awards API returned ${response.status}${body ? `: ${body.slice(0, 180)}` : ''}`)
+        error.status = response.status
+        throw error
+      }
+      return await response.json()
+    } catch (error) {
+      lastError = error?.name === 'AbortError'
+        ? Object.assign(new Error('SAM.gov took too long to return contract data'), { status: 504 })
+        : error
+      const retryable = [429, 500, 502, 503, 504].includes(Number(lastError?.status))
+      if (!retryable || attempt >= attempts - 1) throw lastError
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)))
+    } finally {
+      timeout.cancel()
     }
-    return await response.json()
-  } catch (error) {
-    if (error?.name === 'AbortError') throw new Error('SAM.gov took too long to return contract data')
-    throw error
-  } finally {
-    timeout.cancel()
   }
+  throw lastError
 }
 
 function recordDate(record) {
@@ -338,14 +349,39 @@ async function resolveVehicles(req, env, ctx) {
   const refresh = Boolean(body?.refresh)
   if (!identifiers.length) return json({ resolutions: [], source: 'SAM.gov' })
   if (identifiers.length > RESOLUTION_BATCH_LIMIT) return json({ error: `Resolve no more than ${RESOLUTION_BATCH_LIMIT} vehicle identifiers per request` }, 400)
-  const resolutions = await Promise.all(identifiers.map((identifier) => resolveOneVehicle(env, identifier, ctx, refresh)))
-  return json({ resolutions: resolutions.filter(Boolean), source: 'SAM.gov', fetchedAt: new Date().toISOString() })
+  const outcomes = await Promise.all(identifiers.map(async (identifier) => {
+    try {
+      const resolution = await resolveOneVehicle(env, identifier, ctx, refresh)
+      return { resolution, failed: false }
+    } catch (error) {
+      const fallback = {
+        piid: clean(identifier?.piid).toUpperCase(),
+        agencyId: clean(identifier?.agencyId),
+        resolutionError: true,
+      }
+      console.warn('[Agency Intelligence] Parent IDV resolution skipped', {
+        piid: fallback.piid,
+        agencyId: fallback.agencyId,
+        status: Number(error?.status) || 0,
+        message: clean(error?.message).slice(0, 220),
+      })
+      return { resolution: fallback, failed: true }
+    }
+  }))
+  const resolutions = outcomes.map((outcome) => outcome.resolution).filter(Boolean)
+  const failures = outcomes.filter((outcome) => outcome.failed)
+  return json({
+    resolutions,
+    failed: failures.length,
+    source: 'SAM.gov',
+    fetchedAt: new Date().toISOString(),
+  })
 }
 
 async function getReport(req, env) {
   const key = reportKey(new URL(req.url))
   const result = await env.CACHE?.get(key, 'json')
-  return result ? json({ status: 'ready', result, cache: 'shared' }) : json({ status: 'missing' }, 404)
+  return result ? json({ status: 'ready', result, cache: 'shared' }) : json({ status: 'missing' })
 }
 
 async function saveReport(req, env) {
