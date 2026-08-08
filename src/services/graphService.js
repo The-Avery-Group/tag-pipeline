@@ -1314,7 +1314,7 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
       rollback: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_DECISION_HEADERS)),
     })),
     ...plan.emailDraftPatches.map((item) => ({
-      label: 'RFI follow-up email draft',
+      label: 'follow-up email draft',
       apply: () => updateWithRetry(() => updateEmailFollowUpDraft(item.rowIndex, item.patch, 'Opportunity rename')),
       rollback: () => updateWithRetry(() => updateEmailFollowUpDraft(item.rowIndex, item.rollback, 'Opportunity rename rollback')),
     })),
@@ -1706,17 +1706,14 @@ function emailPatchForWorkbook(patch, schema) {
   }))
 }
 
-export async function getEmailFollowUpTemplates() {
+export async function getEmailFollowUpTemplates({ force = false } = {}) {
   try {
-    // These tables are configured by administrators after the app is already
-    // deployed. Always refresh their schema before validation so a column
-    // added in Excel during the current browser session is recognized.
     await emailTableSchema(
       'EmailFollowUpTemplatesTable',
       EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
-      { force: true },
+      { force },
     )
-    invalidate('EmailFollowUpTemplatesTable')
+    if (force) invalidate('EmailFollowUpTemplatesTable')
     const rows = await getSheetRows('EmailFollowUpTemplatesTable')
     return canonicalEmailRows(rows, EMAIL_FOLLOW_UP_TEMPLATE_HEADERS)
   } catch (error) {
@@ -1729,7 +1726,7 @@ export async function addEmailFollowUpTemplate(values, updatedBy, templateId = c
   const schema = await emailTableSchema(
     'EmailFollowUpTemplatesTable',
     EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
-    { force: true },
+    { force: false },
   )
   const now = new Date().toISOString()
   const record = {
@@ -1752,17 +1749,25 @@ export async function addEmailFollowUpTemplate(values, updatedBy, templateId = c
     ),
     readRows: async () => {
       invalidate('EmailFollowUpTemplatesTable')
-      return (await getEmailFollowUpTemplates()) || []
+      return (await getEmailFollowUpTemplates({ force: true })) || []
     },
   })
 }
 
-export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy) {
+export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy, templateId = '') {
   const schema = await emailTableSchema(
     'EmailFollowUpTemplatesTable',
     EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
-    { force: true },
+    { force: false },
   )
+  let targetRowIndex = rowIndex
+  const stableId = String(templateId || patch?.['Template ID'] || '').trim().toLowerCase()
+  if (stableId) {
+    const rows = await getEmailFollowUpTemplates({ force: true })
+    const current = rows?.find((row) => String(row?.['Template ID'] || '').trim().toLowerCase() === stableId)
+    if (!current) throw new Error('This template could not be found in the workbook. Refresh the template list and try again.')
+    targetRowIndex = current._rowIndex
+  }
   const nextPatch = {
     ...patch,
     'Last Updated': new Date().toISOString(),
@@ -1770,7 +1775,7 @@ export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy) {
   }
   return updateRow(
     'EmailFollowUpTemplatesTable',
-    rowIndex,
+    targetRowIndex,
     emailPatchForWorkbook(nextPatch, schema),
     schema.headers,
   )
@@ -1780,14 +1785,14 @@ export async function deleteEmailFollowUpTemplate(rowIndex) {
   return deleteRow('EmailFollowUpTemplatesTable', rowIndex)
 }
 
-export async function getEmailFollowUpDrafts() {
+export async function getEmailFollowUpDrafts({ force = false } = {}) {
   try {
     await emailTableSchema(
       'EmailFollowUpDraftsTable',
       EMAIL_FOLLOW_UP_DRAFT_HEADERS,
-      { force: true },
+      { force },
     )
-    invalidate('EmailFollowUpDraftsTable')
+    if (force) invalidate('EmailFollowUpDraftsTable')
     const rows = await getSheetRows('EmailFollowUpDraftsTable')
     return canonicalEmailRows(rows, EMAIL_FOLLOW_UP_DRAFT_HEADERS)
   } catch (error) {
@@ -1802,7 +1807,7 @@ export async function addEmailFollowUpDraft(record) {
   const schema = await emailTableSchema(
     'EmailFollowUpDraftsTable',
     EMAIL_FOLLOW_UP_DRAFT_HEADERS,
-    { force: true },
+    { force: false },
   )
   return createWorkbookRecord({
     tableName: 'EmailFollowUpDraftsTable',
@@ -1817,7 +1822,7 @@ export async function addEmailFollowUpDraft(record) {
     ),
     readRows: async () => {
       invalidate('EmailFollowUpDraftsTable')
-      return (await getEmailFollowUpDrafts()) || []
+      return (await getEmailFollowUpDrafts({ force: true })) || []
     },
     checkBeforeAppend: true,
   })
@@ -1827,7 +1832,7 @@ export async function updateEmailFollowUpDraft(rowIndex, patch, updatedBy) {
   const schema = await emailTableSchema(
     'EmailFollowUpDraftsTable',
     EMAIL_FOLLOW_UP_DRAFT_HEADERS,
-    { force: true },
+    { force: false },
   )
   const nextPatch = {
     ...patch,
