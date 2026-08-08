@@ -28,6 +28,8 @@ import {
   NOTICE_TYPE_VALUES,
   isRfiWorkflowOpportunity,
   isRfiWorkflowNoticeType,
+  isResponseOpportunity,
+  isSubmittedOpportunity,
   normalizeNoticeType,
 } from '@/utils/noticeTypes'
 
@@ -72,7 +74,7 @@ const C = {
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
-const TABS = ['All', 'RFIs', 'Expiring', 'Tracked', 'New']
+const TABS = ['All', 'Responses', 'Expiring', 'Tracked', 'New']
 
 // ── Phase badge map ───────────────────────────────────────────────────────
 const PHASE_BADGE = {
@@ -97,8 +99,8 @@ function getTabRows(pipeline, tab) {
   switch (tab) {
     case 'All':
       return pipeline
-    case 'RFIs':
-      return pipeline.filter((opportunity) => isRfiWorkflowOpportunity(opportunity, C))
+    case 'Responses':
+      return pipeline.filter((opportunity) => isResponseOpportunity(opportunity, C))
     case 'Expiring':
       return pipeline.filter((o) => o[C.outlook] === 'Expiring')
     case 'Tracked':
@@ -111,7 +113,7 @@ function getTabRows(pipeline, tab) {
 // ── Per-tab default sort ──────────────────────────────────────────────────
 const TAB_DEFAULT_SORT = {
   All:      { key: C.lastMod,  dir: 'desc' },
-  RFIs:     { key: C.submDate, dir: 'desc' },
+  Responses:{ key: C.submDate, dir: 'desc' },
   Expiring: { key: C.endDate,  dir: 'asc'  },
   Tracked:  { key: C.lastMod,  dir: 'desc' },
   New:      { key: 'Response Date', dir: 'asc'  },
@@ -128,7 +130,7 @@ function filterChipLabel(key, val) {
   if (key === 'rfiMonth') {
     const [y, m] = val.split('-').map(Number)
     const d = new Date(y, m - 1, 1)
-    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    return `Submitted: ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`
   }
   if (key === 'endYear') return val
   return val
@@ -186,7 +188,7 @@ export default function Opportunities({ toast }) {
   // page can link directly into a pre-filtered, visibly-active view (e.g. a
   // Dashboard chart segment linking to /opportunities?tab=All&phase=Proposal
   // shows real, dismissible filter chips exactly as if applied manually).
-  const requestedTab = searchParams.get('tab')
+  const requestedTab = searchParams.get('tab') === 'RFIs' ? 'Responses' : searchParams.get('tab')
   const activeTab = TABS.includes(requestedTab) ? requestedTab : 'All'
   const search    = searchParams.get('search') || ''
   const rfiFollowUpIds = useMemo(() => {
@@ -314,7 +316,7 @@ export default function Opportunities({ toast }) {
   // ── Tab counts (raw, before search/filters) ───────────────────────────
   const tabCounts = useMemo(() => ({
     All:      pipeline.length,
-    RFIs:     getTabRows(pipeline, 'RFIs').length,
+    Responses:getTabRows(pipeline, 'Responses').length,
     Expiring: getTabRows(pipeline, 'Expiring').length,
     Tracked:  getTabRows(pipeline, 'Tracked').length,
     New:      0,
@@ -395,7 +397,9 @@ export default function Opportunities({ toast }) {
     })
     // Dates are stored as 'YYYY-MM-DD' ISO strings, so a prefix match against
     // a 'YYYY-MM' filter value is exact and doesn't need Date parsing.
-    if (filters.rfiMonth)       rows = rows.filter((o) => String(o[C.submDate] || '').startsWith(filters.rfiMonth))
+    if (filters.rfiMonth)       rows = rows.filter((o) =>
+      isSubmittedOpportunity(o, C) && String(o[C.submDate] || '').startsWith(filters.rfiMonth)
+    )
     if (filters.assignedTo) rows = rows.filter((o) => o[C.assignedTo] === filters.assignedTo)
     if (filters.agency.size > 0) rows = rows.filter((o) =>
       filters.agency.has(String(o[C.agency] || '').trim())
@@ -1234,7 +1238,7 @@ export default function Opportunities({ toast }) {
       ? 'No opportunities match the current filters.'
       : {
           All:      'No opportunities in the pipeline yet.',
-          RFIs:     'No RFIs or MRAS opportunities yet. Set Notice Type to RFI or MRAS to include an opportunity here.',
+          Responses:'No response opportunities yet. Set Notice Type to RFI, MRAS, RFP, or RFQ to include an opportunity here.',
           Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
           Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
           New:      '',
@@ -1294,14 +1298,15 @@ export default function Opportunities({ toast }) {
     </table>
   )
 
-  const RFIsTable = () => (
+  const ResponsesTable = () => (
     <table className="data-table">
       <thead>
         <tr>
           <th onClick={() => handleSort(C.title)} style={{ cursor: 'pointer' }}>Opportunity <SortIcon col={C.title} /></th>
           <th title="Contract or notice ID">ID</th>
+          <th onClick={() => handleSort(C.noticeType)} style={{ cursor: 'pointer' }}>Notice type <SortIcon col={C.noticeType} /></th>
           <th onClick={() => handleSort(C.agency)} style={{ cursor: 'pointer' }}>Agency <SortIcon col={C.agency} /></th>
-          <th onClick={() => handleSort(C.submDate)} style={{ cursor: 'pointer' }}>Submission date <SortIcon col={C.submDate} /></th>
+          <th onClick={() => handleSort(C.submDate)} style={{ cursor: 'pointer' }} title="Response deadline or actual submission date">Response or submission date <SortIcon col={C.submDate} /></th>
         </tr>
       </thead>
       <tbody>
@@ -1316,6 +1321,7 @@ export default function Opportunities({ toast }) {
                 </div>
               </td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
+              <td><span className="badge badge-tracking">{normalizeNoticeType(opp[C.noticeType]) || 'Legacy'}</span></td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
               <td className={`text-sm ${opp[C.submDate] ? '' : 'text-muted'}`}>
                 {opp[C.submDate] ? formatDate(opp[C.submDate]) : '—'}
@@ -1630,7 +1636,7 @@ export default function Opportunities({ toast }) {
         {/* ── New tab: SAM.gov opportunities ── */}
         {activeTab === 'New' && renderNewTab()}
 
-        {/* ── Pipeline tabs: RFIs / Expiring / Tracked ── */}
+        {/* ── Pipeline tabs: Responses / Expiring / Tracked ── */}
         {activeTab !== 'New' && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {loading
@@ -1640,7 +1646,7 @@ export default function Opportunities({ toast }) {
                 : (
                   <div style={{ overflowX: 'auto' }}>
                     {activeTab === 'All'      && <AllTable />}
-                    {activeTab === 'RFIs'     && <RFIsTable />}
+                    {activeTab === 'Responses'&& <ResponsesTable />}
                     {activeTab === 'Expiring' && <ExpiringTable />}
                     {activeTab === 'Tracked'  && <TrackedTable />}
                   </div>
