@@ -315,8 +315,6 @@ export function useSAMOpportunities() {
       'Department*':                             row['Department']          || '',
       'Agency*':                                 row['Agency']              || '',
       'Office*':                                 row['Office']              || '',
-      'Department ID':                           row['Department ID']       || '',
-      'Agency ID':                               row['Agency ID']           || '',
       'NAICS Code*':                             row['NAICS Code']          || '',
       'Contracting Officer / Specialist (POC)*': contactName                || '',
       'Submission Date (Response Date)*':        row['Response Date']        || '',
