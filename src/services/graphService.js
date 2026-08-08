@@ -5,6 +5,7 @@ import {
   appendWithReconciliation,
   createFingerprint,
   createStableId,
+  queueTableMutation,
 } from '@/services/workbookMutations'
 import { deterministicDraftId } from '@/utils/followUpEmails'
 
@@ -85,17 +86,31 @@ export function getCachedTableNames() {
 }
 
 async function createWorkbookRecord({ tableName, idColumn, idValue, ...options }) {
-  const previousRows = cache.get(tableName)
-  const saved = await appendWithReconciliation({ idColumn, idValue, ...options })
-  const baseRows = cache.get(tableName) || previousRows
-  if (baseRows) {
-    const identity = String(idValue || '').trim().toLowerCase()
-    const withoutDuplicate = baseRows.filter((row) =>
-      String(row?.[idColumn] || '').trim().toLowerCase() !== identity
-    )
-    cache.set(tableName, [...withoutDuplicate, saved])
-  }
-  return saved
+  return queueTableMutation(tableName, async () => {
+    const saved = await appendWithReconciliation({ idColumn, idValue, ...options })
+    const flags = {
+      _recovered: Boolean(saved?._recovered),
+      _alreadyExisted: Boolean(saved?._alreadyExisted),
+    }
+
+    // Appending can change every positional row index, especially when the
+    // workbook table is sorted. Do not rebuild the cache from rows captured
+    // before the append. Re-read once and return the authoritative saved row.
+    invalidate(tableName)
+    try {
+      const freshRows = await getSheetRows(tableName)
+      const identity = String(idValue || '').trim().toLowerCase()
+      const current = freshRows.find((row) =>
+        String(row?.[idColumn] || '').trim().toLowerCase() === identity
+      )
+      return current ? { ...current, ...flags } : saved
+    } catch {
+      // The append already succeeded. Keep the table invalidated so the next
+      // reader performs the reconciliation, but never tell the user that a
+      // successfully created record failed and encourage a duplicate retry.
+      return { ...saved, ...flags, _verificationPending: true }
+    }
+  })
 }
 
 async function getTableHeaders(tableName, { force = false } = {}) {
@@ -376,11 +391,12 @@ export async function appendRow(tableName, values, headers) {
  * Update a row in a named table by row index.
  * patch: object with only the fields to update.
  */
-export async function updateRow(tableName, rowIndex, patch, headers) {
+async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = {}) {
   // Never rebuild an Excel row from a stale browser cache. A direct workbook
   // edit can happen while this app is open; read the current row immediately
   // before writing so unrelated changes are retained.
-  const cached = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+  const cachedAtIndex = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+  const cached = options.original || cachedAtIndex
   let targetRowIndex = rowIndex
   const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, { retryReads: true })
   const values = response?.values?.[0]
@@ -403,7 +419,7 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   // A table row index can move when someone edits the workbook directly.
   // Refuse to write if the record at that index is no longer the record the
   // user started editing, rather than silently changing a different record.
-  const identity = recordIdentity(tableName, cached)
+  const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
   if (identity && identity !== recordIdentity(tableName, current)) {
     // Row insertions and sorting can move a record without changing the
     // record itself. Relocate it by its stable ID, then retain the same
@@ -448,6 +464,12 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
   }
 }
 
+export function updateRow(tableName, rowIndex, patch, headers, options = {}) {
+  return queueTableMutation(tableName, () =>
+    updateRowUnlocked(tableName, rowIndex, patch, headers, options)
+  )
+}
+
 /**
  * Retry an idempotent row patch after transient Graph failures. A PATCH can
  * succeed even when Graph returns an ambiguous 5xx response, so each retry
@@ -456,48 +478,67 @@ export async function updateRow(tableName, rowIndex, patch, headers) {
  * different row after workbook sorting or row insertion.
  */
 export async function updateRowWithReconciliation(tableName, rowIndex, patch, headers, { attempts = 3 } = {}) {
-  const original = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
-  const identity = recordIdentity(tableName, original)
-  let targetRowIndex = rowIndex
-  let lastError
+  return queueTableMutation(tableName, async () => {
+    const original = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+    const identity = recordIdentity(tableName, original)
+    let targetRowIndex = rowIndex
+    let lastError
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      await updateRow(tableName, targetRowIndex, patch, headers)
-      return { reconciled: false, attempts: attempt + 1 }
-    } catch (error) {
-      lastError = error
-      const transient = [429, 502, 503, 504].includes(Number(error?.status))
-      if (!transient || !identity || attempt >= attempts - 1) throw error
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await updateRowUnlocked(tableName, targetRowIndex, patch, headers, { original, identity })
+        return { reconciled: false, attempts: attempt + 1 }
+      } catch (error) {
+        lastError = error
+        const transient = [429, 502, 503, 504].includes(Number(error?.status))
+        if (!transient || !identity || attempt >= attempts - 1) throw error
 
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
-      invalidate(tableName)
-      const freshRows = await getSheetRows(tableName)
-      const current = freshRows.find((row) => recordIdentity(tableName, row) === identity)
-      if (!current) throw new Error('This record moved in the workbook and could not be located during retry.')
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+        invalidate(tableName)
+        const freshRows = await getSheetRows(tableName)
+        const current = freshRows.find((row) => recordIdentity(tableName, row) === identity)
+        if (!current) throw new Error('This record moved in the workbook and could not be located during retry.')
 
-      const applied = Object.entries(patch).every(([field, value]) =>
-        String(current?.[field] ?? '').trim() === String(value ?? '').trim()
-      )
-      if (applied) return { reconciled: true, attempts: attempt + 1 }
-      targetRowIndex = current._rowIndex
+        const applied = Object.entries(patch).every(([field, value]) =>
+          String(current?.[field] ?? '').trim() === String(value ?? '').trim()
+        )
+        if (applied) return { reconciled: true, attempts: attempt + 1 }
+        targetRowIndex = current._rowIndex
+      }
     }
-  }
 
-  throw lastError
+    throw lastError
+  })
 }
 
 /**
  * Delete a row from a named table by row index.
  */
-export async function deleteRow(tableName, rowIndex) {
-  await graphFetch(`/tables/${tableName}/rows/itemAt(index=${rowIndex})`, {
-    method: 'DELETE',
+export function deleteRow(tableName, rowIndex, options = {}) {
+  return queueTableMutation(tableName, async () => {
+    const cached = options.original || cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+    const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
+    let targetRowIndex = rowIndex
+
+    // A delete changes every following row index. Resolve the target by its
+    // stable identity immediately before deleting, then rebuild the table
+    // cache before the next queued mutation is allowed to begin.
+    if (identity) {
+      invalidate(tableName)
+      const currentRows = await getSheetRows(tableName)
+      const current = currentRows.find((row) => recordIdentity(tableName, row) === identity)
+      // A retried delete after an ambiguous Graph response is successful when
+      // the stable identity is already absent.
+      if (!current) return { alreadyDeleted: true }
+      targetRowIndex = current._rowIndex
+    }
+
+    await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, {
+      method: 'DELETE',
+    })
+    invalidate(tableName)
+    await getSheetRows(tableName)
   })
-  const cachedRows = cache.get(tableName)
-  if (cachedRows) {
-    cache.set(tableName, cachedRows.filter((row) => row._rowIndex !== rowIndex))
-  }
 }
 
 // ── Column header constants ────────────────────────────────────────────────
@@ -680,7 +721,10 @@ export const OPPORTUNITY_PHASES = [
   'Cancelled',
 ]
 export const OPPORTUNITY_OUTLOOK = ['Expiring', 'Forecasted', 'New', 'Tracking']
-export const ACTIVITY_PHASES = ['Pre-RFP', 'Submitted RFI', 'RFP Released', 'Proposal Submitted', 'BAFO', 'Award Pending']
+export const ACTIVITY_PHASES = [
+  'Pre-RFP', 'Submitted RFI', 'Submitted Market Research', 'Submitted RFP',
+  'Submitted RFQ', 'RFP Released', 'Proposal Submitted', 'BAFO', 'Award Pending',
+]
 export const PRIORITY_VALUES = ['Cold', 'Warm', 'Hot']
 export const SET_ASIDE_VALUES = ['-', '8A', '8AN', 'NONE', 'SBA', 'SDVOSBC', 'SDVOSBS']
 
@@ -956,13 +1000,13 @@ export async function addPartner(data) {
   })
 }
 
-export async function updatePartner(rowIndex, patch) {
+export async function updatePartner(rowIndex, patch, original) {
   const schema = await partnerSchema()
-  return updateRow('PartnersTable', rowIndex, partnerValuesForWorkbook(patch, schema), schema.headers)
+  return updateRow('PartnersTable', rowIndex, partnerValuesForWorkbook(patch, schema), schema.headers, { original })
 }
 
-export async function deletePartner(rowIndex) {
-  return deleteRow('PartnersTable', rowIndex)
+export async function deletePartner(rowIndex, original) {
+  return deleteRow('PartnersTable', rowIndex, { original })
 }
 
 const CONTACT_INTERACTIONS_TABLE = 'ContactInteractionsTable'
@@ -1029,15 +1073,15 @@ export async function addOpportunity(data) {
   })
 }
 
-export async function updateOpportunity(rowIndex, patch) {
+export async function updateOpportunity(rowIndex, patch, original) {
   return updateRow('PipelineTable', rowIndex, {
     ...patch,
     'Last Modified*': new Date().toISOString().split('T')[0],
-  }, PIPELINE_HEADERS)
+  }, PIPELINE_HEADERS, { original })
 }
 
-export async function deleteOpportunity(rowIndex) {
-  return deleteRow('PipelineTable', rowIndex)
+export async function deleteOpportunity(rowIndex, original) {
+  return deleteRow('PipelineTable', rowIndex, { original })
 }
 
 export async function addNote(contractNumber, author, text, noteId = createStableId('N')) {
@@ -1062,12 +1106,12 @@ export async function addNote(contractNumber, author, text, noteId = createStabl
   })
 }
 
-export async function updateNote(rowIndex, patch) {
-  return updateRow('NotesTable', rowIndex, patch, NOTES_HEADERS)
+export async function updateNote(rowIndex, patch, original) {
+  return updateRow('NotesTable', rowIndex, patch, NOTES_HEADERS, { original })
 }
 
-export async function deleteNote(rowIndex) {
-  return deleteRow('NotesTable', rowIndex)
+export async function deleteNote(rowIndex, original) {
+  return deleteRow('NotesTable', rowIndex, { original })
 }
 
 export async function addTask(data, createdBy, taskId = createStableId('T')) {
@@ -1093,11 +1137,11 @@ export async function addTask(data, createdBy, taskId = createStableId('T')) {
   })
 }
 
-export async function updateTask(rowIndex, patch) {
+export async function updateTask(rowIndex, patch, original) {
   return updateRow('TasksTable', rowIndex, {
     ...patch,
     UpdatedDate: new Date().toISOString().split('T')[0],
-  }, TASKS_HEADERS)
+  }, TASKS_HEADERS, { original })
 }
 
 // ── Controlled opportunity identifier/title changes ──────────────────────
@@ -1350,8 +1394,8 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
   }
 }
 
-export async function deleteTask(rowIndex) {
-  return deleteRow('TasksTable', rowIndex)
+export async function deleteTask(rowIndex, original) {
+  return deleteRow('TasksTable', rowIndex, { original })
 }
 
 export async function addContact(data, contactId = createStableId('C')) {
@@ -1407,17 +1451,17 @@ export async function addContactInteraction(data, interactionId = createStableId
   })
 }
 
-export async function updateContact(rowIndex, patch) {
+export async function updateContact(rowIndex, patch, original) {
   headerCache.delete('ContactsTable')
   const headers = await getTableHeaders('ContactsTable')
   if (String(patch.Offices || '').trim() && !headers.includes('Offices')) {
     throw new Error('Add an "Offices" column to ContactsTable before saving office assignments')
   }
-  return updateRow('ContactsTable', rowIndex, patch, headers)
+  return updateRow('ContactsTable', rowIndex, patch, headers, { original })
 }
 
-export async function deleteContact(rowIndex) {
-  return deleteRow('ContactsTable', rowIndex)
+export async function deleteContact(rowIndex, original) {
+  return deleteRow('ContactsTable', rowIndex, { original })
 }
 
 /**
@@ -1479,13 +1523,13 @@ export async function addSAMOpportunity(data) {
   })
 }
 
-export async function updateSAMOpportunity(rowIndex, patch) {
+export async function updateSAMOpportunity(rowIndex, patch, original) {
   const headers = await getTableHeaders('NewOpportunitiesTable')
-  return updateRow('NewOpportunitiesTable', rowIndex, patch, headers)
+  return updateRow('NewOpportunitiesTable', rowIndex, patch, headers, { original })
 }
 
-export async function deleteSAMOpportunity(rowIndex) {
-  return deleteRow('NewOpportunitiesTable', rowIndex)
+export async function deleteSAMOpportunity(rowIndex, original) {
+  return deleteRow('NewOpportunitiesTable', rowIndex, { original })
 }
 
 // ── SAMConfig tables ──────────────────────────────────────────────────────
