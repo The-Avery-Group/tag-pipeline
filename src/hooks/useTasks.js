@@ -14,11 +14,14 @@ export function useTasks(contractNumber = null) {
   const [tasks, setTasks]   = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState(null)
+  const tasksRef = useRef([])
+
+  useEffect(() => { tasksRef.current = tasks }, [tasks])
 
   // Tracks in-flight field patches (e.g. Status toggles) not yet confirmed
   // by a server read, so a racing refresh — the background poll, or any
   // other hook's invalidateCache() call anywhere in the app — can't clobber
-  // an edit before the write has actually landed. Keyed by _rowIndex -> patch.
+  // an edit before the write has actually landed. Keyed by stable TaskID.
   const pendingPatches = useRef(new Map())
 
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -32,11 +35,12 @@ export function useTasks(contractNumber = null) {
         ? all.filter((t) => t.ContractNumber === contractNumber)
         : all
       const reconciled = filtered.map((t) => {
-        const patch = pendingPatches.current.get(t._rowIndex)
+        const identity = String(t.TaskID || '').trim()
+        const patch = pendingPatches.current.get(identity)
         if (!patch) return t
         const confirmed = Object.keys(patch).every((k) => t[k] === patch[k])
         if (confirmed) {
-          pendingPatches.current.delete(t._rowIndex)
+          pendingPatches.current.delete(identity)
           return t
         }
         return { ...t, ...patch }
@@ -96,33 +100,36 @@ export function useTasks(contractNumber = null) {
   }, [])
 
   const update = useCallback(async (rowIndex, patch) => {
+    const original = tasksRef.current.find((task) => task._rowIndex === rowIndex)
+    const identity = String(original?.TaskID || '').trim()
     const safePatch = { ...patch }
     if (safePatch.DueDate instanceof Date) {
       safePatch.DueDate = safePatch.DueDate.toISOString().split('T')[0]
     }
-    pendingPatches.current.set(rowIndex, safePatch)
+    if (identity) pendingPatches.current.set(identity, safePatch)
     // Optimistic update — apply patch immediately
     setTasks((prev) =>
       prev.map((t) => t._rowIndex === rowIndex ? { ...t, ...safePatch } : t)
     )
     try {
-      await retryIdempotent(() => updateTask(rowIndex, safePatch))
+      await retryIdempotent(() => updateTask(rowIndex, safePatch, original))
       await publishCacheUpdate(['TasksTable'])
       verifyCacheInBackground(['TasksTable'])
     } catch (err) {
       // A conflicting Excel edit must not remain on screen as though it was
       // saved. Reload the authoritative row and let the caller show the
       // specific conflict message.
-      pendingPatches.current.delete(rowIndex)
+      if (identity) pendingPatches.current.delete(identity)
       await load()
       throw err
     }
   }, [load])
 
   const remove = useCallback(async (rowIndex) => {
+    const original = tasksRef.current.find((task) => task._rowIndex === rowIndex)
     setTasks((current) => current.filter((task) => task._rowIndex !== rowIndex))
     try {
-      await retryIdempotent(() => deleteTask(rowIndex))
+      await retryIdempotent(() => deleteTask(rowIndex, original))
       await publishCacheUpdate(['TasksTable'])
       verifyCacheInBackground(['TasksTable'])
     } catch (error) {
@@ -133,7 +140,7 @@ export function useTasks(contractNumber = null) {
 
   const refreshContext = useCallback(async (task) => {
     const notes = await getNotesForContract(task.ContractNumber)
-    await retryIdempotent(() => updateTask(task._rowIndex, { OpportunityNotes: notes }))
+    await retryIdempotent(() => updateTask(task._rowIndex, { OpportunityNotes: notes }, task))
     await invalidateCache(['TasksTable'])
   }, [])
 
