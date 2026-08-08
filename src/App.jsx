@@ -46,7 +46,7 @@ function cacheTablesForLocation(location) {
 
   if (path === '/') return ['PipelineTable', 'TasksTable']
   if (path.startsWith('/opportunities/')) {
-    return ['PipelineTable', 'NotesTable', 'TasksTable', 'ContactsTable', 'DataValidationTable']
+    return ['PipelineTable', 'NotesTable', 'TasksTable', 'ContactsTable', 'DataValidationTable', 'EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable']
   }
   if (path === '/opportunities') {
     return params.get('tab') === 'New'
@@ -59,7 +59,7 @@ function cacheTablesForLocation(location) {
     return ['ContactsTable', 'ContactInteractionsTable', 'PipelineTable', 'DataValidationTable']
   }
   if (path === '/partners') return ['PartnersTable', 'PipelineTable']
-  if (path === '/settings') return ['DataValidationTable']
+  if (path === '/settings') return ['DataValidationTable', 'EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable']
   if (path === '/lookup') {
     return params.get('view') === 'people'
       ? ['ContactsTable', 'DataValidationTable']
