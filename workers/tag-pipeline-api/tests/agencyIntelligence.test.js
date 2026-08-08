@@ -95,6 +95,45 @@ test('loads one bounded SAM contract page for a target agency', async (t) => {
   assert.equal(payload.hasNext, false)
 })
 
+test('keeps a vehicle resolution batch usable when one SAM IDV lookup fails', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async (url) => {
+    const piid = new URL(url).searchParams.get('piid')
+    if (piid === 'BAD-IDV') return response({ message: 'Temporary failure' }, 503)
+    return response({
+      awardSummary: [{
+        ...sample,
+        contractId: { piid },
+        coreData: { ...sample.coreData, title: 'GSA Multiple Award Schedule' },
+      }],
+      totalRecords: 1,
+    })
+  }
+  const result = await handleAgencyIntelligence(new Request('https://example.com/agency-intelligence/vehicles/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifiers: [
+      { piid: '47QTCA20D0001', agencyId: '4732' },
+      { piid: 'BAD-IDV', agencyId: '4732' },
+    ] }),
+  }), { SAM_API_KEY: 'test' })
+  const payload = await result.json()
+  assert.equal(result.status, 200)
+  assert.equal(payload.resolutions.length, 2)
+  assert.equal(payload.failed, 1)
+  assert.equal(payload.resolutions.find((item) => item.piid === 'BAD-IDV').resolutionError, true)
+})
+
+test('returns a normal cache-miss response instead of a report 404', async () => {
+  const result = await handleAgencyIntelligence(
+    new Request('https://example.com/agency-intelligence/report?name=CDC&tier=subtier'),
+    { CACHE: { async get() { return null } } },
+  )
+  assert.equal(result.status, 200)
+  assert.equal((await result.json()).status, 'missing')
+})
+
 test('stores only completed SAM.gov reports in shared cache', async () => {
   const entries = new Map()
   const env = {
