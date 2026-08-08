@@ -62,3 +62,11 @@ export function outlookPopoutUrl(webLink) {
     return value
   }
 }
+
+export function outlookLaunchPlan(webLink) {
+  return {
+    appUrl: 'ms-outlook://',
+    webUrl: outlookPopoutUrl(webLink),
+    fallbackDelayMs: 4000,
+  }
+}
