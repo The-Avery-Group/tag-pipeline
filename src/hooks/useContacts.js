@@ -32,11 +32,12 @@ export function useContacts() {
     try {
       const data = await getContacts()
       const reconciled = data.map((c) => {
-        const patch = pendingPatches.current.get(c._rowIndex)
+        const identity = String(c.ContactID || '').trim()
+        const patch = pendingPatches.current.get(identity)
         if (!patch) return c
         const confirmed = Object.keys(patch).every((k) => c[k] === patch[k])
         if (confirmed) {
-          pendingPatches.current.delete(c._rowIndex)
+          pendingPatches.current.delete(identity)
           return c
         }
         return { ...c, ...patch }
@@ -111,28 +112,31 @@ export function useContacts() {
   }, [])
 
   const update = useCallback(async (rowIndex, patch) => {
-    pendingPatches.current.set(rowIndex, patch)
+    const original = contactsRef.current.find((contact) => contact._rowIndex === rowIndex)
+    const identity = String(original?.ContactID || '').trim()
+    if (identity) pendingPatches.current.set(identity, patch)
     // Optimistic: apply patch immediately
     setContacts((prev) =>
       prev.map((c) => c._rowIndex === rowIndex ? { ...c, ...patch } : c)
     )
     try {
-      await retryIdempotent(() => updateContact(rowIndex, patch))
+      await retryIdempotent(() => updateContact(rowIndex, patch, original))
       await publishCacheUpdate(['ContactsTable'])
       verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
       // Roll back by reloading from server
-      pendingPatches.current.delete(rowIndex)
+      if (identity) pendingPatches.current.delete(identity)
       await load()
       throw err
     }
   }, [load])
 
   const remove = useCallback(async (rowIndex) => {
+    const original = contactsRef.current.find((contact) => contact._rowIndex === rowIndex)
     // Optimistic: remove immediately
     setContacts((prev) => prev.filter((c) => c._rowIndex !== rowIndex))
     try {
-      await retryIdempotent(() => deleteContact(rowIndex))
+      await retryIdempotent(() => deleteContact(rowIndex, original))
       await publishCacheUpdate(['ContactsTable'])
       verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
