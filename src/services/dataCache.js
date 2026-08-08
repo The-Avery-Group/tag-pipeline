@@ -23,6 +23,7 @@ import {
   getCachedTableNames,
   invalidateTables,
 } from '@/services/graphService'
+import { queueTableMutation } from '@/services/workbookMutations'
 
 const POLL_INTERVAL_MS = 60 * 1000
 const ACTIVE_REFRESH_INTERVAL_MS = 3 * 60 * 1000
@@ -60,6 +61,8 @@ let activeTables = new Set(CORE_TABLES)
 const dirtyTables = new Set()
 const lastTableRefreshAt = new Map()
 const verificationTimers = new Map()
+const verificationInFlight = new Map()
+const verificationPending = new Set()
 const listeners = new Set()
 
 export function onCacheRefresh(listener) {
@@ -179,13 +182,26 @@ export async function publishCacheUpdate(tableNames = []) {
 export function verifyCacheInBackground(tableNames = [], delayMs = 350) {
   const targets = [...new Set(tableNames)].filter((tableName) => loaders[tableName])
   targets.forEach((tableName) => {
-    if (verificationTimers.has(tableName)) clearTimeout(verificationTimers.get(tableName))
+    dirtyTables.add(tableName)
+    if (verificationInFlight.has(tableName)) {
+      verificationPending.add(tableName)
+      return
+    }
+    // Keep the earliest scheduled verification. Repeated writes should not
+    // keep pushing reconciliation farther into the future.
+    if (verificationTimers.has(tableName)) return
     const timer = setTimeout(() => {
       verificationTimers.delete(tableName)
-      forceRefreshCache([tableName]).catch((error) => {
-        dirtyTables.add(tableName)
-        console.warn(`[Cache] Background verification failed for ${tableName}:`, error.message)
-      })
+      const verification = queueTableMutation(tableName, () => forceRefreshCache([tableName]))
+        .catch((error) => {
+          dirtyTables.add(tableName)
+          console.warn(`[Cache] Background verification failed for ${tableName}:`, error.message)
+        })
+        .finally(() => {
+          verificationInFlight.delete(tableName)
+          if (verificationPending.delete(tableName)) verifyCacheInBackground([tableName], 0)
+        })
+      verificationInFlight.set(tableName, verification)
     }, delayMs)
     verificationTimers.set(tableName, timer)
   })
@@ -297,4 +313,6 @@ export function stopPolling() {
   lastTableRefreshAt.clear()
   verificationTimers.forEach((timer) => clearTimeout(timer))
   verificationTimers.clear()
+  verificationInFlight.clear()
+  verificationPending.clear()
 }
