@@ -296,19 +296,30 @@
 .incumbentChartLegend i, .incumbentTooltipRow i { border-radius: 50%; display: inline-block; flex: 0 0 auto; height: 7px; width: 7px; }
 .incumbentActivityChart { height: 280px; min-width: 0; }
 .incumbentAgencyPanel { min-width: 0; }
-.incumbentAgencyLayout { align-items: center; display: grid; gap: 12px; grid-template-columns: minmax(180px, 210px) minmax(220px, 340px); justify-content: start; max-width: 580px; min-width: 0; }
-.incumbentDoughnut { height: 225px; min-width: 0; }
+.incumbentAgencyLayout { align-items: center; display: grid; gap: 24px; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); min-width: 0; width: 100%; }
+.incumbentDoughnut { height: 240px; justify-self: center; max-width: 280px; min-width: 0; width: 100%; }
 .incumbentChartTooltip { background: var(--surface-raised); border: 0.5px solid var(--gray-200); border-radius: var(--radius-sm); box-shadow: 0 4px 14px var(--shadow-color); color: var(--gray-900); display: grid; font-size: 11px; gap: 5px; min-width: 245px; padding: 10px 12px; }
 .incumbentChartTooltip span { color: var(--gray-600); }
 .incumbentTooltipRow { align-items: center; display: grid; gap: 6px; grid-template-columns: auto minmax(0, 1fr) auto; min-width: 0; }
 .incumbentTooltipRow span { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .incumbentTooltipRow strong { color: var(--gray-900); font-weight: 600; justify-self: end; text-align: right; white-space: nowrap; }
-.incumbentHistoryAgencies { display: grid; gap: 3px; }
-.incumbentHistoryAgencies div { align-items: center; display: grid; font-size: 10px; gap: 8px; grid-template-columns: minmax(0, 1fr) 42px; padding: 2px 0; }
-.incumbentHistoryAgencies span { color: var(--gray-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.incumbentHistoryAgencies strong { color: var(--blue-600); text-align: right; }
+.incumbentAgencyTableWrap { border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); min-width: 0; overflow-x: auto; }
+.incumbentAgencyTable { border-collapse: collapse; font-size: 10px; min-width: 520px; table-layout: fixed; width: 100%; }
+.incumbentAgencyTable th { background: var(--gray-50); color: var(--gray-500); font-weight: 600; padding: 7px 10px; text-align: right; white-space: nowrap; }
+.incumbentAgencyTable th:first-child { text-align: left; width: 48%; }
+.incumbentAgencyTable th:nth-child(2) { width: 14%; }
+.incumbentAgencyTable th:nth-child(3) { width: 14%; }
+.incumbentAgencyTable th:nth-child(4) { width: 24%; }
+.incumbentAgencyTable td { border-top: 0.5px solid var(--gray-100); color: var(--gray-700); padding: 7px 10px; text-align: right; white-space: nowrap; }
+.incumbentAgencyTable tbody tr:hover { background: var(--gray-50); }
+.incumbentAgencyTable td:first-child { text-align: left; }
+.incumbentAgencyTable td strong { color: var(--blue-600); font-weight: 600; }
+.incumbentAgencyName { align-items: center; display: flex; gap: 7px; min-width: 0; }
+.incumbentAgencyName i { border-radius: 50%; flex: 0 0 auto; height: 8px; width: 8px; }
+.incumbentAgencyName span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .incumbentHistorySource { color: var(--gray-400); font-size: 9px; margin-top: 4px; text-align: right; }
-@media (max-width: 700px) { .incumbentAgencyLayout { grid-template-columns: 1fr; } .incumbentHistorySource { text-align: left; } }
+@media (max-width: 900px) { .incumbentAgencyLayout { gap: 14px; grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); } }
+@media (max-width: 700px) { .incumbentAgencyLayout { grid-template-columns: 1fr; } .incumbentDoughnut { max-width: 260px; } .incumbentHistorySource { text-align: left; } }
 
 /* ── Contacts ── */
 .contactCard {
