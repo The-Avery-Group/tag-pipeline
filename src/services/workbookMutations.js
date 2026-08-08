@@ -1,4 +1,23 @@
 const pendingCreates = new Map()
+const tableMutationTails = new Map()
+
+/**
+ * Serialize workbook writes per table. Excel row indexes are positional, so
+ * an append/delete that overlaps another mutation can make the second write
+ * target yesterday's row layout. Different tables remain fully concurrent.
+ */
+export function queueTableMutation(tableName, operation) {
+  const key = String(tableName || '').trim()
+  if (!key) return Promise.resolve().then(operation)
+
+  const previous = tableMutationTails.get(key) || Promise.resolve()
+  const current = previous.catch(() => {}).then(operation)
+  tableMutationTails.set(key, current)
+  current.finally(() => {
+    if (tableMutationTails.get(key) === current) tableMutationTails.delete(key)
+  }).catch(() => {})
+  return current
+}
 
 export function createStableId(prefix) {
   const webCrypto = globalThis.crypto
