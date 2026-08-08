@@ -166,7 +166,7 @@ export function useAgingNotifications() {
         }
 
         // ── Upcoming RFI responses (two days and one day) ─────────────
-        // RFIs are the same records shown in the Opportunities RFIs tab.
+        // RFI and MRAS response reminders are a subset of the Responses tab.
         // Their response date is copied into Submission Date when they are
         // added from the SAM opportunities list.
         const responseReminders = allOpps.filter((o) => {
