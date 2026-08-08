@@ -111,7 +111,40 @@ export default function IncumbentAwardHistory({ incumbentUEI, incumbentName }) {
           </div>
           <div className={styles.incumbentHistoryContent}>
             {chartView === 'activity' ? <div className={styles.incumbentActivityPanel}><div className={styles.incumbentChartTitle}>Prime contract obligations</div><div className={styles.incumbentChartLegend} aria-label="Chart legend"><span><i style={{ background: PRIME_COLOR }} />Prime contracts</span>{data.subcontractDataAvailable && <span><i style={{ background: SUBCONTRACT_COLOR }} />Subcontracts</span>}</div><div className={styles.incumbentActivityChart}><ResponsiveContainer width="100%" height="100%"><BarChart data={series} margin={{ top: 18, right: 12, bottom: 4, left: 4 }}><XAxis dataKey="label" interval={tickInterval} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={{ stroke: 'var(--gray-300)', strokeWidth: 0.75 }} tickLine={false} /><YAxis width={58} domain={axis.domain} ticks={axis.ticks} tickFormatter={compactCurrency} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={{ stroke: 'var(--gray-300)', strokeWidth: 0.75 }} tickLine={false} /><ReferenceLine y={0} stroke="var(--gray-300)" strokeWidth={0.75} /><Tooltip cursor={{ fill: 'var(--gray-50)' }} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<ActivityTooltip />} /><Bar dataKey="primeValue" name="Prime contracts" stackId="obligations" fill={PRIME_COLOR} radius={[4, 4, 0, 0]} />{data.subcontractDataAvailable && <Bar dataKey="subcontractValue" name="Subcontracts" stackId="obligations" fill={SUBCONTRACT_COLOR} radius={[4, 4, 0, 0]} />}</BarChart></ResponsiveContainer></div></div>
-              : <div className={styles.incumbentAgencyPanel}><div className={styles.incumbentChartTitle}>Prime contracts by agency</div>{doughnut.length === 0 ? <div className="text-xs text-muted">No agency data.</div> : <div className={styles.incumbentAgencyLayout}><div className={styles.incumbentDoughnut}><ResponsiveContainer width="100%" height="100%"><PieChart><Tooltip allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<AgencyTooltip />} /><Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={48} outerRadius={78} label={({ value }) => `${(agencyCount ? Number(value) / agencyCount * 100 : 0).toFixed(0)}%`} labelLine={false}>{doughnut.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie></PieChart></ResponsiveContainer></div><div className={styles.incumbentHistoryAgencies}>{doughnut.map((agency) => <div key={agency.name} title={`${agency.count} prime contract${agency.count === 1 ? '' : 's'}`}><span>{agency.name}</span><strong>{agency.percentage.toFixed(1)}%</strong></div>)}</div></div>}</div>}
+              : <div className={styles.incumbentAgencyPanel}>
+                <div className={styles.incumbentChartTitle}>Prime contracts by agency</div>
+                {doughnut.length === 0 ? <div className="text-xs text-muted">No agency data.</div> : (
+                  <div className={styles.incumbentAgencyLayout}>
+                    <div className={styles.incumbentDoughnut}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Tooltip allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ zIndex: 20 }} content={<AgencyTooltip />} />
+                          <Pie data={doughnut} dataKey="count" nameKey="name" innerRadius={54} outerRadius={86} label={({ value }) => `${(agencyCount ? Number(value) / agencyCount * 100 : 0).toFixed(0)}%`} labelLine={false}>
+                            {doughnut.map((item) => <Cell key={item.name} fill={item.color} />)}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className={styles.incumbentAgencyTableWrap}>
+                      <table className={styles.incumbentAgencyTable}>
+                        <thead>
+                          <tr><th>Agency</th><th>Contracts</th><th>Share</th><th>Award value</th></tr>
+                        </thead>
+                        <tbody>
+                          {doughnut.map((agency) => (
+                            <tr key={agency.name} title={`${agency.count} prime contract${agency.count === 1 ? '' : 's'} · ${fullCurrency(agency.value)} total award value`}>
+                              <td><span className={styles.incumbentAgencyName}><i style={{ background: agency.color }} /><span>{agency.name}</span></span></td>
+                              <td>{Number(agency.count || 0).toLocaleString('en-US')}</td>
+                              <td><strong>{agency.percentage.toFixed(1)}%</strong></td>
+                              <td>{fullCurrency(agency.value)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>}
           </div>
           <div className={styles.incumbentHistorySource}>USAspending.gov · last 5 years · {data.cache === 'cache' ? 'cached' : 'live'}{data.subcontractDataAvailable ? '' : ' · Subcontract data unavailable'} · Negative amounts reflect deobligations or downward modifications.</div>
         </>}
