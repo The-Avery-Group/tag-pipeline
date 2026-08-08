@@ -8,6 +8,7 @@ import {
 import { buildFollowUpDraft } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
 import { upsertOutlookDraft } from '@/services/outlookService'
+import { outlookLaunchPlan } from '@/utils/outlookDrafts'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import RichEmailEditor from '@/components/Common/RichEmailEditor'
 import {
@@ -22,6 +23,54 @@ import { onCacheRefresh } from '@/services/dataCache'
 
 const clean = (value) => String(value ?? '').trim()
 const PROCUREMENT_EMAIL = clean(import.meta.env.VITE_PROCUREMENT_EMAIL)
+
+function renderOutlookHandoff(targetWindow, webUrl) {
+  if (!targetWindow || targetWindow.closed) return
+  const document = targetWindow.document
+  document.title = 'Open Outlook'
+  document.body.style.cssText = 'margin:0;display:grid;place-items:center;min-height:100vh;background:#f8fafc;color:#334155;font:14px system-ui,sans-serif'
+  document.body.replaceChildren()
+
+  const panel = document.createElement('div')
+  panel.style.cssText = 'display:grid;gap:10px;max-width:420px;padding:28px;text-align:center'
+  const title = document.createElement('strong')
+  title.style.cssText = 'font-size:18px;color:#0f172a'
+  title.textContent = 'Opening the Outlook app'
+  const message = document.createElement('span')
+  message.style.cssText = 'line-height:1.5;color:#475569'
+  message.textContent = 'Your draft is saved in Outlook Drafts. If the app does not open, continue in Outlook on the web.'
+  const webLink = document.createElement('a')
+  webLink.href = webUrl
+  webLink.style.cssText = 'justify-self:center;margin-top:4px;padding:9px 14px;border-radius:7px;background:#2563eb;color:#fff;text-decoration:none;font-weight:600'
+  webLink.textContent = 'Open Outlook on the web'
+  panel.append(title, message, webLink)
+  document.body.append(panel)
+}
+
+function launchOutlookAppFirst(targetWindow, webLink) {
+  const plan = outlookLaunchPlan(webLink)
+  if (!targetWindow || targetWindow.closed) {
+    const opened = window.open(plan.webUrl, '_blank', 'noopener,noreferrer')
+    if (!opened) throw new Error('The Outlook draft was created, but the browser blocked the new window. Allow pop-ups and try again.')
+    return
+  }
+
+  renderOutlookHandoff(targetWindow, plan.webUrl)
+  let appLikelyOpened = false
+  targetWindow.addEventListener('blur', () => { appLikelyOpened = true }, { once: true })
+
+  try {
+    targetWindow.location.href = plan.appUrl
+  } catch {
+    targetWindow.location.replace(plan.webUrl)
+    return
+  }
+
+  window.setTimeout(() => {
+    if (appLikelyOpened || targetWindow.closed) return
+    try { targetWindow.location.replace(plan.webUrl) } catch { /* The external app owns the window. */ }
+  }, plan.fallbackDelayMs)
+}
 
 function contactRecipients(contacts) {
   const seen = new Set()
@@ -491,11 +540,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
         throw new Error('Outlook created the draft but did not return a link to open it.')
       }
 
-      if (outlookWindow && !outlookWindow.closed) outlookWindow.location.replace(outlookDraft.webLink)
-      else {
-        const opened = window.open(outlookDraft.webLink, '_blank', 'noopener,noreferrer')
-        if (!opened) throw new Error('The Outlook draft was created, but the browser blocked the new window. Allow pop-ups and try again.')
-      }
+      launchOutlookAppFirst(outlookWindow, outlookDraft.webLink)
 
       const patch = {
         From: currentDraft.From,
@@ -643,7 +688,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
               <RichEmailEditor value={form.Body || ''} onChange={(Body) => updateField('Body', Body)} ariaLabel="Email body" />
 
               <div className={styles.safety}>
-                <span>Open in Outlook creates or updates an editable draft. Nothing is sent automatically.</span>
+                <span>Open in Outlook creates or updates an editable draft, then tries the installed Outlook app before falling back to the web. Nothing is sent automatically.</span>
                 <div className={styles.editorActions}>
                   <button type="button" className="btn btn-ghost" onClick={undo} disabled={!undoDepth || improving} title="Undo the latest unsaved change (Ctrl+Z or Cmd+Z)">Undo</button>
                   <button type="button" className="btn btn-ghost" onClick={improve} disabled={improving}>{improving ? 'Improving…' : 'Improve with AI'}</button>
