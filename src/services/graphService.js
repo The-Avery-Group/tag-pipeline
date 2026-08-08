@@ -545,8 +545,6 @@ export const PIPELINE_HEADERS = [
   'Qualification PWIN',               // [39] col AN
   'RFI Notified',                     // [40] col AO — date notification was sent, blank = not yet sent
   'Notice Type',                      // RFI / MRAS / RFP / RFQ
-  'Department ID',
-  'Agency ID',
 ]
 
 export const TASKS_HEADERS = [
@@ -667,8 +665,6 @@ export const COL = {
   qualPWIN:       'Qualification PWIN',
   rfiNotified:    'RFI Notified',
   noticeType:     'Notice Type',
-  departmentId:   'Department ID',
-  agencyId:       'Agency ID',
 }
 
 // ── Phase / enum constants from real data ─────────────────────────────────
