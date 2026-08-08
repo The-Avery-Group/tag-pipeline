@@ -5,7 +5,7 @@ import {
   getEmailFollowUpTemplates,
   updateEmailFollowUpDraft,
 } from '@/services/graphService'
-import { buildFollowUpDraft, isoDate } from '@/utils/followUpEmails'
+import { buildFollowUpDraft } from '@/utils/followUpEmails'
 import { sendAIMessage } from '@/services/groqService'
 import { upsertOutlookDraft } from '@/services/outlookService'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
@@ -18,7 +18,7 @@ import {
   sanitizeEmailHtml,
 } from '@/utils/emailHtml'
 import styles from './FollowUpEmailComposer.module.css'
-import { isRfiWorkflowOpportunity, normalizeNoticeType } from '@/utils/noticeTypes'
+import { onCacheRefresh } from '@/services/dataCache'
 
 const clean = (value) => String(value ?? '').trim()
 const PROCUREMENT_EMAIL = clean(import.meta.env.VITE_PROCUREMENT_EMAIL)
@@ -88,6 +88,39 @@ function reconcileLegacyRecipients(draft, templates, opportunity, availableRecip
     : { draft, patch: null }
 }
 
+function reconcileTemplateVersion(draft, templates, opportunity, availableRecipients) {
+  const template = templates.find((item) => clean(item['Template ID']) === clean(draft?.['Template ID']))
+  if (!template) return { draft, patch: null }
+  const templateUpdated = Date.parse(template['Last Updated'] || template['Created At'] || '') || 0
+  const draftUpdated = Date.parse(draft['Updated At'] || draft['Created At'] || '') || 0
+  if (!templateUpdated || templateUpdated <= draftUpdated) return { draft, patch: null }
+  if (['Opened in Outlook', 'Skipped'].includes(clean(draft.Status)) || clean(draft['Outlook Draft ID'])) {
+    return { draft, patch: null }
+  }
+  const untouched = clean(draft['Updated At']) === clean(draft['Created At']) ||
+    ['scheduled worker', 'automatic recipient sync', 'automatic template sync'].includes(clean(draft['Updated By']).toLowerCase())
+  if (!untouched) return { draft, patch: null }
+
+  const currentRecipients = recipientsInDraft(draft, availableRecipients)
+  const refreshed = buildFollowUpDraft({
+    opportunity: { ...opportunity, samUrl: samLink(opportunity) },
+    template,
+    recipients: currentRecipients,
+    recipient: currentRecipients.length ? '' : draft.To,
+    from: draft.From,
+    cc: draft.CC,
+    source: draft['Enrollment Source'] || 'Manual',
+  })
+  const patch = {
+    'Template Name': refreshed['Template Name'],
+    'Milestone Days': refreshed['Milestone Days'],
+    'Due Date': refreshed['Due Date'],
+    Subject: refreshed.Subject,
+    Body: refreshed.Body,
+  }
+  return { draft: { ...draft, ...patch }, patch }
+}
+
 function samLink(opportunity) {
   return clean(opportunity['Other Links*'])
     .split(/\s+/)
@@ -116,6 +149,8 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   const [improving, setImproving] = useState(false)
   const [openingOutlook, setOpeningOutlook] = useState(false)
   const [undoDepth, setUndoDepth] = useState(0)
+  const [templateQuery, setTemplateQuery] = useState('')
+  const [templateToPrepare, setTemplateToPrepare] = useState('')
   const savingRef = useRef(false)
   const saveRef = useRef(null)
   const formRef = useRef(null)
@@ -135,10 +170,19 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     }
     return options
   }, [form?.From, user?.email])
-  const submissionDate = isoDate(opportunity?.['Submission Date (Response Date)*'])
-  const noticeType = normalizeNoticeType(opportunity?.['Notice Type'])
-  const workflowLabel = noticeType === 'MRAS' ? 'MRAS' : 'RFI'
-  const eligible = isRfiWorkflowOpportunity(opportunity) && clean(opportunity?.['TAG Pipeline Activity Phase']) === 'Submitted RFI' && Boolean(submissionDate)
+  const activeTemplates = useMemo(
+    () => templates.filter((template) => clean(template.Active).toLowerCase() !== 'no'),
+    [templates],
+  )
+  const filteredTemplates = useMemo(() => {
+    const query = templateQuery.trim().toLowerCase()
+    return activeTemplates.filter((template) => !query || `${template['Template Name']} ${template.Subject} ${template['Days After Submission']}`.toLowerCase().includes(query))
+  }, [activeTemplates, templateQuery])
+
+  useEffect(() => {
+    if (filteredTemplates.some((template) => template['Template ID'] === templateToPrepare)) return
+    setTemplateToPrepare(filteredTemplates[0]?.['Template ID'] || '')
+  }, [filteredTemplates, templateToPrepare])
 
   const opportunityDrafts = useMemo(
     () => drafts
@@ -182,44 +226,50 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     setUndoDepth(undoStackRef.current.length)
   }
 
-  const load = async () => {
+  const load = async ({ force = false, quiet = false, preserveForm = false } = {}) => {
     setLoading(true)
     try {
       const [templateRows, draftRows] = await Promise.all([
-        getEmailFollowUpTemplates(),
-        getEmailFollowUpDrafts(),
+        getEmailFollowUpTemplates({ force }),
+        getEmailFollowUpDrafts({ force }),
       ])
       const isConfigured = templateRows !== null && draftRows !== null
       setConfigured(isConfigured)
       const loadedTemplates = templateRows || []
-      const reconciled = (draftRows || []).map((draft) => reconcileLegacyRecipients(
-        draft,
-        loadedTemplates,
-        opportunity,
-        availableRecipients,
-      ))
+      const reconciled = (draftRows || []).map((draft) => {
+        const recipientResult = reconcileLegacyRecipients(draft, loadedTemplates, opportunity, availableRecipients)
+        const templateResult = reconcileTemplateVersion(recipientResult.draft, loadedTemplates, opportunity, availableRecipients)
+        return {
+          draft: templateResult.draft,
+          patch: { ...(recipientResult.patch || {}), ...(templateResult.patch || {}) },
+        }
+      })
       const loadedDrafts = reconciled.map((item) => ({
         ...item.draft,
         From: clean(item.draft.From) || defaultSender,
       }))
       setTemplates(loadedTemplates)
       setDrafts(loadedDrafts)
-      const repairs = reconciled.filter((item) => item.patch && Number.isInteger(item.draft._rowIndex))
+      if (!templateToPrepare && loadedTemplates.length) setTemplateToPrepare(loadedTemplates.find((item) => clean(item.Active).toLowerCase() !== 'no')?.['Template ID'] || '')
+      const repairs = reconciled.filter((item) => Object.keys(item.patch || {}).length && Number.isInteger(item.draft._rowIndex))
       if (repairs.length) {
         void Promise.allSettled(repairs.map((item) =>
-          updateEmailFollowUpDraft(item.draft._rowIndex, item.patch, 'Automatic recipient sync')
+          updateEmailFollowUpDraft(item.draft._rowIndex, item.patch, 'Automatic template sync')
         ))
       }
       const matching = loadedDrafts
         .filter((draft) => clean(draft['Opportunity ID']).toLowerCase() === opportunityId.toLowerCase())
         .sort((a, b) => Number(a['Milestone Days']) - Number(b['Milestone Days']))
-      const initial = matching.find((draft) => draft.Status !== 'Skipped') || matching[0]
+      const initial = (preserveForm && matching.find((draft) => draft['Draft ID'] === selectedId)) ||
+        matching.find((draft) => draft.Status !== 'Skipped') || matching[0]
       setSelectedId(initial?.['Draft ID'] || '')
-      setForm(initial ? { ...initial } : null)
-      formRef.current = initial ? { ...initial } : null
-      resetUndo()
+      if (!preserveForm || !formRef.current) {
+        setForm(initial ? { ...initial } : null)
+        formRef.current = initial ? { ...initial } : null
+        resetUndo()
+      }
     } catch (error) {
-      toast?.error(`Could not load follow-up drafts: ${error.message}`)
+      if (!quiet) toast?.error(`Could not load follow-up drafts: ${error.message}`)
     } finally {
       setLoading(false)
     }
@@ -231,12 +281,17 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     formRef.current = null
     setDrafts([])
     setSelectedId('')
+    setTemplateToPrepare('')
     resetUndo()
   }, [opportunityId])
 
-  useEffect(() => {
-    if (open && !loading && !form && !drafts.length) load()
-  }, [open])
+  useEffect(() => { void load({ quiet: !open }) }, [opportunityId])
+
+  useEffect(() => onCacheRefresh((tables) => {
+    if (tables.some((table) => ['EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable'].includes(table))) {
+      void load({ quiet: true, preserveForm: true })
+    }
+  }), [opportunityId, availableRecipients.length])
 
   useEffect(() => {
     if (selected) {
@@ -263,9 +318,9 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
   }, [open])
 
   const enroll = async () => {
-    if (enrolling || !eligible) return
-    const activeTemplates = templates.filter((template) => clean(template.Active).toLowerCase() !== 'no')
-    if (!activeTemplates.length) {
+    if (enrolling) return
+    const template = activeTemplates.find((item) => clean(item['Template ID']) === clean(templateToPrepare))
+    if (!template) {
       toast?.error('Create at least one active follow-up template in Settings first.')
       return
     }
@@ -275,18 +330,15 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
         ...opportunity,
         samUrl: samLink(opportunity),
       }
-      const created = []
-      for (const template of activeTemplates) {
-        const record = buildFollowUpDraft({
-          opportunity: sourceOpportunity,
-          template,
-          recipients: availableRecipients,
-          from: defaultSender,
-          user: user?.displayName,
-          source: 'Manual',
-        })
-        created.push(await addEmailFollowUpDraft(record))
-      }
+      const record = buildFollowUpDraft({
+        opportunity: sourceOpportunity,
+        template,
+        recipients: availableRecipients,
+        from: defaultSender,
+        user: user?.displayName,
+        source: 'Manual',
+      })
+      const created = [await addEmailFollowUpDraft(record)]
       setDrafts((previous) => [
         ...previous.filter((draft) => !created.some((item) => item['Draft ID'] === draft['Draft ID'])),
         ...created,
@@ -296,7 +348,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       setForm(first ? { ...first } : null)
       formRef.current = first ? { ...first } : null
       resetUndo()
-      toast?.success(`${created.length} follow-up draft${created.length === 1 ? '' : 's'} prepared`)
+      toast?.success('Follow-up draft prepared')
     } catch (error) {
       toast?.error(`Could not prepare follow-up drafts: ${error.message}`)
     } finally {
@@ -480,7 +532,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     <section ref={panelRef} className={styles.panel}>
       <button type="button" className={styles.panelHeader} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className={styles.headerCopy}>
-          <span className={styles.title}>{workflowLabel} follow-up emails</span>
+          <span className={styles.title}>Follow-up emails</span>
           <span className={styles.hint}>Prepare and review follow-up drafts. Nothing is sent automatically.</span>
         </span>
         {opportunityDrafts.length > 0 && <span className={styles.count}>{opportunityDrafts.length}</span>}
@@ -493,18 +545,41 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
           {!loading && !configured && (
             <div className={styles.notice}>Follow-up email tables are not configured. An administrator can add them using the workbook setup guide.</div>
           )}
-          {!loading && configured && !eligible && (
-            <div className={styles.notice}>Follow-up emails become available after this RFI or MRAS opportunity is submitted and has a submission date.</div>
+          {!loading && configured && (
+            <div className={styles.templateChooser}>
+              <label>
+                <span>Template</span>
+                <input
+                  type="search"
+                  value={templateQuery}
+                  onChange={(event) => setTemplateQuery(event.target.value)}
+                  placeholder="Search templates"
+                  aria-label="Search follow-up email templates"
+                />
+              </label>
+              <select
+                value={templateToPrepare}
+                onChange={(event) => setTemplateToPrepare(event.target.value)}
+                aria-label="Select a follow-up email template"
+              >
+                {!filteredTemplates.length && <option value="">No matching active templates</option>}
+                {filteredTemplates.map((template) => (
+                  <option key={template['Template ID']} value={template['Template ID']}>
+                    {template['Template Name']} · Day {template['Days After Submission']}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="btn btn-primary" onClick={enroll} disabled={enrolling || !templateToPrepare}>
+                {enrolling ? 'Preparing…' : 'Prepare draft'}
+              </button>
+            </div>
           )}
-          {!loading && configured && eligible && !opportunityDrafts.length && (
+          {!loading && configured && !opportunityDrafts.length && (
             <div className={styles.empty}>
               <div>
-                <strong>No follow-up drafts have been prepared for this {workflowLabel}</strong>
-                <p>Older RFI and MRAS opportunities are not prepared automatically. Prepare them here when you are ready.</p>
+                <strong>No follow-up drafts have been prepared</strong>
+                <p>Choose a template above to prepare an editable draft for this opportunity.</p>
               </div>
-              <button type="button" className="btn btn-primary" onClick={enroll} disabled={enrolling}>
-                {enrolling ? 'Preparing…' : 'Prepare follow-up drafts'}
-              </button>
             </div>
           )}
 
@@ -518,7 +593,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
                     className={`${styles.milestone} ${draft['Draft ID'] === form['Draft ID'] ? styles.activeMilestone : ''}`}
                     onClick={() => setSelectedId(draft['Draft ID'])}
                   >
-                    <span>Day {draft['Milestone Days']}</span>
+                    <span>{draft['Template Name'] || `Day ${draft['Milestone Days']}`}</span>
                     <small>{draft['Due Date'] || 'No due date'}</small>
                   </button>
                 ))}
