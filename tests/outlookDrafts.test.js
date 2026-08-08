@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   buildOutlookDraftPayload,
+  outlookLaunchPlan,
   outlookPopoutUrl,
   parseEmailAddresses,
 } from '../src/utils/outlookDrafts.js'
@@ -39,6 +40,14 @@ test('adds the Outlook popout flag without discarding existing parameters', () =
   const url = outlookPopoutUrl('https://outlook.office.com/mail/deeplink/compose?id=123')
   assert.match(url, /id=123/)
   assert.match(url, /ispopout=1/)
+})
+
+test('launches the installed Outlook app before using the web draft fallback', () => {
+  const plan = outlookLaunchPlan('https://outlook.office.com/mail/deeplink/compose?id=123')
+  assert.equal(plan.appUrl, 'ms-outlook://')
+  assert.match(plan.webUrl, /id=123/)
+  assert.match(plan.webUrl, /ispopout=1/)
+  assert.equal(plan.fallbackDelayMs, 4000)
 })
 
 test('parses comma and semicolon separated addresses', () => {
