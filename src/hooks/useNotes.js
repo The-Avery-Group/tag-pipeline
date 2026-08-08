@@ -39,6 +39,9 @@ export function useNotes(contractNumber) {
   // (same class of bug fixed in the other hooks' pendingPatches tracking).
   const pendingDeletes = useRef(new Set())
   const pendingPatches = useRef(new Map())
+  const notesRef = useRef([])
+
+  useEffect(() => { notesRef.current = notes }, [notes])
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -48,12 +51,13 @@ export function useNotes(contractNumber) {
     try {
       const all = await getNotes()
       const filtered = (contractNumber ? all.filter((n) => n.ContractNumber === contractNumber) : all)
-        .filter((n) => !pendingDeletes.current.has(n._rowIndex))
+        .filter((n) => !pendingDeletes.current.has(String(n.NoteID || '').trim()))
         .map((note) => {
-          const patch = pendingPatches.current.get(note._rowIndex)
+          const identity = String(note.NoteID || '').trim()
+          const patch = pendingPatches.current.get(identity)
           if (!patch) return note
           const confirmed = Object.keys(patch).every((key) => note[key] === patch[key])
-          if (confirmed) pendingPatches.current.delete(note._rowIndex)
+          if (confirmed) pendingPatches.current.delete(identity)
           return confirmed ? note : { ...note, ...patch }
         })
       setNotes([...filtered].sort(compareNotesOldestFirst))
@@ -102,30 +106,34 @@ export function useNotes(contractNumber) {
   }, [contractNumber])
 
   const remove = useCallback(async (rowIndex) => {
-    pendingDeletes.current.add(rowIndex)
+    const original = notesRef.current.find((note) => note._rowIndex === rowIndex)
+    const identity = String(original?.NoteID || '').trim()
+    if (identity) pendingDeletes.current.add(identity)
     setNotes((prev) => prev.filter((n) => n._rowIndex !== rowIndex))
     try {
-      await retryIdempotent(() => deleteNote(rowIndex))
+      await retryIdempotent(() => deleteNote(rowIndex, original))
       await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
+      if (identity) pendingDeletes.current.delete(identity)
     } catch (err) {
       // Delete didn't actually happen — stop hiding it so the note
       // reappears (via reload) rather than staying hidden forever
-      pendingDeletes.current.delete(rowIndex)
+      if (identity) pendingDeletes.current.delete(identity)
       await load()
       throw err
     }
   }, [load])
 
   const update = useCallback(async (rowIndex, patch, original) => {
-    pendingPatches.current.set(rowIndex, patch)
+    const identity = String(original?.NoteID || '').trim()
+    if (identity) pendingPatches.current.set(identity, patch)
     setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? { ...note, ...patch } : note))
     try {
-      await retryIdempotent(() => updateNote(rowIndex, patch))
+      await retryIdempotent(() => updateNote(rowIndex, patch, original))
       await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
     } catch (err) {
-      pendingPatches.current.delete(rowIndex)
+      if (identity) pendingPatches.current.delete(identity)
       setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? original : note))
       throw err
     }
