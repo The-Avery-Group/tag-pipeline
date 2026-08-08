@@ -14,6 +14,43 @@ export function isRfiWorkflowNoticeType(value) {
   return ['RFI', 'MRAS'].includes(normalizeNoticeType(value))
 }
 
+export function submittedActivityNoticeType(value) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ').toUpperCase()
+  if (!normalized) return ''
+  if (normalized === 'PROPOSAL SUBMITTED') return 'RFP'
+  if (!normalized.startsWith('SUBMITTED ')) return ''
+  if (normalized.includes('MARKET RESEARCH') || normalized.includes('MRAS')) return 'MRAS'
+  if (normalized.includes('RFQ')) return 'RFQ'
+  if (normalized.includes('RFP') || normalized.includes('PROPOSAL')) return 'RFP'
+  if (normalized.includes('RFI')) return 'RFI'
+  return 'Unclassified'
+}
+
+/** All currently supported response notice types, plus legacy submitted rows. */
+export function isResponseOpportunity(opportunity, columns = {}) {
+  const noticeTypeColumn = columns.noticeType || 'Notice Type'
+  const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
+  return Boolean(
+    normalizeNoticeType(opportunity?.[noticeTypeColumn]) ||
+    submittedActivityNoticeType(opportunity?.[activityPhaseColumn])
+  )
+}
+
+/** A submission is established by workflow state, not merely by a due date. */
+export function isSubmittedOpportunity(opportunity, columns = {}) {
+  const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
+  return Boolean(submittedActivityNoticeType(opportunity?.[activityPhaseColumn]))
+}
+
+export function submittedOpportunityNoticeType(opportunity, columns = {}) {
+  if (!isSubmittedOpportunity(opportunity, columns)) return ''
+  const noticeTypeColumn = columns.noticeType || 'Notice Type'
+  const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
+  return normalizeNoticeType(opportunity?.[noticeTypeColumn]) ||
+    submittedActivityNoticeType(opportunity?.[activityPhaseColumn]) ||
+    'Unclassified'
+}
+
 /**
  * RFI and MRAS share the same capture workflow. Submitted RFI is retained as
  * a fallback only for older workbook rows created before Notice Type existed.
