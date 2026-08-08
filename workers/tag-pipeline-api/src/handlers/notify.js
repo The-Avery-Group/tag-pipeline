@@ -97,7 +97,7 @@ function opportunityUrl(base, contractNumber) {
 
 function rfiFollowUpUrl(base, identifiers) {
   const ids = (identifiers || []).map(text).filter(Boolean)
-  const params = new URLSearchParams({ tab: 'RFIs' })
+  const params = new URLSearchParams({ tab: 'Responses' })
   if (ids.length) params.set('rfiFollowUps', JSON.stringify(ids))
   return `${base}/tag-pipeline/opportunities?${params.toString()}`
 }
