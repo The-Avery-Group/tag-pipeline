@@ -19,7 +19,6 @@ import {
 import { handleSAM, startScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleEntityEightA } from './handlers/entities.js'
-import { handleAgencyIntelligence } from './handlers/agencyIntelligence.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
@@ -146,9 +145,6 @@ export default {
 
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
-
-      } else if (path.startsWith('/agency-intelligence/') && ['GET', 'POST'].includes(req.method)) {
-        response = await handleAgencyIntelligence(req, env, ctx)
 
       } else {
         response = json({ error: 'Not found' }, 404)
