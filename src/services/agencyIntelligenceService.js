@@ -6,7 +6,7 @@ import {
 } from '@/lib/samVehicleIntelligence'
 
 const CACHE_MS = 90 * 24 * 60 * 60 * 1000
-const RESOLUTION_BATCH_SIZE = 8
+const RESOLUTION_BATCH_SIZE = 4
 const CHECKPOINT_VERSION = 1
 const DATABASE_NAME = 'tag-crm-agency-intelligence'
 const STORE_NAME = 'sam-vehicle-reports'
@@ -221,6 +221,7 @@ async function buildReport(agency, { signal, forceRefresh, onProgress }) {
     period,
     ...aggregate,
     totalRecords,
+    unresolvedVehicleIdentifiers: Object.values(resolutions).filter((resolution) => resolution?.resolutionError).length,
     fetchedAt: new Date().toISOString(),
     source: 'SAM.gov',
   }
