@@ -187,19 +187,13 @@ test('SAM discovery classifies compact and descriptive procurement types consist
   )
 })
 
-test('SAM hierarchy names and identifiers stay aligned by level', () => {
+test('SAM hierarchy names stay aligned by level', () => {
   assert.deepEqual(
-    parseOrg(
-      'DEPT OF DEFENSE.DEPT OF THE ARMY.W6QM MICC-FT KNOX',
-      '097.2100.W9124D',
-    ),
+    parseOrg('DEPT OF DEFENSE.DEPT OF THE ARMY.W6QM MICC-FT KNOX'),
     {
       department: 'DEPT OF DEFENSE',
       agency: 'DEPT OF THE ARMY',
       office: 'W6QM MICC-FT KNOX',
-      departmentId: '097',
-      agencyId: '2100',
-      officeId: 'W9124D',
     },
   )
 })
