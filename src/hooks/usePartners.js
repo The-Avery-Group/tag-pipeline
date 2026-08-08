@@ -22,10 +22,11 @@ export function usePartners() {
     try {
       const data = await getPartners()
       setPartners(data.map((partner) => {
-        const patch = pendingPatches.current.get(partner._rowIndex)
+        const identity = String(partner['UEI Number'] || '').trim()
+        const patch = pendingPatches.current.get(identity)
         if (!patch) return partner
         const confirmed = Object.keys(patch).every((key) => partner[key] === patch[key])
-        if (confirmed) pendingPatches.current.delete(partner._rowIndex)
+        if (confirmed) pendingPatches.current.delete(identity)
         return confirmed ? partner : { ...partner, ...patch }
       }))
     } catch (err) {
@@ -55,16 +56,17 @@ export function usePartners() {
   }, [])
 
   const update = useCallback(async (rowIndex, patch, original) => {
-    pendingPatches.current.set(rowIndex, patch)
+    const identity = String(original?.['UEI Number'] || '').trim()
+    if (identity) pendingPatches.current.set(identity, patch)
     setPartners((current) => current.map((partner) =>
       partner._rowIndex === rowIndex ? { ...partner, ...patch } : partner
     ))
     try {
-      await retryIdempotent(() => updatePartner(rowIndex, patch))
+      await retryIdempotent(() => updatePartner(rowIndex, patch, original))
       await publishCacheUpdate(['PartnersTable'])
       verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
-      pendingPatches.current.delete(rowIndex)
+      if (identity) pendingPatches.current.delete(identity)
       setPartners((current) => current.map((partner) =>
         partner._rowIndex === rowIndex ? original : partner
       ))
@@ -75,7 +77,7 @@ export function usePartners() {
   const remove = useCallback(async (rowIndex, original) => {
     setPartners((current) => current.filter((partner) => partner._rowIndex !== rowIndex))
     try {
-      await retryIdempotent(() => deletePartner(rowIndex))
+      await retryIdempotent(() => deletePartner(rowIndex, original))
       await publishCacheUpdate(['PartnersTable'])
       verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
