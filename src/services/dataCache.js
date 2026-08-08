@@ -17,6 +17,8 @@ import {
   getSAMOpportunities,
   getPartners,
   getContactInteractions,
+  getEmailFollowUpTemplates,
+  getEmailFollowUpDrafts,
   getWorkbookVersion,
   getCachedTableNames,
   invalidateTables,
@@ -43,6 +45,8 @@ const loaders = {
   NewOpportunitiesTable: getSAMOpportunities,
   PartnersTable: getPartners,
   ContactInteractionsTable: getContactInteractions,
+  EmailFollowUpTemplatesTable: getEmailFollowUpTemplates,
+  EmailFollowUpDraftsTable: getEmailFollowUpDrafts,
 }
 
 let warmed = false
