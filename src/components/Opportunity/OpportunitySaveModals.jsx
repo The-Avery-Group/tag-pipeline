@@ -31,7 +31,7 @@ export function OpportunityRenameModal({ pendingSave, preview, opportunity, colu
       <li>{preview.taskCount} linked task{preview.taskCount === 1 ? '' : 's'} will be updated</li>
       <li>{preview.noteCount} linked note{preview.noteCount === 1 ? '' : 's'} will be updated</li>
       <li>{preview.relationshipCount} related-opportunity link{preview.relationshipCount === 1 ? '' : 's'} will be updated</li>
-      {preview.emailDraftCount > 0 && <li>{preview.emailDraftCount} RFI follow-up email draft{preview.emailDraftCount === 1 ? '' : 's'} will be updated</li>}
+      {preview.emailDraftCount > 0 && <li>{preview.emailDraftCount} follow-up email draft{preview.emailDraftCount === 1 ? '' : 's'} will be updated</li>}
     </ul>
     <p className="text-sm text-muted" style={{ marginBottom: 0 }}>Free-text task descriptions and notes, contacts, and Expiring Contract Number will not be changed. If a linked write fails, completed linked changes are rolled back where possible and you will be told to review the affected records.</p>
     {saving && progress && <p className="text-sm" style={{ marginBottom: 0 }}>{progress}</p>}
