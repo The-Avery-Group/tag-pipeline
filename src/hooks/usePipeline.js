@@ -14,11 +14,14 @@ export function usePipeline() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
   const notifyLock = useRef(false)
+  const pipelineRef = useRef([])
+
+  useEffect(() => { pipelineRef.current = pipeline }, [pipeline])
 
   // Tracks in-flight field patches not yet confirmed by a server read, so a
   // racing refresh (background poll, or any other hook's invalidateCache())
   // can't clobber an edit before the write has actually landed. Keyed by
-  // _rowIndex -> patch object.
+  // stable opportunity ID -> patch object.
   const pendingPatches = useRef(new Map())
 
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -29,11 +32,12 @@ export function usePipeline() {
     try {
       const data = await getPipeline()
       const reconciled = data.map((opp) => {
-        const patch = pendingPatches.current.get(opp._rowIndex)
+        const identity = String(opp['Contract Number / Notice ID'] || '').trim()
+        const patch = pendingPatches.current.get(identity)
         if (!patch) return opp
         const confirmed = Object.keys(patch).every((k) => opp[k] === patch[k])
         if (confirmed) {
-          pendingPatches.current.delete(opp._rowIndex)
+          pendingPatches.current.delete(identity)
           return opp
         }
         return { ...opp, ...patch }
@@ -74,7 +78,8 @@ export function usePipeline() {
 
   const update = useCallback(async (rowIndex, patch, original) => {
     const phaseCol = 'TAG Opportunity Phase'
-    pendingPatches.current.set(rowIndex, patch)
+    const identity = String(original?.['Contract Number / Notice ID'] || '').trim()
+    if (identity) pendingPatches.current.set(identity, patch)
 
     // Optimistic update — apply patch to local state immediately so
     // the UI reflects the change before the API call completes
@@ -95,12 +100,12 @@ export function usePipeline() {
     }
 
     try {
-      await retryIdempotent(() => updateOpportunity(rowIndex, patch))
+      await retryIdempotent(() => updateOpportunity(rowIndex, patch, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
     } catch (err) {
       // Roll back optimistic update on failure
-      pendingPatches.current.delete(rowIndex)
+      if (identity) pendingPatches.current.delete(identity)
       setPipeline((prev) =>
         prev.map((opp) =>
           opp._rowIndex === rowIndex ? { ...opp, ...original } : opp
@@ -111,9 +116,10 @@ export function usePipeline() {
   }, [])
 
   const remove = useCallback(async (rowIndex) => {
+    const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
     setPipeline((current) => current.filter((opportunity) => opportunity._rowIndex !== rowIndex))
     try {
-      await retryIdempotent(() => deleteOpportunity(rowIndex))
+      await retryIdempotent(() => deleteOpportunity(rowIndex, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
     } catch (error) {
