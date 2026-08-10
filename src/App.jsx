@@ -39,6 +39,17 @@ const Settings          = lazy(() => import('@/pages/Settings'))
 const Lookup            = lazy(() => import('@/pages/Lookup'))
 const Login             = lazy(() => import('@/pages/Login'))
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'tag_sidebar_collapsed'
+
+function initialSidebarCollapsed() {
+  try {
+    const saved = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY)
+    if (saved !== null) return saved === 'true'
+  } catch {}
+
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches
+}
+
 function cacheTablesForLocation(location) {
   const path = location.pathname
   const params = new URLSearchParams(location.search)
@@ -152,9 +163,16 @@ function AppShell() {
   const { toasts, toast } = useToast()
   const [cacheReady,    setCacheReady]    = useState(isCacheWarmed)
   const [searchOpen,    setSearchOpen]    = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initialSidebarCollapsed)
   const [sessionRefreshOpen, setSessionRefreshOpen] = useState(isSessionRefreshRequired)
   const [refreshingSession, setRefreshingSession] = useState(false)
   useAgingNotifications()
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsed))
+    } catch {}
+  }, [sidebarCollapsed])
 
   useEffect(() => onSessionRefreshRequired(() => {
     stopPolling()
@@ -229,7 +247,11 @@ function AppShell() {
 
   return (
     <div className="app-layout">
-      <Sidebar onSearchOpen={() => setSearchOpen(true)} />
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
+        onSearchOpen={() => setSearchOpen(true)}
+      />
       <div className="main-content">
         <RouteErrorBoundary key={location.pathname}>
           <Suspense fallback={<PageFallback />}>
