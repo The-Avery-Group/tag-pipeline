@@ -313,6 +313,13 @@ export default function Opportunities({ toast }) {
     [C.bidNoBid]: '', [C.partner]: '', [C.awardDate]: '', [C.folder]: '', [C.govwin]: '',
   })
 
+  const closeAddForm = () => {
+    setShowAdd(false)
+    setShowMoreOpportunityDetails(false)
+    setConfirmRfiActivity(false)
+    updateParams({ new: '' })
+  }
+
   // ── Tab counts (raw, before search/filters) ───────────────────────────
   const tabCounts = useMemo(() => ({
     All:      pipeline.length,
@@ -449,8 +456,7 @@ export default function Opportunities({ toast }) {
     try {
       await add(payload)
       toast?.success('Opportunity created')
-      setShowAdd(false)
-      setShowMoreOpportunityDetails(false)
+      closeAddForm()
       setForm({
         [C.contractNum]: '', [C.title]: '', [C.agency]: '', [C.department]: '',
         [C.phase]: 'Identified', [C.outlook]: 'New', [C.value]: '',
@@ -1660,10 +1666,10 @@ export default function Opportunities({ toast }) {
       {showAdd && (
         <Modal
           title="New opportunity"
-          onClose={() => !saving && setShowAdd(false)}
+          onClose={() => !saving && closeAddForm()}
           footer={
             <>
-              <button className="btn" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</button>
+              <button className="btn" onClick={closeAddForm} disabled={saving}>Cancel</button>
               <button className="btn btn-primary" onClick={requestAdd} disabled={saving} aria-busy={saving}>
                 {saving ? 'Saving…' : 'Create opportunity'}
               </button>
