@@ -6,7 +6,10 @@
   flex-direction: column;
   flex-shrink: 0;
   height: 100vh;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+  transition: width 0.18s ease;
+  z-index: 20;
 }
 
 .logo {
@@ -19,6 +22,50 @@
   align-items: center;
   justify-content: flex-start;
   gap: 3px;
+}
+
+.expandedBrand {
+  align-items: center;
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+}
+
+.compactBrand {
+  color: #abad34;
+  display: none;
+  font-family: 'Montserrat Alternates', -apple-system, 'Inter', BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.collapseToggle {
+  align-items: center;
+  background: var(--surface-raised);
+  border: 0.5px solid var(--gray-200);
+  border-radius: 7px;
+  color: var(--gray-500);
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: -13px;
+  top: 16px;
+  transition: background 0.12s, color 0.12s;
+  width: 26px;
+  z-index: 2;
+}
+
+.collapseToggle:hover {
+  background: var(--blue-50);
+  color: var(--blue-800);
+}
+
+.collapseToggle .navIcon {
+  height: 14px;
+  width: 14px;
 }
 
 .logoImageWrap {
@@ -292,4 +339,61 @@
   padding: 1px 4px;
   color: var(--gray-400);
   flex-shrink: 0;
+}
+
+.collapsed {
+  width: 58px;
+}
+
+.collapsed .logo {
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+.collapsed .expandedBrand {
+  display: none;
+}
+
+.collapsed .compactBrand {
+  display: block;
+}
+
+.collapsed .searchTrigger {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.collapsed .searchLabel,
+.collapsed .kbd,
+.collapsed .navLabel,
+.collapsed .userText,
+.collapsed .actionLabel {
+  display: none;
+}
+
+.collapsed .navItem,
+.collapsed .userInfo,
+.collapsed .settingsBtn,
+.collapsed .themeToggle,
+.collapsed .signOutBtn {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.collapsed .footerUtilityRow {
+  display: grid;
+  gap: 4px;
+}
+
+.collapsed .settingsBtn,
+.collapsed .themeToggle {
+  flex: none;
+  min-height: 31px;
+  width: 100%;
+}
+
+@media (max-width: 560px) {
+  .sidebar:not(.collapsed) {
+    width: min(var(--sidebar-width), calc(100vw - 48px));
+  }
 }
