@@ -367,17 +367,18 @@ export function cardForType(type, payload, env) {
       const recipientText = recipients.map(mentionToken).filter(Boolean).join(' ')
       const workflowLabel = marketResearchLabel(payload.items)
       return buildCard({
-        title: `${workflowLabel} follow-up due`,
+        title: `${workflowLabel} follow-up email due`,
         subtitle: '21 days since submission',
-        icon: '↻',
+        icon: '✉',
         color: 'warning',
         recipients,
         body: [
-          ...(recipientText ? [textBlock(`Hello ${recipientText}, it has been 21 days since the ${workflowLabel} opportunities below were submitted. Please follow up as appropriate.`)] : []),
+          textBlock(`${recipientText ? `Hello ${recipientText}, the` : 'The'} opportunities below are due for follow-up. Review their email drafts in TAG CRM.`),
           ...rfiRows(payload.items || []),
           ...(payload.remainingCount ? [textBlock(`+ ${payload.remainingCount} more`, { size: 'Small', weight: 'Default', isSubtle: true })] : []),
+          textBlock('Nothing is sent automatically.', { size: 'Small', weight: 'Default', isSubtle: true }),
         ],
-        actions: [action(`View ${workflowLabel}`, rfiFollowUpUrl(base, payload.filterIds))],
+        actions: [action('Review follow-up drafts', rfiFollowUpUrl(base, payload.filterIds))],
       })
     }
 
