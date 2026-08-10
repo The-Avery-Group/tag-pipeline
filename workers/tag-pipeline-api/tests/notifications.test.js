@@ -86,6 +86,27 @@ test('MRAS uses the existing RFI reminder card workflow with an accurate label',
   assert.match(JSON.stringify(card.attachments[0].content.body), /MRAS response due in two days/)
 })
 
+test('21-day follow-up cards direct users to the editable email draft workflow', () => {
+  const card = cardForType('rfi_followup', {
+    recipients: [{ name: 'Ayomide', id: '' }],
+    filterIds: ['RFI-123'],
+    items: [{
+      title: 'Example RFI',
+      contractNumber: 'RFI-123',
+      submissionDate: '2026-07-20',
+      noticeType: 'RFI',
+    }],
+  }, { ALLOWED_ORIGIN: 'https://example.com' })
+
+  const content = card.attachments[0].content
+  assert.match(JSON.stringify(content.body), /RFI follow-up email due/)
+  assert.match(JSON.stringify(content.body), /Review their email drafts in TAG CRM/)
+  assert.match(JSON.stringify(content.body), /Nothing is sent automatically/)
+  assert.equal(content.body.at(-1).actions[0].title, 'Review follow-up drafts')
+  assert.match(content.body.at(-1).actions[0].url, /tab=Responses/)
+  assert.match(content.body.at(-1).actions[0].url, /rfiFollowUps=/)
+})
+
 test('task summaries share one daily dedupe key per reminder category', () => {
   const date = '2026-07-28'
 
