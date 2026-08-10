@@ -29,11 +29,13 @@ function NavIcon({ name }) {
     sun: <><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></>,
     moon: <path d="M20.5 15.2A8.4 8.4 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/>,
     signOut: <><path d="m10 17 5-5-5-5M15 12H3M21 3v18H10"/></>,
+    panelClose: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m7-11-3 3 3 3"/></>,
+    panelOpen: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M13 9l3 3-3 3"/></>,
   }
   return <svg {...props}>{paths[name]}</svg>
 }
 
-export default function Sidebar({ onSearchOpen }) {
+export default function Sidebar({ collapsed = false, onCollapsedChange, onSearchOpen }) {
   const { user, logout } = useAuth()
   const { resolvedTheme, setThemePreference } = useTheme()
   const quickTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
@@ -45,19 +47,33 @@ export default function Sidebar({ onSearchOpen }) {
     .join('') || '?'
 
   return (
-    <aside className={styles.sidebar}>
+    <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
       <div className={styles.logo}>
-        <div className={styles.logoImageWrap}>
-          <img className={`${styles.logoImage} ${styles.logoImageLight}`} src={`${assetBase}avery-group-logo.png`} alt="The Avery Group" />
-          <img className={`${styles.logoImage} ${styles.logoImageDark}`} src={`${assetBase}avery-group-logo-dark.png`} alt="" aria-hidden="true" />
+        <div className={styles.expandedBrand}>
+          <div className={styles.logoImageWrap}>
+            <img className={`${styles.logoImage} ${styles.logoImageLight}`} src={`${assetBase}avery-group-logo.png`} alt="The Avery Group" />
+            <img className={`${styles.logoImage} ${styles.logoImageDark}`} src={`${assetBase}avery-group-logo-dark.png`} alt="" aria-hidden="true" />
+          </div>
+          <span className={styles.logoProduct}>• CRM</span>
         </div>
-        <span className={styles.logoProduct}>• CRM</span>
+        <span className={styles.compactBrand} aria-hidden={!collapsed}>CRM</span>
       </div>
 
+      <button
+        type="button"
+        className={styles.collapseToggle}
+        onClick={() => onCollapsedChange?.(!collapsed)}
+        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-expanded={!collapsed}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        <NavIcon name={collapsed ? 'panelOpen' : 'panelClose'} />
+      </button>
+
       {/* Notion-style search trigger */}
-      <button className={styles.searchTrigger} onClick={onSearchOpen} aria-label="Search CRM">
+      <button className={styles.searchTrigger} onClick={onSearchOpen} aria-label="Search CRM" title={collapsed ? 'Search CRM' : undefined}>
         <NavIcon name="search" />
-        <span>Search CRM</span>
+        <span className={styles.searchLabel}>Search CRM</span>
         <kbd className={styles.kbd}>⌘K</kbd>
       </button>
 
@@ -70,17 +86,19 @@ export default function Sidebar({ onSearchOpen }) {
             className={({ isActive }) =>
               `${styles.navItem} ${isActive ? styles.active : ''}`
             }
+            title={collapsed ? item.label : undefined}
+            aria-label={collapsed ? item.label : undefined}
           >
             <NavIcon name={item.icon} />
-            {item.label}
+            <span className={styles.navLabel}>{item.label}</span>
           </NavLink>
         ))}
       </nav>
 
       <div className={styles.footer}>
-        <div className={styles.userInfo}>
+        <div className={styles.userInfo} title={collapsed ? user?.displayName : undefined}>
           <div className={styles.avatar}>{initials}</div>
-          <div>
+          <div className={styles.userText}>
             <div className={styles.userName}>{user?.displayName}</div>
           </div>
         </div>
@@ -91,8 +109,10 @@ export default function Sidebar({ onSearchOpen }) {
               className={({ isActive }) =>
                 `${styles.settingsBtn} ${isActive ? styles.settingsBtnActive : ''}`
               }
+              title={collapsed ? 'Settings' : undefined}
+              aria-label={collapsed ? 'Settings' : undefined}
             >
-              <NavIcon name="settings" /> Settings
+              <NavIcon name="settings" /> <span className={styles.actionLabel}>Settings</span>
             </NavLink>
             <button
               type="button"
@@ -104,8 +124,8 @@ export default function Sidebar({ onSearchOpen }) {
               <NavIcon name={resolvedTheme === 'dark' ? 'sun' : 'moon'} />
             </button>
           </div>
-          <button className={styles.signOutBtn} onClick={logout}>
-            <NavIcon name="signOut" /> Sign out
+          <button className={styles.signOutBtn} onClick={logout} title={collapsed ? 'Sign out' : undefined} aria-label={collapsed ? 'Sign out' : undefined}>
+            <NavIcon name="signOut" /> <span className={styles.actionLabel}>Sign out</span>
           </button>
         </div>
       </div>
