@@ -243,6 +243,60 @@ export async function updateEbuyReviewState(db, requestId, nextState, pipelineCo
   return getEbuyOpportunity(db, requestId)
 }
 
+export async function recordArchivedEbuyAttachment(db, {
+  id,
+  requestId,
+  fileName,
+  contentType,
+  byteSize,
+  sourceHash,
+  driveId,
+  itemId,
+  webUrl,
+}) {
+  const opportunity = await db.prepare('SELECT request_id FROM ebuy_opportunities WHERE request_id = ?').bind(requestId).first()
+  if (!opportunity) {
+    const error = new Error('Synchronize the test eBuy archive before archiving its attachment')
+    error.status = 409
+    error.code = 'ebuy_fixture_required'
+    throw error
+  }
+
+  const now = new Date().toISOString()
+  await db.prepare(`INSERT INTO ebuy_attachments (
+      id, request_id, amendment_id, file_name, content_type, byte_size, source_hash,
+      archive_status, sharepoint_drive_id, sharepoint_item_id, sharepoint_web_url,
+      archived_at, error_message, created_at, updated_at
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, 'archived', ?, ?, ?, ?, NULL, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      file_name = excluded.file_name,
+      content_type = excluded.content_type,
+      byte_size = excluded.byte_size,
+      source_hash = excluded.source_hash,
+      archive_status = 'archived',
+      sharepoint_drive_id = excluded.sharepoint_drive_id,
+      sharepoint_item_id = excluded.sharepoint_item_id,
+      sharepoint_web_url = excluded.sharepoint_web_url,
+      archived_at = excluded.archived_at,
+      error_message = NULL,
+      updated_at = excluded.updated_at`)
+    .bind(id, requestId, fileName, contentType, byteSize, sourceHash, driveId, itemId, webUrl, now, now, now)
+    .run()
+
+  return {
+    id,
+    requestId,
+    fileName,
+    contentType,
+    byteSize,
+    archiveStatus: 'archived',
+    sharepointDriveId: driveId,
+    sharepointItemId: itemId,
+    sharepointWebUrl: webUrl,
+    archivedAt: now,
+  }
+}
+
 export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = null } = {}) {
   const now = new Date().toISOString()
   const rows = await db.prepare(`SELECT request_id FROM ebuy_opportunities
