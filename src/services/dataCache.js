@@ -27,6 +27,9 @@ import { queueTableMutation } from '@/services/workbookMutations'
 
 const POLL_INTERVAL_MS = 60 * 1000
 const ACTIVE_REFRESH_INTERVAL_MS = 3 * 60 * 1000
+const ACTIVE_TABLE_REFRESH_INTERVAL_MS = {
+  NewOpportunitiesTable: 60 * 1000,
+}
 const RETURN_REFRESH_AFTER_MS = 60 * 1000
 const PAGE_ENTRY_FRESH_MS = 30 * 1000
 const CORE_TABLES = ['PipelineTable', 'TasksTable', 'DataValidationTable']
@@ -222,10 +225,11 @@ async function refreshActiveTables({ returningToTab = false, pageEntry = false }
   const now = Date.now()
   const targets = activeTargets({ cachedOnly: false }).filter((tableName) => {
     const age = now - (lastTableRefreshAt.get(tableName) || 0)
+    const activeRefreshInterval = ACTIVE_TABLE_REFRESH_INTERVAL_MS[tableName] || ACTIVE_REFRESH_INTERVAL_MS
     if (dirtyTables.has(tableName)) return true
     if (returningToTab) return age >= RETURN_REFRESH_AFTER_MS
     if (pageEntry) return age >= PAGE_ENTRY_FRESH_MS
-    return age >= ACTIVE_REFRESH_INTERVAL_MS
+    return age >= activeRefreshInterval
   })
   if (!targets.length) return []
   const refreshed = await loadTables(targets, {
