@@ -75,6 +75,7 @@ const C = {
 
 // ── Tab definitions ───────────────────────────────────────────────────────
 const TABS = ['All', 'Responses', 'Expiring', 'Tracked', 'New']
+const HIDDEN_RESPONSE_PHASES = new Set(['Cancelled', 'Contract Awarded'])
 
 // ── Phase badge map ───────────────────────────────────────────────────────
 const PHASE_BADGE = {
@@ -108,6 +109,12 @@ function getTabRows(pipeline, tab) {
     default:
       return []
   }
+}
+
+function getVisibleTabRows(pipeline, tab, showHiddenResponses = false) {
+  const rows = getTabRows(pipeline, tab)
+  if (tab !== 'Responses' || showHiddenResponses) return rows
+  return rows.filter((opportunity) => !HIDDEN_RESPONSE_PHASES.has(opportunity[C.phase]))
 }
 
 // ── Per-tab default sort ──────────────────────────────────────────────────
@@ -263,6 +270,7 @@ export default function Opportunities({ toast }) {
 
   // ── Advanced filter panel UI state (not persisted — just whether it's open) ──
   const [showFilter, setShowFilter] = useState(false)
+  const [showHiddenResponses, setShowHiddenResponses] = useState(false)
   const activeFilterCount = Object.entries(filters)
     .filter(([k, v]) => k === 'agency' ? v.size > 0 : Boolean(v)).length + (rfiFollowUpIds.size ? 1 : 0)
   const [agencyFilterOpen, setAgencyFilterOpen] = useState(false)
@@ -323,42 +331,45 @@ export default function Opportunities({ toast }) {
   // ── Tab counts (raw, before search/filters) ───────────────────────────
   const tabCounts = useMemo(() => ({
     All:      pipeline.length,
-    Responses:getTabRows(pipeline, 'Responses').length,
+    Responses:getVisibleTabRows(pipeline, 'Responses').length,
     Expiring: getTabRows(pipeline, 'Expiring').length,
     Tracked:  getTabRows(pipeline, 'Tracked').length,
     New:      0,
   }), [pipeline])
 
+  const hiddenResponseCount = useMemo(() => getTabRows(pipeline, 'Responses')
+    .filter((opportunity) => HIDDEN_RESPONSE_PHASES.has(opportunity[C.phase])).length, [pipeline])
+
   // ── Distinct agencies present in the active tab (for the agency filter) ──
   const tabAgencies = useMemo(() => {
     const ags = new Set()
-    getTabRows(pipeline, activeTab).forEach((o) => {
+    getVisibleTabRows(pipeline, activeTab, showHiddenResponses).forEach((o) => {
       const a = String(o[C.agency] || '').trim()
       if (a) ags.add(a)
     })
     return [...ags].sort()
-  }, [pipeline, activeTab])
+  }, [pipeline, activeTab, showHiddenResponses])
 
   // ── Distinct Classification / Contract Vehicle values present in the
   //    active tab (no fixed validation list for these — derived from data,
   //    same approach as tabAgencies) ────────────────────────────────────
   const classificationOptions = useMemo(() => {
     const vals = new Set()
-    getTabRows(pipeline, activeTab).forEach((o) => {
+    getVisibleTabRows(pipeline, activeTab, showHiddenResponses).forEach((o) => {
       const v = String(o[C.classification] || '').trim()
       if (v) vals.add(v)
     })
     return [...vals].sort()
-  }, [pipeline, activeTab])
+  }, [pipeline, activeTab, showHiddenResponses])
 
   const vehicleOptions = useMemo(() => {
     const vals = new Set()
-    getTabRows(pipeline, activeTab).forEach((o) => {
+    getVisibleTabRows(pipeline, activeTab, showHiddenResponses).forEach((o) => {
       const v = String(o[C.vehicle] || '').trim()
       if (v) vals.add(v)
     })
     return [...vals].sort()
-  }, [pipeline, activeTab])
+  }, [pipeline, activeTab, showHiddenResponses])
 
   const noteSearchIndex = useMemo(() => buildSearchIndex(notes), [notes])
   const pipelineSearchIndex = useMemo(() => buildSearchIndex(pipeline), [pipeline])
@@ -377,7 +388,7 @@ export default function Opportunities({ toast }) {
   const filtered = useMemo(() => {
     if (activeTab === 'New') return []
 
-    let rows = getTabRows(pipeline, activeTab)
+    let rows = getVisibleTabRows(pipeline, activeTab, showHiddenResponses)
 
     if (rfiFollowUpIds.size > 0) {
       rows = rows.filter((o) => rfiFollowUpIds.has(String(o[C.contractNum] || '').trim()))
@@ -418,7 +429,7 @@ export default function Opportunities({ toast }) {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, sortKey, sortDir])
+  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, showHiddenResponses, sortKey, sortDir])
 
   // ── Tab switch — filters are scoped to the tab that applied them. Search
   // remains because it is a separate, deliberate cross-tab lookup.
@@ -1244,7 +1255,9 @@ export default function Opportunities({ toast }) {
       ? 'No opportunities match the current filters.'
       : {
           All:      'No opportunities in the pipeline yet.',
-          Responses:'No response opportunities yet. Set Notice Type to RFI, MRAS, RFP, or RFQ to include an opportunity here.',
+          Responses:hiddenResponseCount > 0 && !showHiddenResponses
+            ? 'All response opportunities are currently hidden. Select Show hidden to view cancelled and awarded records.'
+            : 'No response opportunities yet. Set Notice Type to RFI, MRAS, RFP, or RFQ to include an opportunity here.',
           Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
           Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
           New:      '',
@@ -1636,6 +1649,22 @@ export default function Opportunities({ toast }) {
                 {ag} ✕
               </button>
             ))}
+          </div>
+        )}
+
+        {activeTab === 'Responses' && hiddenResponseCount > 0 && (
+          <div className={styles.responseVisibilityBar}>
+            <button
+              type="button"
+              className={`btn btn-ghost text-sm ${showHiddenResponses ? styles.responseVisibilityActive : ''}`}
+              onClick={() => setShowHiddenResponses((current) => !current)}
+              aria-pressed={showHiddenResponses}
+              title={showHiddenResponses
+                ? 'Hide cancelled and awarded response opportunities'
+                : 'Show cancelled and awarded response opportunities'}
+            >
+              {showHiddenResponses ? 'Hide hidden' : `Show hidden (${hiddenResponseCount})`}
+            </button>
           </div>
         )}
 
