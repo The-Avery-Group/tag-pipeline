@@ -28,7 +28,11 @@ import ActionIcon from '@/components/Common/ActionIcon'
 import { formatDate } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
-import { invalidateCache } from '@/services/dataCache'
+import {
+  invalidateCache,
+  publishCacheUpdate,
+  verifyCacheInBackground,
+} from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
@@ -813,7 +817,9 @@ export default function OpportunityDetail({ toast }) {
             : `Updating ${label} ${Math.min(completed + 1, total)} of ${total}…`)
         }
       )
-      await invalidateCache(['PipelineTable', 'TasksTable', 'NotesTable', 'ContactsTable'])
+      const changedTables = ['PipelineTable', 'TasksTable', 'NotesTable', 'EmailFollowUpDraftsTable']
+      await publishCacheUpdate(changedTables)
+      verifyCacheInBackground(changedTables)
       const newIdentifier = pendingRenameSave[C.contractNum]
       setPendingRenameSave(null)
       setRenamePreview(null)
