@@ -185,7 +185,7 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
         [C.incumbent]: contract.incumbentName || '',
         [C.incumbentUEI]: contract.incumbentUEI || '',
         [C.classification]: contract.awardType || '',
-        [C.solicitation]: contract.solicitationNumber || '',
+        [C.solNum]: contract.solicitationNumber || '',
         [C.vehicleNumber]: contract.referencedIdvPiid || '',
         [C.fiscalYear]: contract.fiscalYear || '',
         [C.setAside]: contract.setAside || '-',
@@ -257,11 +257,25 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
             </div>
           )}
 
+          {status.status === 'error' && (
+            <div className={styles.errorCallout}>
+              <div><strong>Expiring contract refresh stopped</strong><span>{status.error || 'The refresh could not finish.'}</span></div>
+              <button type="button" onClick={runRefresh}>Try again</button>
+            </div>
+          )}
+
+          {status.status === 'partial' && (
+            <div className={styles.warningCallout}>
+              <div><strong>Refresh completed with some agency issues</strong><span>{status.error}</span></div>
+              <button type="button" onClick={runRefresh}>Retry refresh</button>
+            </div>
+          )}
+
           <div className={styles.summaryRow}>
             <strong>{visibleContracts.length} contract{visibleContracts.length === 1 ? '' : 's'}</strong>
             <span>{status.refreshedAt ? `Refreshed ${new Date(status.refreshedAt).toLocaleString()}` : 'Not refreshed yet'}</span>
           </div>
-          {error && <div className={styles.errorCallout}>{error}</div>}
+          {error && <div className={styles.errorCallout}><span>{error}</span></div>}
 
           <div className={styles.tableCard}>
             {loading ? <div className={styles.loading}>Loading expiring contracts…</div> : visibleContracts.length === 0 ? (
