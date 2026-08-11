@@ -176,3 +176,77 @@ test('an expiring Workflow instance fetches a bounded page batch before continui
     globalThis.fetch = previousFetch
   }
 })
+
+test('large checkpoint collections stay outside persisted Workflow step outputs', async () => {
+  const previousFetch = globalThis.fetch
+  const runId = 'large-run'
+  const agency = { id: 'army', label: 'Army', searchName: 'DEPT OF THE ARMY', tier: 'subtier' }
+  const recordsKey = `expiring_contracts:run_records:v1:${runId}:${agency.id}`
+  const priorRecords = Array.from({ length: 600 }, (_, index) => {
+    const record = award({ modificationNumber: `P${String(index).padStart(5, '0')}` })
+    record.awardDetails.productOrServiceInformation.descriptionOfContractRequirement = `Requirement ${index} ${'x'.repeat(2200)}`
+    return record
+  })
+  const values = new Map([[recordsKey, JSON.stringify(priorRecords)]])
+  assert.ok(Buffer.byteLength(values.get(recordsKey)) > 1024 * 1024)
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    totalRecords: 700,
+    awardSummary: Array.from({ length: 100 }, (_, index) => award({
+      modificationNumber: `P${String(600 + index).padStart(5, '0')}`,
+    })),
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+  const env = {
+    SAM_API_KEY: 'test-key',
+    CACHE: {
+      async get(key, type) {
+        const value = values.get(key)
+        return type === 'json' && value ? JSON.parse(value) : value || null
+      },
+      async put(key, value) { values.set(key, value) },
+      async delete(key) { values.delete(key) },
+    },
+    EXPIRING_CONTRACTS_WORKFLOW: {
+      async createBatch(batch) { return [{ id: batch[0].id }] },
+    },
+  }
+  const outputs = new Map()
+  const step = {
+    async do(name, optionsOrCallback, maybeCallback) {
+      const result = await (maybeCallback || optionsOrCallback)()
+      const serialized = JSON.stringify(result)
+      if (serialized) assert.ok(Buffer.byteLength(serialized) <= 1024 * 1024, `${name} exceeded 1 MiB`)
+      outputs.set(name, result)
+      return result
+    },
+  }
+
+  try {
+    const result = await runExpiringContractsRefresh(env, {
+      instanceId: 'expiring-large-2',
+      payload: {
+        runId,
+        checkpoint: 2,
+        agencies: [agency],
+        continuation: {
+          startedAt: '2026-08-11T00:00:00.000Z',
+          naicsCodes: ['541611'],
+          agencyIndex: 0,
+          offset: 600,
+          pageNumber: 6,
+          currentPages: 7,
+          storedRecordCount: priorRecords.length,
+          totalContracts: 0,
+          agencyErrors: [],
+        },
+      },
+    }, step)
+
+    assert.equal(result.status, 'success')
+    assert.deepEqual(outputs.get('Verify army checkpoint records 2'), { key: recordsKey, count: 600 })
+    assert.deepEqual(outputs.get('Save army expiring contracts'), { contractCount: 1 })
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
