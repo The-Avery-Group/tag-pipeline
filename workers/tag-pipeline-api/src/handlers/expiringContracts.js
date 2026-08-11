@@ -12,12 +12,15 @@ import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 const AWARDS_BASE = 'https://api.sam.gov/contract-awards/v1/search'
 const OPPORTUNITIES_BASE = 'https://api.sam.gov/opportunities/v2/search'
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
-const PAGE_SIZE = 50
-const MAX_PAGES_PER_AGENCY = 80
+const PAGE_SIZE = 100
+const MAX_PAGES_PER_AGENCY = 40
+const PAGES_PER_CHECKPOINT = 6
+const MAX_WORKFLOW_CHECKPOINTS = 1000
 const CACHE_TTL_SECONDS = 100 * 24 * 60 * 60
 const STATUS_KEY = 'expiring_contracts:status:v1'
 const AGENCY_REGISTRY_KEY = 'expiring_contracts:agency_registry:v1'
 const DATA_PREFIX = 'expiring_contracts:data:v1:'
+const RUN_RECORDS_PREFIX = 'expiring_contracts:run_records:v1:'
 
 export const DEFAULT_EXPIRING_AGENCIES = [
   { id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' },
@@ -322,81 +325,223 @@ export async function saveAgencyResults(env, agency, records, fetchedAt = new Da
   return value
 }
 
+function runRecordsKey(runId, agencyId) {
+  return `${RUN_RECORDS_PREFIX}${runId}:${agencyId}`
+}
+
+function continuationInstanceId(runId, checkpoint) {
+  const safeRunId = clean(runId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 70)
+  return `expiring-${safeRunId}-${checkpoint}`
+}
+
+async function readCheckpointRecords(env, key, expectedCount = 0) {
+  const records = env.CACHE ? await env.CACHE.get(key, 'json') : null
+  const result = Array.isArray(records) ? records : []
+  if (expectedCount && result.length < expectedCount) {
+    throw new Error(`Expiring contract checkpoint data is not ready (${result.length} of ${expectedCount} records)`)
+  }
+  return result
+}
+
+async function writeCheckpointRecords(env, key, records) {
+  if (!env.CACHE) throw new Error('CACHE binding is unavailable for expiring contract checkpoints')
+  await env.CACHE.put(key, JSON.stringify(records), { expirationTtl: 24 * 60 * 60 })
+}
+
+async function clearCheckpointRecords(env, key) {
+  if (env.CACHE) await env.CACHE.delete(key)
+}
+
+async function scheduleExpiringCheckpoint(env, step, { runId, agencies, checkpoint, continuation }) {
+  if (checkpoint > MAX_WORKFLOW_CHECKPOINTS) {
+    throw new Error(`Expiring contract refresh exceeded ${MAX_WORKFLOW_CHECKPOINTS} checkpoints`)
+  }
+  const instanceId = continuationInstanceId(runId, checkpoint)
+  const scheduled = await step.do(`Schedule expiring contract checkpoint ${checkpoint}`, async () => {
+    const instances = await env.EXPIRING_CONTRACTS_WORKFLOW.createBatch([{
+      id: instanceId,
+      params: { runId, agencies, checkpoint, continuation },
+      retention: { successRetention: '3 days', errorRetention: '7 days' },
+    }])
+    return { instanceId: instances[0]?.id || instanceId, started: Boolean(instances[0]) }
+  })
+  return {
+    status: 'continuing',
+    runId,
+    checkpoint: checkpoint - 1,
+    nextCheckpoint: checkpoint,
+    nextInstanceId: scheduled.instanceId,
+  }
+}
+
+async function completeExpiringRefresh(env, step, {
+  runId,
+  startedAt,
+  agencies,
+  totalContracts,
+  agencyErrors,
+}) {
+  const completedAt = new Date().toISOString()
+  const successfulAgencies = agencies.length - agencyErrors.length
+  const finalStatus = successfulAgencies === 0 ? 'error' : agencyErrors.length ? 'partial' : 'success'
+  const complete = {
+    status: finalStatus,
+    runId,
+    startedAt,
+    completedAt,
+    refreshedAt: successfulAgencies ? completedAt : null,
+    agencyTotal: agencies.length,
+    successfulAgencies,
+    contracts: totalContracts,
+    agencyErrors,
+    error: successfulAgencies === 0
+      ? 'The refresh could not complete for any selected agency'
+      : agencyErrors.length
+        ? `${agencyErrors.length} ${agencyErrors.length === 1 ? 'agency' : 'agencies'} could not be refreshed`
+        : null,
+  }
+  await step.do('Complete expiring contract refresh', () => setStatus(env, complete))
+  return complete
+}
+
 export async function runExpiringContractsRefresh(env, event, step) {
-  const agencies = (event?.payload?.agencies?.length ? event.payload.agencies : DEFAULT_EXPIRING_AGENCIES)
+  const payload = event?.payload || {}
+  const agencies = (payload.agencies?.length ? payload.agencies : DEFAULT_EXPIRING_AGENCIES)
     .map(normalizeAgency)
     .filter((agency) => agency.searchName)
-  const runId = event?.payload?.runId || event?.instanceId || crypto.randomUUID()
-  const startedAt = new Date().toISOString()
+  const continuation = payload.continuation || {}
+  const checkpoint = Math.max(1, Number(payload.checkpoint) || 1)
+  const runId = payload.runId || event?.instanceId || crypto.randomUUID()
+  const startedAt = continuation.startedAt || payload.startedAt || new Date().toISOString()
   try {
-    const naicsCodes = await step.do('Read configured NAICS codes', () => readExpiringNAICS(env))
+    if (!env.CACHE) throw new Error('CACHE binding is unavailable for expiring contract checkpoints')
+    if (checkpoint > MAX_WORKFLOW_CHECKPOINTS) {
+      throw new Error(`Expiring contract refresh exceeded ${MAX_WORKFLOW_CHECKPOINTS} checkpoints`)
+    }
+
+    const naicsCodes = continuation.naicsCodes?.length
+      ? continuation.naicsCodes
+      : await step.do('Read configured NAICS codes', () => readExpiringNAICS(env))
     if (!naicsCodes.length) throw new Error('SAMNAICSTable does not contain any NAICS codes')
-    await step.do('Mark expiring contract refresh active', () => setStatus(env, {
-      status: 'running', runId, startedAt, agencyIndex: 0, agencyTotal: agencies.length,
-      currentAgency: agencies[0]?.label || null, currentPage: 0, currentPages: null, contracts: 0,
+    const agencyIndex = Math.max(0, Number(continuation.agencyIndex) || 0)
+    const totalContracts = Math.max(0, Number(continuation.totalContracts) || 0)
+    const agencyErrors = Array.isArray(continuation.agencyErrors) ? continuation.agencyErrors : []
+    if (agencyIndex >= agencies.length) {
+      return completeExpiringRefresh(env, step, { runId, startedAt, agencies, totalContracts, agencyErrors })
+    }
+
+    const agency = agencies[agencyIndex]
+    const offset = Math.max(0, Number(continuation.offset) || 0)
+    const pageNumber = Math.max(0, Number(continuation.pageNumber) || 0)
+    const expectedRecordCount = Math.max(0, Number(continuation.storedRecordCount) || 0)
+    const recordsKey = runRecordsKey(runId, agency.id)
+    const priorRecords = expectedRecordCount
+      ? await step.do(
+        `Load ${agency.id} checkpoint records ${checkpoint}`,
+        { retries: { limit: 5, delay: '2 seconds', backoff: 'exponential' } },
+        () => readCheckpointRecords(env, recordsKey, expectedRecordCount),
+      )
+      : []
+
+    await step.do(`Mark expiring checkpoint ${checkpoint} active`, () => setStatus(env, {
+      status: 'running', runId, startedAt, agencyIndex, agencyTotal: agencies.length,
+      currentAgency: agency.label, currentPage: pageNumber, currentPages: continuation.currentPages || null,
+      contracts: totalContracts, agencyErrors, checkpoint,
     }))
 
-    let totalContracts = 0
-    const agencyErrors = []
-    for (let agencyIndex = 0; agencyIndex < agencies.length; agencyIndex += 1) {
-      const agency = agencies[agencyIndex]
-      try {
-        let records = []
-        let offset = 0
-        let pageNumber = 0
-        for (; pageNumber < MAX_PAGES_PER_AGENCY; pageNumber += 1) {
-          const page = await step.do(
-            `Fetch ${agency.id} awards page ${pageNumber + 1}`,
-            { retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
-            () => fetchExpiringAwardsPage(env, { agency, naicsCodes, offset }),
-          )
-          records = records.concat(page.records)
-          const estimatedPages = Math.max(1, Math.ceil(page.total / PAGE_SIZE))
-          await step.do(`Record ${agency.id} progress page ${pageNumber + 1}`, () => setStatus(env, {
-            status: 'running', runId, startedAt, agencyIndex, agencyTotal: agencies.length,
-            currentAgency: agency.label, currentPage: pageNumber + 1, currentPages: estimatedPages,
-            contracts: totalContracts, agencyErrors,
-          }))
-          offset = page.nextOffset
-          if (!page.hasMore) break
-        }
-        const saved = await step.do(`Save ${agency.id} expiring contracts`, () => saveAgencyResults(env, agency, records))
-        totalContracts += saved.contracts.length
-      } catch (error) {
-        const issue = { agencyId: agency.id, agency: agency.label, error: error.message }
-        agencyErrors.push(issue)
-        console.error(JSON.stringify({ event: 'expiring_contract_agency_failed', runId, ...issue }))
+    try {
+      let currentOffset = offset
+      let currentPageNumber = pageNumber
+      let currentPages = continuation.currentPages || null
+      let hasMore = true
+      const batchRecords = []
+
+      for (let pageIndex = 0; pageIndex < PAGES_PER_CHECKPOINT && hasMore && currentPageNumber < MAX_PAGES_PER_AGENCY; pageIndex += 1) {
+        const page = await step.do(
+          `Fetch ${agency.id} awards page ${currentPageNumber + 1}`,
+          { retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
+          () => fetchExpiringAwardsPage(env, { agency, naicsCodes, offset: currentOffset }),
+        )
+        batchRecords.push(...page.records)
+        currentOffset = page.nextOffset
+        currentPageNumber += 1
+        currentPages = Math.min(MAX_PAGES_PER_AGENCY, Math.max(1, Math.ceil(page.total / PAGE_SIZE)))
+        hasMore = page.hasMore && currentPageNumber < MAX_PAGES_PER_AGENCY
       }
 
-      const nextAgency = agencies[agencyIndex + 1]
-      await step.do(`Complete ${agency.id} refresh stage`, () => setStatus(env, {
-        status: 'running', runId, startedAt, agencyIndex: agencyIndex + 1, agencyTotal: agencies.length,
-        currentAgency: nextAgency?.label || null, currentPage: 0, currentPages: null,
-        contracts: totalContracts, agencyErrors,
-      }))
-    }
+      const records = dedupeRecords(priorRecords.concat(batchRecords))
+      if (hasMore) {
+        await step.do(`Store ${agency.id} checkpoint records ${checkpoint}`, () => writeCheckpointRecords(env, recordsKey, records))
+        const nextContinuation = {
+          startedAt,
+          naicsCodes,
+          agencyIndex,
+          offset: currentOffset,
+          pageNumber: currentPageNumber,
+          currentPages,
+          storedRecordCount: records.length,
+          totalContracts,
+          agencyErrors,
+        }
+        await step.do(`Record expiring checkpoint ${checkpoint} progress`, () => setStatus(env, {
+          status: 'running', runId, startedAt, agencyIndex, agencyTotal: agencies.length,
+          currentAgency: agency.label, currentPage: currentPageNumber, currentPages,
+          contracts: totalContracts, agencyErrors, checkpoint,
+        }))
+        return scheduleExpiringCheckpoint(env, step, {
+          runId, agencies, checkpoint: checkpoint + 1, continuation: nextContinuation,
+        })
+      }
 
-    const completedAt = new Date().toISOString()
-    const successfulAgencies = agencies.length - agencyErrors.length
-    const finalStatus = successfulAgencies === 0 ? 'error' : agencyErrors.length ? 'partial' : 'success'
-    const complete = {
-      status: finalStatus,
-      runId,
-      startedAt,
-      completedAt,
-      refreshedAt: successfulAgencies ? completedAt : null,
-      agencyTotal: agencies.length,
-      successfulAgencies,
-      contracts: totalContracts,
-      agencyErrors,
-      error: successfulAgencies === 0
-        ? 'The refresh could not complete for any selected agency'
-        : agencyErrors.length
-          ? `${agencyErrors.length} ${agencyErrors.length === 1 ? 'agency' : 'agencies'} could not be refreshed`
-          : null,
+      const saved = await step.do(`Save ${agency.id} expiring contracts`, () => saveAgencyResults(env, agency, records))
+      await step.do(`Clear ${agency.id} checkpoint records`, () => clearCheckpointRecords(env, recordsKey))
+      const nextTotalContracts = totalContracts + saved.contracts.length
+      const nextAgencyIndex = agencyIndex + 1
+      if (nextAgencyIndex >= agencies.length) {
+        return completeExpiringRefresh(env, step, {
+          runId, startedAt, agencies, totalContracts: nextTotalContracts, agencyErrors,
+        })
+      }
+      await step.do(`Complete ${agency.id} refresh stage`, () => setStatus(env, {
+        status: 'running', runId, startedAt, agencyIndex: nextAgencyIndex, agencyTotal: agencies.length,
+        currentAgency: agencies[nextAgencyIndex].label, currentPage: 0, currentPages: null,
+        contracts: nextTotalContracts, agencyErrors, checkpoint,
+      }))
+      return scheduleExpiringCheckpoint(env, step, {
+        runId,
+        agencies,
+        checkpoint: checkpoint + 1,
+        continuation: {
+          startedAt, naicsCodes, agencyIndex: nextAgencyIndex, offset: 0, pageNumber: 0,
+          currentPages: null, storedRecordCount: 0, totalContracts: nextTotalContracts, agencyErrors,
+        },
+      })
+    } catch (error) {
+      const issue = { agencyId: agency.id, agency: agency.label, error: error.message }
+      const nextAgencyErrors = [...agencyErrors, issue]
+      console.error(JSON.stringify({ event: 'expiring_contract_agency_failed', runId, ...issue }))
+      await step.do(`Clear failed ${agency.id} checkpoint records`, () => clearCheckpointRecords(env, recordsKey))
+      const nextAgencyIndex = agencyIndex + 1
+      if (nextAgencyIndex >= agencies.length) {
+        return completeExpiringRefresh(env, step, {
+          runId, startedAt, agencies, totalContracts, agencyErrors: nextAgencyErrors,
+        })
+      }
+      await step.do(`Record failed ${agency.id} refresh stage`, () => setStatus(env, {
+        status: 'running', runId, startedAt, agencyIndex: nextAgencyIndex, agencyTotal: agencies.length,
+        currentAgency: agencies[nextAgencyIndex].label, currentPage: 0, currentPages: null,
+        contracts: totalContracts, agencyErrors: nextAgencyErrors, checkpoint,
+      }))
+      return scheduleExpiringCheckpoint(env, step, {
+        runId,
+        agencies,
+        checkpoint: checkpoint + 1,
+        continuation: {
+          startedAt, naicsCodes, agencyIndex: nextAgencyIndex, offset: 0, pageNumber: 0,
+          currentPages: null, storedRecordCount: 0, totalContracts, agencyErrors: nextAgencyErrors,
+        },
+      })
     }
-    await step.do('Complete expiring contract refresh', () => setStatus(env, complete))
-    return complete
   } catch (error) {
     const failed = { status: 'error', runId, startedAt, completedAt: new Date().toISOString(), error: error.message }
     await setStatus(env, failed)
@@ -418,10 +563,24 @@ export async function startExpiringContractsRefresh(env, { agencies = DEFAULT_EX
     status: 'queued', runId, startedAt: new Date().toISOString(), agencyIndex: 0,
     agencyTotal: normalized.length, currentAgency: normalized[0]?.label || null, contracts: 0,
   })
+  const startedAt = new Date().toISOString()
   try {
     const created = await env.EXPIRING_CONTRACTS_WORKFLOW.createBatch([{
       id: runId,
-      params: { runId, agencies: normalized },
+      params: {
+        runId,
+        agencies: normalized,
+        checkpoint: 1,
+        continuation: {
+          startedAt,
+          agencyIndex: 0,
+          offset: 0,
+          pageNumber: 0,
+          storedRecordCount: 0,
+          totalContracts: 0,
+          agencyErrors: [],
+        },
+      },
       retention: { successRetention: '3 days', errorRetention: '7 days' },
     }])
     return { started: Boolean(created[0]), runId }
