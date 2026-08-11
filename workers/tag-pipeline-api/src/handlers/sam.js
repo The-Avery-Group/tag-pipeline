@@ -163,6 +163,12 @@ function normalizeSolNum(s) {
   return String(s || '').trim().toUpperCase()
 }
 
+export function solicitationFamily(value) {
+  return normalizeSolNum(value)
+    .replace(/(?:[_-](?:AMEND(?:MENT)?[_-]?)?\d{1,4})$/i, '')
+    .replace(/(?:\.\d{1,4})$/i, '')
+}
+
 function normalizeNoticeId(s) {
   return String(s || '').trim().toUpperCase()
 }
@@ -254,6 +260,7 @@ async function cleanupRows(env, token, existingRows, dedupDeleteRowIndices = new
   const today = todayISO()
   const expiredIndices = existingRows
     .filter((r) => {
+      if (String(r.Status || '').trim().toLowerCase() === 'dismissed') return false
       const rd = String(r['Response Date'] || '').trim().slice(0, 10)
       return rd && rd < today
     })
@@ -263,7 +270,11 @@ async function cleanupRows(env, token, existingRows, dedupDeleteRowIndices = new
   // the subrequest budget even when a run has both expired rows AND
   // solicitation-superseded duplicates to remove. De-duped via Set in case
   // a row happens to be both (rare, but possible).
+  const dismissedIndices = new Set(existingRows
+    .filter((row) => String(row.Status || '').trim().toLowerCase() === 'dismissed')
+    .map((row) => row._rowIndex))
   const allIndices = [...new Set([...expiredIndices, ...dedupDeleteRowIndices])]
+    .filter((rowIndex) => !dismissedIndices.has(rowIndex))
     .sort((a, b) => b - a)   // descending so indices stay valid as we delete
     .slice(0, MAX_DELETES_PER_RUN)
 
@@ -774,6 +785,15 @@ async function runSAMPull(
     const key = normalizeNoticeId(row['Notice ID'])
     if (key && !existingByNotice.has(key)) existingByNotice.set(key, row)
   })
+  const dismissedNoticeIds = new Set()
+  const dismissedSolicitationFamilies = new Set()
+  existingRows.forEach((row) => {
+    if (String(row.Status || '').trim().toLowerCase() !== 'dismissed') return
+    const noticeId = normalizeNoticeId(row['Notice ID'])
+    const family = solicitationFamily(row['Solicitation Number'])
+    if (noticeId) dismissedNoticeIds.add(noticeId)
+    if (family) dismissedSolicitationFamilies.add(family)
+  })
 
   // Solicitation Number -> the most-recent variant we currently know about
   // (either already in the sheet, or a candidate fetched earlier this run).
@@ -785,6 +805,7 @@ async function runSAMPull(
   const duplicateExistingRowIndices = new Set()
   const existingNoticeRows = new Map()
   existingRows.forEach((r) => {
+    if (String(r.Status || '').trim().toLowerCase() === 'dismissed') return
     const noticeKey = normalizeNoticeId(r['Notice ID'])
     if (noticeKey) {
       const existingNotice = existingNoticeRows.get(noticeKey)
@@ -871,6 +892,10 @@ async function runSAMPull(
         if (!noticeId) continue
         if (String(raw.active || '').toLowerCase() !== 'yes') continue
         const mapped = mapRecord(raw, naics)
+        const incomingFamily = solicitationFamily(mapped['Solicitation Number'])
+        if (dismissedNoticeIds.has(noticeKey) || (incomingFamily && dismissedSolicitationFamilies.has(incomingFamily))) {
+          continue
+        }
         const existing = existingByNotice.get(noticeKey)
         if (existing) {
           // Rows written before compact SAM ptype codes were supported may
