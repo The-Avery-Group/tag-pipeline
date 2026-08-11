@@ -11,6 +11,7 @@ export function useExpiringContracts(range = '6-12', agencyIds = []) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const timerRef = useRef(null)
+  const refreshPromiseRef = useRef(null)
 
   const loadResults = useCallback(async () => {
     const params = new URLSearchParams({ range })
@@ -61,14 +62,23 @@ export function useExpiringContracts(range = '6-12', agencyIds = []) {
   }, [loadResults, loadStatus, status.status])
 
   const refresh = useCallback(async (agencies) => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current
     setError('')
-    const result = await workerJson('/sam/expiring-contracts/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agencies }),
-    })
-    setStatus((current) => ({ ...current, status: 'queued', runId: result.runId }))
-    return result
+    const operation = workerJson('/sam/expiring-contracts/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agencies }),
+        keepalive: true,
+      })
+      .then((result) => {
+        setStatus((current) => ({ ...current, status: 'queued', runId: result.runId }))
+        return result
+      })
+      .finally(() => {
+        refreshPromiseRef.current = null
+      })
+    refreshPromiseRef.current = operation
+    return operation
   }, [])
 
   const loadDetail = useCallback(async (contract, { refresh: force = false } = {}) => {
