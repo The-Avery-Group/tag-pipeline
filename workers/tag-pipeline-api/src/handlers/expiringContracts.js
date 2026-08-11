@@ -11,6 +11,7 @@ import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 
 const AWARDS_BASE = 'https://api.sam.gov/contract-awards/v1/search'
 const OPPORTUNITIES_BASE = 'https://api.sam.gov/opportunities/v2/search'
+const FEDERAL_HIERARCHY_BASE = 'https://api.sam.gov/prod/federalorganizations/v1/orgs'
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const PAGE_SIZE = 100
 const MAX_PAGES_PER_AGENCY = 40
@@ -21,6 +22,7 @@ const STATUS_KEY = 'expiring_contracts:status:v1'
 const AGENCY_REGISTRY_KEY = 'expiring_contracts:agency_registry:v1'
 const DATA_PREFIX = 'expiring_contracts:data:v1:'
 const RUN_RECORDS_PREFIX = 'expiring_contracts:run_records:v1:'
+const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
 
 export const DEFAULT_EXPIRING_AGENCIES = [
   { id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' },
@@ -218,23 +220,153 @@ async function agencyRegistry(env) {
 async function saveAgencyRegistry(env, agencies) {
   if (!env.CACHE) return
   const custom = agencies.filter((agency) => agency.custom || !DEFAULT_EXPIRING_AGENCIES.some((item) => item.id === agency.id))
-  await env.CACHE.put(AGENCY_REGISTRY_KEY, JSON.stringify(custom), { expirationTtl: CACHE_TTL_SECONDS })
+  await env.CACHE.put(AGENCY_REGISTRY_KEY, JSON.stringify(custom))
 }
 
-function normalizeAgency(value, index = 0) {
+export function normalizeExpiringAgency(value, index = 0) {
   if (typeof value === 'string') {
     const searchName = clean(value)
-    return { id: `custom-${index}-${searchName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, label: searchName, searchName, tier: 'subtier', custom: true }
+    return {
+      id: `custom-${index}-${searchName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      label: searchName,
+      searchName,
+      tier: 'subtier',
+      custom: true,
+      scheduled: true,
+    }
   }
-  const searchName = clean(value?.searchName || value?.label)
+  const searchName = clean(value?.searchName || value?.officialName || value?.label)
   const tier = value?.tier === 'department' ? 'department' : 'subtier'
   return {
     id: clean(value?.id) || `custom-${index}-${searchName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     label: clean(value?.label) || searchName,
     searchName,
     tier,
+    organizationId: clean(value?.organizationId || value?.fhorgid),
+    agencyCode: clean(value?.agencyCode || value?.agencycode),
+    parentName: clean(value?.parentName || value?.fhagencyorgname),
+    scheduled: value?.scheduled !== false,
     custom: Boolean(value?.custom),
   }
+}
+
+const normalizeAgency = normalizeExpiringAgency
+
+function agencySearchText(agency) {
+  const initials = clean(agency.searchName).split(/[^A-Za-z0-9]+/).filter(Boolean).map((part) => part[0]).join('')
+  return [agency.label, agency.searchName, agency.parentName, agency.agencyCode, initials].join(' ').toLowerCase()
+}
+
+function federalOrganizationToAgency(value, index = 0) {
+  const searchName = clean(value?.fhorgname)
+  const organizationId = clean(value?.fhorgid)
+  const agencyCode = clean(value?.agencycode)
+  const rawType = clean(value?.fhorgtype).toLowerCase()
+  const tier = rawType.includes('department') || rawType.includes('ind.') ? 'department' : 'subtier'
+  return normalizeAgency({
+    id: organizationId ? `fh-${organizationId}` : `fh-${tier}-${agencyCode || index}-${searchName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    label: searchName,
+    searchName,
+    tier,
+    organizationId,
+    agencyCode,
+    parentName: clean(value?.fhagencyorgname),
+    scheduled: true,
+    custom: true,
+  }, index)
+}
+
+export async function resolveExpiringAgencies(env, query) {
+  const search = clean(query)
+  if (search.length < 2) return []
+  const existing = await agencyRegistry(env)
+  const localMatches = existing
+    .filter((agency) => agencySearchText(agency).includes(search.toLowerCase()))
+    .map((agency) => ({ ...agency, saved: true, savedId: agency.id }))
+  if (!env.SAM_API_KEY) return localMatches.slice(0, 20)
+
+  const params = new URLSearchParams({
+    api_key: env.SAM_API_KEY,
+    fhorgname: search,
+    status: 'active',
+    limit: '25',
+  })
+  const response = await fetch(`${FEDERAL_HIERARCHY_BASE}?${params}`)
+  if (response.status === 204) return localMatches.slice(0, 20)
+  if (!response.ok) throw new Error(`SAM Federal Hierarchy API returned ${response.status}`)
+  const payload = await response.json()
+  const officialMatches = (Array.isArray(payload.orglist) ? payload.orglist : [])
+    .map(federalOrganizationToAgency)
+    .filter((agency) => agency.searchName && ['department', 'subtier'].includes(agency.tier))
+    .map((agency) => {
+      const saved = existing.find((item) =>
+        item.organizationId === agency.organizationId ||
+        (item.tier === agency.tier && item.searchName === agency.searchName)
+      )
+      return saved ? { ...agency, saved: true, savedId: saved.id } : agency
+    })
+  const byIdentity = new Map()
+  ;[...officialMatches, ...localMatches].forEach((agency) => {
+    const key = agency.organizationId || `${agency.tier}:${agency.searchName}`
+    const nameKey = `${agency.tier}:${agency.searchName}`
+    if (!byIdentity.has(key) && !byIdentity.has(nameKey)) {
+      byIdentity.set(key, agency)
+      byIdentity.set(nameKey, agency)
+    }
+  })
+  return [...new Set(byIdentity.values())].slice(0, 20)
+}
+
+export async function saveExpiringAgency(env, value) {
+  const agency = normalizeAgency({ ...value, custom: true, scheduled: value?.scheduled !== false })
+  if (!agency.searchName || !agency.agencyCode || !agency.organizationId) {
+    throw new Error('Select an official SAM agency match before adding it')
+  }
+  const registry = await agencyRegistry(env)
+  const byId = new Map(registry.map((item) => [item.id, item]))
+  byId.set(agency.id, agency)
+  await saveAgencyRegistry(env, [...byId.values()])
+  return agencyRegistry(env)
+}
+
+export async function removeExpiringAgency(env, id) {
+  const agencyId = clean(id)
+  if (!agencyId) throw new Error('Agency ID is required')
+  if (DEFAULT_EXPIRING_AGENCIES.some((agency) => agency.id === agencyId)) {
+    throw new Error('Default target agencies cannot be removed')
+  }
+  const registry = await agencyRegistry(env)
+  await saveAgencyRegistry(env, registry.filter((agency) => agency.id !== agencyId))
+  return agencyRegistry(env)
+}
+
+export function expiringHiddenKey(familyKey) {
+  const value = clean(familyKey)
+  if (!value) throw new Error('Contract family key is required')
+  return `${HIDDEN_PREFIX}${encodeURIComponent(value)}`
+}
+
+async function listHiddenContractKeys(env) {
+  if (!env.CACHE || typeof env.CACHE.list !== 'function') return new Set()
+  const keys = new Set()
+  let cursor
+  do {
+    const page = await env.CACHE.list({ prefix: HIDDEN_PREFIX, limit: 1000, ...(cursor ? { cursor } : {}) })
+    ;(page.keys || []).forEach((item) => keys.add(item.name))
+    cursor = page.list_complete ? null : page.cursor
+  } while (cursor && keys.size < 10000)
+  return keys
+}
+
+async function setExpiringContractHidden(env, familyKey, hidden) {
+  if (!env.CACHE) throw new Error('Shared contract visibility storage is unavailable')
+  const key = expiringHiddenKey(familyKey)
+  if (hidden) {
+    await env.CACHE.put(key, JSON.stringify({ familyKey: clean(familyKey), hiddenAt: new Date().toISOString() }))
+  } else {
+    await env.CACHE.delete(key)
+  }
+  return { familyKey: clean(familyKey), hidden: Boolean(hidden) }
 }
 
 export async function readExpiringNAICS(env) {
@@ -289,6 +421,7 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
   if (!env.SAM_API_KEY) throw new Error('SAM_API_KEY is not configured')
   const from = addMonths(now, 6)
   const to = addMonths(now, 24)
+  const normalizedAgency = normalizeAgency(agency)
   const params = new URLSearchParams({
     api_key: env.SAM_API_KEY,
     limit: String(PAGE_SIZE),
@@ -297,7 +430,9 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
     closedStatus: 'No',
     ultimateCompletionDate: `[${formatSamDate(from)},${formatSamDate(to)}]`,
     naicsCode: naicsCodes.join('~'),
-    [agency.tier === 'department' ? 'contractingDepartmentName' : 'contractingSubtierName']: agency.searchName,
+    [normalizedAgency.tier === 'department'
+      ? (normalizedAgency.agencyCode ? 'contractingDepartmentCode' : 'contractingDepartmentName')
+      : (normalizedAgency.agencyCode ? 'contractingSubtierCode' : 'contractingSubtierName')]: normalizedAgency.agencyCode || normalizedAgency.searchName,
   })
   const response = await fetch(`${AWARDS_BASE}?${params}`)
   if (response.status === 204) return { records: [], total: 0, nextOffset: offset, hasMore: false }
@@ -562,9 +697,12 @@ export async function runExpiringContractsRefresh(env, event, step) {
   }
 }
 
-export async function startExpiringContractsRefresh(env, { agencies = DEFAULT_EXPIRING_AGENCIES, scheduledTime = Date.now(), source = 'manual' } = {}) {
+export async function startExpiringContractsRefresh(env, { agencies, scheduledTime = Date.now(), source = 'manual' } = {}) {
   if (!env.EXPIRING_CONTRACTS_WORKFLOW) throw new Error('Expiring contract Workflow binding is unavailable')
-  const normalized = agencies.map(normalizeAgency).filter((agency) => agency.searchName)
+  const configured = Array.isArray(agencies) && agencies.length
+    ? agencies
+    : (await agencyRegistry(env)).filter((agency) => agency.scheduled !== false)
+  const normalized = configured.map(normalizeAgency).filter((agency) => agency.searchName)
   const existingRegistry = await agencyRegistry(env)
   const mergedRegistry = new Map(existingRegistry.map((agency) => [agency.id, agency]))
   normalized.forEach((agency) => mergedRegistry.set(agency.id, agency))
@@ -611,17 +749,24 @@ function inSelectedRange(contract, range, now = new Date()) {
   return date && date >= addMonths(now, minimum || 6) && date <= addMonths(now, maximum || 12)
 }
 
-async function loadResults(env, agencies, range) {
-  const selected = agencies.length ? agencies : DEFAULT_EXPIRING_AGENCIES
+async function loadResults(env, agencies, range, includeHidden = false) {
+  const selected = agencies.length ? agencies : await agencyRegistry(env)
   const cached = await Promise.all(selected.map((agency) => env.CACHE?.get(resultCacheKey(normalizeAgency(agency)), 'json')))
   const available = cached.filter(Boolean)
   const contractsByFamily = new Map()
   available.flatMap((entry) => entry.contracts).forEach((contract) => {
     if (inSelectedRange(contract, range)) contractsByFamily.set(contract.familyKey, contract)
   })
+  const hiddenKeys = await listHiddenContractKeys(env)
+  const allContracts = [...contractsByFamily.values()].map((contract) => ({
+    ...contract,
+    hidden: hiddenKeys.has(expiringHiddenKey(contract.familyKey)),
+  }))
+  const hiddenCount = allContracts.filter((contract) => contract.hidden).length
   return {
     agencies: available.map(({ agency, official, fetchedAt, contracts }) => ({ agency, official, fetchedAt, count: contracts.length })),
-    contracts: [...contractsByFamily.values()],
+    contracts: includeHidden ? allContracts : allContracts.filter((contract) => !contract.hidden),
+    hiddenCount,
     refreshedAt: available.map((entry) => entry.fetchedAt).sort().at(0) || null,
   }
 }
@@ -746,6 +891,20 @@ async function loadContractDetail(env, url) {
 export async function handleExpiringContracts(req, env) {
   const url = new URL(req.url)
   try {
+    if (url.pathname === '/sam/expiring-contracts/agencies/resolve' && req.method === 'GET') {
+      return json({ agencies: await resolveExpiringAgencies(env, url.searchParams.get('q')) })
+    }
+    if (url.pathname === '/sam/expiring-contracts/agencies' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json({ agencies: await saveExpiringAgency(env, body.agency) })
+    }
+    if (url.pathname === '/sam/expiring-contracts/agencies' && req.method === 'DELETE') {
+      return json({ agencies: await removeExpiringAgency(env, url.searchParams.get('id')) })
+    }
+    if (url.pathname === '/sam/expiring-contracts/visibility' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json(await setExpiringContractHidden(env, body.familyKey, body.hidden))
+    }
     if (url.pathname === '/sam/expiring-contracts/config' && req.method === 'GET') {
       return json({ agencies: await agencyRegistry(env), ranges: ['6-12', '12-18', '18-24'] })
     }
@@ -757,8 +916,13 @@ export async function handleExpiringContracts(req, env) {
       const registry = await agencyRegistry(env)
       const agencies = requested.length
         ? registry.filter((agency) => requested.includes(agency.id))
-        : DEFAULT_EXPIRING_AGENCIES
-      return json(await loadResults(env, agencies, url.searchParams.get('range') || '6-12'))
+        : registry
+      return json(await loadResults(
+        env,
+        agencies,
+        url.searchParams.get('range') || '6-12',
+        url.searchParams.get('includeHidden') === '1',
+      ))
     }
     if (url.pathname === '/sam/expiring-contracts/refresh' && req.method === 'POST') {
       const body = await req.json().catch(() => ({}))
