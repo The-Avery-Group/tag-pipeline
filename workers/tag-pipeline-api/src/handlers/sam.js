@@ -252,6 +252,10 @@ async function getTableRows(env, token, tableName) {
   return (await getTableData(env, token, tableName)).rows
 }
 
+export function isFlaggedSAMOpportunity(row) {
+  return ['yes', 'true', '1', 'flagged'].includes(String(row?.Flagged || '').trim().toLowerCase())
+}
+
 // ── Delete expired + solicitation-superseded rows, one shared cap ──────────
 // (sequential, capped to preserve subrequest budget; descending index order
 // so earlier deletes don't shift the row indices of later ones)
@@ -261,6 +265,7 @@ async function cleanupRows(env, token, existingRows, dedupDeleteRowIndices = new
   const expiredIndices = existingRows
     .filter((r) => {
       if (String(r.Status || '').trim().toLowerCase() === 'dismissed') return false
+      if (isFlaggedSAMOpportunity(r)) return false
       const rd = String(r['Response Date'] || '').trim().slice(0, 10)
       return rd && rd < today
     })
@@ -273,8 +278,11 @@ async function cleanupRows(env, token, existingRows, dedupDeleteRowIndices = new
   const dismissedIndices = new Set(existingRows
     .filter((row) => String(row.Status || '').trim().toLowerCase() === 'dismissed')
     .map((row) => row._rowIndex))
+  const flaggedIndices = new Set(existingRows
+    .filter(isFlaggedSAMOpportunity)
+    .map((row) => row._rowIndex))
   const allIndices = [...new Set([...expiredIndices, ...dedupDeleteRowIndices])]
-    .filter((rowIndex) => !dismissedIndices.has(rowIndex))
+    .filter((rowIndex) => !dismissedIndices.has(rowIndex) && !flaggedIndices.has(rowIndex))
     .sort((a, b) => b - a)   // descending so indices stay valid as we delete
     .slice(0, MAX_DELETES_PER_RUN)
 
@@ -293,7 +301,7 @@ const NEW_OPP_HEADERS = [
   'Notice ID', 'Solicitation Number', 'Title', 'Set-Aside Type',
   'Department', 'Agency', 'Office', 'Response Date', 'Point of Contact',
   'NAICS Code', 'Posted Date', 'SAM.gov URL', 'Date Added', 'Status',
-  'Notice Type',
+  'Notice Type', 'Flagged',
 ]
 
 async function appendOpportunity(env, token, data, headers = NEW_OPP_HEADERS) {
