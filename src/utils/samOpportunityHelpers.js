@@ -82,6 +82,10 @@ export function sortSAMOpportunities(rows, mode = 'dateAdded') {
   })
 }
 
+export function isSAMOpportunityFlagged(value) {
+  return ['yes', 'true', '1', 'flagged'].includes(String(value || '').trim().toLowerCase())
+}
+
 export function samTypeMatches(row, selectedType) {
   if (selectedType === 'All') return true
   const noticeType = normalizeSAMNoticeType(row['Notice Type'])
@@ -107,6 +111,12 @@ function shouldReplaceSAMDuplicate(current, candidate) {
   return Number(candidate._rowIndex || 0) > Number(current._rowIndex || 0)
 }
 
+function mergeSAMDuplicate(current, candidate) {
+  const selected = shouldReplaceSAMDuplicate(current, candidate) ? candidate : current
+  if (!isSAMOpportunityFlagged(current.Flagged) && !isSAMOpportunityFlagged(candidate.Flagged)) return selected
+  return isSAMOpportunityFlagged(selected.Flagged) ? selected : { ...selected, Flagged: 'Yes' }
+}
+
 /**
  * Keeps malformed or concurrently inserted workbook duplicates from
  * rendering twice. RFI and later procurement notices remain separate, while
@@ -122,7 +132,8 @@ export function dedupeSAMOpportunities(rows) {
       return
     }
     const current = byNotice.get(notice)
-    if (!current || shouldReplaceSAMDuplicate(current, row)) byNotice.set(notice, row)
+    if (!current) byNotice.set(notice, row)
+    else byNotice.set(notice, mergeSAMDuplicate(current, row))
   })
 
   const bySolicitationAndType = new Map()
@@ -131,7 +142,8 @@ export function dedupeSAMOpportunities(rows) {
     const type = normalizeSAMNoticeType(row['Notice Type'])
     const key = solicitation ? `${type}:${solicitation}` : `ROW:${row._rowIndex}`
     const current = bySolicitationAndType.get(key)
-    if (!current || shouldReplaceSAMDuplicate(current, row)) bySolicitationAndType.set(key, row)
+    if (!current) bySolicitationAndType.set(key, row)
+    else bySolicitationAndType.set(key, mergeSAMDuplicate(current, row))
   })
   return [...bySolicitationAndType.values()]
 }
