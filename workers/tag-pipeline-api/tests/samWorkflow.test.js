@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeDiscoveryNoticeType, parseOrg, startScheduledSAMPull } from '../src/handlers/sam.js'
+import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, startScheduledSAMPull } from '../src/handlers/sam.js'
 import { runSAMPullWorkflowCheckpoint } from '../src/workflows/samPullChain.js'
+
+test('shared SAM flags are recognized for cleanup protection', () => {
+  assert.equal(isFlaggedSAMOpportunity({ Flagged: 'Yes' }), true)
+  assert.equal(isFlaggedSAMOpportunity({ Flagged: '' }), false)
+})
 
 test('scheduled SAM pulls create one idempotent workflow instance per day', async () => {
   let batch = null
