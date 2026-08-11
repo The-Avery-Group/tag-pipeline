@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   contractEligibility,
   resolveLastModifiedBy,
+  runExpiringContractsRefresh,
   startExpiringContractsRefresh,
   summarizeAwardFamily,
 } from '../src/handlers/expiringContracts.js'
@@ -108,4 +109,70 @@ test('manual expiring refresh creates a durable Workflow instance', async () => 
   })
   assert.equal(result.started, true)
   assert.equal(created[0].params.agencies[0].id, 'cdc')
+  assert.equal(created[0].params.checkpoint, 1)
+  assert.equal(created[0].params.continuation.agencyIndex, 0)
+})
+
+test('an expiring Workflow instance fetches a bounded page batch before continuing', async () => {
+  const previousFetch = globalThis.fetch
+  let fetchCount = 0
+  let created = null
+  const values = new Map()
+  globalThis.fetch = async () => {
+    fetchCount += 1
+    return new Response(JSON.stringify({
+      totalRecords: 700,
+      awardSummary: Array.from({ length: 100 }, (_, index) => award({
+        modificationNumber: `P${String(fetchCount * 100 + index).padStart(5, '0')}`,
+      })),
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  const env = {
+    SAM_API_KEY: 'test-key',
+    CACHE: {
+      async get(key, type) {
+        const value = values.get(key)
+        return type === 'json' && value ? JSON.parse(value) : value || null
+      },
+      async put(key, value) { values.set(key, value) },
+      async delete(key) { values.delete(key) },
+    },
+    EXPIRING_CONTRACTS_WORKFLOW: {
+      async createBatch(batch) { created = batch; return [{ id: batch[0].id }] },
+    },
+  }
+  const step = {
+    async do(_name, optionsOrCallback, maybeCallback) {
+      return (maybeCallback || optionsOrCallback)()
+    },
+  }
+
+  try {
+    const result = await runExpiringContractsRefresh(env, {
+      instanceId: 'expiring-test-1',
+      payload: {
+        runId: 'test-run',
+        checkpoint: 1,
+        agencies: [{ id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' }],
+        continuation: {
+          startedAt: '2026-08-11T00:00:00.000Z',
+          naicsCodes: ['541611'],
+          agencyIndex: 0,
+          offset: 0,
+          pageNumber: 0,
+          storedRecordCount: 0,
+          totalContracts: 0,
+          agencyErrors: [],
+        },
+      },
+    }, step)
+
+    assert.equal(fetchCount, 6)
+    assert.equal(result.status, 'continuing')
+    assert.equal(result.nextCheckpoint, 2)
+    assert.equal(created[0].params.continuation.pageNumber, 6)
+    assert.equal(created[0].params.continuation.offset, 600)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
 })
