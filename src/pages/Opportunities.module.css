@@ -243,6 +243,48 @@
 .newAction:disabled,
 .newActionPipeline:disabled { cursor: default; opacity: 0.7; }
 
+.samFlagButton {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--gray-400);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 20px;
+  height: 22px;
+  justify-content: center;
+  margin: -3px 0;
+  padding: 3px;
+  transition: color 120ms ease, transform 120ms ease;
+  width: 20px;
+}
+
+.samFlagButton svg {
+  fill: none;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 16px;
+}
+
+.samFlagPennant { fill: transparent; }
+
+.samFlagButton:hover:not(:disabled) {
+  color: var(--red-600);
+}
+
+.samFlagActive { color: var(--red-600); }
+.samFlagActive .samFlagPennant { fill: currentColor; }
+.samFlagSaving { cursor: wait; opacity: 0.55; }
+.samFlagButton:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--blue-500);
+  outline-offset: 1px;
+}
+
 .samTypeFilter {
   align-items: center;
   background: var(--surface);
