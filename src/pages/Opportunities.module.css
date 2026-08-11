@@ -115,16 +115,34 @@
   font-size: 13px;
 }
 
-.responseVisibilityBar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
+.searchVisibilityButton {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-left: 0.5px solid var(--gray-200);
+  color: var(--gray-500);
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  font: 600 11px var(--font);
+  gap: 5px;
+  margin: -4px -5px -4px 2px;
+  min-height: 28px;
+  padding: 4px 8px 4px 12px;
 }
 
-.responseVisibilityActive {
+.searchVisibilityButton:hover { color: var(--blue-700); }
+
+.searchVisibilityActive {
   color: var(--blue-800) !important;
   background: var(--blue-50) !important;
-  border-color: var(--blue-200) !important;
+}
+
+.visibilityIcon { font-size: 12px; }
+
+@media (max-width: 620px) {
+  .visibilityLabel { display: none; }
+  .searchVisibilityButton { padding-inline: 10px; }
 }
 
 /* The discovery view is a fixed workspace: only its table scrolls. */
