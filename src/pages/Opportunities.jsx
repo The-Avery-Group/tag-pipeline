@@ -1676,6 +1676,7 @@ export default function Opportunities({ toast }) {
         {activeTab === 'Expiring' && (
           <ExpiringContractDiscovery
             pipeline={pipeline}
+            contacts={contacts}
             add={add}
             openOpportunity={openOpportunity}
             search={search}
