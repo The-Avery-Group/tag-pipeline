@@ -305,6 +305,7 @@
   grid-template-columns: 1fr 1fr 150px;
   margin: 12px 0;
 }
+.ebuyTestActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 
 .setupNotice {
   color: var(--gray-500);
