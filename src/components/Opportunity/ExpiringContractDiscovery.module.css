@@ -67,6 +67,7 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
 .errorCallout strong, .errorCallout span, .warningCallout strong, .warningCallout span { display: block; }
 .errorCallout span, .warningCallout span { margin-top: 2px; }
 .errorCallout button, .warningCallout button { background: transparent; border: 0.5px solid currentColor; border-radius: var(--radius-md); color: inherit; cursor: pointer; flex: 0 0 auto; font: 600 10px var(--font); padding: 5px 8px; }
+.errorCallout button:disabled, .warningCallout button:disabled { cursor: wait; opacity: .6; }
 .muted { color: var(--gray-400); font-size: 11px; }
 @media (max-width: 900px) {
   .controls { grid-template-columns: 1fr 1fr; }
