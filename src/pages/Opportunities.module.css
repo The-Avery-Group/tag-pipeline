@@ -156,6 +156,36 @@
 .newPageBody > .tabRow,
 .newPageBody > .searchBar { flex-shrink: 0; }
 
+.discoverySourceRow {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin: 0 0 9px;
+}
+
+.discoverySourceRow > span {
+  color: var(--gray-500);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  margin-right: 3px;
+  text-transform: uppercase;
+}
+
+.discoverySourceRow button {
+  background: var(--surface);
+  border: .5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  color: var(--gray-600);
+  cursor: pointer;
+  font: 600 11px var(--font);
+  padding: 5px 10px;
+}
+
+.discoverySourceRow button:hover { color: var(--blue-700); }
+.discoverySourceRow .discoverySourceActive { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-800); }
+
 .newTab {
   display: flex;
   flex: 1;
