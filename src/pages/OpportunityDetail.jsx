@@ -671,6 +671,11 @@ export default function OpportunityDetail({ toast }) {
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
   const isRfiWorkflow = isRfiWorkflowOpportunity(cur, C)
   const noticeType = normalizeNoticeType(f(C.noticeType))
+  const noticeTypeBadgeClass = noticeType === 'MRAS'
+    ? 'badge-qualify'
+    : noticeType === 'RFI'
+      ? 'badge-tracking'
+      : 'badge-proposal'
   const submissionDateLabel = noticeType === 'MRAS' ? 'MRAS submission date' : noticeType === 'RFI' ? 'RFI submission date' : 'Response date'
   const hasIncumbentHistory = /^[A-Z0-9]{12}$/.test(String(opp[C.incumbentUEI] || '').trim().toUpperCase())
   const sectionGroups = [
@@ -1234,7 +1239,7 @@ export default function OpportunityDetail({ toast }) {
                   <>
                     <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
                     {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
-                    {normalizeNoticeType(opp[C.noticeType]) && <span className={`badge ${normalizeNoticeType(opp[C.noticeType]) === 'MRAS' ? 'badge-qualify' : normalizeNoticeType(opp[C.noticeType]) === 'RFI' ? 'badge-tracking' : 'badge-proposal'}`}>{normalizeNoticeType(opp[C.noticeType])}</span>}
+                    {noticeType && <span className={`badge ${noticeTypeBadgeClass}`}>{noticeType}</span>}
                   </>
                 )
               }
