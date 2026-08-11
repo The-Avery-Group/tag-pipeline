@@ -23,6 +23,9 @@ import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
+import { getEbuyStatus, handleEbuy } from './handlers/ebuy.js'
+import { purgeExpiredEbuyRecords } from './lib/ebuyRepository.js'
+import { deleteArchivedEbuyFile } from './lib/sharepointArchive.js'
 import { AuthError, verifyEntraRequest } from './lib/auth.js'
 import { getAutomationHealth } from './lib/automationHealth.js'
 
@@ -40,7 +43,7 @@ function corsHeaders(env, req) {
 
   return {
     'Access-Control-Allow-Origin':  isAllowed ? origin : allowed,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age':       '86400',
   }
@@ -99,12 +102,13 @@ export default {
         response = await handleAIChat(req, env)
 
       } else if (path === '/integrations/status' && req.method === 'GET') {
-        const [capabilities, notifications, automation] = await Promise.all([
+        const [capabilities, notifications, automation, ebuy] = await Promise.all([
           getCapabilitiesStatus(env),
           getNotificationMonitorStatus(env),
           getAutomationHealth(env),
+          getEbuyStatus(env),
         ])
-        response = json({ capabilities, notifications, automation })
+        response = json({ capabilities, notifications, automation, ebuy })
 
       } else if (path === '/integrations/capabilities/refresh' && req.method === 'POST') {
         const result = await manuallyRefreshCapabilities(env)
@@ -149,6 +153,9 @@ export default {
 
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
+
+      } else if (path.startsWith('/ebuy/') && ['GET', 'POST', 'PATCH'].includes(req.method)) {
+        response = await handleEbuy(req, env)
 
       } else {
         response = json({ error: 'Not found' }, 404)
@@ -202,9 +209,19 @@ export default {
     // Teams reminders retain their dedicated 2:01 PM WAT run.
     if (controller.cron === '1 13 * * *') {
       ctx.waitUntil(runScheduledNotifications(env))
+      // Retention is intentionally modest and only runs once each Monday.
+      // Protected records remain until a user explicitly changes their state.
+      if (new Date(controller.scheduledTime).getUTCDay() === 1 && env.EBUY_DB) {
+        ctx.waitUntil(purgeExpiredEbuyRecords(env.EBUY_DB, {
+          deleteFile: (driveId, itemId) => deleteArchivedEbuyFile(env, driveId, itemId),
+        }).catch((error) => {
+          console.error(JSON.stringify({ event: 'ebuy_retention_failed', message: error.message }))
+        }))
+      }
     }
   },
 }
 
 export { SAMPullWorkflow } from './workflows/samPull.js'
 export { ExpiringContractsWorkflow } from './workflows/expiringContracts.js'
+export { EbuySyncWorkflow } from './workflows/ebuySync.js'
