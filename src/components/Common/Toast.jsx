@@ -5,7 +5,8 @@ export function ToastContainer({ toasts }) {
     <div className={styles.container} role="region" aria-live="polite" aria-label="Notifications">
       {toasts.map((t) => (
         <div key={t.id} className={`${styles.toast} ${styles[t.type]}`}>
-          {t.message}
+          <span>{t.message}</span>
+          {t.action && <button type="button" onClick={t.action.onClick}>{t.action.label}</button>}
         </div>
       ))}
     </div>
