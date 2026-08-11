@@ -61,7 +61,12 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
 .pocList a { color: var(--blue-700); font-size: 10px; }
 .detailActions { display: flex; gap: 7px; grid-column: 1 / -1; justify-content: flex-end; }
 .loading, .empty { color: var(--gray-400); font-size: 12px; padding: 36px 20px; text-align: center; }
-.errorCallout { background: var(--red-50); border: 0.5px solid var(--red-200); border-radius: var(--radius-md); color: var(--red-700); font-size: 11px; padding: 8px 10px; }
+.errorCallout, .warningCallout { align-items: center; border-radius: var(--radius-md); display: flex; font-size: 11px; gap: 12px; justify-content: space-between; padding: 8px 10px; }
+.errorCallout { background: var(--red-50); border: 0.5px solid var(--red-200); color: var(--red-700); }
+.warningCallout { background: var(--amber-50, #fffbeb); border: 0.5px solid var(--amber-200, #fde68a); color: var(--amber-800, #92400e); }
+.errorCallout strong, .errorCallout span, .warningCallout strong, .warningCallout span { display: block; }
+.errorCallout span, .warningCallout span { margin-top: 2px; }
+.errorCallout button, .warningCallout button { background: transparent; border: 0.5px solid currentColor; border-radius: var(--radius-md); color: inherit; cursor: pointer; flex: 0 0 auto; font: 600 10px var(--font); padding: 5px 8px; }
 .muted { color: var(--gray-400); font-size: 11px; }
 @media (max-width: 900px) {
   .controls { grid-template-columns: 1fr 1fr; }
