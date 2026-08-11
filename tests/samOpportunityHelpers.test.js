@@ -4,6 +4,7 @@ import {
   applySAMSnapshot,
   buildSAMOpportunityPatch,
   dedupeSAMOpportunities,
+  isSAMOpportunityFlagged,
   normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
@@ -61,6 +62,20 @@ test('collapses duplicate discovery rows without merging an RFI into its RFP fol
 
   const result = dedupeSAMOpportunities(rows)
   assert.deepEqual(result.map((row) => row._rowIndex).sort(), [2, 3])
+})
+
+test('recognizes shared flags and preserves them when duplicate rows collapse', () => {
+  assert.equal(isSAMOpportunityFlagged('Yes'), true)
+  assert.equal(isSAMOpportunityFlagged(''), false)
+
+  const result = dedupeSAMOpportunities([
+    { _rowIndex: 1, 'Notice ID': 'same', 'Solicitation Number': 'ABC-1', 'Notice Type': 'RFI', Status: 'new', Flagged: 'Yes', 'Posted Date': '2026-07-20' },
+    { _rowIndex: 2, 'Notice ID': 'same', 'Solicitation Number': 'ABC-1', 'Notice Type': 'RFI', Status: 'new', Flagged: '', 'Posted Date': '2026-07-21' },
+  ])
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0]._rowIndex, 2)
+  assert.equal(result[0].Flagged, 'Yes')
 })
 
 test('builds a reviewable pipeline patch without replacing the contract identifier', () => {
