@@ -12,6 +12,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import ExpiringContractDiscovery from '@/components/Opportunity/ExpiringContractDiscovery'
+import EbuyDiscovery from '@/components/Opportunity/EbuyDiscovery'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
@@ -199,7 +200,9 @@ export default function Opportunities({ toast }) {
   // shows real, dismissible filter chips exactly as if applied manually).
   const requestedTab = searchParams.get('tab') === 'RFIs' ? 'Responses' : searchParams.get('tab')
   const activeTab = TABS.includes(requestedTab) ? requestedTab : 'All'
+  const discoverySource = searchParams.get('source') === 'ebuy' ? 'ebuy' : 'sam'
   const search    = searchParams.get('search') || ''
+  const [ebuyCount, setEbuyCount] = useState(0)
   const rfiFollowUpIds = useMemo(() => {
     try {
       const values = JSON.parse(searchParams.get('rfiFollowUps') || '[]')
@@ -1488,7 +1491,7 @@ export default function Opportunities({ toast }) {
     <>
       <Topbar
         title="Opportunities"
-        subtitle1={`${activeTab === 'New' ? visibleSAMOpps.length : filtered.length} shown`}
+        subtitle1={`${activeTab === 'New' ? (discoverySource === 'ebuy' ? ebuyCount : visibleSAMOpps.length) : filtered.length} shown`}
         showFilter={activeTab !== 'New'}
         showNew={true}
         newLabel="New opportunity"
@@ -1505,7 +1508,7 @@ export default function Opportunities({ toast }) {
               className={`${styles.tab} ${activeTab === tab ? styles.tabActive : ''}`}
               onClick={() => handleTabChange(tab)}
             >
-              <span title={tab === 'New' ? 'SAM opportunities' : undefined}>{tab === 'New' ? 'SAM' : tab}</span>
+              <span title={tab === 'New' ? 'New opportunity discovery' : undefined}>{tab}</span>
               {tab !== 'New' && tabCounts[tab] > 0 && (
                 <span className={styles.tabBadge}>{tabCounts[tab]}</span>
               )}
@@ -1522,7 +1525,9 @@ export default function Opportunities({ toast }) {
             </span>
             <input
               className={styles.searchInput}
-              placeholder={activeTab === 'New' ? 'Search all SAM opportunity fields…' : 'Search all opportunity fields and linked notes…'}
+              placeholder={activeTab === 'New'
+                ? discoverySource === 'ebuy' ? 'Search all archived eBuy opportunity fields…' : 'Search all SAM opportunity fields…'
+                : 'Search all opportunity fields and linked notes…'}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search opportunities"
@@ -1530,7 +1535,7 @@ export default function Opportunities({ toast }) {
             {search && (
               <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">✕</button>
             )}
-            {activeTab === 'New' && samOpps.some((opportunity) => opportunity.Status === 'dismissed') && (
+            {activeTab === 'New' && discoverySource === 'sam' && samOpps.some((opportunity) => opportunity.Status === 'dismissed') && (
               <button
                 type="button"
                 className={`${styles.searchVisibilityButton} ${showDismissed ? styles.searchVisibilityActive : ''}`}
@@ -1721,8 +1726,18 @@ export default function Opportunities({ toast }) {
           </div>
         )}
 
-        {/* ── New tab: SAM.gov opportunities ── */}
-        {activeTab === 'New' && renderNewTab()}
+        {/* ── New opportunity discovery sources ── */}
+        {activeTab === 'New' && (
+          <div className={styles.discoverySourceRow} role="group" aria-label="Opportunity source">
+            <span>Source</span>
+            <button className={discoverySource === 'sam' ? styles.discoverySourceActive : ''} onClick={() => updateParams({ source: 'sam' })}>SAM.gov</button>
+            <button className={discoverySource === 'ebuy' ? styles.discoverySourceActive : ''} onClick={() => updateParams({ source: 'ebuy' })}>GSA eBuy</button>
+          </div>
+        )}
+        {activeTab === 'New' && discoverySource === 'sam' && renderNewTab()}
+        {activeTab === 'New' && discoverySource === 'ebuy' && (
+          <EbuyDiscovery search={search} pipeline={pipeline} add={add} toast={toast} onCountChange={setEbuyCount} />
+        )}
 
         {/* ── Pipeline tabs: Responses / Expiring / Tracked ── */}
         {activeTab === 'Expiring' && (
