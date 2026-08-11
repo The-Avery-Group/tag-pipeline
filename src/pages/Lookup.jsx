@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useContacts } from '@/hooks/useContacts'
@@ -91,6 +91,7 @@ export default function Lookup({ toast }) {
   const [input, setInput] = useState('')
   const [awardeeUEI, setAwardeeUEI] = useState('')
   const [selectedModification, setSelectedModification] = useState({})
+  const autoLookupRef = useRef('')
   const requestedView = searchParams.get('view')
   const lookupView = ['entity', 'people'].includes(requestedView) ? requestedView : 'awards'
 
@@ -129,6 +130,16 @@ export default function Lookup({ toast }) {
   }
 
   const handleKeyDown = (e) => { if (e.key === 'Enter') handleSearch() }
+
+  useEffect(() => {
+    const piid = String(searchParams.get('piid') || '').trim()
+    const uei = String(searchParams.get('uei') || '').trim().toUpperCase()
+    if (!piid || autoLookupRef.current === `${piid}|${uei}`) return
+    autoLookupRef.current = `${piid}|${uei}`
+    setInput(piid)
+    setAwardeeUEI(uei)
+    lookup({ piid, awardeeUEI: uei })
+  }, [lookup, searchParams])
 
   const isInPipeline = (piid) => pipeline.some((o) => o[C_CONTRACT_NUM] === piid)
 
