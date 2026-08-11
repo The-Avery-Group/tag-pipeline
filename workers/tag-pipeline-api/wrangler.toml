@@ -27,6 +27,11 @@ name = "sam-opportunity-pull"
 binding = "SAM_PULL_WORKFLOW"
 class_name = "SAMPullWorkflow"
 
+[[workflows]]
+name = "sam-expiring-contracts"
+binding = "EXPIRING_CONTRACTS_WORKFLOW"
+class_name = "ExpiringContractsWorkflow"
+
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
@@ -34,6 +39,7 @@ ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 [triggers]
 # All cron schedules are UTC. 12:00 UTC is 1:00 PM Nigeria time (WAT).
 # - SAM change checks: 00:00 and 12:00 UTC every day
+# - Expiring contract refresh: Monday and Thursday at 00:00 UTC (1:00 AM WAT)
 # - Autonomous SAM opportunity pulls: weekdays at 1:00 PM WAT
 # - RFI follow-up monitor: Monday, Wednesday, Friday at 1:00 PM WAT
 # - Capability document eTag checks: every day at 1:01 PM WAT
