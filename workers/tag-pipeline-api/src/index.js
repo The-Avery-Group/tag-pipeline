@@ -18,6 +18,7 @@ import {
 } from './handlers/ai.js'
 import { handleSAM, startScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
+import { handleExpiringContracts, startExpiringContractsRefresh } from './handlers/expiringContracts.js'
 import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
@@ -143,6 +144,9 @@ export default {
       } else if (path === '/awards/lookup' && req.method === 'GET') {
         response = await handleAwards(req, env)
 
+      } else if (path.startsWith('/sam/expiring-contracts/') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleExpiringContracts(req, env)
+
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
 
@@ -172,6 +176,14 @@ export default {
         return runSAMMonitorCheck(env, cursor, { scheduled: true })
       })())
 
+      const scheduledDate = new Date(controller.scheduledTime)
+      if (scheduledDate.getUTCHours() === 0 && [1, 4].includes(scheduledDate.getUTCDay())) {
+        ctx.waitUntil(startExpiringContractsRefresh(env, {
+          scheduledTime: controller.scheduledTime,
+          source: 'scheduled',
+        }))
+      }
+
       // The noon UTC SAM-change pass also starts the independent weekday
       // pull/follow-up work, so the two jobs share one cron trigger.
       if (new Date(controller.scheduledTime).getUTCHours() === 12) {
@@ -195,3 +207,4 @@ export default {
 }
 
 export { SAMPullWorkflow } from './workflows/samPull.js'
+export { ExpiringContractsWorkflow } from './workflows/expiringContracts.js'
