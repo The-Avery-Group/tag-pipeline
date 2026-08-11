@@ -29,7 +29,7 @@ function isPresent(value) {
   return value !== null && value !== undefined && value !== ''
 }
 
-function recordDate(record) {
+export function recordDate(record) {
   // A base award (modification number 0) can be re-indexed or edited in SAM
   // long after it was signed. Its SAM metadata timestamp must not make it
   // appear newer than subsequent modifications.
@@ -40,11 +40,11 @@ function recordDate(record) {
   return date && !Number.isNaN(date.getTime()) ? date : new Date(0)
 }
 
-function normalizeIdentifier(value) {
+export function normalizeIdentifier(value) {
   return String(value || '').trim().toUpperCase()
 }
 
-function normalizedIdentifier(value) {
+export function normalizedIdentifier(value) {
   return normalizeIdentifier(value).replace(/-/g, '')
 }
 
@@ -66,7 +66,7 @@ function stableRecordId(record) {
   ].join('|')
 }
 
-function dedupeRecords(records) {
+export function dedupeRecords(records) {
   const seen = new Map()
   for (const record of records) {
     const key = stableRecordId(record)
@@ -80,7 +80,7 @@ function dedupeRecords(records) {
   return [...seen.values()]
 }
 
-function buildSamGovLink(record) {
+export function buildSamGovLink(record) {
   const piid = record?.contractId?.piid
   if (!piid) return null
   const params = new URLSearchParams({
@@ -103,7 +103,7 @@ function sourceFor(record) {
   }
 }
 
-function latestValue(records, getValue) {
+export function latestValue(records, getValue) {
   for (let i = records.length - 1; i >= 0; i--) {
     const value = getValue(records[i])
     if (isPresent(value)) return { value, source: sourceFor(records[i]) }
@@ -184,7 +184,7 @@ function extractCurrentStateFields(records, aggregation, awardNotice) {
   return extractAwardFields((getter) => latestValue(records, getter), { aggregation, awardNotice })
 }
 
-function extractModificationSnapshotFields(record) {
+export function extractModificationSnapshotFields(record) {
   const direct = (getter) => ({ value: getter(record), source: sourceFor(record) })
   return {
     ...extractAwardFields(direct, { historical: true }),
@@ -241,7 +241,7 @@ function extractTransactionFields(record, section = 'Latest modification') {
   }
 }
 
-function getContractLifecycleAlert(records) {
+export function getContractLifecycleAlert(records) {
   let alert = null
 
   for (const record of records) {
@@ -264,7 +264,7 @@ function getContractLifecycleAlert(records) {
   return alert
 }
 
-async function fetchAwards(env, params) {
+export async function fetchAwards(env, params) {
   const records = []
   let aggregation = null
   let offset = 0
@@ -329,17 +329,17 @@ function dateWindow(dateValue) {
   return { from: formatSamDate(from), to: formatSamDate(to) }
 }
 
-function primaryPoc(pointOfContact) {
+export function primaryPoc(pointOfContact) {
   if (!Array.isArray(pointOfContact) || pointOfContact.length === 0) return null
   return pointOfContact.find((poc) => String(poc?.type || '').toLowerCase() === 'primary') || pointOfContact[0]
 }
 
-function noticeLink(notice) {
+export function noticeLink(notice) {
   const value = String(notice?.uiLink || '').trim()
   return value && value !== 'null' ? value : null
 }
 
-async function searchAwardNotices(env, solicitationNumber, window) {
+export async function searchAwardNotices(env, solicitationNumber, window) {
   const query = new URLSearchParams({
     api_key: env.SAM_API_KEY,
     ptype: 'a',
@@ -414,7 +414,7 @@ async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDa
   }
 }
 
-function groupByAwardFamily(records) {
+export function groupByAwardFamily(records) {
   const groups = new Map()
   for (const record of records) {
     const contract = record?.contractId || {}
