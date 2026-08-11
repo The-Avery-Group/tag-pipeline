@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useExpiringContracts } from '@/hooks/useExpiringContracts'
 import { formatDate } from '@/utils/kpiHelpers'
@@ -97,24 +97,43 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
   const [range, setRange] = useState('6-12')
   const [selectedAgencyIds, setSelectedAgencyIds] = useState([])
   const [agencyMenuOpen, setAgencyMenuOpen] = useState(false)
-  const [customAgency, setCustomAgency] = useState('')
-  const [customAgencies, setCustomAgencies] = useState([])
+  const [agencySearch, setAgencySearch] = useState('')
+  const [agencyMatches, setAgencyMatches] = useState([])
+  const [agencyResolving, setAgencyResolving] = useState(false)
+  const [agencyResolveError, setAgencyResolveError] = useState('')
+  const [showHidden, setShowHidden] = useState(false)
   const [expanded, setExpanded] = useState(new Set())
   const [details, setDetails] = useState({})
   const [detailLoading, setDetailLoading] = useState(new Set())
   const [addingKey, setAddingKey] = useState('')
   const [modifierChoices, setModifierChoices] = useState({})
   const [refreshStarting, setRefreshStarting] = useState(false)
+  const [visibilityKey, setVisibilityKey] = useState('')
   const refreshStartingRef = useRef(false)
-  const { config, contracts, status, loading, error, refresh, loadDetail } = useExpiringContracts(range, selectedAgencyIds)
+  const agencyControlRef = useRef(null)
+  const {
+    config,
+    contracts,
+    hiddenCount,
+    status,
+    loading,
+    error,
+    refresh,
+    loadDetail,
+    resolveAgencies,
+    saveAgency,
+    removeAgency,
+    setContractHidden,
+  } = useExpiringContracts(range, selectedAgencyIds, showHidden)
 
-  const agencies = useMemo(() => {
-    const byId = new Map((config.agencies || []).map((agency) => [agency.id, agency]))
-    customAgencies.forEach((agency) => byId.set(agency.id, agency))
-    return [...byId.values()]
-  }, [config.agencies, customAgencies])
-  const effectiveAgencyIds = selectedAgencyIds.length ? selectedAgencyIds : agencies.filter((agency) => !agency.custom).map((agency) => agency.id)
+  const agencies = config.agencies || []
+  const effectiveAgencyIds = selectedAgencyIds.length ? selectedAgencyIds : agencies.map((agency) => agency.id)
   const selectedAgencies = agencies.filter((agency) => effectiveAgencyIds.includes(agency.id))
+  const agencyPickerLabel = selectedAgencies.length === agencies.length
+    ? 'All target agencies'
+    : selectedAgencies.length <= 2
+      ? selectedAgencies.map((agency) => agency.label).join(', ') || 'No agencies selected'
+      : `${selectedAgencies.slice(0, 2).map((agency) => agency.label).join(', ')} + ${selectedAgencies.length - 2} more`
   const pipelineById = useMemo(() => new Map(pipeline.map((opportunity) => [String(opportunity[C.id] || '').trim().toUpperCase(), opportunity])), [pipeline])
   const visibleContracts = useMemo(() => {
     const needle = String(search || '').trim().toLowerCase()
@@ -122,9 +141,25 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
     return contracts.filter((contract) => Object.values(contract).some((value) => String(value || '').toLowerCase().includes(needle)))
   }, [contracts, search])
 
+  useEffect(() => {
+    if (!agencyMenuOpen) return undefined
+    const closeOnOutside = (event) => {
+      if (!agencyControlRef.current?.contains(event.target)) setAgencyMenuOpen(false)
+    }
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setAgencyMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [agencyMenuOpen])
+
   const toggleAgency = (id) => {
     setSelectedAgencyIds((current) => {
-      const base = current.length ? current : agencies.filter((agency) => !agency.custom).map((agency) => agency.id)
+      const base = current.length ? current : agencies.map((agency) => agency.id)
       return base.includes(id) ? base.filter((value) => value !== id) : [...base, id]
     })
   }
@@ -144,17 +179,54 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
     }
   }
 
-  const addCustomAgency = () => {
-    const value = customAgency.trim()
-    if (!value) return
-    const id = `custom-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
-    const custom = { id, label: value, searchName: value, tier: 'subtier', custom: true }
-    setCustomAgencies((current) => current.some((agency) => agency.id === id) ? current : [...current, custom])
-    setSelectedAgencyIds((current) => {
-      const base = current.length ? current : agencies.filter((agency) => !agency.custom).map((agency) => agency.id)
-      return [...new Set([...base, id])]
-    })
-    setCustomAgency('')
+  const searchAgencies = async () => {
+    const query = agencySearch.trim()
+    if (query.length < 2 || agencyResolving) return
+    setAgencyResolving(true)
+    setAgencyResolveError('')
+    try {
+      const matches = await resolveAgencies(query)
+      setAgencyMatches(matches)
+      if (!matches.length) setAgencyResolveError('No active SAM department or subagency matched this search.')
+    } catch (nextError) {
+      setAgencyMatches([])
+      setAgencyResolveError(nextError.message)
+    } finally {
+      setAgencyResolving(false)
+    }
+  }
+
+  const addResolvedAgency = async (agency) => {
+    try {
+      if (agency.saved) {
+        const savedId = agency.savedId || agency.id
+        setSelectedAgencyIds((current) => [...new Set([...(current.length ? current : agencies.map((item) => item.id)), savedId])])
+        setAgencySearch('')
+        setAgencyMatches([])
+        setAgencyResolveError('')
+        return
+      }
+      const previousIds = effectiveAgencyIds
+      const nextAgencies = await saveAgency(agency)
+      const savedAgency = nextAgencies.find((item) => item.organizationId && item.organizationId === agency.organizationId) || agency
+      setSelectedAgencyIds([...new Set([...previousIds, savedAgency.id])].filter((id) => nextAgencies.some((item) => item.id === id)))
+      setAgencySearch('')
+      setAgencyMatches([])
+      setAgencyResolveError('')
+      toast?.success(`${agency.label} added to target agencies`)
+    } catch (nextError) {
+      toast?.error(`Agency could not be added: ${nextError.message}`)
+    }
+  }
+
+  const removeResolvedAgency = async (agency) => {
+    try {
+      await removeAgency(agency.id)
+      setSelectedAgencyIds((current) => current.filter((id) => id !== agency.id))
+      toast?.success(`${agency.label} removed from target agencies`)
+    } catch (nextError) {
+      toast?.error(`Agency could not be removed: ${nextError.message}`)
+    }
   }
 
   const toggleDetails = async (contract) => {
@@ -214,6 +286,28 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
     }
   }
 
+  const changeContractVisibility = async (contract, hidden, { quiet = false } = {}) => {
+    if (visibilityKey) return
+    setVisibilityKey(contract.familyKey)
+    try {
+      await setContractHidden(contract.familyKey, hidden)
+      if (!quiet && hidden) {
+        toast?.success('Contract hidden', {
+          action: {
+            label: 'Undo',
+            onClick: () => changeContractVisibility(contract, false, { quiet: true }),
+          },
+        })
+      } else if (!quiet) {
+        toast?.success('Contract restored')
+      }
+    } catch (nextError) {
+      toast?.error(`Contract visibility could not be changed: ${nextError.message}`)
+    } finally {
+      setVisibilityKey('')
+    }
+  }
+
   const progress = status.currentPages
     ? Math.min(99, Math.round(((status.agencyIndex + (status.currentPage / status.currentPages)) / Math.max(1, status.agencyTotal)) * 100))
     : Math.min(95, Math.round((status.agencyIndex / Math.max(1, status.agencyTotal)) * 100))
@@ -236,28 +330,54 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                 <option value="18-24">18 to 24 months</option>
               </select>
             </label>
-            <div className={styles.agencyControl}>
-              <span>Agencies</span>
-              <button type="button" className={styles.agencyPicker} onClick={() => setAgencyMenuOpen((current) => !current)}>
-                {selectedAgencies.length === agencies.length ? 'Default agencies' : `${selectedAgencies.length} selected`}
+            <div className={styles.agencyControl} ref={agencyControlRef}>
+              <span>Agencies to show</span>
+              <button
+                type="button"
+                className={styles.agencyPicker}
+                aria-expanded={agencyMenuOpen}
+                title="Filters the contracts shown below. A manual refresh updates only the selected agencies."
+                onClick={() => setAgencyMenuOpen((current) => !current)}
+              >
+                <span>{agencyPickerLabel}</span>
                 <span>⌄</span>
               </button>
               {agencyMenuOpen && (
                 <div className={styles.agencyMenu}>
+                  <p className={styles.agencyHint}>Choose which agencies appear below. Refresh uses this same selection.</p>
                   {agencies.map((agency) => (
-                    <label key={agency.id}>
-                      <input type="checkbox" checked={effectiveAgencyIds.includes(agency.id)} onChange={() => toggleAgency(agency.id)} />
-                      <span>{agency.label}</span>
-                      {agency.custom && <small>Custom</small>}
-                    </label>
+                    <div className={styles.agencyOption} key={agency.id}>
+                      <label>
+                        <input type="checkbox" checked={effectiveAgencyIds.includes(agency.id)} onChange={() => toggleAgency(agency.id)} />
+                        <span>{agency.label}</span>
+                        {agency.custom && <small>Added</small>}
+                      </label>
+                      {agency.custom && <button type="button" className={styles.removeAgency} title={`Remove ${agency.label}`} aria-label={`Remove ${agency.label}`} onClick={() => removeResolvedAgency(agency)}>×</button>}
+                    </div>
                   ))}
-                  <div className={styles.customAgency}>
-                    <input value={customAgency} onChange={(event) => setCustomAgency(event.target.value)} placeholder="Add another official agency name" onKeyDown={(event) => { if (event.key === 'Enter') addCustomAgency() }} />
-                    <button type="button" onClick={addCustomAgency}>Add</button>
+                  <div className={styles.agencyResolver}>
+                    <span>Add another SAM agency</span>
+                    <div>
+                      <input value={agencySearch} onChange={(event) => setAgencySearch(event.target.value)} placeholder="Search official agency name or acronym" onKeyDown={(event) => { if (event.key === 'Enter') searchAgencies() }} />
+                      <button type="button" onClick={searchAgencies} disabled={agencyResolving || agencySearch.trim().length < 2}>{agencyResolving ? 'Searching…' : 'Search'}</button>
+                    </div>
+                    {agencyResolveError && <small className={styles.agencyResolveError}>{agencyResolveError}</small>}
+                    {agencyMatches.length > 0 && <div className={styles.agencyMatches}>
+                      {agencyMatches.map((agency) => (
+                        <button type="button" key={`${agency.id}-${agency.savedId || ''}`} onClick={() => addResolvedAgency(agency)}>
+                          <strong>{agency.label}</strong>
+                          <span>{agency.tier === 'department' ? 'Department' : 'Subagency'}{agency.agencyCode ? ` · ${agency.agencyCode}` : ''}{agency.saved ? ' · Already added' : ''}</span>
+                          {agency.parentName && <small>{agency.parentName}</small>}
+                        </button>
+                      ))}
+                    </div>}
                   </div>
                 </div>
               )}
             </div>
+            <button type="button" className={`${styles.hiddenToggle} ${showHidden ? styles.hiddenToggleActive : ''}`} onClick={() => setShowHidden((current) => !current)}>
+              {showHidden ? 'Hide hidden' : `Show hidden${hiddenCount ? ` (${hiddenCount})` : ''}`}
+            </button>
             <button type="button" className="btn btn-primary" onClick={runRefresh} disabled={refreshStarting || ['queued', 'running'].includes(status.status)}>
               {refreshStarting ? 'Starting…' : ['queued', 'running'].includes(status.status) ? 'Refreshing…' : 'Refresh contracts'}
             </button>
@@ -286,7 +406,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
 
           <div className={styles.summaryRow}>
             <strong>{visibleContracts.length} contract{visibleContracts.length === 1 ? '' : 's'}</strong>
-            <span>{status.refreshedAt ? `Refreshed ${new Date(status.refreshedAt).toLocaleString()}` : 'Not refreshed yet'}</span>
+            <span>{showHidden && hiddenCount ? `${hiddenCount} hidden contract${hiddenCount === 1 ? '' : 's'} included · ` : ''}{status.refreshedAt ? `Refreshed ${new Date(status.refreshedAt).toLocaleString()}` : 'Not refreshed yet'}</span>
           </div>
           {error && <div className={styles.errorCallout}><span>{error}</span></div>}
 
@@ -305,8 +425,8 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                       const isOpen = expanded.has(contract.familyKey)
                       const detail = details[contract.familyKey] || contract
                       return [
-                        <tr key={contract.familyKey}>
-                          <td><strong>{contract.title || contract.piid}</strong><small>{contract.piid}</small></td>
+                        <tr key={contract.familyKey} className={contract.hidden ? styles.hiddenRow : ''}>
+                          <td><strong>{contract.title || contract.piid}</strong><small>{contract.piid}</small>{contract.hidden && <small className={styles.hiddenLabel}>Hidden from normal results</small>}</td>
                           <td><span>{contract.agency || 'Not available'}</span><small>{contract.office || contract.department || ''}</small></td>
                           <td><span>{contract.incumbentName || 'Not available'}</span><small>{contract.incumbentUEI || ''}</small></td>
                           <td>{contract.naicsCode || 'Not available'}</td>
@@ -318,6 +438,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                                 ? <button type="button" className={styles.pipelineButton} onClick={() => openOpportunity(existing)}>View in pipeline</button>
                                 : <button type="button" className={styles.pipelineButton} disabled={addingKey === contract.familyKey} onClick={() => handleAdd(contract)}>{addingKey === contract.familyKey ? 'Adding…' : 'Add to pipeline'}</button>}
                               {contract.samLink && <a className={styles.samButton} href={contract.samLink} target="_blank" rel="noreferrer">SAM.gov</a>}
+                              <button type="button" className={contract.hidden ? styles.restoreButton : styles.visibilityButton} disabled={visibilityKey === contract.familyKey} onClick={() => changeContractVisibility(contract, !contract.hidden)}>{visibilityKey === contract.familyKey ? 'Saving…' : contract.hidden ? 'Restore' : 'Hide'}</button>
                             </div>
                           </td>
                           <td><button type="button" className={styles.expandButton} title={isOpen ? 'Collapse contract details' : 'Expand contract details'} aria-expanded={isOpen} onClick={() => toggleDetails(contract)}>{isOpen ? '⌃' : '⌄'}</button></td>
