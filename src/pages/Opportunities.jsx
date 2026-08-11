@@ -17,6 +17,7 @@ import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
   applySAMSnapshot,
   dedupeSAMOpportunities,
+  isSAMOpportunityFlagged,
   normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
@@ -527,6 +528,7 @@ export default function Opportunities({ toast }) {
     addToPipeline,
     dismiss,
     undismiss,
+    updateFlag,
     failedStatuses,
     retryStatus,
     triggerPull,
@@ -542,6 +544,8 @@ export default function Opportunities({ toast }) {
   const [samSortMode, setSAMSortMode] = useState('dateAdded')
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
+  const [flaggingRows, setFlaggingRows] = useState(new Set())
+  const flaggingRowsRef = useRef(new Set())
   const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
   const [selectionMode, setSelectionMode] = useState(false)
   const [bulkProgress, setBulkProgress] = useState(null)
@@ -666,6 +670,10 @@ export default function Opportunities({ toast }) {
 
   const handleDismiss = async (row) => {
     if (actioningRow === row._rowIndex) return
+    if (isSAMOpportunityFlagged(row.Flagged)) {
+      const confirmed = window.confirm(`This opportunity is flagged for the team. Dismiss "${row.Title || 'this opportunity'}" anyway?`)
+      if (!confirmed) return
+    }
     setActioningRow(row._rowIndex)
     saveScroll()
     try {
@@ -679,9 +687,16 @@ export default function Opportunities({ toast }) {
 
   const handleBulkAction = async (kind) => {
     if (selectedRows.size === 0 || bulkProgress) return
-    saveScroll()
     const rows = visibleSAMOpps.filter((row) => selectedRows.has(row._rowIndex) && !['dismissed', 'added_to_pipeline', 'tracked'].includes(row.Status || 'new'))
     if (!rows.length) return
+    if (kind === 'dismiss') {
+      const flaggedCount = rows.filter((row) => isSAMOpportunityFlagged(row.Flagged)).length
+      if (flaggedCount > 0) {
+        const confirmed = window.confirm(`${flaggedCount} flagged opportunit${flaggedCount === 1 ? 'y is' : 'ies are'} included. Dismiss ${flaggedCount === 1 ? 'it' : 'them'} anyway?`)
+        if (!confirmed) return
+      }
+    }
+    saveScroll()
     setBulkProgress({ kind, completed: 0, total: rows.length })
     let failed = 0
     for (const [index, row] of rows.entries()) {
@@ -729,6 +744,22 @@ export default function Opportunities({ toast }) {
       toast?.error(`Still unable to save: ${err.message}`)
     } finally {
       setActioningRow(null)
+    }
+  }
+
+  const handleToggleFlag = async (row) => {
+    const rowIndex = row._rowIndex
+    if (flaggingRowsRef.current.has(rowIndex)) return
+    flaggingRowsRef.current.add(rowIndex)
+    setFlaggingRows(new Set(flaggingRowsRef.current))
+    saveScroll()
+    try {
+      await updateFlag(rowIndex, !isSAMOpportunityFlagged(row.Flagged))
+    } catch (error) {
+      toast?.error(`Could not update the team flag: ${error.message}`)
+    } finally {
+      flaggingRowsRef.current.delete(rowIndex)
+      setFlaggingRows(new Set(flaggingRowsRef.current))
     }
   }
 
@@ -1117,6 +1148,8 @@ export default function Opportunities({ toast }) {
                         normalizeOpportunityKey(opp['Solicitation Number'] || opp['Notice ID'])
                       )
                       const isActioning = actioningRow === opp._rowIndex
+                      const isFlagged = isSAMOpportunityFlagged(opp.Flagged)
+                      const isFlagSaving = flaggingRows.has(opp._rowIndex)
                       const pocDisplay  = (opp['Point of Contact'] || '').split('|')[0].trim()
                       // All buttons same size, text centered
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
@@ -1142,6 +1175,23 @@ export default function Opportunities({ toast }) {
 						  <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {opp['Title']}
+                              <button
+                                type="button"
+                                className={`${styles.samFlagButton} ${isFlagged ? styles.samFlagActive : ''} ${isFlagSaving ? styles.samFlagSaving : ''}`}
+                                aria-label={isFlagged ? `Remove team flag from ${opp.Title}` : `Flag ${opp.Title} for the team`}
+                                aria-pressed={isFlagged}
+                                title={isFlagSaving ? 'Saving team flag' : isFlagged ? 'Remove team flag' : 'Flag for the team'}
+                                disabled={isFlagSaving}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleToggleFlag(opp)
+                                }}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M6.5 3.5v17" />
+                                  <path className={styles.samFlagPennant} d="M7 4.5h10.5l-2.4 3.6 2.4 3.6H7z" />
+                                </svg>
+                              </button>
                               {normalizeSAMNoticeType(opp['Notice Type']) && <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
                                 {normalizeSAMNoticeType(opp['Notice Type'])}
                               </span>}
@@ -1187,6 +1237,7 @@ export default function Opportunities({ toast }) {
                                       </button>
                                       {/* Row 2: Dismiss (red/white) | SAM.gov (blue) */}
                                       <button className={`${styles.newAction} ${styles.newActionDismiss}`} style={btnSm}
+                                        title={isFlagged ? 'Flagged opportunity. Confirmation required before dismissal.' : 'Dismiss opportunity'}
                                         disabled={isActioning} onClick={() => handleDismiss(opp)}>
                                         Dismiss
                                       </button>
@@ -1201,6 +1252,7 @@ export default function Opportunities({ toast }) {
                                         </button>
                                       )}
                                       <button className={`${styles.newAction} ${styles.newActionDismiss}`} style={btnSm}
+                                        title={isFlagged ? 'Flagged opportunity. Confirmation required before dismissal.' : 'Dismiss opportunity'}
                                         disabled={isActioning} onClick={() => handleDismiss(opp)}>
                                         {isActioning ? '…' : 'Dismiss'}
                                       </button>
