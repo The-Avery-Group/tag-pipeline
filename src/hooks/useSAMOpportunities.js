@@ -1,18 +1,20 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
-  getSAMOpportunities, updateSAMOpportunity,
+  getSAMOpportunities, updateSAMOpportunity, updateSAMOpportunityFlag,
   getContacts, addContact, addOpportunity,
   getSAMNAICS, getSAMSettings,
 } from '@/services/graphService'
 import {
   invalidateCache,
   onCacheRefresh,
+  publishCacheUpdate,
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
 import { notifyNewOpportunity } from '@/services/notifyService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import { normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
+import { isSAMOpportunityFlagged } from '@/utils/samOpportunityHelpers'
 
 
 // How often to poll /sam/run-status while a pull is actively running.
@@ -148,6 +150,7 @@ export function useSAMOpportunities() {
   // a dismissed row to flicker: vanish, reappear, then vanish again once
   // the real write is finally reflected. Keyed by _rowIndex -> Status.
   const pendingStatus = useRef(new Map())
+  const pendingFlags = useRef(new Map())
 
   // ── Pull progress — polling infrastructure ──────────────────────────
   // Live status of an in-progress SAM.gov pull, sourced from the Worker's
@@ -201,14 +204,21 @@ export function useSAMOpportunities() {
       const reconciled = rows.map((row) => {
         const identity = String(row['Notice ID'] || row['Solicitation Number'] || '').trim()
         const pending = pendingStatus.current.get(identity)
-        if (pending === undefined) return row
-        if (row.Status === pending) {
+        const pendingFlag = pendingFlags.current.get(identity)
+        let reconciledRow = row
+        if (pending !== undefined && row.Status === pending) {
           // Server has caught up with the optimistic change — stop tracking it
           pendingStatus.current.delete(identity)
-          return row
+        } else if (pending !== undefined) {
+          // Server hasn't caught up yet — keep showing the optimistic status
+          reconciledRow = { ...reconciledRow, Status: pending }
         }
-        // Server hasn't caught up yet — keep showing the optimistic status
-        return { ...row, Status: pending }
+        if (pendingFlag !== undefined && isSAMOpportunityFlagged(row.Flagged) === pendingFlag) {
+          pendingFlags.current.delete(identity)
+        } else if (pendingFlag !== undefined) {
+          reconciledRow = { ...reconciledRow, Flagged: pendingFlag ? 'Yes' : '' }
+        }
+        return reconciledRow
       })
       setOpportunities(reconciled)
     } catch (err) {
@@ -304,6 +314,31 @@ export function useSAMOpportunities() {
       throw err
     }
   }, [debouncedInvalidate])
+
+  const updateFlag = useCallback(async (rowIndex, flagged) => {
+    const original = opportunitiesRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+    if (!original) throw new Error('This SAM.gov opportunity could not be located')
+    const identity = String(original['Notice ID'] || original['Solicitation Number'] || '').trim()
+    if (identity) pendingFlags.current.set(identity, Boolean(flagged))
+    setOpportunities((previous) => previous.map((opportunity) =>
+      opportunity._rowIndex === rowIndex
+        ? { ...opportunity, Flagged: flagged ? 'Yes' : '' }
+        : opportunity
+    ))
+    try {
+      await retryIdempotent(() => updateSAMOpportunityFlag(rowIndex, flagged, original))
+      await publishCacheUpdate(['NewOpportunitiesTable'])
+      verifyCacheInBackground(['NewOpportunitiesTable'])
+    } catch (error) {
+      if (identity) pendingFlags.current.delete(identity)
+      setOpportunities((previous) => previous.map((opportunity) =>
+        opportunity._rowIndex === rowIndex
+          ? { ...opportunity, Flagged: original.Flagged || '' }
+          : opportunity
+      ))
+      throw error
+    }
+  }, [])
 
   // ── Add to pipeline ──────────────────────────────────────────────────
   const addToPipeline = useCallback(async (row, outlook = 'New') => {
@@ -496,6 +531,7 @@ export function useSAMOpportunities() {
     dismiss,
     undismiss,
     updateStatus,
+    updateFlag,
     failedStatuses,
     retryStatus,
     triggerPull,
