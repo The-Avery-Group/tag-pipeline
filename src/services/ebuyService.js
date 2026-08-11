@@ -33,6 +33,10 @@ export async function startEbuyFixtureSync() {
   return workerJson('/ebuy/sync/fixture', { method: 'POST' })
 }
 
+export async function archiveEbuyTestAttachment() {
+  return workerJson('/ebuy/archive/test-attachment', { method: 'POST' })
+}
+
 export async function startManualEbuySync(credentials) {
   return workerJson('/ebuy/sync/manual', {
     method: 'POST',
