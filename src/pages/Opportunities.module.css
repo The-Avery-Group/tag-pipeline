@@ -115,6 +115,18 @@
   font-size: 13px;
 }
 
+.responseVisibilityBar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.responseVisibilityActive {
+  color: var(--blue-800) !important;
+  background: var(--blue-50) !important;
+  border-color: var(--blue-200) !important;
+}
+
 /* The discovery view is a fixed workspace: only its table scrolls. */
 .newPageBody {
   overflow: hidden;
