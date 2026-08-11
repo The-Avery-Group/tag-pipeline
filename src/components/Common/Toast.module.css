@@ -10,6 +10,10 @@
 }
 
 .toast {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
   padding: 10px 16px;
   border-radius: var(--radius-md);
   font-size: 13px;
@@ -17,6 +21,17 @@
   max-width: 320px;
   animation: slideIn 0.2s ease;
   pointer-events: auto;
+}
+
+.toast button {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: 700 11px var(--font);
+  padding: 1px 0;
 }
 
 .success { background: var(--green-50); color: var(--green-600); border: 0.5px solid var(--success-border); }
