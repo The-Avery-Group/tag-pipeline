@@ -31,6 +31,7 @@ const AIChat = lazy(() => import('@/pages/AIChat').then((module) => ({ default: 
 const Dashboard         = lazy(() => import('@/pages/Dashboard'))
 const Opportunities     = lazy(() => import('@/pages/Opportunities'))
 const OpportunityDetail = lazy(() => import('@/pages/OpportunityDetail'))
+const EbuyOpportunityDetail = lazy(() => import('@/pages/EbuyOpportunityDetail'))
 const PipelineBoard     = lazy(() => import('@/pages/PipelineBoard'))
 const Tasks             = lazy(() => import('@/pages/Tasks'))
 const Contacts          = lazy(() => import('@/pages/Contacts'))
@@ -44,6 +45,7 @@ function cacheTablesForLocation(location) {
   const params = new URLSearchParams(location.search)
 
   if (path === '/') return ['PipelineTable', 'TasksTable']
+  if (path.startsWith('/opportunities/ebuy/')) return ['PipelineTable']
   if (path.startsWith('/opportunities/')) {
     return ['PipelineTable', 'NotesTable', 'TasksTable', 'ContactsTable', 'DataValidationTable', 'EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable']
   }
@@ -241,6 +243,7 @@ function AppShell() {
             <Routes>
               <Route path="/"                              element={<Dashboard toast={toast} />} />
               <Route path="/opportunities"                 element={<Opportunities toast={toast} />} />
+              <Route path="/opportunities/ebuy/:requestId"  element={<EbuyOpportunityDetail toast={toast} />} />
               <Route path="/opportunities/:contractNumber" element={<OpportunityDetail toast={toast} />} />
               <Route path="/pipeline-board"                element={<PipelineBoard toast={toast} />} />
               <Route path="/ai-chat"                       element={<AIChat toast={toast} />} />
