@@ -11,6 +11,7 @@ import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import ExpiringContractDiscovery from '@/components/Opportunity/ExpiringContractDiscovery'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
@@ -913,14 +914,6 @@ export default function Opportunities({ toast }) {
           <span className="text-sm text-muted">
             {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
             {search.trim() && samOpps.some((o) => o.Status === 'dismissed') && <> · search includes dismissed</>}
-            {!search.trim() && !showDismissed && samOpps.some((o) => o.Status === 'dismissed') && (
-              <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
-                onClick={() => { saveScroll(); setShowDismissed(true) }}>Show dismissed</button></>
-            )}
-            {!search.trim() && showDismissed && (
-              <> · <button className="btn btn-ghost text-xs" style={{ padding: '2px 6px' }}
-                onClick={() => { saveScroll(); setShowDismissed(false) }}>Hide dismissed</button></>
-            )}
           </span>
           <label className={styles.samTypeFilter}>
             <span>Type</span>
@@ -1485,6 +1478,30 @@ export default function Opportunities({ toast }) {
             {search && (
               <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">✕</button>
             )}
+            {activeTab === 'New' && samOpps.some((opportunity) => opportunity.Status === 'dismissed') && (
+              <button
+                type="button"
+                className={`${styles.searchVisibilityButton} ${showDismissed ? styles.searchVisibilityActive : ''}`}
+                onClick={() => { saveScroll(); setShowDismissed((current) => !current) }}
+                aria-pressed={showDismissed}
+                title={showDismissed ? 'Hide dismissed opportunities' : 'Show dismissed opportunities'}
+              >
+                <span className={styles.visibilityIcon} aria-hidden="true">◉</span>
+                <span className={styles.visibilityLabel}>{showDismissed ? 'Hide dismissed' : 'Show dismissed'}</span>
+              </button>
+            )}
+            {activeTab === 'Responses' && hiddenResponseCount > 0 && (
+              <button
+                type="button"
+                className={`${styles.searchVisibilityButton} ${showHiddenResponses ? styles.searchVisibilityActive : ''}`}
+                onClick={() => setShowHiddenResponses((current) => !current)}
+                aria-pressed={showHiddenResponses}
+                title={showHiddenResponses ? 'Hide cancelled and awarded responses' : 'Show cancelled and awarded responses'}
+              >
+                <span className={styles.visibilityIcon} aria-hidden="true">◉</span>
+                <span className={styles.visibilityLabel}>{showHiddenResponses ? 'Hide hidden' : `Show hidden (${hiddenResponseCount})`}</span>
+              </button>
+            )}
         </div>
 
         {/* ── Advanced filter panel ── */}
@@ -1652,27 +1669,30 @@ export default function Opportunities({ toast }) {
           </div>
         )}
 
-        {activeTab === 'Responses' && hiddenResponseCount > 0 && (
-          <div className={styles.responseVisibilityBar}>
-            <button
-              type="button"
-              className={`btn btn-ghost text-sm ${showHiddenResponses ? styles.responseVisibilityActive : ''}`}
-              onClick={() => setShowHiddenResponses((current) => !current)}
-              aria-pressed={showHiddenResponses}
-              title={showHiddenResponses
-                ? 'Hide cancelled and awarded response opportunities'
-                : 'Show cancelled and awarded response opportunities'}
-            >
-              {showHiddenResponses ? 'Hide hidden' : `Show hidden (${hiddenResponseCount})`}
-            </button>
-          </div>
-        )}
-
         {/* ── New tab: SAM.gov opportunities ── */}
         {activeTab === 'New' && renderNewTab()}
 
         {/* ── Pipeline tabs: Responses / Expiring / Tracked ── */}
-        {activeTab !== 'New' && (
+        {activeTab === 'Expiring' && (
+          <ExpiringContractDiscovery
+            pipeline={pipeline}
+            add={add}
+            openOpportunity={openOpportunity}
+            search={search}
+            toast={toast}
+            pipelineView={(
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                {loading
+                  ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
+                  : filtered.length === 0
+                    ? <div className={styles.empty}>{emptyMsg}</div>
+                    : <div style={{ overflowX: 'auto' }}><ExpiringTable /></div>}
+              </div>
+            )}
+          />
+        )}
+
+        {activeTab !== 'New' && activeTab !== 'Expiring' && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {loading
               ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
@@ -1682,7 +1702,6 @@ export default function Opportunities({ toast }) {
                   <div style={{ overflowX: 'auto' }}>
                     {activeTab === 'All'      && <AllTable />}
                     {activeTab === 'Responses'&& <ResponsesTable />}
-                    {activeTab === 'Expiring' && <ExpiringTable />}
                     {activeTab === 'Tracked'  && <TrackedTable />}
                   </div>
                 )
