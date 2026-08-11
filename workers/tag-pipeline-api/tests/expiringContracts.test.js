@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   contractEligibility,
+  expiringHiddenKey,
+  fetchExpiringAwardsPage,
+  normalizeExpiringAgency,
+  resolveExpiringAgencies,
   resolveLastModifiedBy,
   runExpiringContractsRefresh,
   startExpiringContractsRefresh,
@@ -83,6 +87,81 @@ test('award family summary uses ultimate completion and total base plus all opti
   assert.equal(summary.agencyCode, '7523')
 })
 
+test('official SAM agency metadata preserves the tier, organization ID, and award-search code', () => {
+  const agency = normalizeExpiringAgency({
+    fhorgid: '100006106',
+    fhorgname: 'DEFENSE HEALTH AGENCY',
+    agencycode: '9700',
+    searchName: 'DEFENSE HEALTH AGENCY',
+    tier: 'subtier',
+  })
+  assert.equal(agency.tier, 'subtier')
+  assert.equal(agency.organizationId, '100006106')
+  assert.equal(agency.agencyCode, '9700')
+})
+
+test('agency resolution returns official active SAM hierarchy matches', async () => {
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /federalorganizations\/v1\/orgs/)
+    assert.match(String(url), /status=active/)
+    return new Response(JSON.stringify({
+      orglist: [{
+        fhorgid: '100006106',
+        fhorgname: 'DEFENSE HEALTH AGENCY',
+        fhorgtype: 'Sub-Tier',
+        agencycode: '9700',
+        fhagencyorgname: 'DEPARTMENT OF DEFENSE',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const matches = await resolveExpiringAgencies({
+      SAM_API_KEY: 'test-key',
+      CACHE: { async get() { return null } },
+    }, 'Defense Health')
+    const match = matches.find((agency) => agency.organizationId === '100006106')
+    assert.equal(match.label, 'DEFENSE HEALTH AGENCY')
+    assert.equal(match.tier, 'subtier')
+    assert.equal(match.agencyCode, '9700')
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('award discovery filters official subagencies by code instead of a guessed name', async () => {
+  const previousFetch = globalThis.fetch
+  let requestUrl = ''
+  globalThis.fetch = async (url) => {
+    requestUrl = String(url)
+    return new Response(null, { status: 204 })
+  }
+  try {
+    await fetchExpiringAwardsPage({ SAM_API_KEY: 'test-key' }, {
+      agency: {
+        id: 'fh-100006106',
+        label: 'Defense Health Agency',
+        searchName: 'DEFENSE HEALTH AGENCY',
+        tier: 'subtier',
+        organizationId: '100006106',
+        agencyCode: '9700',
+      },
+      naicsCodes: ['541611'],
+      now: new Date('2026-08-12T00:00:00Z'),
+    })
+    const params = new URL(requestUrl).searchParams
+    assert.equal(params.get('contractingSubtierCode'), '9700')
+    assert.equal(params.has('contractingSubtierName'), false)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('shared hidden-contract keys are deterministic and contract-specific', () => {
+  assert.equal(expiringHiddenKey('9700|ABC-1||'), expiringHiddenKey('9700|ABC-1||'))
+  assert.notEqual(expiringHiddenKey('9700|ABC-1||'), expiringHiddenKey('9700|ABC-2||'))
+})
+
 test('HHS modifier identifiers resolve from public notice contact names', () => {
   const contact = { name: 'Amanda Haynes', email: 'amanda.haynes@hhs.gov', noticeId: 'abc', sourceLink: 'https://sam.gov/opp/abc' }
   const result = resolveLastModifiedBy('HHSAHAYNES', 'CENTERS FOR DISEASE CONTROL AND PREVENTION', [contact])
@@ -111,6 +190,37 @@ test('manual expiring refresh creates a durable Workflow instance', async () => 
   assert.equal(created[0].params.agencies[0].id, 'cdc')
   assert.equal(created[0].params.checkpoint, 1)
   assert.equal(created[0].params.continuation.agencyIndex, 0)
+})
+
+test('scheduled refresh includes saved official target agencies', async () => {
+  let created
+  const customAgency = {
+    id: 'fh-100099999',
+    label: 'Example Agency',
+    searchName: 'EXAMPLE AGENCY',
+    tier: 'subtier',
+    organizationId: '100099999',
+    agencyCode: '9999',
+    custom: true,
+    scheduled: true,
+  }
+  const env = {
+    CACHE: {
+      async get(key, type) {
+        if (key === 'expiring_contracts:agency_registry:v1' && type === 'json') return [customAgency]
+        return null
+      },
+      async put() {},
+    },
+    EXPIRING_CONTRACTS_WORKFLOW: {
+      async createBatch(batch) { created = batch; return [{ id: batch[0].id }] },
+    },
+  }
+  await startExpiringContractsRefresh(env, {
+    scheduledTime: Date.parse('2026-08-12T00:00:00Z'),
+    source: 'scheduled',
+  })
+  assert.ok(created[0].params.agencies.some((agency) => agency.id === customAgency.id))
 })
 
 test('an expiring Workflow instance fetches a bounded page batch before continuing', async () => {
