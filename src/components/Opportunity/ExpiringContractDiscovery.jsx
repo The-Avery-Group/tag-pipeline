@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useExpiringContracts } from '@/hooks/useExpiringContracts'
 import { formatDate } from '@/utils/kpiHelpers'
+import { resolveModifierWithCrmContacts } from '@/utils/modifierIdentity'
 import styles from './ExpiringContractDiscovery.module.css'
 
 const C = {
@@ -65,7 +66,9 @@ function ModifierIdentity({ resolution, choice = '', onChoose }) {
       <span>
         {match.name || resolution.raw}
         <small className={styles.rawIdentifier}>{resolution.raw}</small>
-        {match.sourceLink && <a className={styles.matchSource} href={match.sourceLink} target="_blank" rel="noreferrer">Matched from {match.noticeId || 'public notice'}</a>}
+        {match.sourceLink
+          ? <a className={styles.matchSource} href={match.sourceLink} target="_blank" rel="noreferrer">Matched from {match.sourceLabel}</a>
+          : <small className={styles.matchSource}>Matched from {match.sourceLabel}</small>}
       </span>
     )
   }
@@ -76,17 +79,19 @@ function ModifierIdentity({ resolution, choice = '', onChoose }) {
         <span>{selected?.name || resolution.raw}</span>
         <small className={styles.rawIdentifier}>{resolution.raw} · {resolution.matches.length} possible matches</small>
         <select value={choice} onChange={(event) => onChoose?.(event.target.value)} aria-label={`Resolve ${resolution.raw}`}>
-          <option value="">Choose a public match</option>
-          {resolution.matches.map((match, index) => <option key={`${match.email}-${match.noticeId}`} value={String(index)}>{match.name || match.email} · {match.noticeId || 'public notice'}</option>)}
+          <option value="">Choose a match</option>
+          {resolution.matches.map((match, index) => <option key={`${match.email}-${match.noticeId || match.contactId || index}`} value={String(index)}>{match.name || match.email} · {match.sourceLabel}</option>)}
         </select>
-        {selected?.sourceLink && <a className={styles.matchSource} href={selected.sourceLink} target="_blank" rel="noreferrer">Matched from {selected.noticeId || 'public notice'}</a>}
+        {selected?.sourceLink
+          ? <a className={styles.matchSource} href={selected.sourceLink} target="_blank" rel="noreferrer">Matched from {selected.sourceLabel}</a>
+          : selected && <small className={styles.matchSource}>Matched from {selected.sourceLabel}</small>}
       </div>
     )
   }
   return <span>{resolution.raw}<small className={styles.matchSource}>No public name match found</small></span>
 }
 
-export default function ExpiringContractDiscovery({ pipeline, add, openOpportunity, pipelineView, search, toast }) {
+export default function ExpiringContractDiscovery({ pipeline, contacts = [], add, openOpportunity, pipelineView, search, toast }) {
   const navigate = useNavigate()
   const [view, setView] = useState('pipeline')
   const [range, setRange] = useState('6-12')
@@ -99,6 +104,8 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
   const [detailLoading, setDetailLoading] = useState(new Set())
   const [addingKey, setAddingKey] = useState('')
   const [modifierChoices, setModifierChoices] = useState({})
+  const [refreshStarting, setRefreshStarting] = useState(false)
+  const refreshStartingRef = useRef(false)
   const { config, contracts, status, loading, error, refresh, loadDetail } = useExpiringContracts(range, selectedAgencyIds)
 
   const agencies = useMemo(() => {
@@ -123,11 +130,17 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
   }
 
   const runRefresh = async () => {
+    if (refreshStartingRef.current || ['queued', 'running'].includes(status.status)) return
+    refreshStartingRef.current = true
+    setRefreshStarting(true)
     try {
       await refresh(selectedAgencies.length ? selectedAgencies : agencies.filter((agency) => !agency.custom))
       toast?.success('Expiring contract refresh started')
     } catch (nextError) {
       toast?.error(`Could not start refresh: ${nextError.message}`)
+    } finally {
+      refreshStartingRef.current = false
+      setRefreshStarting(false)
     }
   }
 
@@ -185,7 +198,7 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
         [C.incumbent]: contract.incumbentName || '',
         [C.incumbentUEI]: contract.incumbentUEI || '',
         [C.classification]: contract.awardType || '',
-        [C.solNum]: contract.solicitationNumber || '',
+        [C.solicitation]: contract.solicitationNumber || '',
         [C.vehicleNumber]: contract.referencedIdvPiid || '',
         [C.fiscalYear]: contract.fiscalYear || '',
         [C.setAside]: contract.setAside || '-',
@@ -245,8 +258,8 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
                 </div>
               )}
             </div>
-            <button type="button" className="btn btn-primary" onClick={runRefresh} disabled={['queued', 'running'].includes(status.status)}>
-              {['queued', 'running'].includes(status.status) ? 'Refreshing…' : 'Refresh contracts'}
+            <button type="button" className="btn btn-primary" onClick={runRefresh} disabled={refreshStarting || ['queued', 'running'].includes(status.status)}>
+              {refreshStarting ? 'Starting…' : ['queued', 'running'].includes(status.status) ? 'Refreshing…' : 'Refresh contracts'}
             </button>
           </div>
 
@@ -260,14 +273,14 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
           {status.status === 'error' && (
             <div className={styles.errorCallout}>
               <div><strong>Expiring contract refresh stopped</strong><span>{status.error || 'The refresh could not finish.'}</span></div>
-              <button type="button" onClick={runRefresh}>Try again</button>
+              <button type="button" onClick={runRefresh} disabled={refreshStarting}>{refreshStarting ? 'Starting…' : 'Try again'}</button>
             </div>
           )}
 
           {status.status === 'partial' && (
             <div className={styles.warningCallout}>
               <div><strong>Refresh completed with some agency issues</strong><span>{status.error}</span></div>
-              <button type="button" onClick={runRefresh}>Retry refresh</button>
+              <button type="button" onClick={runRefresh} disabled={refreshStarting}>{refreshStarting ? 'Starting…' : 'Retry refresh'}</button>
             </div>
           )}
 
@@ -346,7 +359,7 @@ export default function ExpiringContractDiscovery({ pipeline, add, openOpportuni
                                         <td>{modification.modificationNumber || '0'}</td>
                                         <td>{modification.dateSigned ? formatDate(modification.dateSigned) : 'Not available'}</td>
                                         <td>{modification.reason || 'Not provided'}</td>
-                                        <td><ModifierIdentity resolution={modification.modifierResolution || { raw: modification.lastModifiedBy, status: 'unresolved' }} choice={modifierChoices[choiceKey]} onChoose={(value) => setModifierChoices((current) => ({ ...current, [choiceKey]: value }))} /></td>
+                                        <td><ModifierIdentity resolution={resolveModifierWithCrmContacts(modification.modifierResolution || { raw: modification.lastModifiedBy, status: 'unresolved', matches: [] }, detail.agency, contacts)} choice={modifierChoices[choiceKey]} onChoose={(value) => setModifierChoices((current) => ({ ...current, [choiceKey]: value }))} /></td>
                                         <td>{modification.lastModifiedDate ? formatDate(modification.lastModifiedDate) : 'Not available'}</td>
                                         <td>{fullMoney(modification.actionObligation)}</td>
                                       </tr>
