@@ -293,6 +293,31 @@
 .integrationTable th:nth-child(2) { min-width: 120px; }
 .integrationTable th:nth-child(4) { min-width: 132px; }
 
+.ebuySetupGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+}
+
+.ebuyCredentialGrid {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 1fr 1fr 150px;
+  margin: 12px 0;
+}
+
+.setupNotice {
+  color: var(--gray-500);
+  font-size: 10px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+}
+
+@media (max-width: 900px) {
+  .ebuySetupGrid { grid-template-columns: 1fr; }
+  .ebuyCredentialGrid { grid-template-columns: 1fr; }
+}
+
 .integrationName {
   color: var(--gray-900);
   font-size: 12px;
