@@ -1498,6 +1498,7 @@ export const NEW_OPP_HEADERS = [
   'Date Added',
   'Status',
   'Notice Type',
+  'Flagged',
 ]
 
 export async function getSAMOpportunities() {
@@ -1526,6 +1527,20 @@ export async function addSAMOpportunity(data) {
 export async function updateSAMOpportunity(rowIndex, patch, original) {
   const headers = await getTableHeaders('NewOpportunitiesTable')
   return updateRow('NewOpportunitiesTable', rowIndex, patch, headers, { original })
+}
+
+export async function updateSAMOpportunityFlag(rowIndex, flagged, original) {
+  const { headers } = await ensureTableColumns('NewOpportunitiesTable', ['Flagged'])
+  const normalizedOriginal = original
+    ? { ...original, Flagged: original.Flagged ?? '' }
+    : original
+  return updateRow(
+    'NewOpportunitiesTable',
+    rowIndex,
+    { Flagged: flagged ? 'Yes' : '' },
+    headers,
+    { original: normalizedOriginal },
+  )
 }
 
 export async function deleteSAMOpportunity(rowIndex, original) {
