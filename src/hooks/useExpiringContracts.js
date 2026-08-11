@@ -3,10 +3,11 @@ import { workerJson } from '@/services/workerClient'
 
 const POLL_MS = 2500
 
-export function useExpiringContracts(range = '6-12', agencyIds = []) {
+export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidden = false) {
   const [config, setConfig] = useState({ agencies: [], ranges: ['6-12', '12-18', '18-24'] })
   const [contracts, setContracts] = useState([])
   const [agencyStatus, setAgencyStatus] = useState([])
+  const [hiddenCount, setHiddenCount] = useState(0)
   const [status, setStatus] = useState({ status: 'idle' })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -16,11 +17,13 @@ export function useExpiringContracts(range = '6-12', agencyIds = []) {
   const loadResults = useCallback(async () => {
     const params = new URLSearchParams({ range })
     if (agencyIds.length) params.set('agencies', agencyIds.join(','))
+    if (includeHidden) params.set('includeHidden', '1')
     const payload = await workerJson(`/sam/expiring-contracts/results?${params}`)
     setContracts(payload.contracts || [])
     setAgencyStatus(payload.agencies || [])
+    setHiddenCount(Number(payload.hiddenCount || 0))
     return payload
-  }, [agencyIds.join(','), range])
+  }, [agencyIds.join(','), includeHidden, range])
 
   const loadStatus = useCallback(async () => {
     const payload = await workerJson('/sam/expiring-contracts/status', { cache: 'no-store' })
@@ -88,5 +91,65 @@ export function useExpiringContracts(range = '6-12', agencyIds = []) {
     return workerJson(`/sam/expiring-contracts/detail?${params}`, { cache: 'no-store' })
   }, [])
 
-  return { config, contracts, agencyStatus, status, loading, error, refresh, loadResults, loadDetail }
+  const resolveAgencies = useCallback(async (query) => {
+    const params = new URLSearchParams({ q: query })
+    const payload = await workerJson(`/sam/expiring-contracts/agencies/resolve?${params}`, { cache: 'no-store' })
+    return payload.agencies || []
+  }, [])
+
+  const saveAgency = useCallback(async (agency) => {
+    const payload = await workerJson('/sam/expiring-contracts/agencies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agency }),
+    })
+    setConfig((current) => ({ ...current, agencies: payload.agencies || current.agencies }))
+    return payload.agencies || []
+  }, [])
+
+  const removeAgency = useCallback(async (agencyId) => {
+    const params = new URLSearchParams({ id: agencyId })
+    const payload = await workerJson(`/sam/expiring-contracts/agencies?${params}`, { method: 'DELETE' })
+    setConfig((current) => ({ ...current, agencies: payload.agencies || current.agencies }))
+    return payload.agencies || []
+  }, [])
+
+  const setContractHidden = useCallback(async (familyKey, hidden) => {
+    const previousContracts = contracts
+    const previousHiddenCount = hiddenCount
+    setContracts((current) => hidden
+      ? (includeHidden
+          ? current.map((contract) => contract.familyKey === familyKey ? { ...contract, hidden: true } : contract)
+          : current.filter((contract) => contract.familyKey !== familyKey))
+      : current.map((contract) => contract.familyKey === familyKey ? { ...contract, hidden: false } : contract))
+    setHiddenCount((current) => Math.max(0, current + (hidden ? 1 : -1)))
+    try {
+      return await workerJson('/sam/expiring-contracts/visibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ familyKey, hidden }),
+      })
+    } catch (error) {
+      setContracts(previousContracts)
+      setHiddenCount(previousHiddenCount)
+      throw error
+    }
+  }, [contracts, hiddenCount, includeHidden])
+
+  return {
+    config,
+    contracts,
+    agencyStatus,
+    hiddenCount,
+    status,
+    loading,
+    error,
+    refresh,
+    loadResults,
+    loadDetail,
+    resolveAgencies,
+    saveAgency,
+    removeAgency,
+    setContractHidden,
+  }
 }
