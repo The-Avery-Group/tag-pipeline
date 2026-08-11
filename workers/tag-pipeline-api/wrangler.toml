@@ -1,6 +1,6 @@
 name = "tag-pipeline-api"
 main = "src/index.js"
-compatibility_date = "2026-07-24"
+compatibility_date = "2026-08-11"
 compatibility_flags = ["nodejs_compat"]
 
 # Secrets (set via `wrangler secret put` or Cloudflare dashboard):
@@ -22,6 +22,13 @@ compatibility_flags = ["nodejs_compat"]
 binding = "CACHE"
 id = "8e2b634e99384d5d9e9c0880fce935b0"
 
+# Durable metadata and search index for the GSA eBuy archive. Wrangler can
+# resolve this binding by database name after the one-time D1 creation step.
+[[d1_databases]]
+binding = "EBUY_DB"
+database_name = "tag-pipeline-ebuy"
+migrations_dir = "migrations"
+
 [[workflows]]
 name = "sam-opportunity-pull"
 binding = "SAM_PULL_WORKFLOW"
@@ -31,6 +38,11 @@ class_name = "SAMPullWorkflow"
 name = "sam-expiring-contracts"
 binding = "EXPIRING_CONTRACTS_WORKFLOW"
 class_name = "ExpiringContractsWorkflow"
+
+[[workflows]]
+name = "ebuy-opportunity-sync"
+binding = "EBUY_SYNC_WORKFLOW"
+class_name = "EbuySyncWorkflow"
 
 [vars]
 ENVIRONMENT = "production"
