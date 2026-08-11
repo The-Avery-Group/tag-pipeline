@@ -343,6 +343,11 @@ async function readCheckpointRecords(env, key, expectedCount = 0) {
   return result
 }
 
+async function checkpointRecordMetadata(env, key, expectedCount = 0) {
+  const records = await readCheckpointRecords(env, key, expectedCount)
+  return { key, count: records.length }
+}
+
 async function writeCheckpointRecords(env, key, records) {
   if (!env.CACHE) throw new Error('CACHE binding is unavailable for expiring contract checkpoints')
   await env.CACHE.put(key, JSON.stringify(records), { expirationTtl: 24 * 60 * 60 })
@@ -435,13 +440,17 @@ export async function runExpiringContractsRefresh(env, event, step) {
     const pageNumber = Math.max(0, Number(continuation.pageNumber) || 0)
     const expectedRecordCount = Math.max(0, Number(continuation.storedRecordCount) || 0)
     const recordsKey = runRecordsKey(runId, agency.id)
-    const priorRecords = expectedRecordCount
-      ? await step.do(
-        `Load ${agency.id} checkpoint records ${checkpoint}`,
+    let priorRecords = []
+    if (expectedRecordCount) {
+      await step.do(
+        `Verify ${agency.id} checkpoint records ${checkpoint}`,
         { retries: { limit: 5, delay: '2 seconds', backoff: 'exponential' } },
-        () => readCheckpointRecords(env, recordsKey, expectedRecordCount),
+        () => checkpointRecordMetadata(env, recordsKey, expectedRecordCount),
       )
-      : []
+      // Checkpoint collections can exceed the 1 MiB Workflow step-output limit.
+      // Keep the collection in KV and read it without returning it from step.do().
+      priorRecords = await readCheckpointRecords(env, recordsKey, expectedRecordCount)
+    }
 
     await step.do(`Mark expiring checkpoint ${checkpoint} active`, () => setStatus(env, {
       status: 'running', runId, startedAt, agencyIndex, agencyTotal: agencies.length,
@@ -493,9 +502,12 @@ export async function runExpiringContractsRefresh(env, event, step) {
         })
       }
 
-      const saved = await step.do(`Save ${agency.id} expiring contracts`, () => saveAgencyResults(env, agency, records))
+      const saved = await step.do(`Save ${agency.id} expiring contracts`, async () => {
+        const value = await saveAgencyResults(env, agency, records)
+        return { contractCount: value.contracts.length }
+      })
       await step.do(`Clear ${agency.id} checkpoint records`, () => clearCheckpointRecords(env, recordsKey))
-      const nextTotalContracts = totalContracts + saved.contracts.length
+      const nextTotalContracts = totalContracts + saved.contractCount
       const nextAgencyIndex = agencyIndex + 1
       if (nextAgencyIndex >= agencies.length) {
         return completeExpiringRefresh(env, step, {
