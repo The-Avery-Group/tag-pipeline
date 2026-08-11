@@ -6,7 +6,7 @@ import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
-import { startEbuyFixtureSync, startManualEbuySync } from '@/services/ebuyService'
+import { archiveEbuyTestAttachment, startEbuyFixtureSync, startManualEbuySync } from '@/services/ebuyService'
 import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
@@ -124,6 +124,8 @@ export default function Settings({ toast }) {
   const [refreshingCapabilities, setRefreshingCapabilities] = useState(false)
   const [ebuyCredentials, setEbuyCredentials] = useState({ username: '', password: '', otp: '' })
   const [ebuySyncing, setEbuySyncing] = useState(false)
+  const [ebuyArchivingTest, setEbuyArchivingTest] = useState(false)
+  const [ebuyTestAttachment, setEbuyTestAttachment] = useState(null)
 
   // ── SAM config state ─────────────────────────────────────────────────
   const [naicsCodes,    setNaicsCodes]    = useState([])
@@ -182,6 +184,20 @@ export default function Settings({ toast }) {
     } catch (error) { toast?.error(error.message) } finally {
       setEbuyCredentials((current) => ({ ...current, password: '', otp: '' }))
       setEbuySyncing(false)
+    }
+  }
+
+  const handleEbuyTestAttachment = async () => {
+    if (ebuyArchivingTest) return
+    setEbuyArchivingTest(true)
+    try {
+      const result = await archiveEbuyTestAttachment()
+      setEbuyTestAttachment(result.attachment)
+      toast?.success('Test attachment archived to SharePoint')
+    } catch (error) {
+      toast?.error(`Could not archive the test attachment: ${error.message}`)
+    } finally {
+      setEbuyArchivingTest(false)
     }
   }
 
@@ -452,9 +468,17 @@ export default function Settings({ toast }) {
               <div className="card">
                 <div className={styles.sectionLabel}>Sanitized test archive</div>
                 <p className="text-xs text-muted">Loads the supplied G2X field shape with sanitized records, amendments, and attachment metadata. It does not contact G2X or eBuy.</p>
-                <button className="btn btn-primary" type="button" onClick={handleEbuyTestSync} disabled={ebuySyncing || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
-                  {ebuySyncing ? 'Starting…' : 'Synchronize test archive'}
-                </button>
+                <div className={styles.ebuyTestActions}>
+                  <button className="btn btn-primary" type="button" onClick={handleEbuyTestSync} disabled={ebuySyncing || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
+                    {ebuySyncing ? 'Starting…' : 'Synchronize test archive'}
+                  </button>
+                  <button className="btn" type="button" onClick={handleEbuyTestAttachment} disabled={ebuyArchivingTest || integrationStatus?.ebuy?.connector?.mode !== 'fixture' || !integrationStatus?.ebuy?.sharepointArchive || !Number(integrationStatus?.ebuy?.opportunityCount || 0)}>
+                    {ebuyArchivingTest ? 'Archiving…' : 'Test attachment archive'}
+                  </button>
+                  {ebuyTestAttachment?.sharepointWebUrl && <a className="btn" href={ebuyTestAttachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived test file</a>}
+                </div>
+                {!integrationStatus?.ebuy?.sharepointArchive && <p className={styles.setupNotice}>Microsoft Graph app credentials are required to test the SharePoint attachment archive.</p>}
+                {integrationStatus?.ebuy?.sharepointArchive && !Number(integrationStatus?.ebuy?.opportunityCount || 0) && <p className={styles.setupNotice}>Synchronize the test archive before testing its attachment.</p>}
                 {integrationStatus?.ebuy?.status === 'migration_required' && <p className={styles.setupNotice}>Apply the D1 migration before running the first test sync.</p>}
               </div>
               <form className="card" onSubmit={handleEbuyManualSync}>
