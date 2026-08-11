@@ -45,6 +45,7 @@ import styles from './OpportunityDetail.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import {
   NOTICE_TYPE_VALUES,
+  isResponseOpportunity,
   isRfiWorkflowOpportunity,
   normalizeNoticeType,
 } from '@/utils/noticeTypes'
@@ -324,7 +325,9 @@ const PHASE_BADGE = {
 const Field = (props) => <OpportunityField {...props} formatValue={formatFieldValue} />
 
 function SummaryGroup({ title, items }) {
-  const visible = items.filter((item) => item.value !== null && item.value !== undefined && String(item.value).trim() !== '')
+  const visible = items.filter((item) => item.showWhenEmpty || (
+    item.value !== null && item.value !== undefined && String(item.value).trim() !== ''
+  ))
   if (!visible.length) return null
   return (
     <div className={styles.summaryGroup}>
@@ -673,6 +676,7 @@ export default function OpportunityDetail({ toast }) {
 
   const f = (key) => cur[key]
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
+  const isResponseRecord = isResponseOpportunity(cur, C)
   const isRfiWorkflow = isRfiWorkflowOpportunity(cur, C)
   const noticeType = normalizeNoticeType(f(C.noticeType))
   const noticeTypeBadgeClass = noticeType === 'MRAS'
@@ -680,7 +684,13 @@ export default function OpportunityDetail({ toast }) {
     : noticeType === 'RFI'
       ? 'badge-tracking'
       : 'badge-proposal'
-  const submissionDateLabel = noticeType === 'MRAS' ? 'MRAS submission date' : noticeType === 'RFI' ? 'RFI submission date' : 'Response date'
+  const submissionDateLabel = noticeType === 'MRAS'
+    ? 'MRAS submission date'
+    : noticeType === 'RFI'
+      ? 'RFI submission date'
+      : noticeType
+        ? `${noticeType} response or submission date`
+        : 'Response or submission date'
   const hasIncumbentHistory = /^[A-Z0-9]{12}$/.test(String(opp[C.incumbentUEI] || '').trim().toUpperCase())
   const sectionGroups = [
     ['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]],
@@ -695,7 +705,7 @@ export default function OpportunityDetail({ toast }) {
       ...(isRfiWorkflow ? [[noticeType === 'MRAS' ? 'MRAS matcher' : 'RFI matcher', 'followup-rfi']] : []),
     ]],
   ]
-  const hasSubmissionDate = !Number.isNaN(localDate(opp[C.submDate]).getTime())
+  const hasSubmissionDate = !Number.isNaN(localDate(f(C.submDate)).getTime())
   const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.contractNumber))
   const followUpStatus = rfiFollowUpMonitor.statusByOpportunity[normalizeOpportunityKey(opp[C.contractNum])]
 
@@ -1356,7 +1366,7 @@ export default function OpportunityDetail({ toast }) {
               <Field label="Incumbent UEI" value={f(C.incumbentUEI)} editing onChange={set(C.incumbentUEI)} raw />
             </div></div>
             <div className={styles.summaryEditGroup}><div className={styles.summaryGroupTitle}>Dates and contract</div><div className={styles.fieldGrid}>
-              {(isRfiWorkflow || hasSubmissionDate) && <Field label={submissionDateLabel} value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
+              {(isResponseRecord || hasSubmissionDate) && <Field label={submissionDateLabel} value={f(C.submDate)} editing onChange={set(C.submDate)} type="date" />}
               <Field label="Contract end date" value={f(C.endDate)} editing onChange={set(C.endDate)} type="date" />
               <Field label="Anticipated award date" value={f(C.awardDate)} editing onChange={set(C.awardDate)} type="date" />
               <Field label="Fiscal year" value={f(C.fiscalYear)} editing onChange={set(C.fiscalYear)} raw />
@@ -1380,7 +1390,12 @@ export default function OpportunityDetail({ toast }) {
               { label: 'Incumbent UEI', value: f(C.incumbentUEI), raw: true },
             ]} />
             <SummaryGroup title="Dates and contract" items={[
-              { label: submissionDateLabel, value: (isRfiWorkflow || hasSubmissionDate) ? f(C.submDate) : '', display: formatDate(f(C.submDate)) },
+              {
+                label: submissionDateLabel,
+                value: (isResponseRecord || hasSubmissionDate) ? f(C.submDate) : '',
+                display: formatDate(f(C.submDate)),
+                showWhenEmpty: isResponseRecord,
+              },
               { label: 'Contract end date', value: f(C.endDate), display: formatDate(f(C.endDate)) },
               { label: 'Anticipated award date', value: f(C.awardDate), display: formatDate(f(C.awardDate)) },
               { label: 'Fiscal year', value: f(C.fiscalYear), raw: true },
