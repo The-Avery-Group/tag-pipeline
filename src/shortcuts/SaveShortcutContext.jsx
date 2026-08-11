@@ -57,7 +57,7 @@ export function SaveShortcutProvider({ children }) {
           footer={(
             <>
               <button type="button" className="btn" onClick={() => setPending(null)}>Cancel</button>
-              <button type="button" className="btn btn-primary" onClick={confirmSave}>Save</button>
+              <button type="button" className="btn btn-primary" onClick={confirmSave} autoFocus>Save</button>
             </>
           )}
         >
