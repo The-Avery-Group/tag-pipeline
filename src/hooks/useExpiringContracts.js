@@ -52,7 +52,7 @@ export function useExpiringContracts(range = '6-12', agencyIds = []) {
     timerRef.current = setInterval(async () => {
       try {
         const next = await loadStatus()
-        if (next.status === 'success') await loadResults()
+        if (['success', 'partial'].includes(next.status)) await loadResults()
       } catch (nextError) {
         setError(nextError.message)
       }
