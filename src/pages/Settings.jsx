@@ -6,6 +6,7 @@ import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
+import { startEbuyFixtureSync, startManualEbuySync } from '@/services/ebuyService'
 import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
@@ -95,6 +96,21 @@ function teamsIntegration(notifications) {
   }
 }
 
+function ebuyIntegration(ebuy) {
+  if (!ebuy) return { status: { label: 'Checking', className: 'integrationPending' }, details: 'Checking eBuy archive status.' }
+  const status = ({
+    ready: { label: ebuy.connector?.mode === 'fixture' ? 'Test mode' : 'Ready', className: ebuy.connector?.mode === 'fixture' ? 'integrationPending' : 'integrationReady' },
+    migration_required: { label: 'Setup required', className: 'integrationPending' },
+    not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
+    error: { label: 'Needs attention', className: 'integrationError' },
+  })[ebuy.status] || { label: 'Unavailable', className: 'integrationUnavailable' }
+  const count = Number(ebuy.opportunityCount || 0)
+  return {
+    status,
+    details: `${ebuy.message || 'eBuy archive status is unavailable.'}${count ? ` · ${count} archived opportunities` : ''}`,
+  }
+}
+
 export default function Settings({ toast }) {
   const { user } = useAuth()
   const { lists, loading, update } = useValidationLists()
@@ -106,6 +122,8 @@ export default function Settings({ toast }) {
   const [integrationStatus, setIntegrationStatus] = useState(null)
   const [loadingIntegrations, setLoadingIntegrations] = useState(false)
   const [refreshingCapabilities, setRefreshingCapabilities] = useState(false)
+  const [ebuyCredentials, setEbuyCredentials] = useState({ username: '', password: '', otp: '' })
+  const [ebuySyncing, setEbuySyncing] = useState(false)
 
   // ── SAM config state ─────────────────────────────────────────────────
   const [naicsCodes,    setNaicsCodes]    = useState([])
@@ -130,6 +148,7 @@ export default function Settings({ toast }) {
     health:    false,
     emailTemplates: false,
     sam:       false,
+    ebuy:      false,
   })
   const toggleSection = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }))
   // Per-card collapsible state, for long option lists nested inside a section
@@ -140,6 +159,31 @@ export default function Settings({ toast }) {
   const capabilities = integrationStatus?.capabilities
   const capabilityIntegrationStatus = capabilityIntegration(capabilities)
   const teamsIntegrationStatus = teamsIntegration(integrationStatus?.notifications)
+  const ebuyIntegrationStatus = ebuyIntegration(integrationStatus?.ebuy)
+
+  const handleEbuyTestSync = async () => {
+    if (ebuySyncing) return
+    setEbuySyncing(true)
+    try {
+      await startEbuyFixtureSync()
+      toast?.success('Test eBuy archive sync started')
+      window.setTimeout(() => loadIntegrationStatus(), 1800)
+    } catch (error) { toast?.error(error.message) } finally { setEbuySyncing(false) }
+  }
+
+  const handleEbuyManualSync = async (event) => {
+    event.preventDefault()
+    if (ebuySyncing) return
+    setEbuySyncing(true)
+    try {
+      await startManualEbuySync(ebuyCredentials)
+      toast?.success('eBuy sync started')
+      setEbuyCredentials({ username: '', password: '', otp: '' })
+    } catch (error) { toast?.error(error.message) } finally {
+      setEbuyCredentials((current) => ({ ...current, password: '', otp: '' }))
+      setEbuySyncing(false)
+    }
+  }
 
   const loadIntegrationStatus = async ({ interactive = false, notify = false } = {}) => {
     if (!WORKER_URL) {
@@ -384,9 +428,48 @@ export default function Settings({ toast }) {
                   <td className={styles.integrationDetails}>Templates and editable drafts are available. Sending and Outlook actions remain disabled until Exchange mail permissions are granted.</td>
                   <td className={styles.integrationAction}><span className="text-xs text-muted">Automatic</span></td>
                 </tr>
+                <tr>
+                  <td className={styles.integrationName}>GSA eBuy archive</td>
+                  <td><span className={`${styles.integrationBadge} ${styles[ebuyIntegrationStatus.status.className]}`}>{ebuyIntegrationStatus.status.label}</span></td>
+                  <td className={styles.integrationDetails}>{ebuyIntegrationStatus.details}</td>
+                  <td className={styles.integrationAction}><button className="btn" type="button" onClick={() => toggleSection('ebuy')}>Configure</button></td>
+                </tr>
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className={styles.collapsible}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('ebuy')}>
+            <span>
+              <span className={styles.collapsibleTitle}>GSA eBuy archive</span>
+              <span className={styles.collapsibleHint}>Test synchronization now and prepare the manual sign-in connector</span>
+            </span>
+            <span className={`${styles.chevron} ${openSections.ebuy ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.ebuy && <div className={styles.collapsibleBody}>
+            <div className={styles.ebuySetupGrid}>
+              <div className="card">
+                <div className={styles.sectionLabel}>Sanitized test archive</div>
+                <p className="text-xs text-muted">Loads the supplied G2X field shape with sanitized records, amendments, and attachment metadata. It does not contact G2X or eBuy.</p>
+                <button className="btn btn-primary" type="button" onClick={handleEbuyTestSync} disabled={ebuySyncing || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
+                  {ebuySyncing ? 'Starting…' : 'Synchronize test archive'}
+                </button>
+                {integrationStatus?.ebuy?.status === 'migration_required' && <p className={styles.setupNotice}>Apply the D1 migration before running the first test sync.</p>}
+              </div>
+              <form className="card" onSubmit={handleEbuyManualSync}>
+                <div className={styles.sectionLabel}>Manual eBuy sign-in</div>
+                <p className="text-xs text-muted">Credentials remain request-local and are never saved. This control will activate after the authorized eBuy login exchange is mapped.</p>
+                <div className={styles.ebuyCredentialGrid}>
+                  <label className="form-field"><span className="form-label">Username</span><input className="form-input" autoComplete="username" value={ebuyCredentials.username} onChange={(event) => setEbuyCredentials((current) => ({ ...current, username: event.target.value }))} /></label>
+                  <label className="form-field"><span className="form-label">Password</span><input className="form-input" type="password" autoComplete="current-password" value={ebuyCredentials.password} onChange={(event) => setEbuyCredentials((current) => ({ ...current, password: event.target.value }))} /></label>
+                  <label className="form-field"><span className="form-label">Current six-digit code</span><input className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={ebuyCredentials.otp} onChange={(event) => setEbuyCredentials((current) => ({ ...current, otp: event.target.value.replace(/\D/g, '').slice(0, 6) }))} /></label>
+                </div>
+                <button className="btn btn-primary" type="submit" disabled={ebuySyncing || !integrationStatus?.ebuy?.connector?.enabled || !ebuyCredentials.username || !ebuyCredentials.password || ebuyCredentials.otp.length !== 6}>Sign in and synchronize</button>
+                {!integrationStatus?.ebuy?.connector?.enabled && <p className={styles.setupNotice}>Live sign-in is intentionally disabled until the authorized eBuy request flow is available for mapping.</p>}
+              </form>
+            </div>
+          </div>}
         </div>
 
         <div className={styles.collapsible}>
