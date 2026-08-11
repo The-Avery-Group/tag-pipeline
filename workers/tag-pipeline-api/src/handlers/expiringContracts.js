@@ -337,39 +337,71 @@ export async function runExpiringContractsRefresh(env, event, step) {
     }))
 
     let totalContracts = 0
+    const agencyErrors = []
     for (let agencyIndex = 0; agencyIndex < agencies.length; agencyIndex += 1) {
       const agency = agencies[agencyIndex]
-      let records = []
-      let offset = 0
-      let pageNumber = 0
-      for (; pageNumber < MAX_PAGES_PER_AGENCY; pageNumber += 1) {
-        const page = await step.do(
-          `Fetch ${agency.id} awards page ${pageNumber + 1}`,
-          { retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
-          () => fetchExpiringAwardsPage(env, { agency, naicsCodes, offset }),
-        )
-        records = records.concat(page.records)
-        const estimatedPages = Math.max(1, Math.ceil(page.total / PAGE_SIZE))
-        await step.do(`Record ${agency.id} progress page ${pageNumber + 1}`, () => setStatus(env, {
-          status: 'running', runId, startedAt, agencyIndex, agencyTotal: agencies.length,
-          currentAgency: agency.label, currentPage: pageNumber + 1, currentPages: estimatedPages,
-          contracts: totalContracts,
-        }))
-        offset = page.nextOffset
-        if (!page.hasMore) break
+      try {
+        let records = []
+        let offset = 0
+        let pageNumber = 0
+        for (; pageNumber < MAX_PAGES_PER_AGENCY; pageNumber += 1) {
+          const page = await step.do(
+            `Fetch ${agency.id} awards page ${pageNumber + 1}`,
+            { retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
+            () => fetchExpiringAwardsPage(env, { agency, naicsCodes, offset }),
+          )
+          records = records.concat(page.records)
+          const estimatedPages = Math.max(1, Math.ceil(page.total / PAGE_SIZE))
+          await step.do(`Record ${agency.id} progress page ${pageNumber + 1}`, () => setStatus(env, {
+            status: 'running', runId, startedAt, agencyIndex, agencyTotal: agencies.length,
+            currentAgency: agency.label, currentPage: pageNumber + 1, currentPages: estimatedPages,
+            contracts: totalContracts, agencyErrors,
+          }))
+          offset = page.nextOffset
+          if (!page.hasMore) break
+        }
+        const saved = await step.do(`Save ${agency.id} expiring contracts`, () => saveAgencyResults(env, agency, records))
+        totalContracts += saved.contracts.length
+      } catch (error) {
+        const issue = { agencyId: agency.id, agency: agency.label, error: error.message }
+        agencyErrors.push(issue)
+        console.error(JSON.stringify({ event: 'expiring_contract_agency_failed', runId, ...issue }))
       }
-      const saved = await step.do(`Save ${agency.id} expiring contracts`, () => saveAgencyResults(env, agency, records))
-      totalContracts += saved.contracts.length
+
+      const nextAgency = agencies[agencyIndex + 1]
+      await step.do(`Complete ${agency.id} refresh stage`, () => setStatus(env, {
+        status: 'running', runId, startedAt, agencyIndex: agencyIndex + 1, agencyTotal: agencies.length,
+        currentAgency: nextAgency?.label || null, currentPage: 0, currentPages: null,
+        contracts: totalContracts, agencyErrors,
+      }))
     }
 
     const completedAt = new Date().toISOString()
-    const complete = { status: 'success', runId, startedAt, completedAt, refreshedAt: completedAt, agencyTotal: agencies.length, contracts: totalContracts }
+    const successfulAgencies = agencies.length - agencyErrors.length
+    const finalStatus = successfulAgencies === 0 ? 'error' : agencyErrors.length ? 'partial' : 'success'
+    const complete = {
+      status: finalStatus,
+      runId,
+      startedAt,
+      completedAt,
+      refreshedAt: successfulAgencies ? completedAt : null,
+      agencyTotal: agencies.length,
+      successfulAgencies,
+      contracts: totalContracts,
+      agencyErrors,
+      error: successfulAgencies === 0
+        ? 'The refresh could not complete for any selected agency'
+        : agencyErrors.length
+          ? `${agencyErrors.length} ${agencyErrors.length === 1 ? 'agency' : 'agencies'} could not be refreshed`
+          : null,
+    }
     await step.do('Complete expiring contract refresh', () => setStatus(env, complete))
     return complete
   } catch (error) {
     const failed = { status: 'error', runId, startedAt, completedAt: new Date().toISOString(), error: error.message }
     await setStatus(env, failed)
-    throw error
+    console.error(JSON.stringify({ event: 'expiring_contract_refresh_failed', runId, error: error.message }))
+    return failed
   }
 }
 
@@ -386,12 +418,20 @@ export async function startExpiringContractsRefresh(env, { agencies = DEFAULT_EX
     status: 'queued', runId, startedAt: new Date().toISOString(), agencyIndex: 0,
     agencyTotal: normalized.length, currentAgency: normalized[0]?.label || null, contracts: 0,
   })
-  const created = await env.EXPIRING_CONTRACTS_WORKFLOW.createBatch([{
-    id: runId,
-    params: { runId, agencies: normalized },
-    retention: { successRetention: '3 days', errorRetention: '7 days' },
-  }])
-  return { started: Boolean(created[0]), runId }
+  try {
+    const created = await env.EXPIRING_CONTRACTS_WORKFLOW.createBatch([{
+      id: runId,
+      params: { runId, agencies: normalized },
+      retention: { successRetention: '3 days', errorRetention: '7 days' },
+    }])
+    return { started: Boolean(created[0]), runId }
+  } catch (error) {
+    await setStatus(env, {
+      status: 'error', runId, startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+      error: `The refresh could not start: ${error.message}`,
+    })
+    throw error
+  }
 }
 
 function inSelectedRange(contract, range, now = new Date()) {
