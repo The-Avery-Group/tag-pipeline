@@ -148,7 +148,7 @@ export default {
       } else if (path === '/awards/lookup' && req.method === 'GET') {
         response = await handleAwards(req, env)
 
-      } else if (path.startsWith('/sam/expiring-contracts/') && ['GET', 'POST'].includes(req.method)) {
+      } else if (path.startsWith('/sam/expiring-contracts/') && ['GET', 'POST', 'DELETE'].includes(req.method)) {
         response = await handleExpiringContracts(req, env)
 
       } else if (path === '/entities/8a' && req.method === 'GET') {
