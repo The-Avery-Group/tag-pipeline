@@ -406,13 +406,6 @@ export default function PeopleSearch({
   }, [clearSearchTimeout])
 
   useEffect(() => {
-    if (!GOOGLE_SEARCH_ENGINE_ID) return
-    void loadGoogleSearchElement().catch(() => {
-      // A visible message is shown if the user starts a search and loading still fails.
-    })
-  }, [])
-
-  useEffect(() => {
     const editor = queryEditorRef.current
     if (!editor || !expanded) return
     editor.style.height = 'auto'
