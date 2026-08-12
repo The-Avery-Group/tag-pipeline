@@ -5,6 +5,7 @@ import {
   expiringHiddenKey,
   fetchAgencyModifierNotices,
   fetchExpiringAwardsPage,
+  isExcludedExpiringSetAside,
   matchingModifierContacts,
   modifierNoticeWindows,
   noticeContacts,
@@ -25,6 +26,7 @@ function award({
   currentCompletionDate = '2027-08-01',
   ultimateCompletionDate = '2028-02-01',
   lastModifiedBy = 'HHSAHAYNES',
+  setAside = '',
 } = {}) {
   return {
     contractId: {
@@ -47,6 +49,7 @@ function award({
         contractingOffice: { code: '75D301', name: 'CDC OFFICE OF ACQUISITION SERVICES' },
       } },
       productOrServiceInformation: { principalNaics: [{ code: '541611' }] },
+      competitionInformation: { typeOfSetAside: setAside ? { name: setAside } : null },
     },
     awardDetails: {
       dates: { dateSigned, currentCompletionDate, ultimateCompletionDate, periodOfPerformanceStartDate: '2026-01-01', fiscalYear: '2026' },
@@ -89,6 +92,38 @@ test('award family summary uses ultimate completion and total base plus all opti
   assert.equal(summary.totalContractValue, 5000000)
   assert.equal(summary.piid, '75D30126C00001')
   assert.equal(summary.agencyCode, '7523')
+})
+
+test('women-owned and HUBZone set-asides are excluded from expiring discovery', () => {
+  assert.equal(isExcludedExpiringSetAside('Women-Owned Small Business (WOSB) Program Set-Aside'), true)
+  assert.equal(isExcludedExpiringSetAside('Economically Disadvantaged Women-Owned Small Business (EDWOSB)'), true)
+  assert.equal(isExcludedExpiringSetAside('HUBZone Set-Aside'), true)
+  assert.equal(isExcludedExpiringSetAside('8(a) Set-Aside'), false)
+  assert.equal(isExcludedExpiringSetAside('Total Small Business Set-Aside'), false)
+})
+
+test('excluded set-asides are discarded before an award page enters the refresh checkpoint', async () => {
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    totalRecords: 3,
+    awardSummary: [
+      award({ setAside: 'WOSB Set-Aside' }),
+      award({ modificationNumber: '1', setAside: 'HUBZone Set-Aside' }),
+      award({ modificationNumber: '2', setAside: '8(a) Set-Aside' }),
+    ],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  try {
+    const result = await fetchExpiringAwardsPage({ SAM_API_KEY: 'test-key' }, {
+      agency: { id: 'cdc', searchName: 'CDC', tier: 'subtier' },
+      naicsCodes: ['541611'],
+      now: new Date('2026-08-12T00:00:00Z'),
+    })
+    assert.equal(result.records.length, 1)
+    assert.equal(result.records[0].coreData.competitionInformation.typeOfSetAside.name, '8(a) Set-Aside')
+    assert.equal(result.nextOffset, 3)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
 })
 
 test('official SAM agency metadata preserves the tier, organization ID, and award-search code', () => {
@@ -159,6 +194,7 @@ test('award discovery filters official subagencies by code instead of a guessed 
     const params = new URL(requestUrl).searchParams
     assert.equal(params.get('contractingSubtierCode'), '9700')
     assert.equal(params.has('contractingSubtierName'), false)
+    assert.equal(params.get('typeOfSetAsideCode'), '!HZC&!HZS&!WOSB&!EDWOSB')
   } finally {
     globalThis.fetch = previousFetch
   }
