@@ -28,6 +28,7 @@ import { purgeExpiredEbuyRecords } from './lib/ebuyRepository.js'
 import { deleteArchivedEbuyFile } from './lib/sharepointArchive.js'
 import { AuthError, verifyEntraRequest } from './lib/auth.js'
 import { getAutomationHealth } from './lib/automationHealth.js'
+import { handleOpportunityWorkspaces } from './handlers/opportunityWorkspaces.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -157,6 +158,9 @@ export default {
       } else if (path.startsWith('/ebuy/') && ['GET', 'POST', 'PATCH'].includes(req.method)) {
         response = await handleEbuy(req, env)
 
+      } else if (path.startsWith('/opportunity-workspaces') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleOpportunityWorkspaces(req, env)
+
       } else {
         response = json({ error: 'Not found' }, 404)
       }
@@ -225,3 +229,4 @@ export default {
 export { SAMPullWorkflow } from './workflows/samPull.js'
 export { ExpiringContractsWorkflow } from './workflows/expiringContracts.js'
 export { EbuySyncWorkflow } from './workflows/ebuySync.js'
+export { OpportunityWorkspaceWorkflow } from './workflows/opportunityWorkspace.js'
