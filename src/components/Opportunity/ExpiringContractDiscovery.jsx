@@ -44,6 +44,17 @@ function fullMoney(value) {
     : 'Not available'
 }
 
+function formatRefreshTime(value) {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 function DetailField({ label, value, link }) {
   return (
     <div className={styles.detailField}>
@@ -350,7 +361,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                       <label>
                         <input type="checkbox" checked={effectiveAgencyIds.includes(agency.id)} onChange={() => toggleAgency(agency.id)} />
                         <span>{agency.label}</span>
-                        {agency.custom && <small>Added</small>}
+                        <small>{[agency.agencyCode, agency.custom ? 'Added' : ''].filter(Boolean).join(' · ') || 'Name fallback'}</small>
                       </label>
                       {agency.custom && <button type="button" className={styles.removeAgency} title={`Remove ${agency.label}`} aria-label={`Remove ${agency.label}`} onClick={() => removeResolvedAgency(agency)}>×</button>}
                     </div>
@@ -378,7 +389,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
             <button type="button" className={`${styles.hiddenToggle} ${showHidden ? styles.hiddenToggleActive : ''}`} onClick={() => setShowHidden((current) => !current)}>
               {showHidden ? 'Hide hidden' : `Show hidden${hiddenCount ? ` (${hiddenCount})` : ''}`}
             </button>
-            <button type="button" className="btn btn-primary" onClick={runRefresh} disabled={refreshStarting || ['queued', 'running'].includes(status.status)}>
+            <button type="button" className={`btn btn-primary ${styles.refreshButton}`} onClick={runRefresh} disabled={refreshStarting || ['queued', 'running'].includes(status.status)}>
               {refreshStarting ? 'Starting…' : ['queued', 'running'].includes(status.status) ? 'Refreshing…' : 'Refresh contracts'}
             </button>
           </div>
@@ -406,7 +417,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
 
           <div className={styles.summaryRow}>
             <strong>{visibleContracts.length} contract{visibleContracts.length === 1 ? '' : 's'}</strong>
-            <span>{showHidden && hiddenCount ? `${hiddenCount} hidden contract${hiddenCount === 1 ? '' : 's'} included · ` : ''}{status.refreshedAt ? `Refreshed ${new Date(status.refreshedAt).toLocaleString()}` : 'Not refreshed yet'}</span>
+            <span>{showHidden && hiddenCount ? `${hiddenCount} hidden contract${hiddenCount === 1 ? '' : 's'} included · ` : ''}{status.refreshedAt ? `Last refreshed: ${formatRefreshTime(status.refreshedAt)}` : 'Not refreshed yet'}</span>
           </div>
           {error && <div className={styles.errorCallout}><span>{error}</span></div>}
 
