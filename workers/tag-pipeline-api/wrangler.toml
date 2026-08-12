@@ -16,6 +16,9 @@ compatibility_flags = ["nodejs_compat"]
 #   CAPABILITIES_FILE_ID — Optional Graph driveItem ID for the AI capabilities DOCX
 #   DRIVE_ID             — Optional only when that DOCX is in a different document library;
 #                          the workbook library is the default.
+#   EBUY_CREDENTIAL_ENCRYPTION_KEY — 32 random bytes encoded as base64. Encrypts
+#                          the company eBuy username, password, authenticator
+#                          setup key, and short-lived session before D1 storage.
 
 # KV namespace for caching (AI conversation history + SAM key status)
 [[kv_namespaces]]
@@ -55,6 +58,7 @@ ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 
 [triggers]
 # All cron schedules are UTC. 12:00 UTC is 1:00 PM Nigeria time (WAT).
+# - eBuy synchronization: 00:00, 06:00, 12:00, and 18:00 UTC every day
 # - SAM change checks: 00:00 and 12:00 UTC every day
 # - Expiring contract refresh: Monday and Thursday at 00:00 UTC (1:00 AM WAT)
 # - Autonomous SAM opportunity pulls: weekdays at 1:00 PM WAT
@@ -62,7 +66,7 @@ ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 # - Capability document eTag checks: every day at 1:01 PM WAT
 # - Teams reminders: every day at 2:01 PM WAT, so weekend RFI response
 #   reminders remain active while the other reminder categories defer to Monday.
-crons = ["0 0,12 * * *", "1 12 * * *", "1 13 * * *"]
+crons = ["0 0,6,12,18 * * *", "1 12 * * *", "1 13 * * *"]
 
 [observability]
 enabled = true
