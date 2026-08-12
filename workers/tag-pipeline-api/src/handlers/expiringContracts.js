@@ -24,6 +24,7 @@ const DATA_PREFIX = 'expiring_contracts:data:v1:'
 const RUN_RECORDS_PREFIX = 'expiring_contracts:run_records:v1:'
 const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
 const MODIFIER_CONTACT_PREFIX = 'expiring_contracts:modifier_contacts:v1:'
+const EXCLUDED_SET_ASIDE_QUERY = '!HZC&!HZS&!WOSB&!EDWOSB'
 const MODIFIER_CONTACT_TTL_SECONDS = 14 * 24 * 60 * 60
 
 export const DEFAULT_EXPIRING_AGENCIES = [
@@ -155,6 +156,20 @@ export function contractEligibility(records, nowValue = new Date()) {
     return { eligible: true, reason: 'recent-award-activity', lifecycle: null, lastOptionDate: null }
   }
   return { eligible: false, reason: 'inactive', lifecycle: null, lastOptionDate: null }
+}
+
+export function isExcludedExpiringSetAside(value) {
+  const normalized = clean(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+  return /\bHUB\s*ZONE\b/.test(normalized) ||
+    /\bWOM(?:AN|EN)\s+OWNED\b/.test(normalized) ||
+    /\b(?:ED)?WOSB\b/.test(normalized)
+}
+
+function recordSetAside(record) {
+  return record?.coreData?.competitionInformation?.typeOfSetAside?.name
 }
 
 export function summarizeAwardFamily(records, now = new Date()) {
@@ -505,6 +520,7 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
     offset: String(offset),
     awardOrIDV: 'Award',
     closedStatus: 'No',
+    typeOfSetAsideCode: EXCLUDED_SET_ASIDE_QUERY,
     ultimateCompletionDate: `[${formatSamDate(from)},${formatSamDate(to)}]`,
     naicsCode: naicsCodes.join('~'),
   }
@@ -518,10 +534,13 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
       throw new Error(`SAM Contract Awards API returned ${response.status}: ${body.slice(0, 180)}`)
     }
     const payload = await response.json()
-    const records = (payload.awardSummary || []).map(compactAwardRecord)
-    const total = Number(payload.totalRecords || records.length)
-    const nextOffset = offset + records.length
-    return { records, total, nextOffset, hasMore: records.length === PAGE_SIZE && nextOffset < total }
+    const rawRecords = payload.awardSummary || []
+    const records = rawRecords
+      .map(compactAwardRecord)
+      .filter((record) => !isExcludedExpiringSetAside(recordSetAside(record)))
+    const total = Number(payload.totalRecords || rawRecords.length)
+    const nextOffset = offset + rawRecords.length
+    return { records, total, nextOffset, hasMore: rawRecords.length === PAGE_SIZE && nextOffset < total }
   }
 
   const codeFilter = normalizedAgency.tier === 'department' ? 'contractingDepartmentCode' : 'contractingSubtierCode'
@@ -538,7 +557,7 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
 export async function saveAgencyResults(env, agency, records, fetchedAt = new Date().toISOString()) {
   const families = groupByAwardFamily(dedupeRecords(records))
     .map((family) => summarizeAwardFamily(family))
-    .filter((result) => result.eligibility.eligible)
+    .filter((result) => result.eligibility.eligible && !isExcludedExpiringSetAside(result.setAside))
     .sort((left, right) => clean(left.ultimateCompletionDate).localeCompare(clean(right.ultimateCompletionDate)))
   const official = families[0]
     ? { departmentCode: families[0].departmentCode, agencyCode: families[0].agencyCode, agencyName: families[0].agency, departmentName: families[0].department }
@@ -842,7 +861,10 @@ function inSelectedRange(contract, range, now = new Date()) {
 async function loadResults(env, agencies, range, includeHidden = false) {
   const selected = agencies.length ? agencies : await agencyRegistry(env)
   const cached = await Promise.all(selected.map((agency) => env.CACHE?.get(resultCacheKey(normalizeAgency(agency)), 'json')))
-  const available = cached.filter(Boolean)
+  const available = cached.filter(Boolean).map((entry) => ({
+    ...entry,
+    contracts: (entry.contracts || []).filter((contract) => !isExcludedExpiringSetAside(contract.setAside)),
+  }))
   const contractsByFamily = new Map()
   available.flatMap((entry) => entry.contracts).forEach((contract) => {
     if (inSelectedRange(contract, range)) contractsByFamily.set(contract.familyKey, contract)
