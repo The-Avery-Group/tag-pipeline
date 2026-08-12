@@ -15,6 +15,7 @@ import { notifyNewOpportunity } from '@/services/notifyService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import { normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
 import { isSAMOpportunityFlagged } from '@/utils/samOpportunityHelpers'
+import { parseSAMPOCs } from '@/utils/samPoc'
 
 
 // How often to poll /sam/run-status while a pull is actively running.
@@ -105,13 +106,6 @@ function startSharedPullPolling({ reconcileNow = false } = {}) {
   // triggering page waits for its normal interval so it cannot accidentally
   // read the previous run before the Worker writes the new running status.
   if (reconcileNow) refreshSharedPullProgress()
-}
-
-// ── POC parser ────────────────────────────────────────────────────────────
-function parsePOC(pocStr) {
-  if (!pocStr) return { name: '', email: '', phone: '' }
-  const parts = String(pocStr).split('|').map((s) => s.trim())
-  return { name: parts[0] || '', email: parts[1] || '', phone: parts[2] || '' }
 }
 
 // ── Worker status checks ──────────────────────────────────────────────────
@@ -342,8 +336,11 @@ export function useSAMOpportunities() {
 
   // ── Add to pipeline ──────────────────────────────────────────────────
   const addToPipeline = useCallback(async (row, outlook = 'New') => {
-    const poc = parsePOC(row['Point of Contact'])
-    const contactName = await resolveContact(poc, row['Agency'], row['Department'])
+    const contactNames = []
+    for (const poc of parseSAMPOCs(row['Point of Contact'])) {
+      const contactName = await resolveContact(poc, row['Agency'], row['Department'])
+      if (contactName && !contactNames.some((name) => name.toLowerCase() === contactName.toLowerCase())) contactNames.push(contactName)
+    }
 
     const opportunity = {
       'TAG Opportunity Phase':                   'Identified',
@@ -357,7 +354,7 @@ export function useSAMOpportunities() {
       'Agency*':                                 row['Agency']              || '',
       'Office*':                                 row['Office']              || '',
       'NAICS Code*':                             row['NAICS Code']          || '',
-      'Contracting Officer / Specialist (POC)*': contactName                || '',
+      'Contracting Officer / Specialist (POC)*': contactNames.join(', '),
       'Submission Date (Response Date)*':        row['Response Date']        || '',
       'Other Links*':                            row['SAM.gov URL']          || '',
     }
