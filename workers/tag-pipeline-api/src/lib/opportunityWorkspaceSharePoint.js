@@ -5,6 +5,7 @@ export const DEFAULT_WORKSPACE_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlM
 export const WORKSPACE_ROOT_NAME = 'RFI Pipeline and Responses'
 export const WORKSPACE_TEMPLATE_PATH = [WORKSPACE_ROOT_NAME, '_Templates', 'Copy Me For RFI']
 export const SAM_DOCUMENTS_FOLDER_NAME = '2. RFI Documents'
+const HIDDEN_SYSTEM_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 
 function driveIdFor(env) {
   // DRIVE_ID may point at a separate capabilities-document library. Keep the
@@ -215,7 +216,7 @@ export async function listWorkspaceChildren(env, workspace, parentId = '') {
   )
   return {
     parent: { id: requested.id, name: requested.name, webUrl: requested.webUrl },
-    items: (body.value || []).map((item) => ({
+    items: (body.value || []).filter((item) => !HIDDEN_SYSTEM_FILES.has(String(item.name || '').toLowerCase())).map((item) => ({
       id: item.id,
       name: item.name,
       webUrl: item.webUrl,
