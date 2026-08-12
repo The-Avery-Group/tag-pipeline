@@ -9,6 +9,7 @@ import {
 import {
   beginWorkspaceTemplateCopy,
   findCopiedWorkspaceFolder,
+  finishRecordedWorkspaceFolders,
   finishWorkspaceFolders,
   resolveWorkspaceDestination,
   updatePipelineFolderLink,
@@ -38,36 +39,43 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
       errorMessage: null,
     }))
 
-    const destination = await step.do('Resolve SharePoint destination', {
-      retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
+    let folders = await step.do('Check recorded SharePoint workspace', {
+      retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' },
       timeout: '1 minute',
-    }, () => resolveWorkspaceDestination(env, workspace, folderName))
+    }, () => finishRecordedWorkspaceFolders(env, workspace))
 
-    const copy = await step.do('Start SharePoint template copy', {
-      retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
-      timeout: '1 minute',
-    }, () => beginWorkspaceTemplateCopy(env, destination))
+    if (!folders) {
+      const destination = await step.do('Resolve SharePoint destination', {
+        retries: { limit: 3, delay: '5 seconds', backoff: 'exponential' },
+        timeout: '1 minute',
+      }, () => resolveWorkspaceDestination(env, workspace, folderName))
 
-    if (!copy.completed) {
-      for (let attempt = 0; attempt < COPY_POLL_LIMIT; attempt += 1) {
-        await step.sleep(`Wait for template copy ${attempt + 1}`, '5 seconds')
-        // Graph's copy Location can point at the tenant's SharePoint host.
-        // A Microsoft Graph token is not valid for that audience. Check the
-        // destination through Graph instead; this is bounded, retryable, and
-        // also proves the folder is available before subsequent work starts.
-        const result = await step.do(`Check copied destination folder ${attempt + 1}`, {
-          retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' },
-          timeout: '30 seconds',
-        }, () => findCopiedWorkspaceFolder(env, destination))
-        if (result.complete) break
-        if (attempt === COPY_POLL_LIMIT - 1) throw new Error('SharePoint template copy did not finish in time')
+      const copy = await step.do('Start SharePoint template copy', {
+        retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' },
+        timeout: '1 minute',
+      }, () => beginWorkspaceTemplateCopy(env, destination))
+
+      if (!copy.completed) {
+        for (let attempt = 0; attempt < COPY_POLL_LIMIT; attempt += 1) {
+          await step.sleep(`Wait for template copy ${attempt + 1}`, '5 seconds')
+          // Graph's copy Location can point at the tenant's SharePoint host.
+          // A Microsoft Graph token is not valid for that audience. Check the
+          // destination through Graph instead; this is bounded, retryable, and
+          // also proves the folder is available before subsequent work starts.
+          const result = await step.do(`Check copied destination folder ${attempt + 1}`, {
+            retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' },
+            timeout: '30 seconds',
+          }, () => findCopiedWorkspaceFolder(env, destination))
+          if (result.complete) break
+          if (attempt === COPY_POLL_LIMIT - 1) throw new Error('SharePoint template copy did not finish in time')
+        }
       }
-    }
 
-    const folders = await step.do('Resolve copied workspace folders', {
-      retries: { limit: 4, delay: '5 seconds', backoff: 'exponential' },
-      timeout: '1 minute',
-    }, () => finishWorkspaceFolders(env, workspace, folderName))
+      folders = await step.do('Resolve copied workspace folders', {
+        retries: { limit: 4, delay: '5 seconds', backoff: 'exponential' },
+        timeout: '1 minute',
+      }, () => finishWorkspaceFolders(env, workspace, folderName))
+    }
 
     await step.do('Save SharePoint workspace location', () => updateWorkspace(env.EBUY_DB, opportunityKey, {
       sharePointDriveId: folders.driveId,
