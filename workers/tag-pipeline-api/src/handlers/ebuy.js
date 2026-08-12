@@ -1,12 +1,14 @@
-import { getEbuyConnectorStatus, fetchEbuyWithManualSession } from '../lib/ebuyConnector.js'
 import {
   ebuyStorageStatus,
+  getEbuyConnectionStatus,
   getEbuyOpportunity,
+  hasRunningEbuySync,
   listEbuyOpportunities,
   purgeExpiredEbuyRecords,
   recordArchivedEbuyAttachment,
   updateEbuyReviewState,
 } from '../lib/ebuyRepository.js'
+import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
 import { archiveEbuyFile, deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
 
 const FIXTURE_ATTACHMENT = {
@@ -43,11 +45,33 @@ async function startFixtureSync(env) {
   return json({ ok: true, started: created.length > 0, instanceId, mode: 'fixture' }, 202)
 }
 
-async function archiveFixtureAttachment(env) {
-  if (getEbuyConnectorStatus(env).mode !== 'fixture') {
-    return json({ error: 'The test attachment is available only while the eBuy connector is in test mode', code: 'ebuy_fixture_mode_required' }, 409)
+async function startLiveSync(env, source = 'manual', scheduledTime = null) {
+  const db = requireDatabase(env)
+  if (!env.EBUY_SYNC_WORKFLOW) {
+    return json({ error: 'The eBuy sync Workflow is not configured', code: 'ebuy_workflow_not_configured' }, 503)
   }
+  const connection = await getEbuyConnectionStatus(db, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
+  if (!connection.configured) return json({ error: 'Connect the company GSA eBuy account in Settings first', code: 'ebuy_not_connected' }, 409)
+  if (await hasRunningEbuySync(db)) return json({ ok: true, started: false, alreadyRunning: true, message: 'An eBuy synchronization is already running.' }, 202)
+  const slot = scheduledTime ? Math.floor(Number(scheduledTime) / (6 * 60 * 60 * 1000)) : crypto.randomUUID()
+  const instanceId = `ebuy-live-${slot}`
+  const created = await env.EBUY_SYNC_WORKFLOW.createBatch([{
+    id: instanceId,
+    params: { mode: 'live', source },
+    retention: { successRetention: '3 days', errorRetention: '7 days' },
+  }])
+  return json({ ok: true, started: created.length > 0, instanceId, mode: 'live' }, 202)
+}
 
+export async function startScheduledEbuySync(env, scheduledTime) {
+  if (!env.EBUY_DB || !env.EBUY_SYNC_WORKFLOW || !env.EBUY_CREDENTIAL_ENCRYPTION_KEY) return { started: false, reason: 'not_configured' }
+  const connection = await getEbuyConnectionStatus(env.EBUY_DB, true)
+  if (!connection.configured) return { started: false, reason: 'not_connected' }
+  const response = await startLiveSync(env, 'scheduled', scheduledTime)
+  return response.json()
+}
+
+async function archiveFixtureAttachment(env) {
   const db = requireDatabase(env)
   if (!await getEbuyOpportunity(db, FIXTURE_ATTACHMENT.requestId)) {
     return json({ error: 'Synchronize the test eBuy archive before archiving its attachment', code: 'ebuy_fixture_required' }, 409)
@@ -83,19 +107,43 @@ async function archiveFixtureAttachment(env) {
 }
 
 export async function getEbuyStatus(env) {
-  const [storage, connector] = await Promise.all([
-    ebuyStorageStatus(env.EBUY_DB),
-    Promise.resolve(getEbuyConnectorStatus(env)),
-  ])
+  const storage = await ebuyStorageStatus(env.EBUY_DB)
+  const connection = await getEbuyConnectionStatus(env.EBUY_DB, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
+  const connector = {
+    enabled: Boolean(connection.configured),
+    mode: connection.configured ? 'live' : 'fixture',
+    message: connection.configured
+      ? connection.status === 'error'
+        ? connection.lastErrorMessage || 'The latest eBuy connection attempt needs attention.'
+        : 'The company eBuy account is connected for autonomous synchronization.'
+      : connection.encryptionConfigured
+        ? 'The secure connection is ready for company eBuy credentials.'
+        : 'Add the Worker encryption secret before connecting the company eBuy account.',
+    automationReady: Boolean(connection.configured && connection.encryptionConfigured),
+    connection,
+  }
   return { ...storage, connector, sharepointArchive: Boolean(env.MS_TENANT_ID && env.MS_CLIENT_ID && env.MS_CLIENT_SECRET) }
 }
 
-export async function handleEbuy(req, env) {
+export async function handleEbuy(req, env, identity = {}) {
   const url = new URL(req.url)
   const path = url.pathname
   try {
     if (path === '/ebuy/status' && req.method === 'GET') return json(await getEbuyStatus(env))
     if (path === '/ebuy/sync/status' && req.method === 'GET') return json(await getEbuyStatus(env))
+    if (path === '/ebuy/connection' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      const connection = await connectEbuyAccount(env, body, identity.name || identity.userId || '')
+      return json({ ok: true, connection })
+    }
+    if (path === '/ebuy/connection' && req.method === 'DELETE') {
+      await disconnectEbuyAccount(env)
+      return json({ ok: true })
+    }
+    if (path === '/ebuy/connection/test' && req.method === 'POST') {
+      return json({ ok: true, ...(await testStoredEbuyConnection(env)) })
+    }
+    if (path === '/ebuy/sync' && req.method === 'POST') return startLiveSync(env)
     if (path === '/ebuy/sync/fixture' && req.method === 'POST') {
       requireDatabase(env)
       return startFixtureSync(env)
@@ -103,21 +151,6 @@ export async function handleEbuy(req, env) {
     if (path === '/ebuy/archive/test-attachment' && req.method === 'POST') {
       requireDatabase(env)
       return archiveFixtureAttachment(env)
-    }
-    if (path === '/ebuy/sync/manual' && req.method === 'POST') {
-      requireDatabase(env)
-      if (!getEbuyConnectorStatus(env).enabled) {
-        return json({ error: 'Manual eBuy sign-in is not enabled yet. Use Test archive sync for now.', code: 'live_connector_not_configured' }, 501)
-      }
-      const credentials = await req.json().catch(() => ({}))
-      try {
-        await fetchEbuyWithManualSession(env, credentials)
-        return json({ error: 'The live connector returned no synchronization result', code: 'live_connector_invalid_result' }, 502)
-      } finally {
-        credentials.username = ''
-        credentials.password = ''
-        credentials.otp = ''
-      }
     }
     if (path === '/ebuy/opportunities' && req.method === 'GET') {
       const db = requireDatabase(env)
