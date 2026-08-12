@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useExpiringContracts } from '@/hooks/useExpiringContracts'
+import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { formatDate } from '@/utils/kpiHelpers'
 import { resolveModifierWithCrmContacts } from '@/utils/modifierIdentity'
+import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import styles from './ExpiringContractDiscovery.module.css'
 
 const C = {
@@ -66,6 +68,49 @@ function DetailField({ label, value, link }) {
   )
 }
 
+function CompactEightAStatus({ uei, contractEndDate }) {
+  const normalizedUEI = String(uei || '').trim().toUpperCase()
+  const validUEI = /^[A-Z0-9]{12}$/.test(normalizedUEI)
+  const { data, loading, error } = useEntityEightA(validUEI ? normalizedUEI : '')
+
+  if (!validUEI) return <div className={`${styles.eightAStatus} ${styles.eightANeutral}`}>8(a) check needs a valid incumbent UEI.</div>
+  if (loading) return <div className={`${styles.eightAStatus} ${styles.eightANeutral}`}>Checking 8(a) status…</div>
+
+  const sbaLink = sbaProfileUrl(data, normalizedUEI)
+  const exitDate = data?.eightA?.exitDate
+  if (error || !exitDate) {
+    const message = error
+      ? '8(a) status is temporarily unavailable.'
+      : data?.eightA
+        ? 'No 8(a) exit date was returned.'
+        : 'No active 8(a) record was returned.'
+    return (
+      <div className={`${styles.eightAStatus} ${styles.eightANeutral}`} title={error || undefined}>
+        <span>{message}</span>
+        <a href={sbaLink} target="_blank" rel="noreferrer">Verify on SBA</a>
+      </div>
+    )
+  }
+
+  const exit = localDate(exitDate)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const sixMonthsFromNow = new Date(today)
+  sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6)
+  const contractEnd = localDate(contractEndDate)
+  const exited = exit < today
+  const exitsBeforeContractEnd = !exited && !Number.isNaN(contractEnd.getTime()) && exit < contractEnd
+  const tone = exited ? styles.eightAGreen : exit <= sixMonthsFromNow ? styles.eightAAmber : styles.eightARed
+
+  return (
+    <div className={`${styles.eightAStatus} ${tone}`}>
+      <span>8(a) exit <strong>{formatDate(dateOnly(exitDate))}</strong>{exited ? ' · Past date' : exitsBeforeContractEnd ? ' · Before contract end' : ''}</span>
+      <small>SBA Entity Management API</small>
+      <a href={sbaLink} target="_blank" rel="noreferrer">Verify on SBA</a>
+    </div>
+  )
+}
+
 function ModifierIdentity({ resolution, choice = '', onChoose }) {
   if (!resolution?.raw) return <span className={styles.muted}>Not available</span>
   if (resolution.status === 'system') {
@@ -113,6 +158,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
   const [agencyResolving, setAgencyResolving] = useState(false)
   const [agencyResolveError, setAgencyResolveError] = useState('')
   const [classification, setClassification] = useState('all')
+  const [setAside, setSetAside] = useState('all')
   const [showHidden, setShowHidden] = useState(false)
   const [expanded, setExpanded] = useState(new Set())
   const [details, setDetails] = useState({})
@@ -150,18 +196,26 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
   const classifications = useMemo(() => [...new Set(
     contracts.map((contract) => String(contract.awardType || '').trim()).filter(Boolean),
   )].sort((left, right) => left.localeCompare(right)), [contracts])
+  const setAsides = useMemo(() => [...new Set(
+    contracts.map((contract) => String(contract.setAside || '').trim()).filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right)), [contracts])
   const visibleContracts = useMemo(() => {
     const needle = String(search || '').trim().toLowerCase()
     return contracts.filter((contract) => {
       if (classification !== 'all' && String(contract.awardType || '').trim() !== classification) return false
+      if (setAside !== 'all' && String(contract.setAside || '').trim() !== setAside) return false
       if (!needle) return true
       return Object.values(contract).some((value) => String(value || '').toLowerCase().includes(needle))
     })
-  }, [classification, contracts, search])
+  }, [classification, contracts, search, setAside])
 
   useEffect(() => {
     if (classification !== 'all' && !classifications.includes(classification)) setClassification('all')
   }, [classification, classifications])
+
+  useEffect(() => {
+    if (setAside !== 'all' && !setAsides.includes(setAside)) setSetAside('all')
+  }, [setAside, setAsides])
 
   useEffect(() => {
     if (!agencyMenuOpen) return undefined
@@ -404,6 +458,13 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                 {classifications.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
+            <label>
+              <span>Set-aside</span>
+              <select value={setAside} onChange={(event) => setSetAside(event.target.value)}>
+                <option value="all">All set-asides</option>
+                {setAsides.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
             <button type="button" className={`${styles.hiddenToggle} ${showHidden ? styles.hiddenToggleActive : ''}`} onClick={() => setShowHidden((current) => !current)}>
               {showHidden ? 'Hide hidden' : `Show hidden${hiddenCount ? ` (${hiddenCount})` : ''}`}
             </button>
@@ -493,7 +554,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                                 <DetailField label="UEI" value={detail.incumbentUEI} />
                                 <DetailField label="Total base and all options" value={fullMoney(detail.totalContractValue)} />
                                 <DetailField label="Set-aside" value={detail.setAside} />
-                              </div></section>
+                              </div><CompactEightAStatus uei={detail.incumbentUEI} contractEndDate={detail.ultimateCompletionDate} /></section>
                               <section><h4>Dates</h4><div className={styles.detailGrid}>
                                 <DetailField label="Period of performance start" value={detail.periodOfPerformanceStartDate ? formatDate(detail.periodOfPerformanceStartDate) : null} />
                                 <DetailField label="Current completion" value={detail.currentCompletionDate ? formatDate(detail.currentCompletionDate) : null} />
