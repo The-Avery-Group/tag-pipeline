@@ -345,13 +345,25 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
               fields,
               summary: `SAM.gov updated ${fields.map((field) => LABELS[field]).join(', ')}.`,
               changedAt: watch.lastCheckedAt,
+              // Keep the SAM source revision that produced this change. A
+              // later check may find no field differences because the saved
+              // snapshot is now current; without this marker that check used
+              // to replace an acknowledged field-level change with a fresh,
+              // unreviewed generic badge.
+              sourceModifiedAt: sourceDate,
               uiLink: nextSnapshot.uiLink,
             }
-          } else if (changedAfterAdded && (!watch.change?.reviewedAt || watch.change.changedAt !== sourceDate)) {
+          } else if (watch.change?.reviewedAt && !watch.change.sourceModifiedAt) {
+            // Upgrade older reviewed records in place. Treat the current SAM
+            // revision as the revision the user reviewed instead of raising
+            // the same update once more after deployment.
+            watch.change.sourceModifiedAt = sourceDate
+          } else if (changedAfterAdded && (!watch.change || watch.change.sourceModifiedAt !== sourceDate)) {
             watch.change = {
               fields: ['samUpdate'],
               summary: 'SAM reports this notice was updated after it was added to the pipeline.',
               changedAt: sourceDate,
+              sourceModifiedAt: sourceDate,
               uiLink: nextSnapshot.uiLink,
             }
           }
@@ -364,6 +376,7 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
               fields: ['samUpdate'],
               summary: 'SAM reports this notice was updated after it was added to the pipeline.',
               changedAt: sourceDate,
+              sourceModifiedAt: sourceDate,
               uiLink: nextSnapshot.uiLink,
             }
           }
