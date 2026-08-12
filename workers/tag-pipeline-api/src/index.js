@@ -23,7 +23,7 @@ import { handleEntityEightA } from './handlers/entities.js'
 import { handleSAMMonitor, runSAMMonitorCheck } from './handlers/samMonitor.js'
 import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiFollowUpMonitor.js'
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
-import { getEbuyStatus, handleEbuy } from './handlers/ebuy.js'
+import { getEbuyStatus, handleEbuy, startScheduledEbuySync } from './handlers/ebuy.js'
 import { purgeExpiredEbuyRecords } from './lib/ebuyRepository.js'
 import { deleteArchivedEbuyFile } from './lib/sharepointArchive.js'
 import { AuthError, verifyEntraRequest } from './lib/auth.js'
@@ -85,7 +85,7 @@ export default {
       // came from an authenticated user of this Entra application. Health is
       // deliberately public for deployment monitoring; scheduled handlers do
       // not pass through fetch() and are unaffected.
-      if (path !== '/health') await verifyEntraRequest(req, env)
+      const identity = path !== '/health' ? await verifyEntraRequest(req, env) : null
 
       if (path === '/health' && req.method === 'GET') {
         response = json({ status: 'ok', timestamp: new Date().toISOString() })
@@ -155,8 +155,8 @@ export default {
       } else if (path === '/entities/8a' && req.method === 'GET') {
         response = await handleEntityEightA(req, env)
 
-      } else if (path.startsWith('/ebuy/') && ['GET', 'POST', 'PATCH'].includes(req.method)) {
-        response = await handleEbuy(req, env)
+      } else if (path.startsWith('/ebuy/') && ['GET', 'POST', 'PATCH', 'DELETE'].includes(req.method)) {
+        response = await handleEbuy(req, env, identity)
 
       } else if (path.startsWith('/opportunity-workspaces') && ['GET', 'POST'].includes(req.method)) {
         response = await handleOpportunityWorkspaces(req, env)
@@ -180,7 +180,15 @@ export default {
   // at 12:00 UTC (1 PM WAT) on weekdays; RFI follow-on checks remain three
   // times weekly; response-deadline reminders may still run on weekends.
   async scheduled(controller, env, ctx) {
-    if (controller.cron === '0 0,12 * * *') {
+    if (controller.cron === '0 0,6,12,18 * * *') {
+      ctx.waitUntil(startScheduledEbuySync(env, controller.scheduledTime).catch((error) => {
+        console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
+      }))
+
+      // The existing SAM work remains at midnight and noon UTC. The 06:00
+      // and 18:00 invocations are reserved for the four-times-daily eBuy sync.
+      const scheduledHour = new Date(controller.scheduledTime).getUTCHours()
+      if (![0, 12].includes(scheduledHour)) return
       ctx.waitUntil((async () => {
         const run = await env.CACHE?.get('sam_monitor_run', 'json')
         const cursor = run?.nextCursor ?? 0
@@ -197,7 +205,7 @@ export default {
 
       // The noon UTC SAM-change pass also starts the independent weekday
       // pull/follow-up work, so the two jobs share one cron trigger.
-      if (new Date(controller.scheduledTime).getUTCHours() === 12) {
+      if (scheduledHour === 12) {
         const weekday = new Date(controller.scheduledTime).getUTCDay()
         if (weekday >= 1 && weekday <= 5) {
           ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
