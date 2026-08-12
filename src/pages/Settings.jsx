@@ -7,7 +7,14 @@ import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
-import { archiveEbuyTestAttachment, startEbuyFixtureSync, startManualEbuySync } from '@/services/ebuyService'
+import {
+  archiveEbuyTestAttachment,
+  connectEbuyAccount,
+  disconnectEbuyAccount,
+  startEbuyFixtureSync,
+  startEbuyLiveSync,
+  testEbuyConnection,
+} from '@/services/ebuyService'
 import {
   VALIDATION_KEY_MAP,
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, PRIORITY_VALUES,
@@ -100,7 +107,7 @@ function teamsIntegration(notifications) {
 function ebuyIntegration(ebuy) {
   if (!ebuy) return { status: { label: 'Checking', className: 'integrationPending' }, details: 'Checking eBuy archive status.' }
   const status = ({
-    ready: { label: ebuy.connector?.mode === 'fixture' ? 'Test mode' : 'Ready', className: ebuy.connector?.mode === 'fixture' ? 'integrationPending' : 'integrationReady' },
+    ready: { label: ebuy.connector?.enabled ? 'Connected' : 'Test mode', className: ebuy.connector?.enabled ? 'integrationReady' : 'integrationPending' },
     migration_required: { label: 'Setup required', className: 'integrationPending' },
     not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
     error: { label: 'Needs attention', className: 'integrationError' },
@@ -108,7 +115,7 @@ function ebuyIntegration(ebuy) {
   const count = Number(ebuy.opportunityCount || 0)
   return {
     status,
-    details: `${ebuy.message || 'eBuy archive status is unavailable.'}${count ? ` · ${count} archived opportunities` : ''}`,
+    details: `${ebuy.connector?.message || ebuy.message || 'eBuy archive status is unavailable.'}${count ? ` · ${count} archived opportunities` : ''}`,
   }
 }
 
@@ -123,10 +130,15 @@ export default function Settings({ toast }) {
   const [integrationStatus, setIntegrationStatus] = useState(null)
   const [loadingIntegrations, setLoadingIntegrations] = useState(false)
   const [refreshingCapabilities, setRefreshingCapabilities] = useState(false)
-  const [ebuyCredentials, setEbuyCredentials] = useState({ username: '', password: '', otp: '' })
   const [ebuySyncing, setEbuySyncing] = useState(false)
   const [ebuyArchivingTest, setEbuyArchivingTest] = useState(false)
   const [ebuyTestAttachment, setEbuyTestAttachment] = useState(null)
+  const [ebuyConnectionForm, setEbuyConnectionForm] = useState({ username: '', password: '', totpSecret: '' })
+  const [showEbuyConnectionForm, setShowEbuyConnectionForm] = useState(false)
+  const [ebuyConnecting, setEbuyConnecting] = useState(false)
+  const [ebuyTestingConnection, setEbuyTestingConnection] = useState(false)
+  const [ebuyLiveSyncing, setEbuyLiveSyncing] = useState(false)
+  const [ebuyDisconnecting, setEbuyDisconnecting] = useState(false)
 
   // ── SAM config state ─────────────────────────────────────────────────
   const [naicsCodes,    setNaicsCodes]    = useState([])
@@ -175,20 +187,6 @@ export default function Settings({ toast }) {
     } catch (error) { toast?.error(error.message) } finally { setEbuySyncing(false) }
   }
 
-  const handleEbuyManualSync = async (event) => {
-    event.preventDefault()
-    if (ebuySyncing) return
-    setEbuySyncing(true)
-    try {
-      await startManualEbuySync(ebuyCredentials)
-      toast?.success('eBuy sync started')
-      setEbuyCredentials({ username: '', password: '', otp: '' })
-    } catch (error) { toast?.error(error.message) } finally {
-      setEbuyCredentials((current) => ({ ...current, password: '', otp: '' }))
-      setEbuySyncing(false)
-    }
-  }
-
   const handleEbuyTestAttachment = async () => {
     if (ebuyArchivingTest) return
     setEbuyArchivingTest(true)
@@ -200,6 +198,67 @@ export default function Settings({ toast }) {
       toast?.error(`Could not archive the test attachment: ${error.message}`)
     } finally {
       setEbuyArchivingTest(false)
+    }
+  }
+
+  const handleEbuyConnect = async (event) => {
+    event.preventDefault()
+    if (ebuyConnecting) return
+    setEbuyConnecting(true)
+    try {
+      await connectEbuyAccount(ebuyConnectionForm)
+      setEbuyConnectionForm({ username: '', password: '', totpSecret: '' })
+      setShowEbuyConnectionForm(false)
+      await loadIntegrationStatus()
+      toast?.success('Company eBuy account connected')
+    } catch (error) {
+      toast?.error(`Could not connect eBuy: ${error.message}`)
+    } finally {
+      setEbuyConnecting(false)
+    }
+  }
+
+  const handleEbuyConnectionTest = async () => {
+    if (ebuyTestingConnection) return
+    setEbuyTestingConnection(true)
+    try {
+      await testEbuyConnection()
+      await loadIntegrationStatus()
+      toast?.success('eBuy connection verified')
+    } catch (error) {
+      await loadIntegrationStatus()
+      toast?.error(`eBuy connection needs attention: ${error.message}`)
+    } finally {
+      setEbuyTestingConnection(false)
+    }
+  }
+
+  const handleEbuyLiveSync = async () => {
+    if (ebuyLiveSyncing) return
+    setEbuyLiveSyncing(true)
+    try {
+      const result = await startEbuyLiveSync()
+      toast?.success(result.alreadyRunning ? 'eBuy synchronization is already running' : 'eBuy synchronization started')
+      window.setTimeout(() => loadIntegrationStatus(), 1800)
+    } catch (error) {
+      toast?.error(`Could not start eBuy synchronization: ${error.message}`)
+    } finally {
+      setEbuyLiveSyncing(false)
+    }
+  }
+
+  const handleEbuyDisconnect = async () => {
+    if (ebuyDisconnecting || !window.confirm('Disconnect the company eBuy account? Archived opportunities and files will remain available.')) return
+    setEbuyDisconnecting(true)
+    try {
+      await disconnectEbuyAccount()
+      await loadIntegrationStatus()
+      setShowEbuyConnectionForm(false)
+      toast?.success('eBuy account disconnected')
+    } catch (error) {
+      toast?.error(`Could not disconnect eBuy: ${error.message}`)
+    } finally {
+      setEbuyDisconnecting(false)
     }
   }
 
@@ -459,41 +518,108 @@ export default function Settings({ toast }) {
 
         <div className={styles.collapsible}>
           <button className={styles.collapsibleHeader} onClick={() => toggleSection('ebuy')}>
-            <span>
-              <span className={styles.collapsibleTitle}>GSA eBuy archive</span>
-              <span className={styles.collapsibleHint}>Test synchronization now and prepare the manual sign-in connector</span>
-            </span>
+              <span>
+                <span className={styles.collapsibleTitle}>GSA eBuy archive</span>
+                <span className={styles.collapsibleHint}>Secure company connection, autonomous synchronization, and SharePoint archive</span>
+              </span>
             <span className={`${styles.chevron} ${openSections.ebuy ? styles.chevronOpen : ''}`}>›</span>
           </button>
           {openSections.ebuy && <div className={styles.collapsibleBody}>
-            <div className={styles.ebuySetupGrid}>
+            <div className={styles.ebuyStack}>
+              <div className={`card ${styles.ebuyConnectionCard}`}>
+                <div className={styles.ebuyCardHeader}>
+                  <div>
+                    <div className={styles.sectionLabel}>Company connection</div>
+                    <div className={styles.ebuyConnectionTitle}>
+                      {integrationStatus?.ebuy?.connector?.connection?.configured ? 'GSA eBuy connected' : 'Connect GSA eBuy'}
+                    </div>
+                    <p className="text-xs text-muted">
+                      Credentials and the authenticator setup key are encrypted before D1 storage. TAG CRM never returns them to the browser.
+                    </p>
+                  </div>
+                  <span className={`${styles.integrationBadge} ${styles[integrationStatus?.ebuy?.connector?.connection?.configured ? 'integrationReady' : 'integrationNotConfigured']}`}>
+                    {integrationStatus?.ebuy?.connector?.connection?.configured ? 'Connected' : 'Not connected'}
+                  </span>
+                </div>
+
+                {integrationStatus?.ebuy?.connector?.connection?.configured && !showEbuyConnectionForm && (
+                  <div className={styles.ebuyConnectionSummary}>
+                    <div><span>Account</span><strong>{integrationStatus.ebuy.connector.connection.usernameMasked || 'Connected account'}</strong></div>
+                    <div><span>Contracts</span><strong>{integrationStatus.ebuy.connector.connection.contracts?.length || 0}</strong></div>
+                    <div><span>Last verified</span><strong>{formatHealthTime(integrationStatus.ebuy.connector.connection.lastAuthenticatedAt)}</strong></div>
+                    <div><span>Last synchronized</span><strong>{formatHealthTime(integrationStatus.ebuy.connector.connection.lastSyncAt)}</strong></div>
+                  </div>
+                )}
+
+                {integrationStatus?.ebuy?.connector?.connection?.lastErrorMessage && (
+                  <div className={styles.ebuyConnectionError}>{integrationStatus.ebuy.connector.connection.lastErrorMessage}</div>
+                )}
+
+                {integrationStatus?.ebuy?.connector?.connection?.configured && !showEbuyConnectionForm && (
+                  <div className={styles.ebuyContractList}>
+                    {(integrationStatus.ebuy.connector.connection.contracts || []).map((contract) => (
+                      <div key={contract.contractNumber} className={styles.ebuyContractRow}>
+                        <strong>{contract.contractNumber}</strong>
+                        <span>{[contract.contractVehicle, contract.companyName].filter(Boolean).join(' · ') || 'Seller contract'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {(!integrationStatus?.ebuy?.connector?.connection?.configured || showEbuyConnectionForm) && (
+                  <form className={styles.ebuyConnectionForm} onSubmit={handleEbuyConnect}>
+                    <label>
+                      <span>FAS ID username</span>
+                      <input className="form-input" type="text" autoComplete="username" value={ebuyConnectionForm.username} onChange={(event) => setEbuyConnectionForm((current) => ({ ...current, username: event.target.value }))} required disabled={ebuyConnecting} />
+                    </label>
+                    <label>
+                      <span>FAS ID password</span>
+                      <input className="form-input" type="password" autoComplete="current-password" value={ebuyConnectionForm.password} onChange={(event) => setEbuyConnectionForm((current) => ({ ...current, password: event.target.value }))} required disabled={ebuyConnecting} />
+                    </label>
+                    <label className={styles.ebuyTotpField}>
+                      <span>Authenticator setup key</span>
+                      <input className="form-input" type="password" autoComplete="off" value={ebuyConnectionForm.totpSecret} onChange={(event) => setEbuyConnectionForm((current) => ({ ...current, totpSecret: event.target.value }))} required disabled={ebuyConnecting} />
+                      <small>Enter the permanent setup key shown when an authenticator app is enrolled—not the rotating six-digit code. Email verification cannot support unattended synchronization.</small>
+                    </label>
+                    <div className={styles.ebuyConsent}>
+                      Connecting authorizes TAG CRM to retrieve the company&apos;s eligible eBuy opportunities and archive their attachments in the existing SharePoint site. It does not submit quotes or change eBuy data.
+                    </div>
+                    <div className={styles.ebuyTestActions}>
+                      <button className="btn btn-primary" type="submit" disabled={ebuyConnecting || !integrationStatus?.ebuy?.connector?.connection?.encryptionConfigured || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
+                        {ebuyConnecting ? 'Connecting…' : integrationStatus?.ebuy?.connector?.connection?.configured ? 'Replace connection' : 'Connect account'}
+                      </button>
+                      {showEbuyConnectionForm && <button className="btn" type="button" onClick={() => setShowEbuyConnectionForm(false)} disabled={ebuyConnecting}>Cancel</button>}
+                    </div>
+                  </form>
+                )}
+
+                {!integrationStatus?.ebuy?.connector?.connection?.encryptionConfigured && <p className={styles.setupNotice}>Add the EBUY_CREDENTIAL_ENCRYPTION_KEY Worker secret before entering company credentials.</p>}
+                {integrationStatus?.ebuy?.status === 'migration_required' && <p className={styles.setupNotice}>Apply the latest D1 migration before connecting the account.</p>}
+
+                {integrationStatus?.ebuy?.connector?.connection?.configured && !showEbuyConnectionForm && (
+                  <div className={styles.ebuyTestActions}>
+                    <button className="btn btn-primary" type="button" onClick={handleEbuyLiveSync} disabled={ebuyLiveSyncing}>{ebuyLiveSyncing ? 'Starting…' : 'Synchronize now'}</button>
+                    <button className="btn" type="button" onClick={handleEbuyConnectionTest} disabled={ebuyTestingConnection}>{ebuyTestingConnection ? 'Checking…' : 'Check connection'}</button>
+                    <button className="btn" type="button" onClick={() => setShowEbuyConnectionForm(true)}>Replace credentials</button>
+                    <button className="btn btn-danger" type="button" onClick={handleEbuyDisconnect} disabled={ebuyDisconnecting}>{ebuyDisconnecting ? 'Disconnecting…' : 'Disconnect'}</button>
+                  </div>
+                )}
+              </div>
+
               <div className="card">
-                <div className={styles.sectionLabel}>Sanitized test archive</div>
-                <p className="text-xs text-muted">Loads the supplied G2X field shape with sanitized records, amendments, and attachment metadata. It does not contact G2X or eBuy.</p>
+                <div className={styles.sectionLabel}>Archive verification</div>
+                <p className="text-xs text-muted">The sanitized records remain available for checking D1 and SharePoint without contacting GSA eBuy.</p>
                 <div className={styles.ebuyTestActions}>
-                  <button className="btn btn-primary" type="button" onClick={handleEbuyTestSync} disabled={ebuySyncing || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
+                  <button className="btn" type="button" onClick={handleEbuyTestSync} disabled={ebuySyncing || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
                     {ebuySyncing ? 'Starting…' : 'Synchronize test archive'}
                   </button>
-                  <button className="btn" type="button" onClick={handleEbuyTestAttachment} disabled={ebuyArchivingTest || integrationStatus?.ebuy?.connector?.mode !== 'fixture' || !integrationStatus?.ebuy?.sharepointArchive || !Number(integrationStatus?.ebuy?.opportunityCount || 0)}>
+                  <button className="btn" type="button" onClick={handleEbuyTestAttachment} disabled={ebuyArchivingTest || !integrationStatus?.ebuy?.sharepointArchive || !Number(integrationStatus?.ebuy?.opportunityCount || 0)}>
                     {ebuyArchivingTest ? 'Archiving…' : 'Test attachment archive'}
                   </button>
                   {ebuyTestAttachment?.sharepointWebUrl && <a className="btn" href={ebuyTestAttachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived test file</a>}
                 </div>
                 {!integrationStatus?.ebuy?.sharepointArchive && <p className={styles.setupNotice}>Microsoft Graph app credentials are required to test the SharePoint attachment archive.</p>}
-                {integrationStatus?.ebuy?.sharepointArchive && !Number(integrationStatus?.ebuy?.opportunityCount || 0) && <p className={styles.setupNotice}>Synchronize the test archive before testing its attachment.</p>}
-                {integrationStatus?.ebuy?.status === 'migration_required' && <p className={styles.setupNotice}>Apply the D1 migration before running the first test sync.</p>}
               </div>
-              <form className="card" onSubmit={handleEbuyManualSync}>
-                <div className={styles.sectionLabel}>Manual eBuy sign-in</div>
-                <p className="text-xs text-muted">Credentials remain request-local and are never saved. This control will activate after the authorized eBuy login exchange is mapped.</p>
-                <div className={styles.ebuyCredentialGrid}>
-                  <label className="form-field"><span className="form-label">Username</span><input className="form-input" autoComplete="username" value={ebuyCredentials.username} onChange={(event) => setEbuyCredentials((current) => ({ ...current, username: event.target.value }))} /></label>
-                  <label className="form-field"><span className="form-label">Password</span><input className="form-input" type="password" autoComplete="current-password" value={ebuyCredentials.password} onChange={(event) => setEbuyCredentials((current) => ({ ...current, password: event.target.value }))} /></label>
-                  <label className="form-field"><span className="form-label">Current six-digit code</span><input className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={ebuyCredentials.otp} onChange={(event) => setEbuyCredentials((current) => ({ ...current, otp: event.target.value.replace(/\D/g, '').slice(0, 6) }))} /></label>
-                </div>
-                <button className="btn btn-primary" type="submit" disabled={ebuySyncing || !integrationStatus?.ebuy?.connector?.enabled || !ebuyCredentials.username || !ebuyCredentials.password || ebuyCredentials.otp.length !== 6}>Sign in and synchronize</button>
-                {!integrationStatus?.ebuy?.connector?.enabled && <p className={styles.setupNotice}>Live sign-in is intentionally disabled until the authorized eBuy request flow is available for mapping.</p>}
-              </form>
             </div>
           </div>}
         </div>
