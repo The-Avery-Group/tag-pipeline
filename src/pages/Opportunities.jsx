@@ -23,6 +23,7 @@ import {
   samTypeMatches,
   sortSAMOpportunities,
 } from '@/utils/samOpportunityHelpers'
+import { samPOCDisplayNames } from '@/utils/samPoc'
 import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES } from '@/services/graphService'
 import styles from './Opportunities.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
@@ -1153,7 +1154,7 @@ export default function Opportunities({ toast }) {
                       const isActioning = actioningRow === opp._rowIndex
                       const isFlagged = isSAMOpportunityFlagged(opp.Flagged)
                       const isFlagSaving = flaggingRows.has(opp._rowIndex)
-                      const pocDisplay  = (opp['Point of Contact'] || '').split('|')[0].trim()
+                      const pocDisplay = samPOCDisplayNames(opp['Point of Contact']).join(', ')
                       // All buttons same size, text centered
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
@@ -1206,7 +1207,7 @@ export default function Opportunities({ toast }) {
                           <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
                           <td className="text-xs text-muted">{opp['NAICS Code'] || '—'}</td>
                           <td className="text-sm">{formatDateTime(opp['Response Date'])}</td>
-                          <td className="text-xs text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <td className="text-xs text-muted" title={pocDisplay || undefined} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {pocDisplay || '—'}
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
