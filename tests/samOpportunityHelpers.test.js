@@ -35,6 +35,16 @@ test('applies a fresh SAM snapshot before displaying or adding an opportunity', 
   assert.equal(result.Agency, 'AGENCY')
 })
 
+test('a fresh SAM snapshot retains every unique point of contact', () => {
+  const result = applySAMSnapshot({}, {
+    pointOfContact: [
+      'Primary Person | primary@example.gov | 111-111-1111',
+      'Secondary Person | secondary@example.gov | 222-222-2222',
+    ],
+  })
+  assert.equal(result['Point of Contact'], 'Primary Person | primary@example.gov | 111-111-1111\nSecondary Person | secondary@example.gov | 222-222-2222')
+})
+
 test('sorts discovery rows by newest date added and cycles response-date modes separately', () => {
   const rows = [
     { _rowIndex: 1, 'Date Added': '2026-07-20', 'Response Date': '2026-08-10' },
