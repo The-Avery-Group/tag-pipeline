@@ -22,6 +22,7 @@ import Section from '@/components/Opportunity/OpportunitySection'
 import OpportunityNotesSection from '@/components/Opportunity/OpportunityNotesSection'
 import OpportunityTasksSection from '@/components/Opportunity/OpportunityTasksSection'
 import FollowUpEmailComposer from '@/components/Opportunity/FollowUpEmailComposer'
+import OpportunityFilesPanel from '@/components/Opportunity/OpportunityFilesPanel'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
@@ -693,7 +694,7 @@ export default function OpportunityDetail({ toast }) {
         : 'Response or submission date'
   const hasIncumbentHistory = /^[A-Z0-9]{12}$/.test(String(opp[C.incumbentUEI] || '').trim().toUpperCase())
   const sectionGroups = [
-    ['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links']]],
+    ['Overview', [['Summary', 'overview-summary'], ['Contacts', 'overview-contacts'], ['Partners & links', 'overview-links'], ['Files', 'overview-files']]],
     ['Activity', [['Notes', 'activity-notes'], ['Tasks', 'activity-tasks']]],
     ['Research', [
       ...(hasIncumbentHistory ? [['Incumbent history', 'research-incumbent']] : []),
@@ -1596,6 +1597,8 @@ export default function OpportunityDetail({ toast }) {
             </>
           })()}
         </Section>
+
+        <OpportunityFilesPanel opportunity={opp} toast={toast} />
 
         <div className={`${styles.categoryHeading} ${styles.categoryActivity}`}>Activity</div>
         {/* ── Section 7: Notes ── */}
