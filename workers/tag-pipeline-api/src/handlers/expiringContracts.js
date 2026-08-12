@@ -24,7 +24,6 @@ const DATA_PREFIX = 'expiring_contracts:data:v1:'
 const RUN_RECORDS_PREFIX = 'expiring_contracts:run_records:v1:'
 const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
 const MODIFIER_CONTACT_PREFIX = 'expiring_contracts:modifier_contacts:v1:'
-const EXCLUDED_SET_ASIDE_QUERY = '!HZC&!HZS&!WOSB&!EDWOSB'
 const MODIFIER_CONTACT_TTL_SECONDS = 14 * 24 * 60 * 60
 
 export const DEFAULT_EXPIRING_AGENCIES = [
@@ -520,7 +519,6 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
     offset: String(offset),
     awardOrIDV: 'Award',
     closedStatus: 'No',
-    typeOfSetAsideCode: EXCLUDED_SET_ASIDE_QUERY,
     ultimateCompletionDate: `[${formatSamDate(from)},${formatSamDate(to)}]`,
     naicsCode: naicsCodes.join('~'),
   }
