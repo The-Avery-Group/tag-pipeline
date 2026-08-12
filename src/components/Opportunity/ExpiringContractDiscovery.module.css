@@ -3,7 +3,7 @@
 .viewTabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--gray-500); cursor: pointer; font: 600 12px var(--font); padding: 7px 10px; }
 .viewTabs button:hover { color: var(--gray-900); }
 .viewTabs .activeView { border-bottom-color: var(--blue-600); color: var(--blue-700); }
-.controls { align-items: end; background: var(--surface); border: 0.5px solid var(--gray-200); border-radius: var(--radius-lg); display: grid; gap: 10px; grid-template-columns: minmax(170px, .65fr) minmax(250px, 1.3fr) auto auto; padding: 12px; }
+.controls { align-items: end; background: var(--surface); border: 0.5px solid var(--gray-200); border-radius: var(--radius-lg); display: grid; gap: 10px; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1.1fr) minmax(180px, .8fr) auto auto; padding: 12px; }
 .controls > button { align-self: end; height: 34px; min-height: 34px; }
 .controls label, .agencyControl { display: flex; flex-direction: column; gap: 5px; min-width: 0; position: relative; }
 .controls label > span, .agencyControl > span { color: var(--gray-500); font-size: 10px; font-weight: 700; letter-spacing: .035em; text-transform: uppercase; }
