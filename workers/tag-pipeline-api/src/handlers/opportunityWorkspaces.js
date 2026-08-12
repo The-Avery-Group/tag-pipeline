@@ -2,10 +2,16 @@ import {
   claimWorkspaceRun,
   ensureWorkspaceRequest,
   getWorkspace,
+  resetWorkspaceForRebuild,
   updateWorkspace,
   workspaceStorageStatus,
 } from '../lib/opportunityWorkspaceRepository.js'
-import { listWorkspaceChildren } from '../lib/opportunityWorkspaceSharePoint.js'
+import {
+  inspectWorkspaceRoot,
+  listWorkspaceChildren,
+  resolveWorkspaceFolderLink,
+} from '../lib/opportunityWorkspaceSharePoint.js'
+import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -40,17 +46,58 @@ async function startWorkflow(env, workspace, { force = false } = {}) {
   }
 }
 
+async function adoptExistingFolderIfAvailable(env, storage, workspace, folderLink) {
+  if (!folderLink) return workspace
+  try {
+    const folder = await resolveWorkspaceFolderLink(env, folderLink)
+    await resetWorkspaceForRebuild(storage, workspace.opportunityKey)
+    return updateWorkspace(storage, workspace.opportunityKey, {
+      status: 'new',
+      progressPhase: 'Existing SharePoint workspace connected',
+      sharePointDriveId: folder.driveId,
+      rootFolderId: folder.rootFolderId,
+      samFolderId: folder.samFolderId,
+      webUrl: folder.webUrl,
+      attachmentTotal: 0,
+      archivedCount: 0,
+      failedCount: 0,
+      errorMessage: null,
+      completedAt: null,
+    })
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'opportunity_workspace_link_not_adopted',
+      opportunityKey: workspace.opportunityKey,
+      message: error.message,
+    }))
+    return workspace
+  }
+}
+
 export async function handleOpportunityWorkspaces(req, env) {
   const url = new URL(req.url)
   const path = url.pathname
   try {
+    if (path === '/opportunity-workspaces/migration/scan' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json(await scanLegacyOpportunityFolders(env, body.cursor || ''))
+    }
+
+    if (path === '/opportunity-workspaces/migration/apply' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json({ ok: true, ...(await applyLegacyFolderLinks(env, body.links || [])) })
+    }
+
     const storage = requireStorage(env)
     const storageState = await workspaceStorageStatus(storage)
     if (storageState.status !== 'ready') return json({ error: storageState.message, code: storageState.status }, 503)
 
     if (path === '/opportunity-workspaces' && req.method === 'POST') {
       const body = await req.json().catch(() => ({}))
-      const workspace = await ensureWorkspaceRequest(storage, body)
+      let workspace = await ensureWorkspaceRequest(storage, body)
+      if (!workspace.rootFolderId && body.folderLink) {
+        workspace = await adoptExistingFolderIfAvailable(env, storage, workspace, body.folderLink)
+      }
       const result = await startWorkflow(env, workspace)
       return json({ ok: true, ...result }, result.started ? 202 : 200)
     }
@@ -58,8 +105,16 @@ export async function handleOpportunityWorkspaces(req, env) {
     const retryMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/retry$/)
     if (retryMatch && req.method === 'POST') {
       const key = decodeURIComponent(retryMatch[1])
-      const workspace = await getWorkspace(storage, key)
+      const body = await req.json().catch(() => ({}))
+      let workspace = body && Object.keys(body).length
+        ? await ensureWorkspaceRequest(storage, { ...body, opportunityKey: key })
+        : await getWorkspace(storage, key)
       if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
+      const root = await inspectWorkspaceRoot(env, workspace)
+      if (!root.exists) {
+        workspace = await resetWorkspaceForRebuild(storage, key)
+        workspace = await adoptExistingFolderIfAvailable(env, storage, workspace, body.folderLink)
+      }
       return json({ ok: true, ...(await startWorkflow(env, workspace, { force: true })) }, 202)
     }
 
