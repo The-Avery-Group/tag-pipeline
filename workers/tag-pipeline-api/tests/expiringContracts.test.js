@@ -194,7 +194,6 @@ test('award discovery filters official subagencies by code instead of a guessed 
     const params = new URL(requestUrl).searchParams
     assert.equal(params.get('contractingSubtierCode'), '9700')
     assert.equal(params.has('contractingSubtierName'), false)
-    assert.equal(params.get('typeOfSetAsideCode'), '!HZC&!HZS&!WOSB&!EDWOSB')
     assert.equal(params.has('typeOfSetAsideCode'), false)
   } finally {
     globalThis.fetch = previousFetch
