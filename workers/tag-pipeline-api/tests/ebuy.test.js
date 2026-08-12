@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EBUY_FIXTURE_OPPORTUNITIES } from '../src/fixtures/ebuyOpportunities.js'
 import { hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportunity, retentionDeadline } from '../src/lib/ebuyDomain.js'
+import { normalizeLiveEbuyOpportunity } from '../src/lib/ebuyClient.js'
+import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
+import { generateTotp } from '../src/lib/ebuyTotp.js'
 import { recordArchivedEbuyAttachment, syncEbuyOpportunities } from '../src/lib/ebuyRepository.js'
 
 class PlaceholderCheckingStatement {
@@ -97,4 +100,36 @@ test('attachment archive requires the synchronized fixture opportunity', async (
     id: 'missing', requestId: 'RFI-DEMO-001', fileName: 'missing.txt', contentType: 'text/plain',
     byteSize: 1, sourceHash: 'hash', driveId: 'drive', itemId: 'item', webUrl: 'https://example.com',
   }), /Synchronize the test eBuy archive/)
+})
+
+test('eBuy secrets use authenticated encryption and never expose plaintext', async () => {
+  const key = Buffer.alloc(32, 7).toString('base64')
+  const source = { username: 'seller@example.com', password: 'not-a-real-password', totpSecret: 'JBSWY3DPEHPK3PXP' }
+  const encrypted = await encryptEbuySecret(key, source)
+  assert.doesNotMatch(encrypted, /seller@example\.com|not-a-real-password|JBSWY3DPEHPK3PXP/)
+  assert.deepEqual(await decryptEbuySecret(key, encrypted), source)
+  assert.equal(maskEbuyUsername('seller@example.com'), 'se****@example.com')
+})
+
+test('TOTP generation follows the standard HMAC-SHA1 test vector', async () => {
+  const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
+  assert.equal(await generateTotp(secret, 59_000, { digits: 8 }), '94287082')
+})
+
+test('live eBuy details normalize into the archive field model', () => {
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFI123', title: 'Program support', userAgency: 'Agency', issueTime: 1_786_000_000_000,
+  }, {
+    rfqInfo: { rfqId: 'RFI123', title: 'Program support', description: 'Scope', sourceSought: true, issueTime: 1_786_000_000_000, closeTime: 1_786_086_400_000 },
+    rfqProps: { userAgency: 'Agency', userBureau: 'Office', userName: 'Buyer', userEmail: 'BUYER@EXAMPLE.GOV' },
+    rfqAdditionalInfo: { contractType: 'T&M', awardMethod: 'Best value' },
+    rfqCategories: [{ schedule: 'MAS', sin: '541611' }],
+    rfqAttachments: [{ docName: 'Scope.pdf', docPath: '/files/scope.pdf', docSeqNum: 4 }],
+    rfqModifications: [{ versionNumber: 2, modificationNote: 'Updated date', modificationTime: 1_786_010_000_000 }],
+  }, '47QRAA22D00A0')
+  assert.equal(record.requestType, 'RFI')
+  assert.equal(record.buyerDepartment, 'Office')
+  assert.deepEqual(record.vehiclePairs, ['MAS:541611'])
+  assert.equal(record.attachments[0].id, 'RFI123:4')
+  assert.equal(record.amendments[0].label, 'Modification 2')
 })
