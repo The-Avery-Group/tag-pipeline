@@ -23,6 +23,8 @@ const AGENCY_REGISTRY_KEY = 'expiring_contracts:agency_registry:v1'
 const DATA_PREFIX = 'expiring_contracts:data:v1:'
 const RUN_RECORDS_PREFIX = 'expiring_contracts:run_records:v1:'
 const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
+const MODIFIER_CONTACT_PREFIX = 'expiring_contracts:modifier_contacts:v1:'
+const MODIFIER_CONTACT_TTL_SECONDS = 14 * 24 * 60 * 60
 
 export const DEFAULT_EXPIRING_AGENCIES = [
   { id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' },
@@ -865,7 +867,24 @@ function noticeDate(notice) {
 
 function noticeLink(notice) {
   const value = clean(notice?.uiLink)
-  return value && value !== 'null' ? value : null
+  if (value && value !== 'null') return value
+  const noticeId = clean(notice?.noticeId)
+  return noticeId ? `https://sam.gov/opp/${encodeURIComponent(noticeId)}/view` : null
+}
+
+function noticeType(notice) {
+  return clean(notice?.type || notice?.baseType || notice?.noticeType)
+}
+
+function isAwardNotice(notice) {
+  const type = noticeType(notice).toLowerCase()
+  return type === 'a' || type.includes('award')
+}
+
+function dedupeNotices(notices) {
+  const unique = new Map()
+  notices.forEach((notice) => unique.set(clean(notice.noticeId) || `${notice.title}|${noticeDate(notice)}`, notice))
+  return [...unique.values()]
 }
 
 async function fetchNotices(env, solicitationNumber, from, to) {
@@ -896,12 +915,72 @@ async function relatedNotices(env, solicitationNumber, originalSignedDate) {
   for (const identifier of identifiers) {
     for (const window of windows) responses.push(...await fetchNotices(env, identifier, window.from, window.to))
   }
-  const unique = new Map()
-  responses.forEach((notice) => unique.set(clean(notice.noticeId) || `${notice.title}|${noticeDate(notice)}`, notice))
-  return [...unique.values()].sort((left, right) => noticeDate(right).localeCompare(noticeDate(left)))
+  return dedupeNotices(responses).sort((left, right) => noticeDate(right).localeCompare(noticeDate(left)))
 }
 
-function noticeContacts(notices, agencyName) {
+export function modifierNoticeWindows(modifications, paddingDays = 30) {
+  const windows = (Array.isArray(modifications) ? modifications : [])
+    .map((modification) => dateValue(modification?.lastModifiedDate || modification?.dateSigned))
+    .filter(Boolean)
+    .map((date) => ({ from: addDays(date, -paddingDays), to: addDays(date, paddingDays) }))
+    .sort((left, right) => left.from - right.from)
+  const merged = []
+  windows.forEach((window) => {
+    const previous = merged.at(-1)
+    if (previous && window.from <= addDays(previous.to, 1) && window.to <= addDays(previous.from, 364)) {
+      if (window.to > previous.to) previous.to = window.to
+    } else {
+      merged.push({ ...window })
+    }
+  })
+  return merged
+}
+
+async function requestAgencyNotices(env, { agencyCode, agencyName, from, to, useName = false }) {
+  const today = new Date()
+  if (from > today) return []
+  const safeTo = to > today ? today : to
+  const params = new URLSearchParams({
+    api_key: env.SAM_API_KEY,
+    postedFrom: formatSamDate(from),
+    postedTo: formatSamDate(safeTo),
+    limit: '1000',
+    offset: '0',
+    [useName || !agencyCode ? 'organizationName' : 'organizationCode']: useName || !agencyCode ? agencyName : agencyCode,
+  })
+  ;['a', 'r', 'o', 'k', 'p', 's'].forEach((type) => params.append('ptype', type))
+  const response = await fetch(`${OPPORTUNITIES_BASE}?${params}`)
+  if (response.status === 204 || response.status === 404) return []
+  if (!response.ok) {
+    console.warn(JSON.stringify({
+      event: 'expiring_contract_modifier_notice_search_failed',
+      agencyCode,
+      agencyName,
+      status: response.status,
+    }))
+    return []
+  }
+  const payload = await response.json()
+  return payload.opportunitiesData || payload.data || []
+}
+
+export async function fetchAgencyModifierNotices(env, { agencyCode, agencyName, modifications }) {
+  if (!env.SAM_API_KEY || (!agencyCode && !agencyName)) return []
+  const notices = []
+  for (const window of modifierNoticeWindows(modifications)) {
+    const byCode = await requestAgencyNotices(env, { agencyCode, agencyName, ...window })
+    notices.push(...byCode)
+    if (!byCode.length && agencyCode && agencyName) {
+      notices.push(...await requestAgencyNotices(env, { agencyCode, agencyName, ...window, useName: true }))
+    }
+  }
+  return dedupeNotices(notices).sort((left, right) => {
+    const awardDifference = Number(isAwardNotice(right)) - Number(isAwardNotice(left))
+    return awardDifference || noticeDate(right).localeCompare(noticeDate(left))
+  })
+}
+
+export function noticeContacts(notices, agencyName) {
   const contacts = []
   for (const notice of notices) {
     for (const poc of Array.isArray(notice?.pointOfContact) ? notice.pointOfContact : []) {
@@ -913,9 +992,10 @@ function noticeContacts(notices, agencyName) {
         agency: agencyName,
         noticeId: clean(notice.noticeId),
         noticeTitle: clean(notice.title),
-        noticeType: clean(notice.type || notice.baseType),
+        noticeType: noticeType(notice),
         noticeDate: noticeDate(notice),
         sourceLink: noticeLink(notice),
+        sourceLabel: isAwardNotice(notice) ? 'SAM award notice' : 'SAM opportunity notice',
       })
     }
   }
@@ -925,6 +1005,21 @@ function noticeContacts(notices, agencyName) {
     if (key && !unique.has(key)) unique.set(key, contact)
   })
   return [...unique.values()]
+}
+
+function dedupeContacts(contacts) {
+  const unique = new Map()
+  contacts.forEach((contact) => {
+    const key = clean(contact.email).toLowerCase() || `${clean(contact.name).toLowerCase()}|${clean(contact.agency).toLowerCase()}`
+    if (key && !unique.has(key)) unique.set(key, contact)
+  })
+  return [...unique.values()]
+}
+
+export function matchingModifierContacts(contacts, modifications, agencyName) {
+  return dedupeContacts(contacts).filter((contact) => (Array.isArray(modifications) ? modifications : []).some((modification) =>
+    resolveLastModifiedBy(modification.lastModifiedBy, agencyName, [contact]).status === 'matched'
+  ))
 }
 
 function nameCode(name) {
@@ -964,14 +1059,49 @@ async function loadContractDetail(env, url) {
   if (!family) throw new Error('No matching award family was found')
   const result = summarizeAwardFamily(family)
   const originalSignedDate = family[0]?.awardDetails?.dates?.dateSigned
-  const notices = await relatedNotices(env, result.solicitationNumber, originalSignedDate)
-  const contacts = noticeContacts(notices, result.agency).slice(0, 3)
+  const solicitationNotices = await relatedNotices(env, result.solicitationNumber, originalSignedDate)
+  const solicitationContacts = noticeContacts(solicitationNotices, result.agency)
+  let resolutionContacts = solicitationContacts
+  const needsAgencyDateFallback = result.modifications.some((modification) => {
+    const resolution = resolveLastModifiedBy(modification.lastModifiedBy, result.agency, resolutionContacts)
+    return resolution.status === 'unresolved' && (clean(modification.lastModifiedBy).includes('@') || clean(modification.lastModifiedBy).toUpperCase().startsWith('HHS'))
+  })
+  let fallbackContacts = []
+  if (needsAgencyDateFallback) {
+    const fallbackKey = `${MODIFIER_CONTACT_PREFIX}${encodeURIComponent(result.familyKey)}`
+    let cached = null
+    try {
+      cached = env.CACHE ? await env.CACHE.get(fallbackKey, 'json') : null
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'expiring_contract_modifier_contact_cache_read_failed', message: error.message }))
+    }
+    if (Array.isArray(cached)) {
+      fallbackContacts = cached
+    } else {
+      const agencyNotices = await fetchAgencyModifierNotices(env, {
+        agencyCode: result.agencyCode,
+        agencyName: result.agency,
+        modifications: result.modifications,
+      })
+      const candidates = noticeContacts(agencyNotices, result.agency)
+      fallbackContacts = matchingModifierContacts(candidates, result.modifications, result.agency)
+      if (env.CACHE) {
+        try {
+          await env.CACHE.put(fallbackKey, JSON.stringify(fallbackContacts), { expirationTtl: MODIFIER_CONTACT_TTL_SECONDS })
+        } catch (error) {
+          console.warn(JSON.stringify({ event: 'expiring_contract_modifier_contact_cache_write_failed', message: error.message }))
+        }
+      }
+    }
+  }
+  resolutionContacts = dedupeContacts([...fallbackContacts, ...solicitationContacts])
+  const contacts = dedupeContacts([...solicitationContacts, ...fallbackContacts]).slice(0, 3)
   return {
     ...result,
     publicPocs: contacts,
     modifications: result.modifications.map((modification) => ({
       ...modification,
-      modifierResolution: resolveLastModifiedBy(modification.lastModifiedBy, result.agency, noticeContacts(notices, result.agency)),
+      modifierResolution: resolveLastModifiedBy(modification.lastModifiedBy, result.agency, resolutionContacts),
     })),
   }
 }
