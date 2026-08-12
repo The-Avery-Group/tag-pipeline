@@ -112,6 +112,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
   const [agencyMatches, setAgencyMatches] = useState([])
   const [agencyResolving, setAgencyResolving] = useState(false)
   const [agencyResolveError, setAgencyResolveError] = useState('')
+  const [classification, setClassification] = useState('all')
   const [showHidden, setShowHidden] = useState(false)
   const [expanded, setExpanded] = useState(new Set())
   const [details, setDetails] = useState({})
@@ -146,11 +147,21 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
       ? selectedAgencies.map((agency) => agency.label).join(', ') || 'No agencies selected'
       : `${selectedAgencies.slice(0, 2).map((agency) => agency.label).join(', ')} + ${selectedAgencies.length - 2} more`
   const pipelineById = useMemo(() => new Map(pipeline.map((opportunity) => [String(opportunity[C.id] || '').trim().toUpperCase(), opportunity])), [pipeline])
+  const classifications = useMemo(() => [...new Set(
+    contracts.map((contract) => String(contract.awardType || '').trim()).filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right)), [contracts])
   const visibleContracts = useMemo(() => {
     const needle = String(search || '').trim().toLowerCase()
-    if (!needle) return contracts
-    return contracts.filter((contract) => Object.values(contract).some((value) => String(value || '').toLowerCase().includes(needle)))
-  }, [contracts, search])
+    return contracts.filter((contract) => {
+      if (classification !== 'all' && String(contract.awardType || '').trim() !== classification) return false
+      if (!needle) return true
+      return Object.values(contract).some((value) => String(value || '').toLowerCase().includes(needle))
+    })
+  }, [classification, contracts, search])
+
+  useEffect(() => {
+    if (classification !== 'all' && !classifications.includes(classification)) setClassification('all')
+  }, [classification, classifications])
 
   useEffect(() => {
     if (!agencyMenuOpen) return undefined
@@ -386,6 +397,13 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                 </div>
               )}
             </div>
+            <label>
+              <span>Contract classification</span>
+              <select value={classification} onChange={(event) => setClassification(event.target.value)}>
+                <option value="all">All classifications</option>
+                {classifications.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
             <button type="button" className={`${styles.hiddenToggle} ${showHidden ? styles.hiddenToggleActive : ''}`} onClick={() => setShowHidden((current) => !current)}>
               {showHidden ? 'Hide hidden' : `Show hidden${hiddenCount ? ` (${hiddenCount})` : ''}`}
             </button>
