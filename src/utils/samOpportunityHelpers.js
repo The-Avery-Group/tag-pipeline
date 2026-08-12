@@ -1,4 +1,5 @@
 import { isRfiWorkflowNoticeType, normalizeNoticeType } from './noticeTypes.js'
+import { serializeSAMPOCs } from './samPoc.js'
 
 const NOTICE_TYPES = new Set(['RFI', 'MRAS', 'RFP', 'RFQ'])
 
@@ -24,16 +25,6 @@ function parseOrganization(value) {
   }
 }
 
-function primaryPOC(value) {
-  const contacts = Array.isArray(value) ? value : []
-  const primary = contacts.find((entry) => String(entry || '').trim()) || ''
-  return String(primary)
-    .split('|')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join(' | ')
-}
-
 export function applySAMSnapshot(row, snapshot) {
   if (!snapshot) return row
   const organization = parseOrganization(snapshot.organization)
@@ -48,7 +39,7 @@ export function applySAMSnapshot(row, snapshot) {
     Agency: organization.agency || row.Agency,
     Office: organization.office || row.Office,
     'Response Date': snapshot.responseDate || row['Response Date'],
-    'Point of Contact': primaryPOC(snapshot.pointOfContact) || row['Point of Contact'],
+    'Point of Contact': serializeSAMPOCs(snapshot.pointOfContact) || row['Point of Contact'],
     'NAICS Code': snapshot.naics || row['NAICS Code'],
     'Posted Date': snapshot.postedDate || row['Posted Date'],
     'SAM.gov URL': snapshot.uiLink || row['SAM.gov URL'],
