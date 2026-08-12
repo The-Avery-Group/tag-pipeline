@@ -71,7 +71,9 @@ function FileTree({ items, opportunityKey }) {
 
 function workspaceDescription(workspace, missing) {
   if (!workspace) return missing ? 'SharePoint workspace has not been set up.' : 'Browse the SharePoint workspace and archived SAM.gov files'
-  if (workspace.status === 'ready') return `${workspace.archivedCount} of ${workspace.attachmentTotal} SAM.gov attachments saved`
+  if (workspace.status === 'ready') return workspace.attachmentTotal > 0
+    ? `${workspace.archivedCount} of ${workspace.attachmentTotal} SAM.gov attachments saved`
+    : workspace.progressPhase || 'SharePoint workspace is ready'
   if (workspace.status === 'partial') return workspace.progressPhase || 'Workspace is ready, with some items needing attention.'
   if (workspace.status === 'error') return workspace.errorMessage || 'Workspace setup needs attention.'
   return workspace.progressPhase || 'Preparing SharePoint workspace…'
@@ -99,6 +101,9 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
       if (nextWorkspace?.rootFolderId && ['ready', 'partial'].includes(nextWorkspace.status)) {
         const listing = await listOpportunityWorkspaceFiles(opportunityKey)
         setItems(listing.items || [])
+        if (listing.parent?.webUrl && listing.parent.webUrl !== nextWorkspace.webUrl) {
+          setWorkspace((current) => current ? { ...current, webUrl: listing.parent.webUrl } : current)
+        }
       }
     } catch (nextError) {
       if (nextError.status === 404) {
@@ -131,9 +136,9 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
     setLoading(true)
     setError('')
     try {
-      if (retry && workspace) await retryOpportunityWorkspace(opportunityKey)
+      if (retry && workspace) await retryOpportunityWorkspace(opportunityKey, opportunity)
       else await requestOpportunityWorkspace(opportunity)
-      toast?.success(retry ? 'Workspace setup restarted' : 'SharePoint workspace setup started')
+      toast?.success(retry ? 'Workspace recovery started' : 'SharePoint workspace setup started')
       await load({ quiet: true })
     } catch (nextError) {
       setError(nextError.message)
@@ -163,7 +168,7 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
     {open && <div className={styles.panel}>
       {loading && !workspace && <div className={styles.state}>Loading opportunity files…</div>}
       {missing && !loading && <div className={styles.state}><strong>No SharePoint workspace yet</strong><span>Set up the standard opportunity folder and save available SAM.gov attachments.</span><button type="button" className="btn btn-primary" onClick={() => setup()}>Set up workspace</button></div>}
-      {error && <div className={styles.stateError}><span>{error}</span><button type="button" className="btn" onClick={() => workspace ? setup({ retry: true }) : load()}>Try again</button></div>}
+      {error && <div className={styles.stateError}><span>{error}</span><button type="button" className="btn" onClick={() => workspace ? setup({ retry: true }) : load()}>{workspace ? 'Repair workspace' : 'Try again'}</button></div>}
       {workspace && <>
         <div className={styles.workspaceBar}>
           <div><strong>{workspace.progressPhase || 'SharePoint workspace'}</strong><span>{workspace.archivedCount} saved · {workspace.failedCount} need attention</span></div>
