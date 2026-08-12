@@ -43,8 +43,8 @@ export async function ensureEbuyArchiveFolder(env, requestId) {
   return { driveId, folderId: opportunity.id, webUrl: opportunity.webUrl, token }
 }
 
-export async function archiveEbuyFile(env, { requestId, fileName, contentType, body }) {
-  const { driveId, folderId, token } = await ensureEbuyArchiveFolder(env, requestId)
+export async function archiveEbuyFile(env, { requestId, fileName, contentType, body, archiveLocation = null }) {
+  const { driveId, folderId, token } = archiveLocation || await ensureEbuyArchiveFolder(env, requestId)
   const encodedName = encodeURIComponent(safeSegment(fileName))
   const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodedName}:/content`, {
     method: 'PUT',
