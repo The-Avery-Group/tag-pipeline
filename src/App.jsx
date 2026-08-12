@@ -39,6 +39,11 @@ const Partners          = lazy(() => import('@/pages/Partners'))
 const Settings          = lazy(() => import('@/pages/Settings'))
 const Lookup            = lazy(() => import('@/pages/Lookup'))
 const Login             = lazy(() => import('@/pages/Login'))
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'tag_crm_sidebar_collapsed'
+
+function savedSidebarCollapsed() {
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true' } catch { return false }
+}
 
 function cacheTablesForLocation(location) {
   const path = location.pathname
@@ -154,10 +159,14 @@ function AppShell() {
   const { toasts, toast } = useToast()
   const [cacheReady,    setCacheReady]    = useState(isCacheWarmed)
   const [searchOpen,    setSearchOpen]    = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(savedSidebarCollapsed)
   const [sessionRefreshOpen, setSessionRefreshOpen] = useState(isSessionRefreshRequired)
   const [refreshingSession, setRefreshingSession] = useState(false)
   useAgingNotifications()
+
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsed)) } catch {}
+  }, [sidebarCollapsed])
 
   useEffect(() => onSessionRefreshRequired(() => {
     stopPolling()
