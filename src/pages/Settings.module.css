@@ -293,30 +293,104 @@
 .integrationTable th:nth-child(2) { min-width: 120px; }
 .integrationTable th:nth-child(4) { min-width: 132px; }
 
-.ebuySetupGrid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+.ebuyTestActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ebuyStack { display: grid; gap: 12px; }
+
+.ebuyConnectionCard { display: grid; gap: 14px; }
+
+.ebuyCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.ebuyCredentialGrid {
-  display: grid;
-  gap: 9px;
-  grid-template-columns: 1fr 1fr 150px;
-  margin: 12px 0;
+.ebuyCardHeader .sectionLabel { margin-bottom: 5px; }
+.ebuyCardHeader p { margin: 4px 0 0; max-width: 720px; }
+
+.ebuyConnectionTitle {
+  color: var(--gray-900);
+  font-size: 14px;
+  font-weight: 650;
 }
-.ebuyTestActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ebuyConnectionSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  overflow: hidden;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+}
+
+.ebuyConnectionSummary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 0.5px solid var(--gray-200);
+}
+.ebuyConnectionSummary > div:last-child { border-right: 0; }
+.ebuyConnectionSummary span { color: var(--gray-500); font-size: 10px; }
+.ebuyConnectionSummary strong { overflow: hidden; color: var(--gray-900); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+
+.ebuyContractList {
+  overflow: hidden;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+}
+
+.ebuyContractRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.35fr) 1fr;
+  gap: 14px;
+  padding: 8px 11px;
+  border-bottom: 0.5px solid var(--gray-200);
+  font-size: 11px;
+}
+.ebuyContractRow:last-child { border-bottom: 0; }
+.ebuyContractRow strong { color: var(--gray-900); }
+.ebuyContractRow span { color: var(--gray-500); }
+
+.ebuyConnectionForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+  padding: 14px;
+  border: 0.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+}
+
+.ebuyConnectionForm label { display: grid; align-content: start; gap: 5px; min-width: 0; color: var(--gray-700); font-size: 11px; font-weight: 600; }
+.ebuyConnectionForm small { color: var(--gray-500); font-size: 10px; font-weight: 400; line-height: 1.45; }
+.ebuyTotpField, .ebuyConsent, .ebuyConnectionForm .ebuyTestActions { grid-column: 1 / -1; }
+
+.ebuyConsent {
+  padding: 9px 11px;
+  border-left: 2px solid var(--blue-500);
+  background: var(--surface);
+  color: var(--gray-600);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ebuyConnectionError {
+  padding: 9px 11px;
+  border: 0.5px solid var(--red-200);
+  border-radius: var(--radius-md);
+  background: var(--red-50);
+  color: var(--red-700);
+  font-size: 11px;
+  line-height: 1.45;
+}
 
 .setupNotice {
   color: var(--gray-500);
   font-size: 10px;
   line-height: 1.45;
   margin: 8px 0 0;
-}
-
-@media (max-width: 900px) {
-  .ebuySetupGrid { grid-template-columns: 1fr; }
-  .ebuyCredentialGrid { grid-template-columns: 1fr; }
 }
 
 .integrationName {
@@ -354,4 +428,11 @@
 @media (max-width: 560px) {
   .themeCard { align-items: flex-start; flex-direction: column; }
   .integrationHeader { align-items: flex-start; flex-direction: column; }
+  .ebuyCardHeader { flex-direction: column; }
+  .ebuyConnectionSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ebuyConnectionSummary > div:nth-child(2) { border-right: 0; }
+  .ebuyConnectionSummary > div:nth-child(-n + 2) { border-bottom: 0.5px solid var(--gray-200); }
+  .ebuyConnectionForm { grid-template-columns: 1fr; }
+  .ebuyTotpField, .ebuyConsent, .ebuyConnectionForm .ebuyTestActions { grid-column: auto; }
+  .ebuyContractRow { grid-template-columns: 1fr; gap: 2px; }
 }
