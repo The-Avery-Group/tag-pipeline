@@ -16,6 +16,7 @@ import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import { normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
 import { isSAMOpportunityFlagged } from '@/utils/samOpportunityHelpers'
 import { parseSAMPOCs } from '@/utils/samPoc'
+import { requestOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 
 
 // How often to poll /sam/run-status while a pull is actively running.
@@ -361,6 +362,12 @@ export function useSAMOpportunities() {
 
     const saved = await addOpportunity(opportunity)
     if (!saved._alreadyExisted) notifyNewOpportunity(opportunity).catch(() => {})
+    if (!saved._alreadyExisted) {
+      await requestOpportunityWorkspace(saved, {
+        noticeId: row['Notice ID'] || '',
+        solicitationNumber: row['Solicitation Number'] || '',
+      }).catch((error) => console.warn('[Opportunity workspace] Setup could not start:', error.message))
+    }
     verifyCacheInBackground(['PipelineTable'])
 
     await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
