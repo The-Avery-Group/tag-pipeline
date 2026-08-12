@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, startScheduledSAMPull } from '../src/handlers/sam.js'
+import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, parsePOC, startScheduledSAMPull } from '../src/handlers/sam.js'
 import { runSAMPullWorkflowCheckpoint } from '../src/workflows/samPullChain.js'
 
 test('shared SAM flags are recognized for cleanup protection', () => {
@@ -190,6 +190,14 @@ test('SAM discovery classifies compact and descriptive procurement types consist
     normalizeDiscoveryNoticeType('Solicitation', 'Combined Synopsis/Solicitation'),
     'RFQ',
   )
+})
+
+test('SAM discovery retains all unique points of contact with the primary first', () => {
+  assert.equal(parsePOC([
+    { type: 'secondary', fullName: 'Secondary Person', email: 'secondary@example.gov', phone: '222' },
+    { type: 'primary', fullName: 'Primary Person', email: 'primary@example.gov', phone: '111' },
+    { type: 'secondary', fullName: 'Duplicate', email: 'secondary@example.gov', phone: '333' },
+  ]), 'Primary Person | primary@example.gov | 111\nSecondary Person | secondary@example.gov | 222')
 })
 
 test('SAM hierarchy names stay aligned by level', () => {
