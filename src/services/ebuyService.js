@@ -37,10 +37,22 @@ export async function archiveEbuyTestAttachment() {
   return workerJson('/ebuy/archive/test-attachment', { method: 'POST' })
 }
 
-export async function startManualEbuySync(credentials) {
-  return workerJson('/ebuy/sync/manual', {
+export async function connectEbuyAccount(credentials) {
+  return workerJson('/ebuy/connection', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(credentials),
   })
+}
+
+export async function testEbuyConnection() {
+  return workerJson('/ebuy/connection/test', { method: 'POST' })
+}
+
+export async function disconnectEbuyAccount() {
+  return workerJson('/ebuy/connection', { method: 'DELETE' })
+}
+
+export async function startEbuyLiveSync() {
+  return workerJson('/ebuy/sync', { method: 'POST' })
 }
