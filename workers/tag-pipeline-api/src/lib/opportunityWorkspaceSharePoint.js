@@ -14,6 +14,13 @@ function driveIdFor(env) {
   return env.OPPORTUNITY_WORKSPACE_DRIVE_ID || DEFAULT_WORKSPACE_DRIVE_ID
 }
 
+function encodedSharingUrl(value) {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return `u!${btoa(binary).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-')}`
+}
+
 async function graphResponse(url, token, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -39,6 +46,89 @@ async function getItem(env, token, driveId, itemId) {
     token,
   )
   return body
+}
+
+export async function inspectWorkspaceRoot(env, workspace) {
+  if (!workspace?.sharePointDriveId || !workspace?.rootFolderId) {
+    return { exists: false, reason: 'Workspace location is not recorded' }
+  }
+  const token = await getAppOnlyGraphToken(env)
+  try {
+    const folder = await getItem(env, token, workspace.sharePointDriveId, workspace.rootFolderId)
+    return folder?.folder
+      ? { exists: true, folder }
+      : { exists: false, reason: 'Recorded workspace item is not a folder' }
+  } catch (error) {
+    if (error.status === 404) return { exists: false, reason: 'Recorded SharePoint folder no longer exists' }
+    throw error
+  }
+}
+
+export async function describeExistingWorkspaceFolder(env, driveId, folderId) {
+  const token = await getAppOnlyGraphToken(env)
+  const folder = await getItem(env, token, driveId, folderId)
+  if (!folder?.folder) throw Object.assign(new Error('The selected SharePoint item is not a folder'), { status: 400 })
+  const samFolder = await childByName(env, token, driveId, folder.id, SAM_DOCUMENTS_FOLDER_NAME)
+  return {
+    driveId,
+    rootFolderId: folder.id,
+    samFolderId: samFolder?.id || null,
+    webUrl: folder.webUrl || '',
+  }
+}
+
+export async function resolveWorkspaceFolderLink(env, webUrl) {
+  let parsed
+  try { parsed = new URL(String(webUrl || '').trim()) } catch {
+    throw Object.assign(new Error('The opportunity folder link is not a valid URL'), { status: 400 })
+  }
+  if (parsed.protocol !== 'https:' || !parsed.hostname.toLowerCase().endsWith('.sharepoint.com')) {
+    throw Object.assign(new Error('The opportunity folder link must be a SharePoint URL'), { status: 400 })
+  }
+
+  const driveId = driveIdFor(env)
+  const token = await getAppOnlyGraphToken(env)
+  const { body: folder } = await graphResponse(
+    `https://graph.microsoft.com/v1.0/shares/${encodedSharingUrl(parsed.href)}/driveItem?$select=id,name,webUrl,parentReference,folder`,
+    token,
+    { headers: { Prefer: 'redeemSharingLinkIfNecessary' } },
+  )
+  if (!folder?.folder || folder?.parentReference?.driveId !== driveId) {
+    throw Object.assign(new Error('The folder link is not in the configured SharePoint document library'), { status: 403 })
+  }
+
+  if (!env.WORKBOOK_ID) throw new Error('WORKBOOK_ID is not configured')
+  const workbook = await getItem(env, token, driveId, env.WORKBOOK_ID)
+  const workbookParentId = workbook?.parentReference?.id
+  if (!workbookParentId) throw new Error('Could not resolve the workbook SharePoint folder')
+  const archiveRoot = await childByName(env, token, driveId, workbookParentId, WORKSPACE_ROOT_NAME)
+  if (!archiveRoot?.folder) throw Object.assign(new Error(`SharePoint folder is missing: ${WORKSPACE_ROOT_NAME}`), { status: 404 })
+  const rootPath = fullItemPath(archiveRoot)
+  const folderPath = fullItemPath(folder)
+  const relativePath = folderPath.slice(rootPath.length + 1)
+  if (!folderPath.startsWith(`${rootPath}/`) || relativePath.split('/').some((part) => part.toLowerCase() === '_templates')) {
+    throw Object.assign(new Error('The selected folder is outside the opportunity archive'), { status: 403 })
+  }
+  return describeExistingWorkspaceFolder(env, driveId, folder.id)
+}
+
+export async function finishRecordedWorkspaceFolders(env, workspace) {
+  const inspection = await inspectWorkspaceRoot(env, workspace)
+  if (!inspection.exists) return null
+  const token = await getAppOnlyGraphToken(env)
+  const samFolder = await ensureFolder(
+    env,
+    token,
+    workspace.sharePointDriveId,
+    workspace.rootFolderId,
+    SAM_DOCUMENTS_FOLDER_NAME,
+  )
+  return {
+    driveId: workspace.sharePointDriveId,
+    rootFolderId: inspection.folder.id,
+    samFolderId: samFolder.id,
+    webUrl: inspection.folder.webUrl,
+  }
 }
 
 async function childByName(env, token, driveId, parentId, name) {
