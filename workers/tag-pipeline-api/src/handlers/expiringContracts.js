@@ -219,8 +219,12 @@ async function agencyRegistry(env) {
 
 async function saveAgencyRegistry(env, agencies) {
   if (!env.CACHE) return
-  const custom = agencies.filter((agency) => agency.custom || !DEFAULT_EXPIRING_AGENCIES.some((item) => item.id === agency.id))
-  await env.CACHE.put(AGENCY_REGISTRY_KEY, JSON.stringify(custom))
+  const persisted = agencies.filter((agency) => {
+    const defaultAgency = DEFAULT_EXPIRING_AGENCIES.find((item) => item.id === agency.id)
+    return agency.custom || !defaultAgency || agency.organizationId || agency.agencyCode ||
+      agency.searchName !== defaultAgency.searchName || agency.tier !== defaultAgency.tier
+  })
+  await env.CACHE.put(AGENCY_REGISTRY_KEY, JSON.stringify(persisted))
 }
 
 export function normalizeExpiringAgency(value, index = 0) {
@@ -276,6 +280,89 @@ function federalOrganizationToAgency(value, index = 0) {
   }, index)
 }
 
+async function fetchFederalOrganizations(env, query) {
+  if (!env.SAM_API_KEY) return []
+  const params = new URLSearchParams({
+    api_key: env.SAM_API_KEY,
+    fhorgname: clean(query),
+    status: 'active',
+    limit: '25',
+  })
+  const response = await fetch(`${FEDERAL_HIERARCHY_BASE}?${params}`)
+  if (response.status === 204 || response.status === 404) return []
+  if (!response.ok) throw new Error(`SAM Federal Hierarchy API returned ${response.status}`)
+  const payload = await response.json()
+  return (Array.isArray(payload.orglist) ? payload.orglist : [])
+    .map(federalOrganizationToAgency)
+    .filter((agency) => agency.searchName && ['department', 'subtier'].includes(agency.tier))
+}
+
+function sameAgencyName(left, right) {
+  return clean(left).toUpperCase().replace(/[^A-Z0-9]/g, '') === clean(right).toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function mergeOfficialAgency(agency, official) {
+  if (!official) return normalizeAgency(agency)
+  const current = normalizeAgency(agency)
+  return normalizeAgency({
+    ...current,
+    searchName: official.searchName || current.searchName,
+    organizationId: official.organizationId || current.organizationId,
+    agencyCode: official.agencyCode || current.agencyCode,
+    parentName: official.parentName || current.parentName,
+    tier: official.tier || current.tier,
+    custom: current.custom,
+  })
+}
+
+async function hydrateAgencyCodes(env, agencies) {
+  const hydrated = []
+  for (const value of agencies) {
+    const agency = normalizeAgency(value)
+    if (agency.agencyCode) {
+      hydrated.push(agency)
+      continue
+    }
+
+    let official = null
+    const cached = env.CACHE ? await env.CACHE.get(resultCacheKey(agency), 'json') : null
+    if (cached?.official) {
+      const code = agency.tier === 'department'
+        ? cached.official.departmentCode
+        : cached.official.agencyCode
+      const name = agency.tier === 'department'
+        ? cached.official.departmentName
+        : cached.official.agencyName
+      if (code) {
+        official = normalizeAgency({
+          ...agency,
+          searchName: name || agency.searchName,
+          agencyCode: code,
+          parentName: cached.official.departmentName || agency.parentName,
+        })
+      }
+    }
+
+    if (!official?.agencyCode) {
+      try {
+        const matches = await fetchFederalOrganizations(env, agency.searchName)
+        official = matches.find((match) => match.tier === agency.tier && sameAgencyName(match.searchName, agency.searchName)) ||
+          matches.find((match) => match.tier === agency.tier) || null
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: 'expiring_contract_agency_code_resolution_failed',
+          agencyId: agency.id,
+          agency: agency.label,
+          message: error.message,
+        }))
+      }
+    }
+    hydrated.push(mergeOfficialAgency(agency, official))
+  }
+  await saveAgencyRegistry(env, hydrated)
+  return hydrated
+}
+
 export async function resolveExpiringAgencies(env, query) {
   const search = clean(query)
   if (search.length < 2) return []
@@ -285,19 +372,7 @@ export async function resolveExpiringAgencies(env, query) {
     .map((agency) => ({ ...agency, saved: true, savedId: agency.id }))
   if (!env.SAM_API_KEY) return localMatches.slice(0, 20)
 
-  const params = new URLSearchParams({
-    api_key: env.SAM_API_KEY,
-    fhorgname: search,
-    status: 'active',
-    limit: '25',
-  })
-  const response = await fetch(`${FEDERAL_HIERARCHY_BASE}?${params}`)
-  if (response.status === 204) return localMatches.slice(0, 20)
-  if (!response.ok) throw new Error(`SAM Federal Hierarchy API returned ${response.status}`)
-  const payload = await response.json()
-  const officialMatches = (Array.isArray(payload.orglist) ? payload.orglist : [])
-    .map(federalOrganizationToAgency)
-    .filter((agency) => agency.searchName && ['department', 'subtier'].includes(agency.tier))
+  const officialMatches = (await fetchFederalOrganizations(env, search))
     .map((agency) => {
       const saved = existing.find((item) =>
         item.organizationId === agency.organizationId ||
@@ -422,7 +497,7 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
   const from = addMonths(now, 6)
   const to = addMonths(now, 24)
   const normalizedAgency = normalizeAgency(agency)
-  const params = new URLSearchParams({
+  const baseParams = {
     api_key: env.SAM_API_KEY,
     limit: String(PAGE_SIZE),
     offset: String(offset),
@@ -430,21 +505,32 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
     closedStatus: 'No',
     ultimateCompletionDate: `[${formatSamDate(from)},${formatSamDate(to)}]`,
     naicsCode: naicsCodes.join('~'),
-    [normalizedAgency.tier === 'department'
-      ? (normalizedAgency.agencyCode ? 'contractingDepartmentCode' : 'contractingDepartmentName')
-      : (normalizedAgency.agencyCode ? 'contractingSubtierCode' : 'contractingSubtierName')]: normalizedAgency.agencyCode || normalizedAgency.searchName,
-  })
-  const response = await fetch(`${AWARDS_BASE}?${params}`)
-  if (response.status === 204) return { records: [], total: 0, nextOffset: offset, hasMore: false }
-  if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`SAM Contract Awards API returned ${response.status}: ${body.slice(0, 180)}`)
   }
-  const payload = await response.json()
-  const records = (payload.awardSummary || []).map(compactAwardRecord)
-  const total = Number(payload.totalRecords || records.length)
-  const nextOffset = offset + records.length
-  return { records, total, nextOffset, hasMore: records.length === PAGE_SIZE && nextOffset < total }
+
+  const requestPage = async (filterKey, filterValue) => {
+    const params = new URLSearchParams({ ...baseParams, [filterKey]: filterValue })
+    const response = await fetch(`${AWARDS_BASE}?${params}`)
+    if (response.status === 204) return { records: [], total: 0, nextOffset: offset, hasMore: false }
+    if (!response.ok) {
+      const body = await response.text()
+      throw new Error(`SAM Contract Awards API returned ${response.status}: ${body.slice(0, 180)}`)
+    }
+    const payload = await response.json()
+    const records = (payload.awardSummary || []).map(compactAwardRecord)
+    const total = Number(payload.totalRecords || records.length)
+    const nextOffset = offset + records.length
+    return { records, total, nextOffset, hasMore: records.length === PAGE_SIZE && nextOffset < total }
+  }
+
+  const codeFilter = normalizedAgency.tier === 'department' ? 'contractingDepartmentCode' : 'contractingSubtierCode'
+  const nameFilter = normalizedAgency.tier === 'department' ? 'contractingDepartmentName' : 'contractingSubtierName'
+  if (normalizedAgency.agencyCode) {
+    const byCode = await requestPage(codeFilter, normalizedAgency.agencyCode)
+    if (byCode.total || offset > 0) return { ...byCode, filter: 'code' }
+    const byName = await requestPage(nameFilter, normalizedAgency.searchName)
+    return { ...byName, filter: byName.total ? 'name-fallback' : 'code' }
+  }
+  return { ...(await requestPage(nameFilter, normalizedAgency.searchName)), filter: 'name' }
 }
 
 export async function saveAgencyResults(env, agency, records, fetchedAt = new Date().toISOString()) {
@@ -702,7 +788,9 @@ export async function startExpiringContractsRefresh(env, { agencies, scheduledTi
   const configured = Array.isArray(agencies) && agencies.length
     ? agencies
     : (await agencyRegistry(env)).filter((agency) => agency.scheduled !== false)
-  const normalized = configured.map(normalizeAgency).filter((agency) => agency.searchName)
+  const normalized = (await hydrateAgencyCodes(env, configured))
+    .map(normalizeAgency)
+    .filter((agency) => agency.searchName)
   const existingRegistry = await agencyRegistry(env)
   const mergedRegistry = new Map(existingRegistry.map((agency) => [agency.id, agency]))
   normalized.forEach((agency) => mergedRegistry.set(agency.id, agency))
