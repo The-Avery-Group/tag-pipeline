@@ -134,7 +134,10 @@ test('award discovery filters official subagencies by code instead of a guessed 
   let requestUrl = ''
   globalThis.fetch = async (url) => {
     requestUrl = String(url)
-    return new Response(null, { status: 204 })
+    return new Response(JSON.stringify({ totalRecords: 1, awardSummary: [award()] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
   try {
     await fetchExpiringAwardsPage({ SAM_API_KEY: 'test-key' }, {
@@ -152,6 +155,40 @@ test('award discovery filters official subagencies by code instead of a guessed 
     const params = new URL(requestUrl).searchParams
     assert.equal(params.get('contractingSubtierCode'), '9700')
     assert.equal(params.has('contractingSubtierName'), false)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('an empty code result retries the same official agency by name', async () => {
+  const previousFetch = globalThis.fetch
+  const requestUrls = []
+  globalThis.fetch = async (url) => {
+    requestUrls.push(String(url))
+    if (new URL(url).searchParams.has('contractingSubtierCode')) return new Response(null, { status: 204 })
+    return new Response(JSON.stringify({ totalRecords: 1, awardSummary: [award()] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  try {
+    const result = await fetchExpiringAwardsPage({ SAM_API_KEY: 'test-key' }, {
+      agency: {
+        id: 'fh-100006106',
+        label: 'Defense Health Agency',
+        searchName: 'DEFENSE HEALTH AGENCY',
+        tier: 'subtier',
+        organizationId: '100006106',
+        agencyCode: '9700',
+      },
+      naicsCodes: ['541611'],
+      now: new Date('2026-08-12T00:00:00Z'),
+    })
+    assert.equal(requestUrls.length, 2)
+    assert.equal(new URL(requestUrls[0]).searchParams.get('contractingSubtierCode'), '9700')
+    assert.equal(new URL(requestUrls[1]).searchParams.get('contractingSubtierName'), 'DEFENSE HEALTH AGENCY')
+    assert.equal(result.filter, 'name-fallback')
+    assert.equal(result.total, 1)
   } finally {
     globalThis.fetch = previousFetch
   }
@@ -190,6 +227,39 @@ test('manual expiring refresh creates a durable Workflow instance', async () => 
   assert.equal(created[0].params.agencies[0].id, 'cdc')
   assert.equal(created[0].params.checkpoint, 1)
   assert.equal(created[0].params.continuation.agencyIndex, 0)
+})
+
+test('default agencies inherit official codes from their previous cached award results', async () => {
+  let created
+  const values = new Map([
+    ['expiring_contracts:data:v1:cdc', JSON.stringify({
+      official: {
+        departmentCode: '7500',
+        agencyCode: '7523',
+        agencyName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION',
+        departmentName: 'HEALTH AND HUMAN SERVICES, DEPARTMENT OF',
+      },
+    })],
+  ])
+  const env = {
+    CACHE: {
+      async get(key, type) {
+        const value = values.get(key)
+        return type === 'json' && value ? JSON.parse(value) : value || null
+      },
+      async put(key, value) { values.set(key, value) },
+    },
+    EXPIRING_CONTRACTS_WORKFLOW: {
+      async createBatch(batch) { created = batch; return [{ id: batch[0].id }] },
+    },
+  }
+  await startExpiringContractsRefresh(env, {
+    agencies: [{ id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' }],
+    scheduledTime: Date.parse('2026-08-12T00:00:00Z'),
+  })
+  assert.equal(created[0].params.agencies[0].agencyCode, '7523')
+  const registry = JSON.parse(values.get('expiring_contracts:agency_registry:v1'))
+  assert.equal(registry.find((agency) => agency.id === 'cdc').agencyCode, '7523')
 })
 
 test('scheduled refresh includes saved official target agencies', async () => {
