@@ -44,6 +44,11 @@ name = "ebuy-opportunity-sync"
 binding = "EBUY_SYNC_WORKFLOW"
 class_name = "EbuySyncWorkflow"
 
+[[workflows]]
+name = "opportunity-sharepoint-workspace"
+binding = "OPPORTUNITY_WORKSPACE_WORKFLOW"
+class_name = "OpportunityWorkspaceWorkflow"
+
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
