@@ -8,8 +8,8 @@ import {
 } from '../lib/opportunityWorkspaceRepository.js'
 import {
   beginWorkspaceTemplateCopy,
+  findCopiedWorkspaceFolder,
   finishWorkspaceFolders,
-  pollWorkspaceTemplateCopy,
   resolveWorkspaceDestination,
   updatePipelineFolderLink,
   uploadSAMAttachment,
@@ -51,10 +51,14 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
     if (!copy.completed) {
       for (let attempt = 0; attempt < COPY_POLL_LIMIT; attempt += 1) {
         await step.sleep(`Wait for template copy ${attempt + 1}`, '5 seconds')
-        const result = await step.do(`Check template copy ${attempt + 1}`, {
+        // Graph's copy Location can point at the tenant's SharePoint host.
+        // A Microsoft Graph token is not valid for that audience. Check the
+        // destination through Graph instead; this is bounded, retryable, and
+        // also proves the folder is available before subsequent work starts.
+        const result = await step.do(`Check copied destination folder ${attempt + 1}`, {
           retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' },
           timeout: '30 seconds',
-        }, () => pollWorkspaceTemplateCopy(env, copy.monitorUrl))
+        }, () => findCopiedWorkspaceFolder(env, destination))
         if (result.complete) break
         if (attempt === COPY_POLL_LIMIT - 1) throw new Error('SharePoint template copy did not finish in time')
       }
@@ -104,14 +108,15 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
     let failedCount = 0
     for (let index = 0; index < notice.resourceLinks.length; index += 1) {
       const sourceUrl = notice.resourceLinks[index]
-      const result = await step.do(`Archive SAM attachment ${index + 1}`, {
-        retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
-        timeout: '5 minutes',
-      }, async () => {
-        const prior = await getWorkspaceFile(env.EBUY_DB, opportunityKey, sourceUrl)
-        if (prior?.archive_status === 'archived' && prior.sharepoint_item_id) return { ok: true, reused: true }
-        const id = await attachmentRecordId(opportunityKey, sourceUrl)
-        try {
+      const id = await attachmentRecordId(opportunityKey, sourceUrl)
+      let result
+      try {
+        result = await step.do(`Archive SAM attachment ${index + 1}`, {
+          retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
+          timeout: '5 minutes',
+        }, async () => {
+          const prior = await getWorkspaceFile(env.EBUY_DB, opportunityKey, sourceUrl)
+          if (prior?.archive_status === 'archived' && prior.sharepoint_item_id) return { ok: true, reused: true }
           const attachment = await fetchSAMAttachment(env, sourceUrl, index)
           const uploaded = await uploadSAMAttachment(env, {
             driveId: folders.driveId,
@@ -136,8 +141,9 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
             archivedAt: new Date().toISOString(),
           })
           return { ok: true }
-        } catch (error) {
-          await recordWorkspaceFile(env.EBUY_DB, {
+        })
+      } catch (error) {
+        await step.do(`Record failed SAM attachment ${index + 1}`, () => recordWorkspaceFile(env.EBUY_DB, {
             id,
             opportunityKey,
             sourceNoticeId: notice.noticeId,
@@ -145,10 +151,15 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
             fileName: `SAM attachment ${index + 1}`,
             archiveStatus: 'failed',
             errorMessage: error.message,
-          })
-          return { ok: false, error: error.message }
-        }
-      })
+          }))
+        console.warn(JSON.stringify({
+          event: 'opportunity_workspace_attachment_failed',
+          opportunityKey,
+          attachmentNumber: index + 1,
+          message: error.message,
+        }))
+        result = { ok: false, error: error.message }
+      }
       if (result.ok) archivedCount += 1
       else failedCount += 1
       await step.do(`Update attachment progress ${index + 1}`, () => updateWorkspace(env.EBUY_DB, opportunityKey, {
@@ -166,6 +177,13 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
       failedCount,
       errorMessage: failedCount ? `${failedCount} SAM.gov attachment${failedCount === 1 ? '' : 's'} could not be saved` : null,
       completedAt,
+    }))
+    console.info(JSON.stringify({
+      event: 'opportunity_workspace_complete',
+      opportunityKey,
+      archivedCount,
+      failedCount,
+      attachmentTotal: notice.resourceLinks.length,
     }))
     return { ok: true, partial: failedCount > 0, workspaceUrl: folders.webUrl, archivedCount, failedCount }
   } catch (error) {
