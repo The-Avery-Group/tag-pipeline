@@ -8,6 +8,7 @@ import {
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
+import { requestOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 
 export function usePipeline() {
   const [pipeline, setPipeline] = useState([])
@@ -73,6 +74,12 @@ export function usePipeline() {
     }
     await publishCacheUpdate(['PipelineTable'])
     verifyCacheInBackground(['PipelineTable'])
+    if (!saved._alreadyExisted) {
+      await requestOpportunityWorkspace(saved, {
+        noticeId: data?._workspaceNoticeId || '',
+        solicitationNumber: data?._workspaceSolicitationNumber || data?.['Solicitation Number'] || '',
+      }).catch((error) => console.warn('[Opportunity workspace] Setup could not start:', error.message))
+    }
     return saved
   }, [])
 
