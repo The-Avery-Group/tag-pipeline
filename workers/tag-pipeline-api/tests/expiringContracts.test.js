@@ -3,7 +3,11 @@ import test from 'node:test'
 import {
   contractEligibility,
   expiringHiddenKey,
+  fetchAgencyModifierNotices,
   fetchExpiringAwardsPage,
+  matchingModifierContacts,
+  modifierNoticeWindows,
+  noticeContacts,
   normalizeExpiringAgency,
   resolveExpiringAgencies,
   resolveLastModifiedBy,
@@ -204,6 +208,87 @@ test('HHS modifier identifiers resolve from public notice contact names', () => 
   const result = resolveLastModifiedBy('HHSAHAYNES', 'CENTERS FOR DISEASE CONTROL AND PREVENTION', [contact])
   assert.equal(result.status, 'matched')
   assert.equal(result.matches[0].name, 'Amanda Haynes')
+})
+
+test('modifier notice windows merge nearby modification dates into one bounded search', () => {
+  const windows = modifierNoticeWindows([
+    { lastModifiedDate: '2026-06-01' },
+    { dateSigned: '2026-06-20' },
+    { lastModifiedDate: '2025-01-01' },
+  ])
+  assert.equal(windows.length, 2)
+  assert.equal(windows[0].from.toISOString().slice(0, 10), '2024-12-02')
+  assert.equal(windows[1].from.toISOString().slice(0, 10), '2026-05-02')
+  assert.equal(windows[1].to.toISOString().slice(0, 10), '2026-07-20')
+})
+
+test('agency-date POC fallback searches award and opportunity notices together', async () => {
+  const previousFetch = globalThis.fetch
+  let requestUrl = ''
+  globalThis.fetch = async (url) => {
+    requestUrl = String(url)
+    return new Response(JSON.stringify({
+      opportunitiesData: [{
+        noticeId: 'award-notice-1',
+        title: 'Award notice',
+        type: 'Award Notice',
+        postedDate: '2026-06-15',
+        pointOfContact: [{ fullName: 'Amanda Haynes', email: 'amanda.haynes@hhs.gov' }],
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const notices = await fetchAgencyModifierNotices({ SAM_API_KEY: 'test-key' }, {
+      agencyCode: '7523',
+      agencyName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION',
+      modifications: [{ lastModifiedDate: '2026-06-10' }],
+    })
+    const params = new URL(requestUrl).searchParams
+    assert.equal(params.get('organizationCode'), '7523')
+    assert.equal(params.get('limit'), '1000')
+    assert.deepEqual(params.getAll('ptype'), ['a', 'r', 'o', 'k', 'p', 's'])
+    assert.equal(notices.length, 1)
+    const contacts = noticeContacts(notices, 'CENTERS FOR DISEASE CONTROL AND PREVENTION')
+    assert.equal(contacts[0].sourceLabel, 'SAM award notice')
+    assert.equal(resolveLastModifiedBy('HHSAHAYNES', 'CENTERS FOR DISEASE CONTROL AND PREVENTION', contacts).status, 'matched')
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('agency-date POC fallback retries by agency name when its code returns no notices', async () => {
+  const previousFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (url) => {
+    requests.push(String(url))
+    if (new URL(url).searchParams.has('organizationCode')) return new Response(null, { status: 204 })
+    return new Response(JSON.stringify({ opportunitiesData: [{ noticeId: 'fallback-1', type: 'Solicitation', postedDate: '2026-06-01' }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  try {
+    const notices = await fetchAgencyModifierNotices({ SAM_API_KEY: 'test-key' }, {
+      agencyCode: '7523',
+      agencyName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION',
+      modifications: [{ dateSigned: '2026-06-01' }],
+    })
+    assert.equal(requests.length, 2)
+    assert.equal(new URL(requests[1]).searchParams.get('organizationName'), 'CENTERS FOR DISEASE CONTROL AND PREVENTION')
+    assert.equal(notices.length, 1)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('agency-wide POC fallback retains only contacts matching a modifier identity', () => {
+  const contacts = [
+    { name: 'Amanda Haynes', email: 'amanda.haynes@hhs.gov', sourceLabel: 'SAM award notice' },
+    { name: 'Unrelated Person', email: 'unrelated@hhs.gov', sourceLabel: 'SAM opportunity notice' },
+  ]
+  const matches = matchingModifierContacts(contacts, [{ lastModifiedBy: 'HHSAHAYNES' }], 'CENTERS FOR DISEASE CONTROL AND PREVENTION')
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].name, 'Amanda Haynes')
 })
 
 test('dismissal matching collapses amendment-style solicitation suffixes', () => {
