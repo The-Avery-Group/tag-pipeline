@@ -132,14 +132,20 @@ function parseResponseDate(val) {
   return s.slice(0, 10)
 }
 
-function parsePOC(pocList) {
+export function parsePOC(pocList) {
   if (!Array.isArray(pocList) || pocList.length === 0) return ''
-  const primary = pocList.find((p) => String(p?.type || '').toLowerCase() === 'primary') || pocList[0]
-  if (!primary) return ''
-  const name  = String(primary.fullName || primary.fullname || '').trim()
-  const email = String(primary.email  || '').trim()
-  const phone = String(primary.phone  || '').trim()
-  return [name, email, phone].filter(Boolean).join(' | ')
+  const ordered = [...pocList].sort((left, right) =>
+    Number(String(right?.type || '').toLowerCase() === 'primary') - Number(String(left?.type || '').toLowerCase() === 'primary')
+  )
+  const unique = new Map()
+  ordered.forEach((poc) => {
+    const name = String(poc?.fullName || poc?.fullname || '').trim()
+    const email = String(poc?.email || '').trim()
+    const phone = String(poc?.phone || '').trim()
+    const key = email.toLowerCase() || `${name.toLowerCase()}|${phone}`
+    if (key && !unique.has(key)) unique.set(key, [name, email, phone].filter(Boolean).join(' | '))
+  })
+  return [...unique.values()].join('\n')
 }
 
 export function parseOrg(fullParentPathName) {
