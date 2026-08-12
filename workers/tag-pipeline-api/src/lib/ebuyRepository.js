@@ -54,6 +54,8 @@ export async function ebuyStorageStatus(db) {
   try {
     const table = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ebuy_opportunities'").first()
     if (!table) return { status: 'migration_required', message: 'The eBuy database exists but its migration has not been applied.' }
+    const connectionTable = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ebuy_connections'").first()
+    if (!connectionTable) return { status: 'migration_required', message: 'Apply the latest eBuy database migration to enable the secure connection.' }
     const latest = await db.prepare('SELECT * FROM ebuy_sync_runs ORDER BY started_at DESC LIMIT 1').first()
     const count = await db.prepare('SELECT COUNT(*) AS count FROM ebuy_opportunities').first()
     return {
@@ -65,6 +67,139 @@ export async function ebuyStorageStatus(db) {
   } catch (error) {
     return { status: 'error', message: error.message }
   }
+}
+
+export async function getEbuyConnectionRecord(db) {
+  return db.prepare('SELECT * FROM ebuy_connections WHERE id = 1').first()
+}
+
+export async function getEbuyConnectionStatus(db, encryptionConfigured = false) {
+  if (!db) return { configured: false, status: 'not_configured', encryptionConfigured }
+  try {
+    const row = await getEbuyConnectionRecord(db)
+    if (!row) return { configured: false, status: 'not_connected', encryptionConfigured }
+    return {
+      configured: true,
+      status: row.status || 'connected',
+      encryptionConfigured,
+      usernameMasked: row.username_masked || '',
+      contracts: decode(row.contracts_json, []),
+      lastAuthenticatedAt: row.last_authenticated_at || null,
+      lastSyncAt: row.last_sync_at || null,
+      lastSuccessAt: row.last_success_at || null,
+      lastErrorCode: row.last_error_code || null,
+      lastErrorMessage: row.last_error_message || null,
+      connectedBy: row.connected_by || '',
+      updatedAt: row.updated_at || null,
+    }
+  } catch (error) {
+    if (/no such table/i.test(error.message)) return { configured: false, status: 'migration_required', encryptionConfigured }
+    throw error
+  }
+}
+
+export async function saveEbuyConnection(db, {
+  usernameMasked, credentialsEncrypted, sessionEncrypted, contracts, connectedBy,
+}) {
+  const now = new Date().toISOString()
+  await db.prepare(`INSERT INTO ebuy_connections (
+      id, username_masked, credentials_encrypted, session_encrypted, status,
+      contracts_json, last_authenticated_at, last_error_code, last_error_message,
+      connected_by, created_at, updated_at
+    ) VALUES (1, ?, ?, ?, 'connected', ?, ?, NULL, NULL, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      username_masked = excluded.username_masked,
+      credentials_encrypted = excluded.credentials_encrypted,
+      session_encrypted = excluded.session_encrypted,
+      status = 'connected',
+      contracts_json = excluded.contracts_json,
+      last_authenticated_at = excluded.last_authenticated_at,
+      last_error_code = NULL,
+      last_error_message = NULL,
+      connected_by = excluded.connected_by,
+      updated_at = excluded.updated_at`)
+    .bind(usernameMasked, credentialsEncrypted, sessionEncrypted, encode(contracts), now, connectedBy || '', now, now).run()
+}
+
+export async function updateEbuyConnectionSession(db, sessionEncrypted, contracts) {
+  const now = new Date().toISOString()
+  await db.prepare(`UPDATE ebuy_connections SET session_encrypted = ?, contracts_json = ?, status = 'connected',
+    last_authenticated_at = ?, last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = 1`)
+    .bind(sessionEncrypted, encode(contracts), now, now).run()
+}
+
+export async function recordEbuyConnectionResult(db, { ok, code = null, message = null, synced = false } = {}) {
+  const now = new Date().toISOString()
+  await db.prepare(`UPDATE ebuy_connections SET status = ?, last_error_code = ?, last_error_message = ?,
+    last_sync_at = CASE WHEN ? THEN ? ELSE last_sync_at END,
+    last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+    updated_at = ? WHERE id = 1`)
+    .bind(ok ? 'connected' : 'error', ok ? null : code, ok ? null : message, synced ? 1 : 0, now, ok && synced ? 1 : 0, now, now).run()
+}
+
+export async function deleteEbuyConnection(db) {
+  await db.prepare('DELETE FROM ebuy_connections WHERE id = 1').run()
+}
+
+export async function stageEbuySyncCandidates(db, runId, contractNumber, records) {
+  const now = new Date().toISOString()
+  let staged = 0
+  for (let offset = 0; offset < records.length; offset += 50) {
+    const statements = records.slice(offset, offset + 50).map((record) => {
+      const requestId = String(record?.rfqId || record?.requestId || '').trim()
+      if (!requestId) return null
+      staged++
+      return db.prepare(`INSERT INTO ebuy_sync_candidates (
+        run_id, request_id, contract_number, summary_json, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
+      ON CONFLICT(run_id, request_id) DO UPDATE SET
+        summary_json = excluded.summary_json,
+        updated_at = excluded.updated_at`)
+        .bind(runId, requestId, contractNumber, encode(record), now, now)
+    }).filter(Boolean)
+    if (statements.length) await db.batch(statements)
+  }
+  return staged
+}
+
+export async function nextEbuySyncCandidate(db, runId) {
+  return db.prepare(`SELECT * FROM ebuy_sync_candidates
+    WHERE run_id = ? AND status = 'pending' ORDER BY created_at, request_id LIMIT 1`).bind(runId).first()
+}
+
+export async function finishEbuySyncCandidate(db, runId, requestId, error = null) {
+  await db.prepare(`UPDATE ebuy_sync_candidates SET status = ?, error_message = ?, updated_at = ?
+    WHERE run_id = ? AND request_id = ?`)
+    .bind(error ? 'error' : 'complete', error?.message || null, new Date().toISOString(), runId, requestId).run()
+}
+
+export async function countPendingEbuySyncCandidates(db, runId) {
+  const row = await db.prepare("SELECT COUNT(*) AS count FROM ebuy_sync_candidates WHERE run_id = ? AND status = 'pending'").bind(runId).first()
+  return Number(row?.count || 0)
+}
+
+export async function completeLiveEbuySnapshot(db, runStartedAt) {
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const settingsRow = await db.prepare('SELECT * FROM ebuy_settings WHERE id = 1').first()
+  const candidates = await db.prepare("SELECT request_id, review_state FROM ebuy_opportunities WHERE lifecycle_status != 'unavailable' AND last_seen_at < ? AND raw_json NOT LIKE '%sanitized-g2x-schema%'")
+    .bind(runStartedAt).all()
+  let removed = 0
+  for (const candidate of candidates.results || []) {
+    const purgeAfter = retentionDeadline(candidate.review_state, 'unavailable', now, {
+      dismissedRetentionDays: settingsRow?.dismissed_retention_days,
+      expiredRetentionDays: settingsRow?.expired_retention_days,
+      unavailableRetentionDays: settingsRow?.unavailable_retention_days,
+    })
+    await db.prepare("UPDATE ebuy_opportunities SET lifecycle_status = 'unavailable', removed_at = ?, purge_after = ?, updated_at = ? WHERE request_id = ?")
+      .bind(nowIso, purgeAfter, nowIso, candidate.request_id).run()
+    removed++
+  }
+  return removed
+}
+
+export async function clearEbuySyncCandidates(db, runId) {
+  await db.prepare('DELETE FROM ebuy_sync_candidates WHERE run_id = ?').bind(runId).run()
 }
 
 export async function listEbuyOpportunities(db, options = {}) {
@@ -132,6 +267,12 @@ export async function startEbuySyncRun(db, mode, details = {}) {
   await db.prepare('INSERT INTO ebuy_sync_runs (id, mode, status, started_at, details_json) VALUES (?, ?, ?, ?, ?)')
     .bind(id, mode, 'running', startedAt, encode(details)).run()
   return { id, startedAt }
+}
+
+export async function hasRunningEbuySync(db) {
+  const threshold = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()
+  const row = await db.prepare("SELECT id FROM ebuy_sync_runs WHERE status = 'running' AND started_at >= ? ORDER BY started_at DESC LIMIT 1").bind(threshold).first()
+  return Boolean(row?.id)
 }
 
 export async function finishEbuySyncRun(db, id, result, error = null) {
@@ -295,6 +436,17 @@ export async function recordArchivedEbuyAttachment(db, {
     sharepointWebUrl: webUrl,
     archivedAt: now,
   }
+}
+
+export async function getArchivedEbuyAttachmentIds(db, requestId) {
+  const rows = await db.prepare("SELECT id FROM ebuy_attachments WHERE request_id = ? AND archive_status = 'archived' AND sharepoint_item_id IS NOT NULL")
+    .bind(requestId).all()
+  return new Set((rows.results || []).map((row) => row.id))
+}
+
+export async function recordEbuyAttachmentFailure(db, id, message) {
+  await db.prepare(`UPDATE ebuy_attachments SET archive_status = 'error', error_message = ?, updated_at = ? WHERE id = ?`)
+    .bind(String(message || 'Attachment archive failed'), new Date().toISOString(), id).run()
 }
 
 export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = null } = {}) {
