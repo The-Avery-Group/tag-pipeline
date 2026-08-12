@@ -100,7 +100,7 @@ export async function resolveWorkspaceDestination(env, workspace, folderName) {
 
 export async function beginWorkspaceTemplateCopy(env, destination) {
   if (destination.existingFolder) {
-    return { completed: true, folder: destination.existingFolder, monitorUrl: null }
+    return { completed: true, folder: destination.existingFolder }
   }
   const token = await getAppOnlyGraphToken(env)
   const response = await fetch(
@@ -118,19 +118,21 @@ export async function beginWorkspaceTemplateCopy(env, destination) {
     const body = await response.json().catch(() => null)
     throw new Error(body?.error?.message || `Could not copy the SharePoint template (${response.status})`)
   }
-  const monitorUrl = response.headers.get('Location')
-  if (!monitorUrl) throw new Error('SharePoint did not return a template-copy monitor URL')
-  return { completed: false, monitorUrl }
+  return { completed: false }
 }
 
-export async function pollWorkspaceTemplateCopy(env, monitorUrl) {
+export async function findCopiedWorkspaceFolder(env, destination) {
   const token = await getAppOnlyGraphToken(env)
-  const response = await fetch(monitorUrl, { headers: { Authorization: `Bearer ${token}` } })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(body?.error?.message || `SharePoint template copy failed (${response.status})`)
-  const status = String(body.status || '').toLowerCase()
-  if (status === 'failed') throw new Error(body.error?.message || 'SharePoint could not copy the opportunity template')
-  return { complete: ['completed', 'succeeded'].includes(status), status: status || 'inProgress' }
+  const folder = await childByName(
+    env,
+    token,
+    destination.driveId,
+    destination.destinationParentId,
+    destination.folderName,
+  )
+  return folder
+    ? { complete: true, folder: { id: folder.id, name: folder.name, webUrl: folder.webUrl } }
+    : { complete: false, folder: null }
 }
 
 export async function finishWorkspaceFolders(env, workspace, folderName) {
