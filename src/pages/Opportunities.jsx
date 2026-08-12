@@ -159,6 +159,28 @@ function normalizeOpportunityKey(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function linkedPipelineOpportunity(opportunity, pipelineIndex) {
+  const solicitationKey = normalizeOpportunityKey(opportunity?.['Solicitation Number'])
+  const noticeKey = normalizeOpportunityKey(opportunity?.['Notice ID'])
+  return (solicitationKey && pipelineIndex.get(solicitationKey)) ||
+    (noticeKey && pipelineIndex.get(noticeKey)) ||
+    null
+}
+
+function reconciledSAMStatus(opportunity, linkedOpportunity) {
+  const storedStatus = String(opportunity?.Status || 'new').toLowerCase()
+  // Dismissal is an explicit discovery decision and remains authoritative
+  // even when the opportunity also exists in the pipeline.
+  if (storedStatus === 'dismissed') return 'dismissed'
+  if (linkedOpportunity) {
+    return linkedOpportunity[C.outlook] === 'Tracking' ? 'tracked' : 'added_to_pipeline'
+  }
+  // Pipeline deletion must immediately restore the discovery actions even
+  // if NewOpportunitiesTable still contains its old denormalized status.
+  if (['added_to_pipeline', 'tracked'].includes(storedStatus)) return 'new'
+  return storedStatus
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 export default function Opportunities({ toast }) {
   const navigate = useNavigate()
@@ -535,12 +557,21 @@ export default function Opportunities({ toast }) {
     updateFlag,
     failedStatuses,
     retryStatus,
+    updateStatus: updateSAMStatus,
     triggerPull,
     pullProgress,
     pullOrigin,
   } = useSAMOpportunities()
 
-  const { changesByRow: samChangesByRow, checking: checkingSAMChanges, progress: samCheckProgress, checkError: samCheckError, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(samOpps)
+  const reconciledSAMOpps = useMemo(() => samOpps.map((opportunity) => {
+    const linked = linkedPipelineOpportunity(opportunity, pipelineByOpportunityKey)
+    const status = reconciledSAMStatus(opportunity, linked)
+    return status === String(opportunity.Status || 'new').toLowerCase()
+      ? opportunity
+      : { ...opportunity, Status: status }
+  }), [pipelineByOpportunityKey, samOpps])
+
+  const { changesByRow: samChangesByRow, checking: checkingSAMChanges, progress: samCheckProgress, checkError: samCheckError, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(reconciledSAMOpps)
   const { statusByOpportunity: rfiFollowUpStatus, markSeen: markFollowUpsSeen } = useRfiFollowUpMonitor(pipeline, contacts, { replace: true })
 
   const [showDismissed, setShowDismissed] = useState(false)
@@ -569,6 +600,26 @@ export default function Opportunities({ toast }) {
   const pullProgressPercentRef = useRef(0)
   const lastAutomaticSAMCheck = useRef('')
   const pullWasActiveRef = useRef(false)
+  const reconcilingSAMStatusesRef = useRef(new Map())
+
+  // NewOpportunitiesTable stores a convenient denormalized pipeline status.
+  // Reconcile it after both tables have loaded so deleting a pipeline record
+  // restores the discovery row across browsers, not only in this render.
+  useEffect(() => {
+    if (loading || samLoading) return
+    samOpps.forEach((opportunity) => {
+      const storedStatus = String(opportunity.Status || 'new').toLowerCase()
+      const linked = linkedPipelineOpportunity(opportunity, pipelineByOpportunityKey)
+      const expectedStatus = reconciledSAMStatus(opportunity, linked)
+      const rowIndex = opportunity._rowIndex
+      if (expectedStatus === storedStatus || rowIndex === null || rowIndex === undefined) return
+      if (reconcilingSAMStatusesRef.current.get(rowIndex) === expectedStatus) return
+      reconcilingSAMStatusesRef.current.set(rowIndex, expectedStatus)
+      updateSAMStatus(rowIndex, expectedStatus)
+        .catch((error) => console.warn('[SAM] Pipeline status reconciliation failed:', error.message))
+        .finally(() => reconcilingSAMStatusesRef.current.delete(rowIndex))
+    })
+  }, [loading, pipelineByOpportunityKey, samLoading, samOpps, updateSAMStatus])
 
   const handleCheckSAMChanges = async () => {
     try {
@@ -625,9 +676,9 @@ export default function Opportunities({ toast }) {
     savedScrollTop.current = tableScrollRef.current?.scrollTop ?? 0
   }, [])
 
-  const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(samOpps.map((opportunity) =>
+  const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(reconciledSAMOpps.map((opportunity) =>
     applySAMSnapshot(opportunity, samChangesByRow[opportunity._rowIndex]?.latest)
-  )), [samChangesByRow, samOpps])
+  )), [reconciledSAMOpps, samChangesByRow])
   const samSearchIndex = useMemo(() => buildSearchIndex(currentSAMOpps), [currentSAMOpps])
   const samRowsMatchingSearch = useMemo(
     () => new Set(filterSearchIndex(samSearchIndex, search)),
@@ -725,7 +776,7 @@ export default function Opportunities({ toast }) {
     if (actioningRow === row._rowIndex) return
     setActioningRow(row._rowIndex)
     try {
-      const pipelineRecord = pipelineByOpportunityKey.get(normalizeOpportunityKey(row['Solicitation Number'] || row['Notice ID']))
+      const pipelineRecord = linkedPipelineOpportunity(row, pipelineByOpportunityKey)
       const restoredStatus = pipelineRecord
         ? (pipelineRecord[C.outlook] === 'Tracking' ? 'tracked' : 'added_to_pipeline')
         : 'new'
@@ -882,9 +933,7 @@ export default function Opportunities({ toast }) {
         title={change.summary || 'SAM.gov has updated this opportunity.'}
         onClick={(event) => {
           event.stopPropagation()
-          const linked = pipelineByOpportunityKey.get(
-            normalizeOpportunityKey(opportunity['Solicitation Number'] || opportunity['Notice ID'])
-          )
+          const linked = linkedPipelineOpportunity(opportunity, pipelineByOpportunityKey)
           if (linked) {
             openOpportunity(linked, { focusSAMChanges: true })
             return
@@ -895,7 +944,7 @@ export default function Opportunities({ toast }) {
         SAM.gov updated
         <span className={styles.samUpdatedTooltip}>
           {change.summary || 'SAM.gov has updated this opportunity.'}<br />
-          <strong>{pipelineByOpportunityKey.get(normalizeOpportunityKey(opportunity['Solicitation Number'] || opportunity['Notice ID']))
+          <strong>{linkedPipelineOpportunity(opportunity, pipelineByOpportunityKey)
             ? 'Click to review pipeline updates'
             : 'Click to mark reviewed'}</strong>
         </span>
@@ -1148,9 +1197,7 @@ export default function Opportunities({ toast }) {
                       const isDismissed = opp.Status === 'dismissed'
                       const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
                       const syncFailure = failedStatuses[opp._rowIndex]
-                      const linkedOpportunity = pipelineByOpportunityKey.get(
-                        normalizeOpportunityKey(opp['Solicitation Number'] || opp['Notice ID'])
-                      )
+                      const linkedOpportunity = linkedPipelineOpportunity(opp, pipelineByOpportunityKey)
                       const isActioning = actioningRow === opp._rowIndex
                       const isFlagged = isSAMOpportunityFlagged(opp.Flagged)
                       const isFlagSaving = flaggingRows.has(opp._rowIndex)
