@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Topbar from '@/components/Layout/Topbar'
 import FollowUpEmailTemplates from '@/components/Settings/FollowUpEmailTemplates'
+import LegacyFolderMigration from '@/components/Settings/LegacyFolderMigration'
 import { useAuth } from '@/auth/AuthContext'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
@@ -149,6 +150,7 @@ export default function Settings({ toast }) {
     dropdowns: false,
     health:    false,
     emailTemplates: false,
+    folderMigration: false,
     sam:       false,
     ebuy:      false,
   })
@@ -558,6 +560,17 @@ export default function Settings({ toast }) {
             <span className={`${styles.chevron} ${openSections.emailTemplates ? styles.chevronOpen : ''}`}>›</span>
           </button>
           {openSections.emailTemplates && <FollowUpEmailTemplates user={user} toast={toast} />}
+        </div>
+
+        <div className={styles.collapsible}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('folderMigration')}>
+            <span>
+              <span className={styles.collapsibleTitle}>Legacy opportunity folders</span>
+              <span className={styles.collapsibleHint}>Review copied OneDrive folders and connect them to pipeline opportunities</span>
+            </span>
+            <span className={`${styles.chevron} ${openSections.folderMigration ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.folderMigration && <LegacyFolderMigration toast={toast} />}
         </div>
 
         {/* ── Collapsible: Dropdown options ── */}
