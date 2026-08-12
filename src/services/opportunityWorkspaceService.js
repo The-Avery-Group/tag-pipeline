@@ -11,6 +11,7 @@ function opportunityPayload(opportunity, overrides = {}) {
     department: opportunity?.['Department*'] || '',
     agency: opportunity?.['Agency*'] || '',
     noticeType: opportunity?.['Notice Type'] || '',
+    folderLink: opportunity?.['Link to Folder'] || '',
     calendarYear: new Date().getFullYear(),
   }
 }
@@ -27,8 +28,12 @@ export function getOpportunityWorkspace(opportunityKey) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`)
 }
 
-export function retryOpportunityWorkspace(opportunityKey) {
-  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/retry`, { method: 'POST' })
+export function retryOpportunityWorkspace(opportunityKey, opportunity = null) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/retry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opportunity ? opportunityPayload(opportunity) : {}),
+  })
 }
 
 export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
