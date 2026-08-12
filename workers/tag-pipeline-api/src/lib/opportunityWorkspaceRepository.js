@@ -94,6 +94,22 @@ export async function claimWorkspaceRun(db, opportunityKey, instanceId, { force 
   return Number(result.meta?.changes || 0) > 0
 }
 
+export async function resetWorkspaceForRebuild(db, opportunityKey) {
+  const key = normalizeWorkspaceKey(opportunityKey)
+  if (!key) throw Object.assign(new Error('An opportunity identifier is required'), { status: 400 })
+  const now = new Date().toISOString()
+  await db.batch([
+    db.prepare('DELETE FROM opportunity_workspace_files WHERE opportunity_key = ?').bind(key),
+    db.prepare(`UPDATE opportunity_workspaces
+      SET status = 'new', progress_phase = 'Ready to rebuild', workflow_instance_id = NULL,
+          sharepoint_drive_id = NULL, root_folder_id = NULL, sam_folder_id = NULL,
+          sharepoint_web_url = NULL, attachment_total = 0, archived_count = 0,
+          failed_count = 0, error_message = NULL, completed_at = NULL, updated_at = ?
+      WHERE opportunity_key = ?`).bind(now, key),
+  ])
+  return getWorkspace(db, key)
+}
+
 export async function updateWorkspace(db, opportunityKey, patch = {}) {
   const columns = {
     status: 'status', progressPhase: 'progress_phase', workflowInstanceId: 'workflow_instance_id',
@@ -149,4 +165,3 @@ export async function recordWorkspaceFile(db, input) {
       now,
     ).run()
 }
-
