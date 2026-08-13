@@ -7,6 +7,7 @@ import {
   workspaceCalendarYear,
 } from '../src/lib/opportunityWorkspaceDomain.js'
 import { resetWorkspaceForRebuild } from '../src/lib/opportunityWorkspaceRepository.js'
+import { opportunityUploadValidation } from '../src/lib/opportunityWorkspaceSharePoint.js'
 
 test('opportunity workspace uses known agency abbreviations and a safe title', () => {
   assert.equal(agencyAbbreviation('Department of Defense Education Activity'), 'DODEA')
@@ -52,4 +53,14 @@ test('workspace rebuild clears stale SharePoint and attachment metadata together
   assert.match(batched[1].sql, /root_folder_id = NULL/)
   assert.equal(result.status, 'new')
   assert.equal(result.rootFolderId, undefined)
+})
+
+test('opportunity reference uploads sanitize names and reject executable files', () => {
+  assert.deepEqual(opportunityUploadValidation('Research #1.pdf', 1024), {
+    valid: true,
+    name: 'Research _1.pdf',
+    size: 1024,
+  })
+  assert.equal(opportunityUploadValidation('run.cmd', 10).valid, false)
+  assert.equal(opportunityUploadValidation('empty.docx', 0).valid, false)
 })
