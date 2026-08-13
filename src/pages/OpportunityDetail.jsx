@@ -35,6 +35,12 @@ import {
   verifyCacheInBackground,
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
+import {
+  announceOpportunityFilesChanged,
+  noteWithReferenceLinks,
+  rollbackOpportunityReferenceFiles,
+  uploadOpportunityReferenceFiles,
+} from '@/services/opportunityReferenceUploadService'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
@@ -379,6 +385,7 @@ export default function OpportunityDetail({ toast }) {
   const [deleting,        setDeleting]        = useState(false)
   const [newNote,         setNewNote]         = useState('')
   const [addingNote,      setAddingNote]      = useState(false)
+  const [noteUploadProgress, setNoteUploadProgress] = useState(null)
   const addingNoteRef = useRef(false)
   const [deletingNoteId,  setDeletingNoteId]  = useState(null)
   const [editingNoteId,   setEditingNoteId]   = useState(null)
@@ -882,19 +889,30 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
-  const handleAddNote = async () => {
-    if (addingNoteRef.current || !newNote.trim()) return
+  const handleAddNote = async (attachments = []) => {
+    const files = Array.from(attachments || [])
+    if (addingNoteRef.current || (!newNote.trim() && files.length === 0)) return false
     addingNoteRef.current = true
     setAddingNote(true)
+    let uploaded = []
     try {
-      await addNote(user.firstName, newNote.trim())
+      uploaded = files.length
+        ? await uploadOpportunityReferenceFiles(decodedCN, files, setNoteUploadProgress)
+        : []
+      const noteText = noteWithReferenceLinks(newNote, uploaded)
+      await addNote(user.firstName, noteText)
       setNewNote('')
+      if (uploaded.length) announceOpportunityFilesChanged(decodedCN)
       toast?.success('Note added')
+      return true
     } catch (err) {
+      if (uploaded.length) await rollbackOpportunityReferenceFiles(decodedCN, uploaded).catch(() => {})
       toast?.error(`Failed to add note: ${err.message}`)
+      return false
     } finally {
       addingNoteRef.current = false
       setAddingNote(false)
+      setNoteUploadProgress(null)
     }
   }
 
@@ -1638,6 +1656,7 @@ export default function OpportunityDetail({ toast }) {
           setNewNote={setNewNote}
           addNote={handleAddNote}
           addingNote={addingNote}
+          uploadProgress={noteUploadProgress}
         />
 
         {/* ── Section 8: Tasks ── */}
