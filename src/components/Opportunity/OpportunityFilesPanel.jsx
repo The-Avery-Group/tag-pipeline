@@ -5,6 +5,7 @@ import {
   requestOpportunityWorkspace,
   retryOpportunityWorkspace,
 } from '@/services/opportunityWorkspaceService'
+import { OPPORTUNITY_FILES_CHANGED_EVENT } from '@/services/opportunityReferenceUploadService'
 import styles from './OpportunityFilesPanel.module.css'
 
 function formatSize(bytes) {
@@ -15,16 +16,14 @@ function formatSize(bytes) {
   return `${(value / 1024 ** 2).toFixed(value >= 10 * 1024 ** 2 ? 0 : 1)} MB`
 }
 
-function FolderRow({ item, opportunityKey }) {
+function FolderRow({ item, opportunityKey, refreshToken }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [children, setChildren] = useState(null)
   const [error, setError] = useState('')
+  const handledRefreshToken = useRef(refreshToken)
 
-  const toggle = async () => {
-    const next = !open
-    setOpen(next)
-    if (!next || children) return
+  const loadChildren = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
@@ -35,7 +34,20 @@ function FolderRow({ item, opportunityKey }) {
     } finally {
       setLoading(false)
     }
+  }, [item.id, opportunityKey])
+
+  const toggle = async () => {
+    const next = !open
+    setOpen(next)
+    if (!next || children) return
+    await loadChildren()
   }
+
+  useEffect(() => {
+    if (handledRefreshToken.current === refreshToken) return
+    handledRefreshToken.current = refreshToken
+    if (open) loadChildren()
+  }, [open, refreshToken, loadChildren])
 
   return <li className={styles.treeItem}>
     <div className={styles.itemRow}>
@@ -51,15 +63,15 @@ function FolderRow({ item, opportunityKey }) {
       {loading && <span className={styles.muted}>Loading…</span>}
       {error && <span className={styles.error}>{error}</span>}
       {children && children.length === 0 && <span className={styles.muted}>Empty folder</span>}
-      {children && children.length > 0 && <FileTree items={children} opportunityKey={opportunityKey} />}
+      {children && children.length > 0 && <FileTree items={children} opportunityKey={opportunityKey} refreshToken={refreshToken} />}
     </div>}
   </li>
 }
 
-function FileTree({ items, opportunityKey }) {
+function FileTree({ items, opportunityKey, refreshToken = 0 }) {
   return <ul className={styles.tree}>
     {items.map((item) => item.type === 'folder'
-      ? <FolderRow key={item.id} item={item} opportunityKey={opportunityKey} />
+      ? <FolderRow key={item.id} item={item} opportunityKey={opportunityKey} refreshToken={refreshToken} />
       : <li className={styles.treeItem} key={item.id}><a className={styles.fileRow} href={item.webUrl} target="_blank" rel="noreferrer">
           <span className={styles.fileIcon} aria-hidden="true">□</span>
           <span className={styles.fileName}>{item.name}</span>
@@ -87,6 +99,7 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
   const [loading, setLoading] = useState(false)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState('')
+  const [refreshToken, setRefreshToken] = useState(0)
   const actionRef = useRef(false)
 
   const load = useCallback(async ({ quiet = false } = {}) => {
@@ -129,6 +142,16 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
     const timer = window.setInterval(() => load({ quiet: true }), 3500)
     return () => window.clearInterval(timer)
   }, [open, workspace?.status, load])
+
+  useEffect(() => {
+    const handleFilesChanged = (event) => {
+      if (String(event.detail?.opportunityKey || '') !== opportunityKey) return
+      setRefreshToken((value) => value + 1)
+      if (open) load({ quiet: true })
+    }
+    window.addEventListener(OPPORTUNITY_FILES_CHANGED_EVENT, handleFilesChanged)
+    return () => window.removeEventListener(OPPORTUNITY_FILES_CHANGED_EVENT, handleFilesChanged)
+  }, [load, open, opportunityKey])
 
   const setup = async ({ retry = false } = {}) => {
     if (actionRef.current) return
@@ -178,7 +201,7 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
           </div>
         </div>
         {['queued', 'running'].includes(workspace.status) && <div className={styles.progress}><span /></div>}
-        {items && items.length > 0 && <FileTree items={items} opportunityKey={opportunityKey} />}
+        {items && items.length > 0 && <FileTree items={items} opportunityKey={opportunityKey} refreshToken={refreshToken} />}
         {items && items.length === 0 && ['ready', 'partial'].includes(workspace.status) && <div className={styles.state}>The opportunity workspace is empty.</div>}
       </>}
     </div>}
