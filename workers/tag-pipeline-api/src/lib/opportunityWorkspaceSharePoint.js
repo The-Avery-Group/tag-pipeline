@@ -5,7 +5,14 @@ export const DEFAULT_WORKSPACE_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlM
 export const WORKSPACE_ROOT_NAME = 'RFI Pipeline and Responses'
 export const WORKSPACE_TEMPLATE_PATH = [WORKSPACE_ROOT_NAME, '_Templates', 'Copy Me For RFI']
 export const SAM_DOCUMENTS_FOLDER_NAME = '2. RFI Documents'
+export const REFERENCE_MATERIALS_FOLDER_NAME = '7. Reference Materials'
 const HIDDEN_SYSTEM_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
+const BLOCKED_UPLOAD_EXTENSIONS = new Set([
+  'app', 'bat', 'cmd', 'com', 'cpl', 'dll', 'exe', 'gadget', 'hta', 'inf', 'ins',
+  'isp', 'jar', 'js', 'jse', 'lnk', 'mjs', 'msc', 'msi', 'msp', 'mst', 'pif',
+  'ps1', 'reg', 'scr', 'sct', 'shb', 'sys', 'vb', 'vbe', 'vbs', 'ws', 'wsc',
+  'wsf', 'wsh',
+])
 
 function driveIdFor(env) {
   // DRIVE_ID may point at a separate capabilities-document library. Keep the
@@ -46,6 +53,105 @@ async function getItem(env, token, driveId, itemId) {
     token,
   )
   return body
+}
+
+export function opportunityUploadValidation(fileName, fileSize) {
+  const name = String(fileName || '').trim()
+  const size = Number(fileSize)
+  if (!name) return { valid: false, error: 'Choose a file with a valid name' }
+  if (!Number.isFinite(size) || size <= 0) return { valid: false, error: `${name} is empty or has an invalid size` }
+  const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+  if (BLOCKED_UPLOAD_EXTENSIONS.has(extension)) {
+    return { valid: false, error: `${name} is an executable or script file and cannot be uploaded` }
+  }
+  return { valid: true, name: safeSharePointSegment(name, 'Reference material', 180), size }
+}
+
+export async function createReferenceMaterialUploadSession(env, workspace, file) {
+  if (!workspace?.sharePointDriveId || !workspace?.rootFolderId) {
+    throw Object.assign(new Error('Set up the SharePoint workspace before attaching files to a note'), { status: 409 })
+  }
+  const validation = opportunityUploadValidation(file?.fileName, file?.fileSize)
+  if (!validation.valid) throw Object.assign(new Error(validation.error), { status: 400 })
+
+  const token = await getAppOnlyGraphToken(env)
+  const root = await getItem(env, token, workspace.sharePointDriveId, workspace.rootFolderId)
+  if (!root?.folder) {
+    throw Object.assign(new Error('The opportunity SharePoint workspace is unavailable'), { status: 409 })
+  }
+  const referenceFolder = await childByName(
+    env,
+    token,
+    workspace.sharePointDriveId,
+    root.id,
+    REFERENCE_MATERIALS_FOLDER_NAME,
+  )
+  if (!referenceFolder?.folder) {
+    throw Object.assign(new Error(`The SharePoint workspace is missing ${REFERENCE_MATERIALS_FOLDER_NAME}`), { status: 409 })
+  }
+
+  const { body } = await graphResponse(
+    `https://graph.microsoft.com/v1.0/drives/${workspace.sharePointDriveId}/items/${referenceFolder.id}:/${encodeURIComponent(validation.name)}:/createUploadSession`,
+    token,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        item: {
+          '@microsoft.graph.conflictBehavior': 'rename',
+          name: validation.name,
+        },
+      }),
+    },
+  )
+  if (!body?.uploadUrl) throw new Error(`SharePoint did not create an upload session for ${validation.name}`)
+  return {
+    uploadUrl: body.uploadUrl,
+    expirationDateTime: body.expirationDateTime || '',
+    fileName: validation.name,
+    folder: {
+      id: referenceFolder.id,
+      name: referenceFolder.name,
+      webUrl: referenceFolder.webUrl || '',
+    },
+  }
+}
+
+export async function removeReferenceMaterialUploads(env, workspace, itemIds) {
+  if (!workspace?.sharePointDriveId || !workspace?.rootFolderId) return { removed: 0 }
+  const ids = [...new Set((itemIds || []).map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 20)
+  if (!ids.length) return { removed: 0 }
+  const token = await getAppOnlyGraphToken(env)
+  const referenceFolder = await childByName(
+    env,
+    token,
+    workspace.sharePointDriveId,
+    workspace.rootFolderId,
+    REFERENCE_MATERIALS_FOLDER_NAME,
+  )
+  if (!referenceFolder?.folder) return { removed: 0 }
+
+  let removed = 0
+  for (const itemId of ids) {
+    try {
+      const item = await getItem(env, token, workspace.sharePointDriveId, itemId)
+      if (item?.parentReference?.id !== referenceFolder.id || item?.folder) continue
+      await graphResponse(
+        `https://graph.microsoft.com/v1.0/drives/${workspace.sharePointDriveId}/items/${encodeURIComponent(itemId)}`,
+        token,
+        { method: 'DELETE' },
+      )
+      removed += 1
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: 'opportunity_reference_upload_cleanup_failed',
+        opportunityKey: workspace.opportunityKey,
+        itemId,
+        message: error.message,
+      }))
+    }
+  }
+  return { removed }
 }
 
 export async function inspectWorkspaceRoot(env, workspace) {
