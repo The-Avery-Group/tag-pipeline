@@ -40,3 +40,23 @@ export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
   const query = parentId ? `?parentId=${encodeURIComponent(parentId)}` : ''
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/files${query}`)
 }
+
+export function createOpportunityReferenceUpload(opportunityKey, file) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type || 'application/octet-stream',
+    }),
+  })
+}
+
+export function removeOpportunityReferenceUploads(opportunityKey, itemIds) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/uploads/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemIds }),
+  })
+}
