@@ -7,8 +7,10 @@ import {
   workspaceStorageStatus,
 } from '../lib/opportunityWorkspaceRepository.js'
 import {
+  createReferenceMaterialUploadSession,
   inspectWorkspaceRoot,
   listWorkspaceChildren,
+  removeReferenceMaterialUploads,
   resolveWorkspaceFolderLink,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
@@ -123,6 +125,22 @@ export async function handleOpportunityWorkspaces(req, env) {
       const workspace = await getWorkspace(storage, decodeURIComponent(filesMatch[1]))
       if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
       return json(await listWorkspaceChildren(env, workspace, url.searchParams.get('parentId') || ''))
+    }
+
+    const uploadRollbackMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/uploads\/rollback$/)
+    if (uploadRollbackMatch && req.method === 'POST') {
+      const workspace = await getWorkspace(storage, decodeURIComponent(uploadRollbackMatch[1]))
+      if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
+      const body = await req.json().catch(() => ({}))
+      return json({ ok: true, ...(await removeReferenceMaterialUploads(env, workspace, body.itemIds || [])) })
+    }
+
+    const uploadsMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/uploads$/)
+    if (uploadsMatch && req.method === 'POST') {
+      const workspace = await getWorkspace(storage, decodeURIComponent(uploadsMatch[1]))
+      if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
+      const body = await req.json().catch(() => ({}))
+      return json({ upload: await createReferenceMaterialUploadSession(env, workspace, body) })
     }
 
     const detailMatch = path.match(/^\/opportunity-workspaces\/([^/]+)$/)
