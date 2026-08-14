@@ -3,6 +3,10 @@ import { serializeSAMPOCs } from './samPoc.js'
 
 const NOTICE_TYPES = new Set(['RFI', 'MRAS', 'RFP', 'RFQ'])
 
+export function cleanSAMOpportunityTitle(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
 export function normalizeSAMNoticeType(value) {
   const values = (Array.isArray(value) ? value : [value])
     .map((item) => String(item || '').trim().toUpperCase())
@@ -32,7 +36,7 @@ export function applySAMSnapshot(row, snapshot) {
     ...row,
     'Notice ID': snapshot.noticeId || row['Notice ID'],
     'Solicitation Number': snapshot.solicitationNumber || row['Solicitation Number'],
-    Title: snapshot.title || row.Title,
+    Title: cleanSAMOpportunityTitle(snapshot.title || row.Title),
     'Notice Type': normalizeSAMNoticeType([snapshot.type, snapshot.baseType, snapshot.title, row['Notice Type']]),
     'Set-Aside Type': snapshot.setAside || row['Set-Aside Type'],
     Department: organization.department || row.Department,
@@ -151,7 +155,7 @@ export function buildSAMOpportunityPatch(opportunity, snapshot, columns) {
   const nextLinks = samLink && !currentLinks.includes(samLink) ? [...currentLinks, samLink] : currentLinks
   const candidates = [
     [columns.noticeType, normalizeSAMNoticeType([snapshot.type, snapshot.baseType, snapshot.title])],
-    [columns.title, snapshot.title],
+    [columns.title, cleanSAMOpportunityTitle(snapshot.title)],
     [columns.solNum, snapshot.solicitationNumber],
     [columns.setAside, snapshot.setAside],
     [columns.department, organization.department],
