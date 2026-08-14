@@ -61,7 +61,10 @@ async function postJson(url, body, options = {}) {
 }
 
 function requireSuccessfulEbuyResponse(payload, action) {
-  if (payload?.header?.status !== 0 || !payload?.response) {
+  const status = Number(payload?.header?.status)
+  // eBuy uses both service-style `0` and HTTP-style `200` success values
+  // across otherwise identical response envelopes.
+  if (![0, 200].includes(status) || !payload?.response) {
     throw connectorError(payload?.response?.message || `GSA eBuy could not ${action}`, 'ebuy_response_error')
   }
   return payload.response
