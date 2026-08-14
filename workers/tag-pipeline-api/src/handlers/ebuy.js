@@ -2,6 +2,7 @@ import {
   ebuyStorageStatus,
   getEbuyConnectionStatus,
   getEbuyOpportunity,
+  getResumableEbuySyncRun,
   hasRunningEbuySync,
   listEbuyOpportunities,
   purgeExpiredEbuyRecords,
@@ -32,14 +33,22 @@ async function startLiveSync(env, source = 'manual', scheduledTime = null) {
   const connection = await getEbuyConnectionStatus(db, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
   if (!connection.configured) return json({ error: 'Connect the company GSA eBuy account in Settings first', code: 'ebuy_not_connected' }, 409)
   if (await hasRunningEbuySync(db)) return json({ ok: true, started: false, alreadyRunning: true, message: 'An eBuy synchronization is already running.' }, 202)
+  const resumable = await getResumableEbuySyncRun(db)
   const slot = scheduledTime ? Math.floor(Number(scheduledTime) / (6 * 60 * 60 * 1000)) : crypto.randomUUID()
-  const instanceId = `ebuy-live-${slot}`
+  const instanceId = resumable ? `ebuy-resume-${resumable.id}-${crypto.randomUUID()}` : `ebuy-live-${slot}`
   const created = await env.EBUY_SYNC_WORKFLOW.createBatch([{
     id: instanceId,
-    params: { mode: 'live', source },
+    params: { mode: 'live', source, resumeRunId: resumable?.id || null },
     retention: { successRetention: '3 days', errorRetention: '7 days' },
   }])
-  return json({ ok: true, started: created.length > 0, instanceId, mode: 'live' }, 202)
+  return json({
+    ok: true,
+    started: created.length > 0,
+    resumed: Boolean(resumable),
+    remaining: resumable ? resumable.retryableCandidates + resumable.retryableAttachments : null,
+    instanceId,
+    mode: 'live',
+  }, 202)
 }
 
 export async function startScheduledEbuySync(env, scheduledTime) {
@@ -97,8 +106,9 @@ export async function handleEbuy(req, env, identity = {}) {
         lifecycle: url.searchParams.get('lifecycle') || 'all',
         includeDismissed: url.searchParams.get('includeDismissed') === 'true',
         excludeFixtures: true,
+        all: url.searchParams.get('all') === 'true',
         page: url.searchParams.get('page') || 1,
-        limit: url.searchParams.get('limit') || 25,
+        limit: url.searchParams.get('limit') || 500,
       }))
     }
     const detailMatch = path.match(/^\/ebuy\/opportunities\/([^/]+)$/)
