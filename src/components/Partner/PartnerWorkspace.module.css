@@ -1,0 +1,15 @@
+.linkerIntro { color: var(--gray-600); font-size: 12px; line-height: 1.5; margin-bottom: 12px; }
+.linkerState, .linkerError { border-radius: var(--radius-sm); font-size: 11px; padding: 10px; }
+.linkerState { background: var(--gray-50); color: var(--gray-500); }
+.linkerError { background: var(--red-50); color: var(--red-600); }
+.linkerRows { border: .5px solid var(--gray-200); border-radius: var(--radius-md); max-height: 52vh; overflow: auto; }
+.linkerRow { align-items: center; border-bottom: .5px solid var(--gray-200); display: grid; gap: 14px; grid-template-columns: minmax(180px, .8fr) minmax(230px, 1.2fr); padding: 10px 12px; }
+.linkerRow:last-child { border-bottom: 0; }
+.linkerRow > div { display: grid; gap: 2px; min-width: 0; }
+.linkerRow strong { color: var(--gray-900); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linkerRow small { color: var(--gray-500); font-size: 10px; }
+.linkerRow a { color: var(--blue-600); font-size: 11px; justify-self: end; }
+.linkerRow select { font-size: 11px; min-width: 0; }
+.inline { border-top: .5px solid var(--gray-200); padding: 16px 18px 18px; }
+.inlineActions { display: flex; justify-content: flex-end; margin-top: 12px; }
+@media (max-width: 620px) { .linkerRow { align-items: stretch; grid-template-columns: 1fr; } .linkerRow a { justify-self: start; } }
