@@ -90,7 +90,6 @@ export default function EbuyOpportunityDetail({ toast }) {
         </div>
       </section>
 
-      {opportunity.fixtureSource && <div className={styles.fixture}>Sanitized test record based on the supplied G2X eBuy schema. It is not a live GSA opportunity.</div>}
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Overview</span><h2>Opportunity summary</h2></div></header>
@@ -137,7 +136,7 @@ export default function EbuyOpportunityDetail({ toast }) {
           const size = attachment.byteSize
             ? `${Math.ceil(attachment.byteSize / 1024)} KB`
             : archived ? 'Size not reported' : 'Size pending'
-          const status = failed ? 'Archive failed' : archived ? 'Archived' : attachment.archiveStatus === 'fixture' ? 'Test record' : 'Awaiting archive'
+          const status = failed ? 'Archive failed' : archived ? 'Archived' : 'Awaiting archive'
           return <article key={attachment.id} className={styles.file}>
             <div>
               <strong>{attachment.fileName}</strong>
@@ -146,7 +145,7 @@ export default function EbuyOpportunityDetail({ toast }) {
             </div>
             {attachment.sharepointWebUrl
               ? <a className="btn" href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived file</a>
-              : <span className={styles.pending}>{attachment.archiveStatus === 'fixture' ? 'Test metadata only' : failed ? 'Retries on next sync' : 'Awaiting archive'}</span>}
+              : <span className={styles.pending}>{failed ? 'Retries on next sync' : 'Awaiting archive'}</span>}
           </article>
         })}{!opportunity.attachments?.length && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
       </section>
