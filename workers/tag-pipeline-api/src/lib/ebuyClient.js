@@ -6,6 +6,20 @@ const OKTA_ORIGIN = 'https://mfalogin.fas.gsa.gov'
 const OKTA_ISSUER = `${OKTA_ORIGIN}/oauth2/aus4g6gtt3hndAzZq297`
 const SELLER_CLIENT_ID = '0oa55my5bl2HNr9GC297'
 const CALLBACK_URL = `${EBUY_ORIGIN}/ebuy/pkce/callback`
+const EBUY_APP_URL = `${EBUY_ORIGIN}/ebuy/`
+
+function ebuyBrowserHeaders(referer = EBUY_APP_URL) {
+  return {
+    Origin: EBUY_ORIGIN,
+    Referer: referer,
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+  }
+}
+
+function fasBrowserHeaders() {
+  return { Origin: OKTA_ORIGIN, Referer: `${OKTA_ORIGIN}/` }
+}
 
 function connectorError(message, code, status = 502) {
   const error = new Error(message)
@@ -67,7 +81,7 @@ async function createOktaSession(credentials) {
     username: credentials.username,
     password: credentials.password,
     options: { multiOptionalFactorEnroll: false, warnBeforePasswordExpired: true },
-  }, { service: 'FAS ID' })
+  }, { service: 'FAS ID primary authentication', headers: fasBrowserHeaders() })
 
   if (primary.status === 'SUCCESS' && primary.sessionToken) return primary.sessionToken
   if (!['MFA_REQUIRED', 'MFA_CHALLENGE'].includes(primary.status)) {
@@ -92,7 +106,7 @@ async function createOktaSession(credentials) {
   const verified = await postJson(`${OKTA_ORIGIN}/api/v1/authn/factors/${encodeURIComponent(factorId)}/verify?rememberDevice=true`, {
     stateToken,
     passCode,
-  }, { service: 'FAS ID' })
+  }, { service: 'FAS ID authenticator verification', headers: fasBrowserHeaders() })
   if (verified.status !== 'SUCCESS' || !verified.sessionToken) {
     throw connectorError('The authenticator setup key could not complete FAS ID verification', 'ebuy_totp_verification_failed', 401)
   }
@@ -100,8 +114,10 @@ async function createOktaSession(credentials) {
 }
 
 async function exchangeOktaSession(sessionToken) {
-  const pkceResponse = await request(`${EBUY_API}//seller/login/pkce`, { headers: { Accept: 'application/json' } })
-  const pkcePayload = await readJson(pkceResponse, 'GSA eBuy')
+  const pkceResponse = await request(`${EBUY_API}//seller/login/pkce`, {
+    headers: { Accept: 'application/json, text/plain, */*', Referer: EBUY_APP_URL, 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+  })
+  const pkcePayload = await readJson(pkceResponse, 'GSA eBuy PKCE initialization')
   const pkce = pkcePayload?.response || pkcePayload
   const verifier = pkce?.pkce_code_verifier
   const challenge = pkce?.pkce_code_challenger
@@ -120,7 +136,7 @@ async function exchangeOktaSession(sessionToken) {
     sessionToken,
     prompt: 'none',
   }).toString()
-  const authorization = await request(authorize, { redirect: 'manual', headers: { Accept: 'text/html' } })
+  const authorization = await request(authorize, { redirect: 'manual', headers: { Accept: 'text/html', Referer: EBUY_APP_URL } })
   const location = authorization.headers.get('Location')
   if (!location) throw connectorError('FAS ID did not return an eBuy authorization code', 'ebuy_authorization_code_missing')
   const callback = new URL(location, OKTA_ORIGIN)
@@ -131,13 +147,20 @@ async function exchangeOktaSession(sessionToken) {
 
   const tokenResponse = await request(`${OKTA_ISSUER}/v1/token`, {
     method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      Origin: EBUY_ORIGIN,
+      Referer: EBUY_APP_URL,
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
     body: new URLSearchParams({
       grant_type: 'authorization_code', code, client_id: SELLER_CLIENT_ID,
       redirect_uri: CALLBACK_URL, code_verifier: verifier,
     }),
   })
-  const token = await readJson(tokenResponse, 'FAS ID')
+  const token = await readJson(tokenResponse, 'FAS ID token exchange')
   if (!token.access_token) throw connectorError('FAS ID did not return an eBuy access token', 'ebuy_access_token_missing')
   return token
 }
@@ -148,7 +171,10 @@ export async function authenticateEbuyAccount(credentials) {
   }
   const sessionToken = await createOktaSession(credentials)
   const token = await exchangeOktaSession(sessionToken)
-  const login = await postJson(`${EBUY_API}//seller/oktalogin/`, { oktatoken: token.access_token, token: '' })
+  const login = await postJson(`${EBUY_API}//seller/oktalogin/`, { oktatoken: token.access_token, token: '' }, {
+    service: 'GSA eBuy seller login',
+    headers: { ...ebuyBrowserHeaders(CALLBACK_URL), 'Content-Type': 'text/plain' },
+  })
   const loginResponse = requireSuccessfulEbuyResponse(login, 'load seller contracts')
   const contracts = cleanContracts(loginResponse)
   if (!contracts.length) throw connectorError('No active seller contracts were returned for this eBuy account', 'ebuy_no_contracts', 409)
@@ -169,6 +195,9 @@ export async function getEbuyContractToken(accessToken, contractNumber) {
     contractnumber: contractNumber,
     password: null,
     oktatoken: accessToken,
+  }, {
+    service: 'GSA eBuy seller contract selection',
+    headers: { ...ebuyBrowserHeaders(CALLBACK_URL), 'Content-Type': 'text/plain' },
   })
   const login = requireSuccessfulEbuyResponse(response, 'select a seller contract')
   if (![1, 2, 4].includes(Number(login.rc)) || !login.token) {
@@ -181,6 +210,7 @@ async function getEbuyJson(path, jwtToken) {
   const response = await request(`${EBUY_API}//${path.replace(/^\//, '')}`, {
     headers: {
       Accept: 'application/json', Authorization: `Bearer ${jwtToken}`,
+      Referer: EBUY_APP_URL,
       'Cache-Control': 'no-cache', Pragma: 'no-cache', Expires: '0',
     },
   })
