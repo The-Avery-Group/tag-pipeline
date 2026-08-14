@@ -5,7 +5,14 @@ import { hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportun
 import { normalizeLiveEbuyOpportunity } from '../src/lib/ebuyClient.js'
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
-import { deleteEbuyFixtureRecords, recordArchivedEbuyAttachment, stageEbuySyncCandidates, syncEbuyOpportunities } from '../src/lib/ebuyRepository.js'
+import {
+  deleteEbuyFixtureRecords,
+  reconcileEbuyPipelineRecords,
+  recordArchivedEbuyAttachment,
+  stageEbuySyncCandidates,
+  syncEbuyOpportunities,
+  unlinkEbuyPipelineRecord,
+} from '../src/lib/ebuyRepository.js'
 
 class PlaceholderCheckingStatement {
   constructor(sql, db) { this.sql = sql; this.db = db; this.values = [] }
@@ -30,6 +37,24 @@ class PlaceholderCheckingStatement {
 class PlaceholderCheckingD1 {
   constructor(opportunities = []) { this.executed = []; this.opportunities = new Set(opportunities) }
   prepare(sql) { return new PlaceholderCheckingStatement(sql, this) }
+  async batch(statements) { for (const statement of statements) await statement.run(); return statements.map(() => ({ success: true })) }
+}
+
+class ReconciliationStatement {
+  constructor(sql, db) { this.sql = sql; this.db = db; this.values = [] }
+  bind(...values) { this.values = values; return this }
+  async first() {
+    if (this.sql.includes('FROM ebuy_settings')) return { dismissed_retention_days: 30, expired_retention_days: 90, unavailable_retention_days: 30 }
+    if (this.sql.includes('FROM ebuy_opportunities') && this.sql.includes('LIMIT 1')) return this.db.match || null
+    return null
+  }
+  async all() { return { results: this.db.rows } }
+  async run() { this.db.executed.push(this); return { success: true } }
+}
+
+class ReconciliationD1 {
+  constructor(rows = [], match = null) { this.rows = rows; this.match = match; this.executed = [] }
+  prepare(sql) { return new ReconciliationStatement(sql, this) }
   async batch(statements) { for (const statement of statements) await statement.run(); return statements.map(() => ({ success: true })) }
 }
 
@@ -117,6 +142,28 @@ test('attachment archive requires the synchronized fixture opportunity', async (
   }), /Synchronize the test eBuy archive/)
 })
 
+test('pipeline reconciliation repairs missing and stale eBuy pipeline markers', async () => {
+  const db = new ReconciliationD1([
+    { request_id: 'RFI-KEEP', review_state: 'new', lifecycle_status: 'active', pipeline_contract_id: null },
+    { request_id: 'RFQ-REMOVE', review_state: 'added_to_pipeline', lifecycle_status: 'active', pipeline_contract_id: 'RFQ-REMOVE' },
+  ])
+  const result = await reconcileEbuyPipelineRecords(db, [{ id: 'RFI-KEEP', outlook: 'Tracking' }])
+  assert.deepEqual(result, { linked: 1, unlinked: 1, changed: 2 })
+  assert.equal(db.executed[0].values[0], 'tracked')
+  assert.equal(db.executed[0].values[1], 'RFI-KEEP')
+  assert.equal(db.executed[1].values[0], 'new')
+})
+
+test('pipeline deletion immediately clears the eBuy link', async () => {
+  const db = new ReconciliationD1([], {
+    request_id: 'RFI-DELETE', review_state: 'added_to_pipeline', lifecycle_status: 'active',
+  })
+  const result = await unlinkEbuyPipelineRecord(db, 'RFI-DELETE')
+  assert.deepEqual(result, { changed: 1, requestId: 'RFI-DELETE', reviewState: 'new' })
+  assert.equal(db.executed.length, 1)
+  assert.equal(db.executed[0].values[0], 'new')
+})
+
 test('eBuy secrets use authenticated encryption and never expose plaintext', async () => {
   const key = Buffer.alloc(32, 7).toString('base64')
   const source = { username: 'seller@example.com', password: 'not-a-real-password', totpSecret: 'JBSWY3DPEHPK3PXP' }
@@ -143,7 +190,8 @@ test('live eBuy details normalize into the archive field model', () => {
     rfqModifications: [{ versionNumber: 2, modificationNote: 'Updated date', modificationTime: 1_786_010_000_000 }],
   }, '47QRAA22D00A0')
   assert.equal(record.requestType, 'RFI')
-  assert.equal(record.buyerDepartment, 'Office')
+  assert.equal(record.buyerAgency, 'Office')
+  assert.equal(record.buyerDepartment, 'Agency')
   assert.deepEqual(record.vehiclePairs, ['MAS:541611'])
   assert.equal(record.attachments[0].id, 'RFI123:4')
   assert.equal(record.amendments[0].label, 'Modification 2')
