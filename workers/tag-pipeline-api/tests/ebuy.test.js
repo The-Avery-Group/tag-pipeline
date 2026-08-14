@@ -5,7 +5,7 @@ import { hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportun
 import { normalizeLiveEbuyOpportunity } from '../src/lib/ebuyClient.js'
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
-import { recordArchivedEbuyAttachment, syncEbuyOpportunities } from '../src/lib/ebuyRepository.js'
+import { recordArchivedEbuyAttachment, stageEbuySyncCandidates, syncEbuyOpportunities } from '../src/lib/ebuyRepository.js'
 
 class PlaceholderCheckingStatement {
   constructor(sql, db) { this.sql = sql; this.db = db; this.values = [] }
@@ -74,6 +74,13 @@ test('fixture synchronization binds every D1 statement consistently', async () =
   assert.ok(db.executed.length > EBUY_FIXTURE_OPPORTUNITIES.length)
 })
 
+test('candidate staging refreshes the contract used to retrieve duplicate discovery records', async () => {
+  const db = new PlaceholderCheckingD1()
+  await stageEbuySyncCandidates(db, 'run-1', '47QRAA22D0001', [{ rfqId: 'RFQ123', title: 'First listing' }])
+  assert.equal(db.executed.length, 1)
+  assert.match(db.executed[0].sql, /contract_number = excluded\.contract_number/)
+})
+
 test('archived fixture attachments are saved as one idempotent D1 record', async () => {
   const db = new PlaceholderCheckingD1(['RFI-DEMO-001'])
   const attachment = await recordArchivedEbuyAttachment(db, {
@@ -132,4 +139,33 @@ test('live eBuy details normalize into the archive field model', () => {
   assert.deepEqual(record.vehiclePairs, ['MAS:541611'])
   assert.equal(record.attachments[0].id, 'RFI123:4')
   assert.equal(record.amendments[0].label, 'Modification 2')
+})
+
+test('an eBuy discovery summary remains usable when its detail request is temporarily unavailable', () => {
+  const summary = {
+    rfqId: 'RFQ1830432',
+    title: 'Discovery title',
+    userAgency: 'Department of Example',
+    userName: 'Casey Buyer',
+    userEmail: 'casey@example.gov',
+    issueTime: 1_786_000_000_000,
+    rfq: {
+      rfqInfo: {
+        rfqId: 'RFQ1830432',
+        title: 'Discovery title',
+        description: 'The complete description returned by active eBuy discovery.',
+        requestType: 1,
+        issueTime: 1_786_000_000_000,
+        closeTime: 1_786_086_400_000,
+      },
+      rfqAdditionalInfo: { contractType: 'Firm fixed price' },
+      rfqProps: {},
+    },
+  }
+  const record = normalizeLiveEbuyOpportunity(summary, summary.rfq, '47QRAA22D0001')
+  assert.equal(record.requestId, 'RFQ1830432')
+  assert.equal(record.title, 'Discovery title')
+  assert.equal(record.description, 'The complete description returned by active eBuy discovery.')
+  assert.equal(record.buyerAgency, 'Department of Example')
+  assert.equal(record.buyerName, 'Casey Buyer')
 })
