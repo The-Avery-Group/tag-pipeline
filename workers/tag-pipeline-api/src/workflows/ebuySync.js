@@ -22,6 +22,7 @@ import {
   stageEbuySyncCandidates,
   startEbuySyncRun,
   syncEbuyOpportunities,
+  updateEbuySyncRunProgress,
 } from '../lib/ebuyRepository.js'
 import { archiveEbuyFile, ensureEbuyArchiveFolder } from '../lib/sharepointArchive.js'
 
@@ -48,7 +49,11 @@ async function discoverContract(env, runId, contractNumber) {
   return withContractToken(env, contractNumber, async (jwt) => {
     const records = await listActiveEbuyOpportunities(contractNumber, jwt)
     const staged = await stageEbuySyncCandidates(env.EBUY_DB, runId, contractNumber, records)
-    return { discovered: records.length, staged }
+    const summaries = records
+      .map((record) => normalizeLiveEbuyOpportunity(record, record?.rfq || {}, contractNumber))
+      .filter((record) => record.requestId)
+    const summarySync = await syncEbuyOpportunities(env.EBUY_DB, summaries, { source: 'live', completeSnapshot: false })
+    return { discovered: records.length, staged, summarySync }
   })
 }
 
@@ -89,9 +94,9 @@ async function archiveAttachments(env, record, jwt) {
   return { archivedFiles, attachmentFailures: failures }
 }
 
-function canUseDiscoveryFallback(summary, error) {
+function canUseDiscoveryFallback(summary, requestId, error) {
   if (error?.code === 'ebuy_authentication_failed') return false
-  return Boolean(summary?.rfq?.rfqInfo?.rfqId || summary?.rfqId)
+  return Boolean((summary?.rfq?.rfqInfo?.rfqId || summary?.rfqId || requestId) && (summary?.title || summary?.rfq?.rfqInfo?.title))
 }
 
 async function processCandidateWithToken(env, runId, candidate, jwt) {
@@ -101,7 +106,8 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
   try {
     detail = await getEbuyOpportunityDetail(candidate.request_id, candidate.contract_number, jwt)
   } catch (error) {
-    if (!canUseDiscoveryFallback(summary, error)) throw error
+    if (!canUseDiscoveryFallback(summary, candidate.request_id, error)) throw error
+    if (!summary.rfqId) summary.rfqId = candidate.request_id
     detail = summary.rfq || {}
     candidateWarning = {
       requestId: candidate.request_id,
@@ -147,39 +153,76 @@ export async function runEbuySyncWorkflow(env, event, step) {
   const run = await step.do('Create eBuy sync record', () => startEbuySyncRun(env.EBUY_DB, mode, {
     instanceId: event.instanceId,
     source: event.payload?.source || 'manual',
+    progress: { phase: 'preparing', percent: 2, message: 'Preparing eBuy synchronization' },
   }))
   const totals = { discovered: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
+  let processedCandidates = 0
+  let totalCandidates = 0
 
   try {
     if (mode === 'live') {
       await step.do('Remove legacy eBuy demo records', () => deleteEbuyFixtureRecords(env.EBUY_DB))
+      await step.do('Record eBuy authentication progress', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+        phase: 'authenticating', percent: 5, message: 'Connecting securely to GSA eBuy',
+      }))
       const connection = await step.do('Authenticate company eBuy connection', {
         retries: { limit: 1, delay: '20 seconds', backoff: 'constant' }, timeout: '1 minute',
       }, async () => {
         const session = await getEbuyLiveSession(env)
         return { contracts: session.contracts }
       })
-      for (const contract of connection.contracts) {
+      const contractTotal = connection.contracts.length
+      await step.do('Record eBuy discovery start', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+        phase: 'discovering', percent: 10, message: `Checking ${contractTotal} seller contract${contractTotal === 1 ? '' : 's'}`,
+        contractsCompleted: 0, contractTotal,
+      }))
+      for (const [contractIndex, contract] of connection.contracts.entries()) {
         const discovery = await step.do(`Load ${contract.contractNumber} opportunities`, {
           retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '2 minutes',
         }, () => discoverContract(env, run.id, contract.contractNumber))
         totals.discovered += Number(discovery.discovered || 0)
+        mergeCounts(totals, { ...(discovery.summarySync || {}), discovered: 0 })
+        const contractsCompleted = contractIndex + 1
+        const discoveryPercent = 10 + Math.round((contractsCompleted / Math.max(1, contractTotal)) * 20)
+        await step.do(`Record eBuy discovery progress ${contractsCompleted}`, () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+          phase: 'discovering', percent: discoveryPercent,
+          message: `Found ${totals.discovered} opportunit${totals.discovered === 1 ? 'y' : 'ies'}`,
+          contractsCompleted, contractTotal,
+        }))
       }
 
       let remaining = await step.do('Count eBuy opportunities to process', () => countPendingEbuySyncCandidates(env.EBUY_DB, run.id))
+      totalCandidates = remaining
+      await step.do('Record eBuy processing start', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+        phase: 'processing', percent: remaining ? 30 : 96,
+        message: remaining ? `Processing 0 of ${remaining} opportunities` : 'Finalizing eBuy synchronization',
+        processed: 0, total: remaining,
+      }))
       let iteration = 0
       while (remaining > 0) {
         iteration++
         const result = await step.do(`Archive eBuy opportunity batch ${iteration}`, {
-          retries: { limit: 1, delay: '20 seconds', backoff: 'constant' }, timeout: '5 minutes',
-        }, () => processCandidateBatch(env, run.id))
+          retries: { limit: 4, delay: '10 seconds', backoff: 'exponential' }, timeout: '5 minutes',
+        }, () => processCandidateBatch(env, run.id, 6))
         if (!result.processed) throw new Error('The eBuy synchronization batch did not advance')
+        processedCandidates += result.processed
         mergeCounts(totals, { ...result, discovered: 0 })
         if (result.candidateErrors?.length) totals.candidateErrors.push(...result.candidateErrors)
         if (result.candidateWarnings?.length) totals.candidateWarnings.push(...result.candidateWarnings)
         if (result.attachmentFailures?.length) totals.attachmentFailures.push(...result.attachmentFailures)
         remaining -= result.processed
+        const processingPercent = Math.min(95, 30 + Math.round((processedCandidates / Math.max(1, totalCandidates)) * 65))
+        await step.do(`Record eBuy processing progress ${iteration}`, () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+          phase: 'processing', percent: processingPercent,
+          message: `Processed ${processedCandidates} of ${totalCandidates} opportunities`,
+          processed: processedCandidates, total: totalCandidates,
+          archivedFiles: totals.archivedFiles,
+        }))
       }
+      await step.do('Record eBuy finalization progress', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+        phase: 'finalizing', percent: 97, message: 'Finalizing eBuy synchronization',
+        processed: processedCandidates, total: totalCandidates, archivedFiles: totals.archivedFiles,
+      }))
       if (!totals.candidateErrors.length) {
         totals.removed = await step.do('Mark unavailable eBuy opportunities', () => completeLiveEbuySnapshot(env.EBUY_DB, run.startedAt))
       }
@@ -197,6 +240,11 @@ export async function runEbuySyncWorkflow(env, event, step) {
     const incompleteError = totals.candidateErrors.length
       ? new Error(`${totals.candidateErrors.length} eBuy opportunit${totals.candidateErrors.length === 1 ? 'y' : 'ies'} could not be saved`)
       : null
+    totals.details.progress = {
+      phase: incompleteError ? 'complete_with_issues' : 'complete', percent: 100,
+      message: incompleteError ? incompleteError.message : `Synchronized ${totals.discovered} opportunities`,
+      processed: processedCandidates, total: totalCandidates, archivedFiles: totals.archivedFiles,
+    }
     await step.do('Complete eBuy sync record', () => finishEbuySyncRun(env.EBUY_DB, run.id, totals, incompleteError))
     return { ok: !incompleteError, runId: run.id, ...totals }
   } catch (error) {
@@ -204,6 +252,15 @@ export async function runEbuySyncWorkflow(env, event, step) {
       await step.do('Record eBuy connection failure', () => recordEbuyConnectionResult(env.EBUY_DB, {
         ok: false, code: error.code || 'ebuy_sync_failed', message: error.message, synced: true,
       }))
+    }
+    totals.details = {
+      candidateErrors: totals.candidateErrors.slice(0, 20),
+      candidateWarnings: totals.candidateWarnings.slice(0, 20),
+      attachmentFailures: totals.attachmentFailures.slice(0, 20),
+      progress: {
+        phase: 'error', percent: totalCandidates ? Math.min(95, 30 + Math.round((processedCandidates / Math.max(1, totalCandidates)) * 65)) : 5,
+        message: error.message, processed: processedCandidates, total: totalCandidates, archivedFiles: totals.archivedFiles,
+      },
     }
     await step.do('Record eBuy sync failure', () => finishEbuySyncRun(env.EBUY_DB, run.id, totals, error))
     throw error
