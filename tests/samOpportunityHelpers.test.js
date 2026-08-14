@@ -3,12 +3,17 @@ import test from 'node:test'
 import {
   applySAMSnapshot,
   buildSAMOpportunityPatch,
+  cleanSAMOpportunityTitle,
   dedupeSAMOpportunities,
   isSAMOpportunityFlagged,
   normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
 } from '../src/utils/samOpportunityHelpers.js'
+
+test('normalizes line breaks and repeated spacing in SAM opportunity titles', () => {
+  assert.equal(cleanSAMOpportunityTitle('  Program\n\n support   services  '), 'Program support services')
+})
 
 test('normalizes current and legacy SAM notice types', () => {
   assert.equal(normalizeSAMNoticeType('Sources Sought'), 'RFI')
@@ -26,7 +31,7 @@ test('normalizes current and legacy SAM notice types', () => {
 test('applies a fresh SAM snapshot before displaying or adding an opportunity', () => {
   const row = { Title: 'Old', 'Notice Type': '', Agency: 'Old agency' }
   const result = applySAMSnapshot(row, {
-    title: 'Current title',
+    title: 'Current\n title',
     type: 'Solicitation',
     organization: 'DEPARTMENT.AGENCY.OFFICE',
   })
