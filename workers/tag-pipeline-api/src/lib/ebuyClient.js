@@ -245,6 +245,9 @@ function isoDate(value) {
 }
 
 function requestType(info, summary = {}) {
+  const requestId = String(info?.rfqId || summary?.rfqId || summary?.requestId || '').trim().toUpperCase()
+  const idType = ['RFI', 'RFQ', 'RFP'].find((type) => requestId.startsWith(type))
+  if (idType) return idType
   const explicit = String(info?.requestTypeString || summary.requestTypeString || '').trim().toUpperCase()
   if (explicit) return explicit
   if (info?.sourceSought) return 'RFI'
@@ -351,17 +354,38 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     },
     body: form,
   }, 60_000)
-  if (!response.ok) {
-    const code = [401, 403].includes(response.status) ? 'ebuy_authentication_failed' : 'ebuy_attachment_download_failed'
-    throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${response.status})`, code, response.status === 401 ? 401 : 502)
-  }
   const contentType = String(response.headers.get('Content-Type') || '').toLowerCase()
-  if (contentType.includes('application/json')) {
-    const payload = await response.json().catch(() => null)
-    throw connectorError(
-      payload?.response?.message || payload?.message || `GSA eBuy did not return the file ${attachment.fileName}`,
-      'ebuy_attachment_download_failed',
-    )
+  if (response.ok && !contentType.includes('application/json')) return response
+  if ([401, 403].includes(response.status)) {
+    throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${response.status})`, 'ebuy_authentication_failed', 401)
   }
-  return response
+
+  const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null
+  const upstreamMessage = payload?.response?.message || payload?.message
+    || (response.ok
+      ? `GSA eBuy did not return the file ${attachment.fileName}`
+      : `GSA eBuy could not download ${attachment.fileName} (${response.status})`)
+
+  // Some eBuy document records return an empty JSON envelope from the normal
+  // attachment endpoint even though their protected upload path is valid.
+  // Retry that first-party path with the same contract token before marking it
+  // unavailable. The origin and path checks prevent this from becoming a
+  // general-purpose server-side fetch.
+  const directUrl = new URL(attachment.docPath, EBUY_ORIGIN)
+  if (directUrl.origin === EBUY_ORIGIN && directUrl.pathname.startsWith('/ebuy_upload/')) {
+    const direct = await request(directUrl.toString(), {
+      headers: {
+        Accept: '*/*',
+        Authorization: `Bearer ${jwtToken}`,
+        ...ebuyBrowserHeaders(`${EBUY_ORIGIN}/ebuy/seller/prepare-quote/${encodeURIComponent(requestId)}`),
+      },
+    }, 60_000)
+    const directType = String(direct.headers.get('Content-Type') || '').toLowerCase()
+    if (direct.ok && !directType.includes('application/json') && Number(direct.headers.get('Content-Length') || 1) !== 0) return direct
+    if ([401, 403].includes(direct.status)) {
+      throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${direct.status})`, 'ebuy_authentication_failed', 401)
+    }
+  }
+
+  throw connectorError(upstreamMessage, 'ebuy_attachment_download_failed')
 }
