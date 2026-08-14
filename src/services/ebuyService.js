@@ -47,3 +47,19 @@ export async function disconnectEbuyAccount() {
 export async function startEbuyLiveSync() {
   return workerJson('/ebuy/sync', { method: 'POST' })
 }
+
+export async function reconcileEbuyPipeline(pipeline = []) {
+  return workerJson('/ebuy/pipeline/reconcile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipeline }),
+  })
+}
+
+export async function unlinkEbuyPipelineOpportunity(pipelineContractId) {
+  return workerJson('/ebuy/pipeline/unlink', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipelineContractId }),
+  })
+}
