@@ -615,13 +615,27 @@ export const PARTNER_HEADERS = [
   'Contracts Vehicles',
   'Keywords',
   'Link to website',
-  'Link to onedrive folder',
+  'Link to Partner Folder',
   'Notes',
 ]
 
+export const LEGACY_PARTNER_FOLDER_HEADER = 'Link to onedrive folder'
+
 export const NOTES_HEADERS = [
-  'NoteID', 'ContractNumber', 'Date', 'Author', 'NoteText',
+  'NoteID', 'ContractNumber', 'Date', 'Author', 'NoteText', 'Related Type', 'Related ID',
 ]
+let notesRelationshipSchemaPromise = null
+
+function ensureNotesRelationshipSchema() {
+  if (!notesRelationshipSchemaPromise) {
+    notesRelationshipSchemaPromise = ensureTableColumns('NotesTable', ['Related Type', 'Related ID'])
+      .catch((error) => {
+        notesRelationshipSchemaPromise = null
+        throw error
+      })
+  }
+  return notesRelationshipSchemaPromise
+}
 
 export const EMAIL_FOLLOW_UP_TEMPLATE_HEADERS = [
   'Template ID',
@@ -957,6 +971,11 @@ export async function getPartners() {
     const normalizedKeys = new Map(Object.keys(row).map((key) => [normalizeTableHeader(key), key]))
     const canonical = Object.fromEntries(PARTNER_HEADERS.map((header) => {
       const sourceKey = normalizedKeys.get(normalizeTableHeader(header))
+      if (sourceKey && row[sourceKey] !== '') return [header, row[sourceKey]]
+      if (header === 'Link to Partner Folder') {
+        const legacyKey = normalizedKeys.get(normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER))
+        return [header, legacyKey ? row[legacyKey] : '']
+      }
       return [header, sourceKey ? row[sourceKey] : '']
     }))
     return { ...row, ...canonical }
@@ -967,7 +986,10 @@ async function partnerSchema() {
   headerCache.delete('PartnersTable')
   const headers = await getTableHeaders('PartnersTable')
   const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
-  const missing = PARTNER_HEADERS.filter((header) => !byNormalizedHeader.has(normalizeTableHeader(header)))
+  const missing = PARTNER_HEADERS.filter((header) => {
+    if (byNormalizedHeader.has(normalizeTableHeader(header))) return false
+    return header !== 'Link to Partner Folder' || !byNormalizedHeader.has(normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER))
+  })
   if (missing.length) throw new Error(`PartnersTable is missing: ${missing.join(', ')}`)
   return { headers, byNormalizedHeader }
 }
@@ -976,8 +998,59 @@ function partnerValuesForWorkbook(values, schema) {
   const canonicalValues = new Map(Object.entries(values || {}).map(([key, value]) => [normalizeTableHeader(key), value]))
   return Object.fromEntries(schema.headers.map((header) => [
     header,
-    canonicalValues.get(normalizeTableHeader(header)) ?? '',
+    canonicalValues.get(normalizeTableHeader(header)) ?? (
+      normalizeTableHeader(header) === normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER)
+        ? canonicalValues.get(normalizeTableHeader('Link to Partner Folder')) ?? ''
+        : ''
+    ),
   ]))
+}
+
+/**
+ * Bring existing workbooks forward without making the legacy partner-folder
+ * column a breaking requirement. The old column is retained for compatibility;
+ * its values are copied into the canonical SharePoint column once.
+ */
+export async function ensurePartnerWorkspaceSchema() {
+  let partnerHeaders = await getTableHeaders('PartnersTable', { force: true })
+  const hasCanonical = partnerHeaders.some((header) => normalizeTableHeader(header) === normalizeTableHeader('Link to Partner Folder'))
+  const legacyHeader = partnerHeaders.find((header) => normalizeTableHeader(header) === normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER))
+  let renamedPartnerColumn = false
+  if (!hasCanonical && legacyHeader) {
+    try {
+      await graphFetch(`/tables/PartnersTable/columns/${encodeURIComponent(legacyHeader)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: 'Link to Partner Folder' }),
+      })
+      headerCache.delete('PartnersTable')
+      invalidate('PartnersTable')
+      partnerHeaders = await getTableHeaders('PartnersTable', { force: true })
+      renamedPartnerColumn = true
+    } catch {
+      // Some workbook/Graph combinations do not permit a table-column rename.
+      // The add-and-copy fallback below preserves the data and compatibility.
+    }
+  }
+  const partnerColumns = await ensureTableColumns('PartnersTable', ['Link to Partner Folder'])
+  const notesColumns = await ensureNotesRelationshipSchema()
+  const rows = await getSheetRows('PartnersTable')
+  const hasLegacy = partnerColumns.headers.some((header) => normalizeTableHeader(header) === normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER))
+  let migratedLinks = 0
+  if (hasLegacy) {
+    for (const row of rows) {
+      const canonical = String(row['Link to Partner Folder'] || '').trim()
+      const legacy = String(row[LEGACY_PARTNER_FOLDER_HEADER] || '').trim()
+      if (canonical || !legacy) continue
+      await updateRow('PartnersTable', row._rowIndex, { 'Link to Partner Folder': legacy }, partnerColumns.headers, { original: row })
+      migratedLinks += 1
+    }
+  }
+  return {
+    addedPartnerColumns: partnerColumns.added,
+    addedNoteColumns: notesColumns.added,
+    renamedPartnerColumn,
+    migratedLinks,
+  }
 }
 
 export async function addPartner(data) {
@@ -1084,21 +1157,26 @@ export async function deleteOpportunity(rowIndex, original) {
   return deleteRow('PipelineTable', rowIndex, { original })
 }
 
-export async function addNote(contractNumber, author, text, noteId = createStableId('N')) {
+export async function addNote(contractNumber, author, text, noteId = createStableId('N'), relationship = {}) {
+  const { headers } = await ensureNotesRelationshipSchema()
+  const relatedType = String(relationship.relatedType || (contractNumber ? 'Opportunity' : '')).trim()
+  const relatedId = String(relationship.relatedId || contractNumber || '').trim()
   const record = {
     NoteID: noteId,
     ContractNumber: contractNumber,
     Date: new Date().toISOString().split('T')[0],
     Author: author,
     NoteText: text,
+    'Related Type': relatedType,
+    'Related ID': relatedId,
   }
   return createWorkbookRecord({
     tableName: 'NotesTable',
-    operationKey: `note:${createFingerprint({ contractNumber, author, text })}`,
+    operationKey: `note:${createFingerprint({ contractNumber, relatedType, relatedId, author, text })}`,
     idColumn: 'NoteID',
     idValue: noteId,
     record,
-    append: () => appendRow('NotesTable', record, NOTES_HEADERS),
+    append: () => appendRow('NotesTable', record, headers),
     readRows: async () => {
       invalidate('NotesTable')
       return getNotes()
@@ -1107,7 +1185,8 @@ export async function addNote(contractNumber, author, text, noteId = createStabl
 }
 
 export async function updateNote(rowIndex, patch, original) {
-  return updateRow('NotesTable', rowIndex, patch, NOTES_HEADERS, { original })
+  const { headers } = await ensureNotesRelationshipSchema()
+  return updateRow('NotesTable', rowIndex, patch, headers, { original })
 }
 
 export async function deleteNote(rowIndex, original) {
@@ -1218,6 +1297,10 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     if (identifierChanged && String(note.ContractNumber ?? '').trim() === oldId) {
       patch.ContractNumber = newId
       rollback.ContractNumber = note.ContractNumber
+      if (String(note['Related Type'] || '').trim().toLowerCase() === 'opportunity') {
+        patch['Related ID'] = newId
+        rollback['Related ID'] = note['Related ID']
+      }
     }
     const related = parseRelatedOpportunityNote(note.NoteText)
     if (related && String(related.contractNumber ?? '').trim() === oldId && (identifierChanged || titleChanged)) {
@@ -1340,8 +1423,8 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
     })),
     ...plan.notePatches.map((item) => ({
       label: 'linked note',
-      apply: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.patch, NOTES_HEADERS)),
-      rollback: () => updateWithRetry(() => updateRow('NotesTable', item.rowIndex, item.rollback, NOTES_HEADERS)),
+      apply: () => updateWithRetry(() => updateNote(item.rowIndex, item.patch)),
+      rollback: () => updateWithRetry(() => updateNote(item.rowIndex, item.rollback)),
     })),
     ...plan.overridePatches.map((item) => ({
       label: 'RFI follow-on override',
