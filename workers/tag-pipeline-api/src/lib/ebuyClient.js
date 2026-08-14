@@ -270,6 +270,12 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     docPath: String(attachment.docPath || ''),
     sourceUrl: String(attachment.docPath || ''),
     docSeqNum: attachment.docSeqNum ?? attachment.seqNum ?? null,
+    // The attachment download endpoint expects the original eBuy attachment
+    // DTO. Retain its non-sensitive source fields for the archive step.
+    docType: attachment.docType ?? null,
+    docSessionId: attachment.docSessionId ?? null,
+    docSessionDate: attachment.docSessionDate ?? null,
+    seqNum: attachment.seqNum ?? null,
     postedAt: isoDate(attachment.docSessionDate),
   }))
   const amendments = (Array.isArray(detail?.rfqModifications) ? detail.rfqModifications : []).map((modification) => ({
@@ -327,10 +333,35 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     return request(attachment.docPath, { headers: { Accept: '*/*' } }, 60_000)
   }
   const form = new FormData()
-  form.append('data', JSON.stringify({ fileName: attachment.fileName, docPath: attachment.docPath, action: 'download' }))
+  form.append('data', JSON.stringify({
+    docName: attachment.fileName,
+    docPath: attachment.docPath,
+    docSeqNum: attachment.docSeqNum,
+    docType: attachment.docType,
+    docSessionId: attachment.docSessionId,
+    docSessionDate: attachment.docSessionDate,
+    seqNum: attachment.seqNum,
+  }))
   const response = await request(`${EBUY_API}/rfq/${encodeURIComponent(requestId)}/rfqAttachment/`, {
-    method: 'POST', headers: { Accept: '*/*', Authorization: `Bearer ${jwtToken}` }, body: form,
+    method: 'POST',
+    headers: {
+      Accept: 'application/json, text/plain, */*',
+      Authorization: `Bearer ${jwtToken}`,
+      ...ebuyBrowserHeaders(`${EBUY_ORIGIN}/ebuy/seller/prepare-quote/${encodeURIComponent(requestId)}`),
+    },
+    body: form,
   }, 60_000)
-  if (!response.ok) throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${response.status})`, 'ebuy_attachment_download_failed')
+  if (!response.ok) {
+    const code = [401, 403].includes(response.status) ? 'ebuy_authentication_failed' : 'ebuy_attachment_download_failed'
+    throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${response.status})`, code, response.status === 401 ? 401 : 502)
+  }
+  const contentType = String(response.headers.get('Content-Type') || '').toLowerCase()
+  if (contentType.includes('application/json')) {
+    const payload = await response.json().catch(() => null)
+    throw connectorError(
+      payload?.response?.message || payload?.message || `GSA eBuy did not return the file ${attachment.fileName}`,
+      'ebuy_attachment_download_failed',
+    )
+  }
   return response
 }
