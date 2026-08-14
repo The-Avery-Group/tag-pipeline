@@ -9,6 +9,7 @@ import {
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
 import { requestOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
+import { unlinkEbuyPipelineOpportunity } from '@/services/ebuyService'
 
 export function usePipeline() {
   const [pipeline, setPipeline] = useState([])
@@ -129,6 +130,12 @@ export function usePipeline() {
       await retryIdempotent(() => deleteOpportunity(rowIndex, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
+      const identifier = String(original?.['Contract Number / Notice ID'] || '').trim()
+      if (identifier) {
+        unlinkEbuyPipelineOpportunity(identifier).catch((error) => {
+          console.warn('[eBuy] Pipeline deletion reconciliation will retry on the eBuy page:', error.message)
+        })
+      }
     } catch (error) {
       await load()
       throw error
