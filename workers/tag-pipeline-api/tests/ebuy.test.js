@@ -5,7 +5,7 @@ import { hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportun
 import { normalizeLiveEbuyOpportunity } from '../src/lib/ebuyClient.js'
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
-import { recordArchivedEbuyAttachment, stageEbuySyncCandidates, syncEbuyOpportunities } from '../src/lib/ebuyRepository.js'
+import { deleteEbuyFixtureRecords, recordArchivedEbuyAttachment, stageEbuySyncCandidates, syncEbuyOpportunities } from '../src/lib/ebuyRepository.js'
 
 class PlaceholderCheckingStatement {
   constructor(sql, db) { this.sql = sql; this.db = db; this.values = [] }
@@ -79,6 +79,14 @@ test('candidate staging refreshes the contract used to retrieve duplicate discov
   await stageEbuySyncCandidates(db, 'run-1', '47QRAA22D0001', [{ rfqId: 'RFQ123', title: 'First listing' }])
   assert.equal(db.executed.length, 1)
   assert.match(db.executed[0].sql, /contract_number = excluded\.contract_number/)
+})
+
+test('legacy demo cleanup targets only records carrying the sanitized fixture marker', async () => {
+  const db = new PlaceholderCheckingD1()
+  await deleteEbuyFixtureRecords(db)
+  assert.equal(db.executed.length, 1)
+  assert.match(db.executed[0].sql, /DELETE FROM ebuy_opportunities/)
+  assert.match(db.executed[0].sql, /sanitized-g2x-schema/)
 })
 
 test('archived fixture attachments are saved as one idempotent D1 record', async () => {
@@ -164,6 +172,7 @@ test('an eBuy discovery summary remains usable when its detail request is tempor
   }
   const record = normalizeLiveEbuyOpportunity(summary, summary.rfq, '47QRAA22D0001')
   assert.equal(record.requestId, 'RFQ1830432')
+  assert.equal(record.requestType, 'RFQ')
   assert.equal(record.title, 'Discovery title')
   assert.equal(record.description, 'The complete description returned by active eBuy discovery.')
   assert.equal(record.buyerAgency, 'Department of Example')
