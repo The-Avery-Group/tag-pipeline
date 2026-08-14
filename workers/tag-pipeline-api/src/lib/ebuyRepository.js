@@ -49,7 +49,7 @@ function publicOpportunity(row) {
   }
 }
 
-export async function ebuyStorageStatus(db) {
+export async function ebuyStorageStatus(db, { excludeFixtures = false } = {}) {
   if (!db) return { status: 'not_configured', message: 'The eBuy D1 database binding is not configured.' }
   try {
     const table = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ebuy_opportunities'").first()
@@ -57,7 +57,7 @@ export async function ebuyStorageStatus(db) {
     const connectionTable = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ebuy_connections'").first()
     if (!connectionTable) return { status: 'migration_required', message: 'Apply the latest eBuy database migration to enable the secure connection.' }
     const latest = await db.prepare('SELECT * FROM ebuy_sync_runs ORDER BY started_at DESC LIMIT 1').first()
-    const count = await db.prepare('SELECT COUNT(*) AS count FROM ebuy_opportunities').first()
+    const count = await db.prepare(`SELECT COUNT(*) AS count FROM ebuy_opportunities${excludeFixtures ? " WHERE raw_json NOT LIKE '%sanitized-g2x-schema%'" : ''}`).first()
     return {
       status: latest?.status === 'error' ? 'error' : 'ready',
       message: latest?.status === 'error' ? latest.error_message || 'The latest eBuy sync failed.' : 'The eBuy archive is ready.',
@@ -153,6 +153,7 @@ export async function stageEbuySyncCandidates(db, runId, contractNumber, records
         run_id, request_id, contract_number, summary_json, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
       ON CONFLICT(run_id, request_id) DO UPDATE SET
+        contract_number = excluded.contract_number,
         summary_json = excluded.summary_json,
         updated_at = excluded.updated_at`)
         .bind(runId, requestId, contractNumber, encode(record), now, now)
@@ -165,6 +166,16 @@ export async function stageEbuySyncCandidates(db, runId, contractNumber, records
 export async function nextEbuySyncCandidate(db, runId) {
   return db.prepare(`SELECT * FROM ebuy_sync_candidates
     WHERE run_id = ? AND status = 'pending' ORDER BY created_at, request_id LIMIT 1`).bind(runId).first()
+}
+
+export async function nextEbuySyncCandidateBatch(db, runId, limit = 4) {
+  const first = await nextEbuySyncCandidate(db, runId)
+  if (!first) return []
+  const result = await db.prepare(`SELECT * FROM ebuy_sync_candidates
+    WHERE run_id = ? AND status = 'pending' AND contract_number = ?
+    ORDER BY created_at, request_id LIMIT ?`)
+    .bind(runId, first.contract_number, Math.min(10, Math.max(1, Number(limit || 4)))).all()
+  return result.results || []
 }
 
 export async function finishEbuySyncCandidate(db, runId, requestId, error = null) {
@@ -208,6 +219,7 @@ export async function listEbuyOpportunities(db, options = {}) {
   const offset = (page - 1) * limit
   const where = []
   const bindings = []
+  if (options.excludeFixtures) where.push("raw_json NOT LIKE '%sanitized-g2x-schema%'")
   if (options.search) {
     const query = `%${String(options.search).trim().toLowerCase()}%`
     where.push(`(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(request_id) LIKE ? OR LOWER(reference_number) LIKE ? OR LOWER(buyer_agency) LIKE ? OR LOWER(buyer_department) LIKE ? OR LOWER(buyer_name) LIKE ? OR LOWER(set_aside_type) LIKE ? OR LOWER(contract_type) LIKE ? OR LOWER(place_of_performance) LIKE ? OR LOWER(raw_json) LIKE ?)`)
