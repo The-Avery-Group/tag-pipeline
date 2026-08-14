@@ -1,12 +1,10 @@
 .workspace { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 10px; }
-.toolbar, .fixtureNotice { align-items: center; background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-md); display: flex; gap: 12px; justify-content: space-between; padding: 9px 12px; }
+.toolbar { align-items: center; background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-md); display: flex; gap: 12px; justify-content: space-between; padding: 9px 12px; }
 .filters, .syncSummary { align-items: center; display: flex; flex-wrap: wrap; gap: 9px; }
 .filters label { align-items: center; color: var(--gray-500); display: flex; font-size: 11px; gap: 6px; }
 .filters select { background: var(--surface); border: .5px solid var(--gray-300); border-radius: var(--radius-md); color: var(--gray-800); font: inherit; min-height: 28px; padding: 3px 26px 3px 8px; }
 .filters .check { color: var(--gray-700); }
 .syncSummary { color: var(--gray-500); font-size: 11px; justify-content: flex-end; }
-.fixtureNotice { background: color-mix(in srgb, var(--blue-50) 70%, var(--surface)); color: var(--gray-700); font-size: 12px; }
-.fixtureNotice span { display: flex; flex-direction: column; gap: 2px; }
 .error { background: var(--red-50); border: .5px solid var(--error-border); border-radius: var(--radius-md); color: var(--red-700); display: flex; flex-direction: column; font-size: 12px; gap: 3px; padding: 10px 12px; }
 .loading { display: grid; gap: 7px; }.loading > div { height: 54px; }
 .tableWrap { border: .5px solid var(--gray-200); border-radius: var(--radius-lg); flex: 1; min-height: 0; overflow: auto; }
@@ -27,4 +25,4 @@
 .action:hover:not(:disabled) { filter: brightness(1.1); }
 .empty { color: var(--gray-500); padding: 40px !important; text-align: center; }
 .pagination { align-items: center; display: flex; font-size: 11px; gap: 10px; justify-content: flex-end; }
-@media (max-width: 760px) { .toolbar, .fixtureNotice { align-items: stretch; flex-direction: column; }.syncSummary { justify-content: flex-start; }.filters label { flex: 1 1 180px; justify-content: space-between; }.filters select { flex: 1; } }
+@media (max-width: 760px) { .toolbar { align-items: stretch; flex-direction: column; }.syncSummary { justify-content: flex-start; }.filters label { flex: 1 1 180px; justify-content: space-between; }.filters select { flex: 1; } }
