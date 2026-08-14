@@ -317,8 +317,13 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     title: String(info.title || summary.title || ''),
     description: String(info.description || ''),
     referenceNumber: String(info.referenceNum || ''),
-    buyerAgency: String(props.userAgency || summary.userAgency || additional.ocoAgency || ''),
-    buyerDepartment: String(props.userBureau || ''),
+    // eBuy calls the top-level department `userAgency` and the subordinate
+    // buying organization `userBureau`. Keep the CRM's Department/Agency
+    // meaning consistent with SAM instead of exposing those source labels
+    // literally. Some records do not include a bureau; in that case the
+    // department remains the best available agency label as well.
+    buyerAgency: String(props.userBureau || additional.ocoAgency || props.userAgency || summary.userAgency || ''),
+    buyerDepartment: String(props.userAgency || summary.userAgency || additional.ocoAgency || ''),
     buyerName: String(props.userName || summary.userName || additional.ocoName || ''),
     buyerEmail: String(props.userEmail || summary.userEmail || ''),
     buyerPhone: String(props.userPhone || additional.ocoPhone || ''),
