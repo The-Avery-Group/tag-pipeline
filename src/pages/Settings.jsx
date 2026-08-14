@@ -8,10 +8,8 @@ import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import {
-  archiveEbuyTestAttachment,
   connectEbuyAccount,
   disconnectEbuyAccount,
-  startEbuyFixtureSync,
   startEbuyLiveSync,
   testEbuyConnection,
 } from '@/services/ebuyService'
@@ -107,7 +105,7 @@ function teamsIntegration(notifications) {
 function ebuyIntegration(ebuy) {
   if (!ebuy) return { status: { label: 'Checking', className: 'integrationPending' }, details: 'Checking eBuy archive status.' }
   const status = ({
-    ready: { label: ebuy.connector?.enabled ? 'Connected' : 'Test mode', className: ebuy.connector?.enabled ? 'integrationReady' : 'integrationPending' },
+    ready: { label: ebuy.connector?.enabled ? 'Connected' : 'Not connected', className: ebuy.connector?.enabled ? 'integrationReady' : 'integrationPending' },
     migration_required: { label: 'Setup required', className: 'integrationPending' },
     not_configured: { label: 'Not configured', className: 'integrationNotConfigured' },
     error: { label: 'Needs attention', className: 'integrationError' },
@@ -130,9 +128,6 @@ export default function Settings({ toast }) {
   const [integrationStatus, setIntegrationStatus] = useState(null)
   const [loadingIntegrations, setLoadingIntegrations] = useState(false)
   const [refreshingCapabilities, setRefreshingCapabilities] = useState(false)
-  const [ebuySyncing, setEbuySyncing] = useState(false)
-  const [ebuyArchivingTest, setEbuyArchivingTest] = useState(false)
-  const [ebuyTestAttachment, setEbuyTestAttachment] = useState(null)
   const [ebuyConnectionForm, setEbuyConnectionForm] = useState({ username: '', password: '', totpSecret: '' })
   const [showEbuyConnectionForm, setShowEbuyConnectionForm] = useState(false)
   const [ebuyConnecting, setEbuyConnecting] = useState(false)
@@ -176,30 +171,6 @@ export default function Settings({ toast }) {
   const capabilityIntegrationStatus = capabilityIntegration(capabilities)
   const teamsIntegrationStatus = teamsIntegration(integrationStatus?.notifications)
   const ebuyIntegrationStatus = ebuyIntegration(integrationStatus?.ebuy)
-
-  const handleEbuyTestSync = async () => {
-    if (ebuySyncing) return
-    setEbuySyncing(true)
-    try {
-      await startEbuyFixtureSync()
-      toast?.success('Test eBuy archive sync started')
-      window.setTimeout(() => loadIntegrationStatus(), 1800)
-    } catch (error) { toast?.error(error.message) } finally { setEbuySyncing(false) }
-  }
-
-  const handleEbuyTestAttachment = async () => {
-    if (ebuyArchivingTest) return
-    setEbuyArchivingTest(true)
-    try {
-      const result = await archiveEbuyTestAttachment()
-      setEbuyTestAttachment(result.attachment)
-      toast?.success('Test attachment archived to SharePoint')
-    } catch (error) {
-      toast?.error(`Could not archive the test attachment: ${error.message}`)
-    } finally {
-      setEbuyArchivingTest(false)
-    }
-  }
 
   const handleEbuyConnect = async (event) => {
     event.preventDefault()
@@ -324,7 +295,7 @@ export default function Settings({ toast }) {
       setNaicsCodes(codes)
       setSkipDays(settings.skipDays)
       setWindowDays(settings.windowDays)
-      setRfiFollowUp(settings.rfiFollowUp)
+      setRfiFollowUp({ ...settings.rfiFollowUp, noticeTypes: 'RFP, RFQ' })
       setSamLoaded(true)
     }).catch((err) => {
       console.warn('[Settings] Failed to load SAM config:', err.message)
@@ -341,7 +312,7 @@ export default function Settings({ toast }) {
       const cleanedCodes = naicsCodes.map((c) => String(c).trim()).filter(Boolean)
       await Promise.all([
         updateSAMNAICS(cleanedCodes),
-        updateSAMSettings(Number(skipDays), Number(windowDays), rfiFollowUp),
+        updateSAMSettings(Number(skipDays), Number(windowDays), { ...rfiFollowUp, noticeTypes: 'RFP, RFQ' }),
       ])
       setNaicsCodes(cleanedCodes)
       setSavedSAM(true)
@@ -606,20 +577,6 @@ export default function Settings({ toast }) {
                 )}
               </div>
 
-              <div className="card">
-                <div className={styles.sectionLabel}>Archive verification</div>
-                <p className="text-xs text-muted">The sanitized records remain available for checking D1 and SharePoint without contacting GSA eBuy.</p>
-                <div className={styles.ebuyTestActions}>
-                  <button className="btn" type="button" onClick={handleEbuyTestSync} disabled={ebuySyncing || !['ready', 'error'].includes(integrationStatus?.ebuy?.status)}>
-                    {ebuySyncing ? 'Starting…' : 'Synchronize test archive'}
-                  </button>
-                  <button className="btn" type="button" onClick={handleEbuyTestAttachment} disabled={ebuyArchivingTest || !integrationStatus?.ebuy?.sharepointArchive || !Number(integrationStatus?.ebuy?.opportunityCount || 0)}>
-                    {ebuyArchivingTest ? 'Archiving…' : 'Test attachment archive'}
-                  </button>
-                  {ebuyTestAttachment?.sharepointWebUrl && <a className="btn" href={ebuyTestAttachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived test file</a>}
-                </div>
-                {!integrationStatus?.ebuy?.sharepointArchive && <p className={styles.setupNotice}>Microsoft Graph app credentials are required to test the SharePoint attachment archive.</p>}
-              </div>
             </div>
           </div>}
         </div>
@@ -874,15 +831,15 @@ export default function Settings({ toast }) {
                 </div>
 
                 <div className="card">
-                  <div className={styles.sectionLabel}>RFI and MRAS follow-on matching</div>
+                  <div className={styles.sectionLabel}>RFI, MRAS, and RFQ follow-on matching</div>
                   <p className="text-xs text-muted" style={{ margin: '4px 0 10px' }}>
-                    Defaults for SAM.gov follow-on checks. Individual RFI or MRAS opportunities can override these rules.
+                    Defaults for SAM.gov follow-on checks. Individual RFI, MRAS, or RFQ opportunities can override these rules.
                   </p>
                   <div className={styles.itemList}>
                     <label className="text-sm" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={rfiFollowUp.monitoringEnabled}
                         onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, monitoringEnabled: e.target.checked })); setSavedSAM(false) }} />
-                      Monitor RFI and MRAS opportunities for follow-on notices
+                      Monitor RFI, MRAS, and RFQ opportunities for RFP or RFQ follow-ons
                     </label>
                     {[
                       ['departmentRule', 'Department match'],
@@ -903,11 +860,9 @@ export default function Settings({ toast }) {
                         onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, titleOverlapPercent: e.target.value })); setSavedSAM(false) }} />
                     </div>
                     <div className="form-field" style={{ marginTop: 8 }}>
-                      <label className="form-label">Notice types</label>
-                      <select className="form-select" value={rfiFollowUp.noticeTypes}
-                        onChange={(e) => { setRfiFollowUp((prev) => ({ ...prev, noticeTypes: e.target.value })); setSavedSAM(false) }}>
-                        <option value="RFP, RFQ">RFP and RFQ</option><option value="RFP">RFP only</option><option value="RFQ">RFQ only</option>
-                      </select>
+                      <label className="form-label">Follow-on notice types</label>
+                      <input className="form-input" value="RFP or RFQ" readOnly aria-readonly="true" />
+                      <span className="text-xs text-muted" style={{ marginTop: 3 }}>Both procurement paths are checked.</span>
                     </div>
                     <div className="form-field" style={{ marginTop: 8 }}>
                       <label className="form-label">Search period after submission (days)</label>
