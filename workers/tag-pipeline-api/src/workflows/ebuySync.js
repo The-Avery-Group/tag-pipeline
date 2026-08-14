@@ -85,12 +85,39 @@ async function contractToken(env, encryptedTokens, contractNumber) {
   return decrypted.token
 }
 
+async function downloadPendingAttachment(env, encryptedTokens, pending) {
+  const jwt = await contractToken(env, encryptedTokens, pending.contractNumber)
+  try {
+    return await downloadEbuyAttachment(pending.requestId, pending.attachment, jwt)
+  } catch (error) {
+    if (error?.code !== 'ebuy_authentication_failed') throw error
+
+    // A long archive run can outlive a contract JWT. Refresh it once inside
+    // the current durable file step before treating the connection as broken.
+    const session = await getEbuyLiveSession(env, { force: true })
+    const refreshedJwt = await getEbuyContractToken(session.accessToken, pending.contractNumber)
+    encryptedTokens[pending.contractNumber] = await encryptEbuySecret(
+      env.EBUY_CREDENTIAL_ENCRYPTION_KEY,
+      { token: refreshedJwt },
+    )
+    return downloadEbuyAttachment(pending.requestId, pending.attachment, refreshedJwt)
+  }
+}
+
+function isAttachmentConnectionFailure(error) {
+  return new Set([
+    'ebuy_authentication_failed',
+    'ebuy_network_error',
+    'ebuy_timeout',
+    'ebuy_contract_token_missing',
+  ]).has(error?.code)
+}
+
 async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
   const pending = await nextPendingEbuyAttachment(env.EBUY_DB, runStartedAt)
   if (!pending) return { processed: 0, archivedFiles: 0 }
   try {
-    const jwt = await contractToken(env, encryptedTokens, pending.contractNumber)
-    const downloaded = await downloadEbuyAttachment(pending.requestId, pending.attachment, jwt)
+    const downloaded = await downloadPendingAttachment(env, encryptedTokens, pending)
     const contentType = downloaded.headers.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
     const archiveLocation = await ensureEbuyArchiveFolder(env, pending.requestId)
     const archived = await archiveEbuyFile(env, {
@@ -113,6 +140,10 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
     })
     return { processed: 1, archivedFiles: 1, requestId: pending.requestId, attachmentId: pending.id }
   } catch (error) {
+    // Authentication and transport failures affect the connection rather than
+    // this individual file. Stop the run and leave this and later files pending
+    // so the next sync can resume without creating dozens of false file errors.
+    if (isAttachmentConnectionFailure(error)) throw error
     await recordEbuyAttachmentFailure(env.EBUY_DB, pending.id, error.message)
     return {
       processed: 1,
