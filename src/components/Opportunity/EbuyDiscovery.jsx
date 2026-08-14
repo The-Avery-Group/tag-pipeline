@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useEbuyOpportunities } from '@/hooks/useEbuyOpportunities'
 import { ebuyToPipelineRecord } from '@/services/ebuyService'
+import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
 import styles from './EbuyDiscovery.module.css'
 
 function formatDate(value) {
@@ -79,9 +80,14 @@ export default function EbuyDiscovery({ search, pipeline, add, toast, onCountCha
         <div className={styles.syncSummary}>
           <span>{archive.total} archived opportunit{archive.total === 1 ? 'y' : 'ies'}</span>
           {archive.status?.lastSync?.completed_at && <span>Last synced {formatDate(archive.status.lastSync.completed_at)}</span>}
+          <button className="btn btn-primary" onClick={() => archive.synchronize().then((result) => toast?.success(result.alreadyRunning ? 'eBuy synchronization is already running' : 'eBuy synchronization started')).catch((error) => toast?.error(error.message))} disabled={archive.syncing}>
+            {archive.syncing ? 'Synchronizing…' : 'Synchronize'}
+          </button>
           <button className="btn" onClick={() => archive.refresh()} disabled={archive.loading}>Refresh</button>
         </div>
       </div>
+
+      <EbuySyncProgress run={archive.status?.lastSync} />
 
       {archive.error && <div className={styles.error}><strong>eBuy archive could not load</strong><span>{archive.error.message}</span></div>}
       {archive.loading ? <div className={styles.loading}><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : (
