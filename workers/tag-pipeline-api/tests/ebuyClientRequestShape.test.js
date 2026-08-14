@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { authenticateEbuyAccount } from '../src/lib/ebuyClient.js'
+import { authenticateEbuyAccount, downloadEbuyAttachment } from '../src/lib/ebuyClient.js'
 
 function jsonResponse(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
@@ -61,6 +61,49 @@ test('live eBuy authentication preserves the first-party request context from th
     assert.equal(sellerLogin.options.headers['Content-Type'], 'text/plain')
     assert.equal(sellerLogin.options.headers.Origin, 'https://www.ebuy.gsa.gov')
     assert.equal(sellerLogin.options.headers.Referer, 'https://www.ebuy.gsa.gov/ebuy/pkce/callback')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('live eBuy attachment download sends the source attachment DTO expected by eBuy', async () => {
+  const originalFetch = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, options = {}) => {
+    captured = { url: String(url), options }
+    return new Response('pdf-content', {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf', 'Content-Length': '11' },
+    })
+  }
+
+  try {
+    const response = await downloadEbuyAttachment('RFQ1829030', {
+      fileName: 'Statement of Work.pdf',
+      docPath: '/documents/statement-of-work.pdf',
+      docSeqNum: 4,
+      docType: 1,
+      docSessionId: 12345,
+      docSessionDate: 1_786_000_000_000,
+      seqNum: 4,
+    }, 'contract-jwt')
+
+    assert.equal(response.status, 200)
+    assert.equal(captured.url, 'https://www.ebuy.gsa.gov/ebuy/api/services/ebuyservices/rfq/RFQ1829030/rfqAttachment/')
+    assert.equal(captured.options.method, 'POST')
+    assert.equal(captured.options.headers.Accept, 'application/json, text/plain, */*')
+    assert.equal(captured.options.headers.Authorization, 'Bearer contract-jwt')
+    assert.equal(captured.options.headers.Origin, 'https://www.ebuy.gsa.gov')
+    assert.equal(captured.options.headers.Referer, 'https://www.ebuy.gsa.gov/ebuy/seller/prepare-quote/RFQ1829030')
+    assert.deepEqual(JSON.parse(captured.options.body.get('data')), {
+      docName: 'Statement of Work.pdf',
+      docPath: '/documents/statement-of-work.pdf',
+      docSeqNum: 4,
+      docType: 1,
+      docSessionId: 12345,
+      docSessionDate: 1_786_000_000_000,
+      seqNum: 4,
+    })
   } finally {
     globalThis.fetch = originalFetch
   }
