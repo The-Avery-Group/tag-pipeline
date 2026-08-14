@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ebuyToPipelineRecord } from '../src/utils/ebuyHelpers.js'
+import {
+  ebuyToPipelineRecord,
+  formatEbuyChangedField,
+  formatEbuyCloseDuration,
+  formatEbuyDateTime,
+} from '../src/utils/ebuyHelpers.js'
 
 test('maps an archived eBuy opportunity into the existing pipeline columns', () => {
   const record = ebuyToPipelineRecord({
@@ -19,3 +24,11 @@ test('maps an archived eBuy opportunity into the existing pipeline columns', () 
   assert.equal(record['Contracting Officer / Specialist (POC)*'], 'A Buyer | buyer@example.gov | 555-0100')
 })
 
+test('formats eBuy dates in a 12-hour clock and shows time until closing', () => {
+  assert.match(formatEbuyDateTime('2026-08-14T13:30:00.000Z'), /AM|PM/)
+  assert.equal(
+    formatEbuyCloseDuration('2026-08-16T15:00:00.000Z', new Date('2026-08-14T13:00:00.000Z')),
+    'Closes in 2 days 2 hours',
+  )
+  assert.equal(formatEbuyChangedField('buyerAgency'), 'Agency')
+})
