@@ -83,15 +83,6 @@ export default function EbuyDiscovery({ search, pipeline, add, toast, onCountCha
         </div>
       </div>
 
-      {archive.status?.connector?.mode === 'fixture' && (
-        <div className={styles.fixtureNotice}>
-          <span><strong>Test archive</strong> uses sanitized data shaped from the supplied G2X samples. No eBuy credentials are stored.</span>
-          <button className="btn btn-primary" onClick={() => archive.syncFixture().then(() => toast?.success('Test eBuy archive synchronized')).catch((error) => toast?.error(error.message))} disabled={archive.syncing}>
-            {archive.syncing ? 'Synchronizing…' : 'Synchronize test archive'}
-          </button>
-        </div>
-      )}
-
       {archive.error && <div className={styles.error}><strong>eBuy archive could not load</strong><span>{archive.error.message}</span></div>}
       {archive.loading ? <div className={styles.loading}><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : (
         <div className={styles.tableWrap}>
