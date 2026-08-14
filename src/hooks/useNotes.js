@@ -28,7 +28,36 @@ function compareNotesOldestFirst(a, b) {
   return Number(a._createdAt || 0) - Number(b._createdAt || 0)
 }
 
-export function useNotes(contractNumber) {
+function normalizeRelationship(value) {
+  if (typeof value === 'string') {
+    const id = value.trim()
+    return { type: id ? 'Opportunity' : '', id, contractNumber: id }
+  }
+  const type = String(value?.type || '').trim()
+  const id = String(value?.id || '').trim()
+  return {
+    type,
+    id,
+    contractNumber: String(value?.contractNumber || (type === 'Opportunity' ? id : '')).trim(),
+  }
+}
+
+function noteMatchesRelationship(note, relationship) {
+  if (!relationship.type && !relationship.id && !relationship.contractNumber) return true
+  const noteType = String(note?.['Related Type'] || '').trim().toLowerCase()
+  const noteId = String(note?.['Related ID'] || '').trim().toLowerCase()
+  const targetType = relationship.type.toLowerCase()
+  const targetId = relationship.id.toLowerCase()
+  if (targetType && targetId && noteType === targetType && noteId === targetId) return true
+  // Rows created before the relationship columns existed remain available to
+  // their opportunity through the original ContractNumber field.
+  return targetType === 'opportunity' && relationship.contractNumber &&
+    String(note?.ContractNumber || '').trim().toLowerCase() === relationship.contractNumber.toLowerCase()
+}
+
+export function useNotes(relationshipValue) {
+  const relationship = normalizeRelationship(relationshipValue)
+  const relationshipKey = `${relationship.type}:${relationship.id}:${relationship.contractNumber}`
   const [notes, setNotes]     = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
@@ -50,7 +79,7 @@ export function useNotes(contractNumber) {
     }
     try {
       const all = await getNotes()
-      const filtered = (contractNumber ? all.filter((n) => n.ContractNumber === contractNumber) : all)
+      const filtered = all.filter((note) => noteMatchesRelationship(note, relationship))
         .filter((n) => !pendingDeletes.current.has(String(n.NoteID || '').trim()))
         .map((note) => {
           const identity = String(note.NoteID || '').trim()
@@ -66,23 +95,30 @@ export function useNotes(contractNumber) {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [contractNumber])
+  }, [relationshipKey, relationship.type, relationship.id, relationship.contractNumber])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    setNotes([])
+    pendingDeletes.current.clear()
+    pendingPatches.current.clear()
+    load()
+  }, [load])
   useEffect(() => onCacheRefresh((tables) => {
     if (tables?.includes('NotesTable')) return load({ silent: true })
     return undefined
   }), [load])
 
   const add = useCallback(async (author, text) => {
-    if (!contractNumber) throw new Error('contractNumber required')
+    if (!relationship.id) throw new Error('A related record is required')
     const noteId = createStableId('N')
 
     // Optimistic: append note immediately so the composer and note stream
     // retain their oldest-to-newest order.
     const tempNote = {
       NoteID:         noteId,
-      ContractNumber: contractNumber,
+      ContractNumber: relationship.contractNumber,
+      'Related Type': relationship.type,
+      'Related ID': relationship.id,
       Author:         author,
       NoteText:       text,
       Date:           new Date().toISOString().split('T')[0],
@@ -92,7 +128,10 @@ export function useNotes(contractNumber) {
     setNotes((prev) => [...prev, tempNote])
 
     try {
-      const saved = await addNote(contractNumber, author, text, noteId)
+      const saved = await addNote(relationship.contractNumber, author, text, noteId, {
+        relatedType: relationship.type,
+        relatedId: relationship.id,
+      })
       setNotes((current) => current.map((note) =>
         note.NoteID === noteId ? saved : note
       ).sort(compareNotesOldestFirst))
@@ -103,7 +142,7 @@ export function useNotes(contractNumber) {
       setNotes((prev) => prev.filter((n) => n.NoteID !== tempNote.NoteID))
       throw err
     }
-  }, [contractNumber])
+  }, [relationshipKey, relationship.type, relationship.id, relationship.contractNumber])
 
   const remove = useCallback(async (rowIndex) => {
     const original = notesRef.current.find((note) => note._rowIndex === rowIndex)
