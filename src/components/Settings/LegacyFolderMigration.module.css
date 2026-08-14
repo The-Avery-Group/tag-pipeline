@@ -1,4 +1,9 @@
-.body { border-top: .5px solid var(--gray-200); padding: 16px 18px 18px; }
+.wrapper { border-top: .5px solid var(--gray-200); }
+.body { padding: 16px 18px 18px; }
+.modeTabs { align-items: center; background: var(--gray-50); border-bottom: .5px solid var(--gray-200); display: flex; gap: 4px; padding: 9px 18px 0; }
+.modeTabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--gray-500); cursor: pointer; font: 600 11px var(--font); padding: 8px 11px; }
+.modeTabs button:hover { color: var(--gray-900); }
+.modeTabs .modeActive { border-bottom-color: var(--blue-600); color: var(--blue-700); }
 .intro { align-items: flex-start; display: flex; gap: 18px; justify-content: space-between; }
 .intro strong { color: var(--gray-900); display: block; font-size: 13px; }
 .intro p { color: var(--gray-500); font-size: 11px; line-height: 1.55; margin: 4px 0 0; max-width: 720px; }
