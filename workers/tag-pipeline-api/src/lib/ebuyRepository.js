@@ -203,6 +203,95 @@ export async function countPendingEbuySyncCandidates(db, runId) {
   return Number(row?.count || 0)
 }
 
+export async function getResumableEbuySyncRun(db, { maxAgeHours = 24 } = {}) {
+  const threshold = new Date(Date.now() - Math.max(1, Number(maxAgeHours || 24)) * 60 * 60 * 1000).toISOString()
+  const row = await db.prepare(`SELECT r.*,
+      (SELECT COUNT(*) FROM ebuy_sync_candidates c WHERE c.run_id = r.id AND c.status = 'complete') AS completed_candidates,
+      (SELECT COUNT(*) FROM ebuy_sync_candidates c WHERE c.run_id = r.id AND c.status IN ('pending', 'error')) AS retryable_candidates,
+      (SELECT COUNT(*) FROM ebuy_attachments a
+        JOIN ebuy_opportunities o ON o.request_id = a.request_id
+        WHERE a.archive_status IN ('pending', 'error') AND o.last_seen_at >= r.started_at) AS retryable_attachments
+    FROM ebuy_sync_runs r
+    WHERE r.status = 'error' AND r.started_at >= ?
+      AND (
+        EXISTS (SELECT 1 FROM ebuy_sync_candidates c WHERE c.run_id = r.id AND c.status IN ('pending', 'error'))
+        OR EXISTS (SELECT 1 FROM ebuy_attachments a
+          JOIN ebuy_opportunities o ON o.request_id = a.request_id
+          WHERE a.archive_status IN ('pending', 'error') AND o.last_seen_at >= r.started_at)
+      )
+    ORDER BY r.started_at DESC LIMIT 1`).bind(threshold).first()
+  if (!row) return null
+  return {
+    ...row,
+    completedCandidates: Number(row.completed_candidates || 0),
+    retryableCandidates: Number(row.retryable_candidates || 0),
+    retryableAttachments: Number(row.retryable_attachments || 0),
+    details: decode(row.details_json, {}),
+  }
+}
+
+export async function resumeEbuySyncRun(db, id) {
+  const row = await db.prepare('SELECT * FROM ebuy_sync_runs WHERE id = ?').bind(id).first()
+  if (!row) throw new Error('The interrupted eBuy synchronization could not be found')
+  const now = new Date().toISOString()
+  await db.prepare("UPDATE ebuy_sync_candidates SET status = 'pending', error_message = NULL, updated_at = ? WHERE run_id = ? AND status = 'error'")
+    .bind(now, id).run()
+  const counts = await db.prepare(`SELECT
+      SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS completed,
+      COUNT(*) AS total
+    FROM ebuy_sync_candidates WHERE run_id = ?`).bind(id).first()
+  const discovered = Number(row.discovered_count || counts?.total || 0)
+  const processedCandidates = Number(counts?.completed || 0)
+  const totalCandidates = Number(counts?.total || 0)
+  await db.prepare(`UPDATE ebuy_sync_runs SET status = 'running', completed_at = NULL,
+      inserted_count = 0, updated_count = 0, unchanged_count = 0, removed_count = 0,
+      archived_file_count = 0, error_message = NULL, details_json = ? WHERE id = ?`)
+    .bind(encode({ progress: {
+      phase: 'resuming', percent: totalCandidates ? 30 + Math.round((processedCandidates / totalCandidates) * 40) : 30,
+      message: `Resuming ${processedCandidates} of ${totalCandidates} opportunities`,
+      processed: processedCandidates, total: totalCandidates, archivedFiles: 0,
+    } }), id).run()
+  return { id, startedAt: row.started_at, discovered, processedCandidates, totalCandidates }
+}
+
+export async function resetRetryableEbuyAttachments(db, runStartedAt) {
+  const result = await db.prepare(`UPDATE ebuy_attachments SET archive_status = 'pending', error_message = NULL, updated_at = ?
+    WHERE archive_status = 'error' AND request_id IN (
+      SELECT request_id FROM ebuy_opportunities WHERE last_seen_at >= ?
+    )`).bind(new Date().toISOString(), runStartedAt).run()
+  return Number(result?.meta?.changes || result?.changes || 0)
+}
+
+export async function countPendingEbuyAttachments(db, runStartedAt) {
+  const row = await db.prepare(`SELECT COUNT(*) AS count FROM ebuy_attachments a
+    JOIN ebuy_opportunities o ON o.request_id = a.request_id
+    WHERE a.archive_status = 'pending' AND o.last_seen_at >= ?`).bind(runStartedAt).first()
+  return Number(row?.count || 0)
+}
+
+export async function nextPendingEbuyAttachment(db, runStartedAt) {
+  const row = await db.prepare(`SELECT a.*, o.raw_json
+    FROM ebuy_attachments a JOIN ebuy_opportunities o ON o.request_id = a.request_id
+    WHERE a.archive_status = 'pending' AND o.last_seen_at >= ?
+    ORDER BY a.updated_at, a.request_id, a.id LIMIT 1`).bind(runStartedAt).first()
+  if (!row) return null
+  const opportunity = decode(row.raw_json, {})
+  const attachment = (Array.isArray(opportunity.attachments) ? opportunity.attachments : [])
+    .find((item) => String(item.id) === String(row.id))
+  return {
+    id: row.id,
+    requestId: row.request_id,
+    contractNumber: opportunity?.sourceDetails?.contractNumber || opportunity?.vehicleSources?.[0] || '',
+    attachment: attachment || {
+      id: row.id,
+      fileName: row.file_name,
+      contentType: row.content_type,
+      docPath: row.source_url,
+      sourceUrl: row.source_url,
+    },
+  }
+}
+
 export async function completeLiveEbuySnapshot(db, runStartedAt) {
   const now = new Date()
   const nowIso = now.toISOString()
@@ -229,8 +318,7 @@ export async function clearEbuySyncCandidates(db, runId) {
 
 export async function listEbuyOpportunities(db, options = {}) {
   const page = Math.max(1, Number(options.page || 1))
-  const limit = Math.min(100, Math.max(1, Number(options.limit || 25)))
-  const offset = (page - 1) * limit
+  const requestedLimit = Math.min(500, Math.max(1, Number(options.limit || 100)))
   const where = []
   const bindings = []
   if (options.excludeFixtures) where.push("raw_json NOT LIKE '%sanitized-g2x-schema%'")
@@ -255,14 +343,18 @@ export async function listEbuyOpportunities(db, options = {}) {
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const count = await db.prepare(`SELECT COUNT(*) AS count FROM ebuy_opportunities ${clause}`).bind(...bindings).first()
+  const total = Number(count?.count || 0)
+  const limit = options.all ? Math.max(1, total) : requestedLimit
+  const effectivePage = options.all ? 1 : page
+  const offset = (effectivePage - 1) * limit
   const result = await db.prepare(`SELECT * FROM ebuy_opportunities ${clause} ORDER BY posted_at DESC, request_id DESC LIMIT ? OFFSET ?`)
     .bind(...bindings, limit, offset).all()
   return {
     opportunities: (result.results || []).map(publicOpportunity),
-    page,
+    page: effectivePage,
     limit,
-    total: Number(count?.count || 0),
-    totalPages: Math.max(1, Math.ceil(Number(count?.count || 0) / limit)),
+    total,
+    totalPages: options.all ? 1 : Math.max(1, Math.ceil(total / limit)),
   }
 }
 
