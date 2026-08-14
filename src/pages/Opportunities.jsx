@@ -17,6 +17,7 @@ import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/ut
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
   applySAMSnapshot,
+  cleanSAMOpportunityTitle,
   dedupeSAMOpportunities,
   isSAMOpportunityFlagged,
   normalizeSAMNoticeType,
@@ -1073,7 +1074,7 @@ export default function Opportunities({ toast }) {
             <span className={`text-xs text-muted ${styles.pullSummary}`}>
               {samRunStatus?.success === true && (
                 <>
-                  {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
+                  {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}`}
                   {samRunStatus.written > 0
                     ? <> · {samRunStatus.written} new total</>
                     : <> · No new opportunities found</>}
@@ -1225,11 +1226,10 @@ export default function Opportunities({ toast }) {
                           </td>}
 						  <td style={{ fontWeight: 500 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              {opp['Title']}
                               <button
                                 type="button"
                                 className={`${styles.samFlagButton} ${isFlagged ? styles.samFlagActive : ''} ${isFlagSaving ? styles.samFlagSaving : ''}`}
-                                aria-label={isFlagged ? `Remove team flag from ${opp.Title}` : `Flag ${opp.Title} for the team`}
+                                aria-label={isFlagged ? `Remove team flag from ${cleanSAMOpportunityTitle(opp.Title)}` : `Flag ${cleanSAMOpportunityTitle(opp.Title)} for the team`}
                                 aria-pressed={isFlagged}
                                 title={isFlagSaving ? 'Saving team flag' : isFlagged ? 'Remove team flag' : 'Flag for the team'}
                                 disabled={isFlagSaving}
@@ -1238,11 +1238,9 @@ export default function Opportunities({ toast }) {
                                   handleToggleFlag(opp)
                                 }}
                               >
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <path d="M6.5 3.5v17" />
-                                  <path className={styles.samFlagPennant} d="M7 4.5h10.5l-2.4 3.6 2.4 3.6H7z" />
-                                </svg>
+                                ⚑
                               </button>
+                              <span>{cleanSAMOpportunityTitle(opp['Title'])}</span>
                               {normalizeSAMNoticeType(opp['Notice Type']) && <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
                                 {normalizeSAMNoticeType(opp['Notice Type'])}
                               </span>}
@@ -1784,7 +1782,7 @@ export default function Opportunities({ toast }) {
         )}
         {activeTab === 'New' && discoverySource === 'sam' && renderNewTab()}
         {activeTab === 'New' && discoverySource === 'ebuy' && (
-          <EbuyDiscovery search={search} pipeline={pipeline} add={add} toast={toast} onCountChange={setEbuyCount} />
+          <EbuyDiscovery search={search} pipeline={pipeline} pipelineLoading={loading} add={add} toast={toast} onCountChange={setEbuyCount} />
         )}
 
         {/* ── Pipeline tabs: Responses / Expiring / Tracked ── */}
