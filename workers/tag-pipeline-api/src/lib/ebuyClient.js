@@ -349,8 +349,10 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     method: 'POST',
     headers: {
       Accept: 'application/json, text/plain, */*',
-      Authorization: `Bearer ${jwtToken}`,
       ...ebuyBrowserHeaders(`${EBUY_ORIGIN}/ebuy/seller/prepare-quote/${encodeURIComponent(requestId)}`),
+      Origin: `${EBUY_ORIGIN}/`,
+      Expires: '0',
+      'If-Modified-Since': '0',
     },
     body: form,
   }, 60_000)
@@ -376,8 +378,10 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     const direct = await request(directUrl.toString(), {
       headers: {
         Accept: '*/*',
-        Authorization: `Bearer ${jwtToken}`,
         ...ebuyBrowserHeaders(`${EBUY_ORIGIN}/ebuy/seller/prepare-quote/${encodeURIComponent(requestId)}`),
+        Origin: `${EBUY_ORIGIN}/`,
+        Expires: '0',
+        'If-Modified-Since': '0',
       },
     }, 60_000)
     const directType = String(direct.headers.get('Content-Type') || '').toLowerCase()
