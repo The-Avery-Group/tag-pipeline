@@ -92,8 +92,8 @@ test('live eBuy attachment download sends the official client download command',
     assert.equal(captured.url, 'https://www.ebuy.gsa.gov/ebuy/api/services/ebuyservices/rfq/RFQ1829030/rfqAttachment/')
     assert.equal(captured.options.method, 'POST')
     assert.equal(captured.options.headers.Accept, 'application/json, text/plain, */*')
-    assert.equal(captured.options.headers.Authorization, undefined)
-    assert.equal(captured.options.headers.Origin, 'https://www.ebuy.gsa.gov/')
+    assert.equal(captured.options.headers.Authorization, 'Bearer contract-jwt')
+    assert.equal(captured.options.headers.Origin, 'https://www.ebuy.gsa.gov')
     assert.equal(captured.options.headers.Referer, 'https://www.ebuy.gsa.gov/ebuy/seller/prepare-quote/RFQ1829030')
     assert.deepEqual(JSON.parse(captured.options.body.get('data')), {
       fileName: 'Statement of Work.pdf',
@@ -134,8 +134,35 @@ test('live eBuy attachment download retries a protected upload path when the att
     assert.equal(response.status, 200)
     assert.equal(calls.length, 2)
     assert.equal(calls[1].url, 'https://www.ebuy.gsa.gov/ebuy_upload/202608/RFI1830128/folder/003%20-%20Statement%20of%20Work.123.docx')
-    assert.equal(calls[1].options.headers.Authorization, undefined)
-    assert.equal(calls[1].options.headers.Origin, 'https://www.ebuy.gsa.gov/')
+    assert.equal(calls[0].options.headers.Authorization, 'Bearer contract-jwt')
+    assert.equal(calls[1].options.headers.Authorization, 'Bearer contract-jwt')
+    assert.equal(calls[1].options.headers.Origin, 'https://www.ebuy.gsa.gov')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('live eBuy attachment download can fall back to its protected upload path after a service 403', async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options })
+    if (calls.length === 1) return jsonResponse({ message: 'Forbidden' }, 403)
+    return new Response('pdf-content', {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf', 'Content-Length': '11' },
+    })
+  }
+
+  try {
+    const response = await downloadEbuyAttachment('RFI1830128', {
+      fileName: 'Attachment.pdf',
+      docPath: '/ebuy_upload/202608/RFI1830128/Attachment.pdf',
+    }, 'contract-jwt')
+
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1].options.headers.Authorization, 'Bearer contract-jwt')
   } finally {
     globalThis.fetch = originalFetch
   }
