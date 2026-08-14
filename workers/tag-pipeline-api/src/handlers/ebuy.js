@@ -107,8 +107,8 @@ async function archiveFixtureAttachment(env) {
 }
 
 export async function getEbuyStatus(env) {
-  const storage = await ebuyStorageStatus(env.EBUY_DB)
   const connection = await getEbuyConnectionStatus(env.EBUY_DB, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
+  const storage = await ebuyStorageStatus(env.EBUY_DB, { excludeFixtures: Boolean(connection.configured) })
   const connector = {
     enabled: Boolean(connection.configured),
     mode: connection.configured ? 'live' : 'fixture',
@@ -154,12 +154,14 @@ export async function handleEbuy(req, env, identity = {}) {
     }
     if (path === '/ebuy/opportunities' && req.method === 'GET') {
       const db = requireDatabase(env)
+      const connection = await getEbuyConnectionStatus(db, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
       return json(await listEbuyOpportunities(db, {
         search: url.searchParams.get('q') || '',
         requestType: url.searchParams.get('type') || 'all',
         reviewState: url.searchParams.get('state') || 'all',
         lifecycle: url.searchParams.get('lifecycle') || 'all',
         includeDismissed: url.searchParams.get('includeDismissed') === 'true',
+        excludeFixtures: Boolean(connection.configured),
         page: url.searchParams.get('page') || 1,
         limit: url.searchParams.get('limit') || 25,
       }))
