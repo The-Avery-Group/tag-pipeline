@@ -108,3 +108,38 @@ test('live eBuy attachment download sends the source attachment DTO expected by 
     globalThis.fetch = originalFetch
   }
 })
+
+test('live eBuy attachment download retries a protected upload path when the attachment endpoint returns JSON', async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options })
+    if (calls.length === 1) return jsonResponse({ response: null })
+    return new Response('docx-content', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Length': '12',
+      },
+    })
+  }
+
+  try {
+    const response = await downloadEbuyAttachment('RFI1830128', {
+      fileName: '003 - Statement of Work.docx',
+      docPath: '/ebuy_upload/202608/RFI1830128/folder/003 - Statement of Work.123.docx',
+      docSeqNum: 3788332,
+      docType: 0,
+      docSessionId: 0,
+      docSessionDate: 1_786_625_569_637,
+      seqNum: 3788332,
+    }, 'contract-jwt')
+
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1].url, 'https://www.ebuy.gsa.gov/ebuy_upload/202608/RFI1830128/folder/003%20-%20Statement%20of%20Work.123.docx')
+    assert.equal(calls[1].options.headers.Authorization, 'Bearer contract-jwt')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
