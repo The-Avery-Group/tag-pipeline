@@ -16,6 +16,7 @@ import {
   deleteEbuyFixtureRecords,
   finishEbuySyncCandidate,
   finishEbuySyncRun,
+  getEbuyAttachmentArchiveProgress,
   nextPendingEbuyAttachment,
   nextEbuySyncCandidateBatch,
   recordArchivedEbuyAttachment,
@@ -29,6 +30,7 @@ import {
   updateEbuySyncRunProgress,
 } from '../lib/ebuyRepository.js'
 import { archiveEbuyFile, ensureEbuyArchiveFolder } from '../lib/sharepointArchive.js'
+import { EBUY_ARCHIVE_FILES_PER_CHECKPOINT, scheduleEbuyArchiveContinuation } from './ebuySyncChain.js'
 
 function mergeCounts(target, result) {
   for (const field of ['discovered', 'inserted', 'updated', 'unchanged', 'removed', 'archivedFiles']) {
@@ -119,7 +121,9 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
   try {
     const downloaded = await downloadPendingAttachment(env, encryptedTokens, pending)
     const contentType = downloaded.headers.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
-    const archiveLocation = await ensureEbuyArchiveFolder(env, pending.requestId)
+    const archiveLocation = await ensureEbuyArchiveFolder(env, pending.requestId, {
+      fastLookup: pending.archiveFolderReady,
+    })
     const archived = await archiveEbuyFile(env, {
       requestId: pending.requestId,
       fileName: pending.attachment.fileName,
@@ -208,6 +212,8 @@ export async function runEbuySyncWorkflow(env, event, step) {
   if (!env.EBUY_DB) throw new Error('The EBUY_DB binding is unavailable')
   const mode = event.payload?.mode || 'live'
   const resumeRunId = String(event.payload?.resumeRunId || '').trim()
+  const archiveCheckpoint = Math.max(1, Number(event.payload?.archiveCheckpoint) || 1)
+  const source = event.payload?.source || 'manual'
   const run = resumeRunId
     ? await step.do('Resume interrupted eBuy sync record', () => resumeEbuySyncRun(env.EBUY_DB, resumeRunId))
     : await step.do('Create eBuy sync record', () => startEbuySyncRun(env.EBUY_DB, mode, {
@@ -235,6 +241,7 @@ export async function runEbuySyncWorkflow(env, event, step) {
         const session = await getEbuyLiveSession(env)
         return { contracts: session.contracts }
       })
+      await step.do('Record active eBuy connection', () => recordEbuyConnectionResult(env.EBUY_DB, { ok: true }))
       if (!resumeRunId) {
         const contractTotal = connection.contracts.length
         await step.do('Record eBuy discovery start', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
@@ -290,13 +297,16 @@ export async function runEbuySyncWorkflow(env, event, step) {
       }
 
       await step.do('Prepare failed eBuy files for retry', () => resetRetryableEbuyAttachments(env.EBUY_DB, run.startedAt))
-      let remainingAttachments = await step.do('Count eBuy files to archive', () => countPendingEbuyAttachments(env.EBUY_DB, run.startedAt))
-      totalAttachments = remainingAttachments
+      const archiveProgress = await step.do('Count eBuy files to archive', () => getEbuyAttachmentArchiveProgress(env.EBUY_DB, run.startedAt))
+      let remainingAttachments = archiveProgress.pending
+      totalAttachments = archiveProgress.total
+      processedAttachments = archiveProgress.archived
+      totals.archivedFiles = archiveProgress.archived
       await step.do('Record eBuy file archive start', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
-        phase: 'archiving', percent: remainingAttachments ? 72 : 95,
-        message: remainingAttachments ? `Archiving 0 of ${remainingAttachments} files` : 'No files are waiting to be archived',
+        phase: 'archiving', percent: remainingAttachments ? Math.min(95, 72 + Math.round((processedAttachments / Math.max(1, totalAttachments)) * 23)) : 95,
+        message: remainingAttachments ? `Archiving ${processedAttachments} of ${totalAttachments} files` : 'No files are waiting to be archived',
         processed: processedCandidates, total: totalCandidates,
-        filesProcessed: 0, filesTotal: remainingAttachments, archivedFiles: totals.archivedFiles,
+        filesProcessed: processedAttachments, filesTotal: totalAttachments, archivedFiles: totals.archivedFiles,
       }))
       let fileIteration = 0
       while (remainingAttachments > 0) {
@@ -316,6 +326,39 @@ export async function runEbuySyncWorkflow(env, event, step) {
           processed: processedCandidates, total: totalCandidates,
           filesProcessed: processedAttachments, filesTotal: totalAttachments, archivedFiles: totals.archivedFiles,
         }))
+
+        if (remainingAttachments > 0 && fileIteration >= EBUY_ARCHIVE_FILES_PER_CHECKPOINT) {
+          const message = `Archived ${totals.archivedFiles} of ${totalAttachments} files · continuing automatically`
+          await step.do('Record eBuy archive continuation', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
+            phase: 'archiving', percent: filePercent, message,
+            processed: processedCandidates, total: totalCandidates,
+            filesProcessed: processedAttachments, filesTotal: totalAttachments, archivedFiles: totals.archivedFiles,
+          }))
+          const continuation = await scheduleEbuyArchiveContinuation({
+            env,
+            step,
+            runId: run.id,
+            checkpoint: archiveCheckpoint,
+            source,
+          })
+          console.log(JSON.stringify({
+            event: 'ebuy_sync_workflow', status: 'continuing', runId: run.id,
+            archiveCheckpoint, nextCheckpoint: continuation.checkpoint,
+            nextInstanceId: continuation.instanceId,
+            archivedFiles: totals.archivedFiles, filesTotal: totalAttachments,
+          }))
+          return {
+            ok: true,
+            status: 'continuing',
+            runId: run.id,
+            archiveCheckpoint,
+            nextCheckpoint: continuation.checkpoint,
+            nextInstanceId: continuation.instanceId,
+            archivedFiles: totals.archivedFiles,
+            filesProcessed: processedAttachments,
+            filesTotal: totalAttachments,
+          }
+        }
       }
       await step.do('Record eBuy finalization progress', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
         phase: 'finalizing', percent: 97, message: 'Finalizing eBuy synchronization',
