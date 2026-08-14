@@ -141,6 +141,11 @@ export async function deleteEbuyConnection(db) {
   await db.prepare('DELETE FROM ebuy_connections WHERE id = 1').run()
 }
 
+export async function deleteEbuyFixtureRecords(db) {
+  const result = await db.prepare("DELETE FROM ebuy_opportunities WHERE raw_json LIKE '%sanitized-g2x-schema%'").run()
+  return Number(result?.meta?.changes || result?.changes || 0)
+}
+
 export async function stageEbuySyncCandidates(db, runId, contractNumber, records) {
   const now = new Date().toISOString()
   let staged = 0
