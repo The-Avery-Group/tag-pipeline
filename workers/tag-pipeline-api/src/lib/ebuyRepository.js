@@ -14,6 +14,10 @@ function decode(value, fallback) {
 function publicOpportunity(row) {
   if (!row) return null
   const raw = decode(row.raw_json, {})
+  const sourceProps = raw?.sourceDetails?.rfqProps || {}
+  const sourceAdditional = raw?.sourceDetails?.rfqAdditionalInfo || {}
+  const sourceDepartment = String(sourceProps.userAgency || '').trim()
+  const sourceAgency = String(sourceProps.userBureau || sourceAdditional.ocoAgency || '').trim()
   return {
     ...raw,
     id: row.source_id,
@@ -22,8 +26,10 @@ function publicOpportunity(row) {
     title: row.title,
     description: row.description,
     referenceNumber: row.reference_number,
-    buyerAgency: row.buyer_agency,
-    buyerDepartment: row.buyer_department,
+    // Resolve legacy rows immediately as well as newly synchronized rows.
+    // Earlier builds stored eBuy's userAgency/userBureau labels in reverse.
+    buyerAgency: sourceAgency || row.buyer_agency || sourceDepartment,
+    buyerDepartment: sourceDepartment || row.buyer_department || row.buyer_agency,
     buyerName: row.buyer_name,
     buyerEmail: row.buyer_email,
     buyerPhone: row.buyer_phone,
@@ -45,8 +51,21 @@ function publicOpportunity(row) {
     removedAt: row.removed_at,
     purgeAfter: row.purge_after,
     pipelineContractId: row.pipeline_contract_id,
+    amendmentCount: Array.isArray(raw.amendments) ? raw.amendments.length : 0,
     updatedAt: row.updated_at,
   }
+}
+
+function normalizePipelineRecord(record) {
+  if (typeof record === 'string') return { id: record.trim(), outlook: '' }
+  return {
+    id: String(record?.id || record?.pipelineContractId || '').trim(),
+    outlook: String(record?.outlook || '').trim(),
+  }
+}
+
+function activePipelineReviewState(outlook) {
+  return String(outlook || '').trim().toLowerCase() === 'tracking' ? 'tracked' : 'added_to_pipeline'
 }
 
 function publicSyncRun(row) {
@@ -544,6 +563,116 @@ export async function updateEbuyReviewState(db, requestId, nextState, pipelineCo
   return getEbuyOpportunity(db, requestId)
 }
 
+/**
+ * Reconcile eBuy's denormalized pipeline marker against the workbook-derived
+ * list supplied by the authenticated client. This repairs both sides of an
+ * interrupted two-system write: an eBuy record whose workbook row was deleted
+ * becomes reviewable again, while a workbook row whose final eBuy PATCH failed
+ * is restored to In pipeline/Tracked without creating another opportunity.
+ */
+export async function reconcileEbuyPipelineRecords(db, pipelineRecords = []) {
+  const pipeline = new Map((pipelineRecords || [])
+    .map(normalizePipelineRecord)
+    .filter((record) => record.id)
+    .map((record) => [record.id.toLowerCase(), record]))
+  const settingsRow = await db.prepare('SELECT * FROM ebuy_settings WHERE id = 1').first()
+  const rows = await db.prepare(`SELECT request_id, review_state, lifecycle_status, pipeline_contract_id
+    FROM ebuy_opportunities`).all()
+  const statements = []
+  let linked = 0
+  let unlinked = 0
+  const now = new Date()
+  const nowIso = now.toISOString()
+
+  for (const row of rows.results || []) {
+    const currentPipelineId = String(row.pipeline_contract_id || '').trim()
+    const match = pipeline.get(currentPipelineId.toLowerCase()) || pipeline.get(String(row.request_id || '').trim().toLowerCase())
+    if (match) {
+      const nextReviewState = ['dismissed', 'flagged'].includes(row.review_state)
+        ? row.review_state
+        : activePipelineReviewState(match.outlook)
+      if (currentPipelineId === match.id && row.review_state === nextReviewState) continue
+      statements.push(db.prepare(`UPDATE ebuy_opportunities
+        SET review_state = ?, pipeline_contract_id = ?, purge_after = NULL, updated_at = ?
+        WHERE request_id = ?`).bind(nextReviewState, match.id, nowIso, row.request_id))
+      linked++
+      continue
+    }
+
+    if (!currentPipelineId && !['added_to_pipeline', 'tracked'].includes(row.review_state)) continue
+    const nextReviewState = ['added_to_pipeline', 'tracked'].includes(row.review_state) ? 'new' : row.review_state
+    const purgeAfter = retentionDeadline(nextReviewState, row.lifecycle_status, now, {
+      dismissedRetentionDays: settingsRow?.dismissed_retention_days,
+      expiredRetentionDays: settingsRow?.expired_retention_days,
+      unavailableRetentionDays: settingsRow?.unavailable_retention_days,
+    })
+    statements.push(db.prepare(`UPDATE ebuy_opportunities
+      SET review_state = ?, pipeline_contract_id = NULL, purge_after = ?, updated_at = ?
+      WHERE request_id = ?`).bind(nextReviewState, purgeAfter, nowIso, row.request_id))
+    unlinked++
+  }
+
+  if (statements.length) await db.batch(statements)
+  return { linked, unlinked, changed: statements.length }
+}
+
+export async function unlinkEbuyPipelineRecord(db, pipelineContractId) {
+  const id = String(pipelineContractId || '').trim()
+  if (!id) return { changed: 0 }
+  const settingsRow = await db.prepare('SELECT * FROM ebuy_settings WHERE id = 1').first()
+  const row = await db.prepare(`SELECT request_id, review_state, lifecycle_status
+    FROM ebuy_opportunities
+    WHERE lower(request_id) = lower(?) OR lower(COALESCE(pipeline_contract_id, '')) = lower(?)
+    LIMIT 1`).bind(id, id).first()
+  if (!row) return { changed: 0 }
+  const nextReviewState = ['added_to_pipeline', 'tracked'].includes(row.review_state) ? 'new' : row.review_state
+  const purgeAfter = retentionDeadline(nextReviewState, row.lifecycle_status, new Date(), {
+    dismissedRetentionDays: settingsRow?.dismissed_retention_days,
+    expiredRetentionDays: settingsRow?.expired_retention_days,
+    unavailableRetentionDays: settingsRow?.unavailable_retention_days,
+  })
+  await db.prepare(`UPDATE ebuy_opportunities
+    SET review_state = ?, pipeline_contract_id = NULL, purge_after = ?, updated_at = ?
+    WHERE request_id = ?`).bind(nextReviewState, purgeAfter, new Date().toISOString(), row.request_id).run()
+  return { changed: 1, requestId: row.request_id, reviewState: nextReviewState }
+}
+
+export async function listArchivedEbuyAttachments(db, requestId) {
+  const rows = await db.prepare(`SELECT id, request_id, file_name, content_type, byte_size,
+      source_hash, archive_status, sharepoint_drive_id, sharepoint_item_id, sharepoint_web_url
+    FROM ebuy_attachments
+    WHERE request_id = ? AND archive_status = 'archived' AND sharepoint_item_id IS NOT NULL
+    ORDER BY created_at`).bind(requestId).all()
+  return rows.results || []
+}
+
+export async function getEbuyWorkspaceArchive(db, requestId) {
+  const opportunity = await db.prepare(`SELECT request_id FROM ebuy_opportunities
+    WHERE lower(request_id) = lower(?) OR lower(COALESCE(pipeline_contract_id, '')) = lower(?)
+    LIMIT 1`).bind(requestId, requestId).first()
+  if (!opportunity) return null
+  return {
+    requestId: opportunity.request_id,
+    attachments: await listArchivedEbuyAttachments(db, opportunity.request_id),
+  }
+}
+
+export async function updateEbuyAttachmentLocation(db, id, { driveId, itemId, webUrl, fileName, byteSize }) {
+  await db.prepare(`UPDATE ebuy_attachments
+    SET sharepoint_drive_id = ?, sharepoint_item_id = ?, sharepoint_web_url = ?,
+        file_name = COALESCE(?, file_name), byte_size = COALESCE(?, byte_size),
+        archive_status = 'archived', error_message = NULL, updated_at = ?
+    WHERE id = ?`).bind(
+      driveId || null,
+      itemId || null,
+      webUrl || null,
+      fileName || null,
+      Number(byteSize || 0) || null,
+      new Date().toISOString(),
+      id,
+    ).run()
+}
+
 export async function recordArchivedEbuyAttachment(db, {
   id,
   requestId,
@@ -614,6 +743,7 @@ export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = nul
   const rows = await db.prepare(`SELECT request_id FROM ebuy_opportunities
     WHERE purge_after IS NOT NULL AND purge_after <= ?
       AND review_state NOT IN ('flagged', 'tracked', 'added_to_pipeline')
+      AND pipeline_contract_id IS NULL
     ORDER BY purge_after ASC LIMIT ?`).bind(now, Math.min(100, limit)).all()
   let deleted = 0
   let archivedFilesDeleted = 0
