@@ -6,8 +6,8 @@ import {
   updateEbuyOpportunityState,
 } from '@/services/ebuyService'
 
-export function useEbuyOpportunities({ search = '', type = 'all', state = 'all', includeDismissed = false, page = 1 } = {}) {
-  const [data, setData] = useState({ opportunities: [], total: 0, totalPages: 1, page: 1 })
+export function useEbuyOpportunities({ search = '', type = 'all', state = 'all', includeDismissed = false } = {}) {
+  const [data, setData] = useState({ opportunities: [], total: 0 })
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -20,7 +20,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     if (!silent) setLoading(true)
     try {
       const [nextData, nextStatus] = await Promise.all([
-        listEbuyOpportunities({ search, type, state, includeDismissed, page }),
+        listEbuyOpportunities({ search, type, state, includeDismissed }),
         getEbuyStatus(),
       ])
       if (request !== requestRef.current) return
@@ -32,7 +32,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     } finally {
       if (request === requestRef.current && !silent) setLoading(false)
     }
-  }, [includeDismissed, page, search, state, type])
+  }, [includeDismissed, search, state, type])
 
   useEffect(() => {
     const timer = window.setTimeout(() => load(), search ? 220 : 0)
