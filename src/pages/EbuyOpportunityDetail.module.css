@@ -57,9 +57,12 @@
 }
 
 .badges .closeDuration {
-  background: var(--gray-100);
-  border-color: var(--gray-200);
-  color: var(--gray-700);
+  background: var(--amber-50);
+  border-color: var(--amber-600);
+  color: var(--amber-600);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 9px;
   text-transform: none;
 }
 
