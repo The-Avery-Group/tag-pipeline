@@ -45,7 +45,7 @@ export default function PartnerFolderLinker({ open = true, inline = false, onClo
     {loading && <div className={styles.linkerState}>Checking SharePoint folders and workbook columns…</div>}
     {error && <div className={styles.linkerError}>{error}</div>}
     {scan && <div className={styles.linkerRows}>{scan.partners.map((partner) => <div className={styles.linkerRow} key={partner.uei}>
-      <div><strong>{partner.partnerName}</strong><small>{partner.uei}{partner.currentLink ? ' · Already linked' : partner.status === 'matched' ? ' · Exact match found' : partner.status === 'ambiguous' ? ' · Choose the correct folder' : ' · No exact match'}</small></div>
+      <div><strong>{partner.partnerName || 'Unnamed partner'}</strong><small>{partner.currentLink ? 'Already linked' : partner.status === 'matched' ? 'Exact match found' : partner.status === 'ambiguous' ? 'Choose the correct folder' : 'No exact match'}</small></div>
       {partner.status === 'linked'
         ? <a href={partner.currentLink} target="_blank" rel="noreferrer">Open linked folder</a>
         : <select className="form-input" value={selections[partner.uei] || ''} onChange={(event) => setSelections((current) => ({ ...current, [partner.uei]: event.target.value }))}>
