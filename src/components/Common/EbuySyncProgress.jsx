@@ -6,6 +6,8 @@ export default function EbuySyncProgress({ run, compact = false }) {
   const percent = Math.max(1, Math.min(99, Number(progress.percent || 2)))
   const processed = Number(progress.processed || 0)
   const total = Number(progress.total || 0)
+  const filesProcessed = Number(progress.filesProcessed || 0)
+  const filesTotal = Number(progress.filesTotal || 0)
   const discovered = Number(run.discovered_count || 0)
   const archivedFiles = Number(progress.archivedFiles ?? run.archived_file_count ?? 0)
 
@@ -27,8 +29,10 @@ export default function EbuySyncProgress({ run, compact = false }) {
       </div>
       {!compact && <div className={styles.meta}>
         <span>{discovered} found</span>
-        {total > 0 && <span>{processed} of {total} processed</span>}
-        <span>{archivedFiles} files archived</span>
+        {total > 0 && <span>{processed} of {total} opportunities processed</span>}
+        {filesTotal > 0
+          ? <span>{filesProcessed} of {filesTotal} files processed · {archivedFiles} archived</span>
+          : <span>{archivedFiles} files archived</span>}
       </div>}
     </div>
   )
