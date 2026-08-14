@@ -24,5 +24,4 @@
 .pipeline { background: var(--new-action-pipeline); }.track { background: var(--new-action-track); }.dismiss { background: var(--new-action-dismiss); }.details { background: var(--new-action-sam); }
 .action:hover:not(:disabled) { filter: brightness(1.1); }
 .empty { color: var(--gray-500); padding: 40px !important; text-align: center; }
-.pagination { align-items: center; display: flex; font-size: 11px; gap: 10px; justify-content: flex-end; }
 @media (max-width: 760px) { .toolbar { align-items: stretch; flex-direction: column; }.syncSummary { justify-content: flex-start; }.filters label { flex: 1 1 180px; justify-content: space-between; }.filters select { flex: 1; } }
