@@ -76,6 +76,19 @@ export async function getWorkspace(db, opportunityKey) {
   return publicWorkspace(row)
 }
 
+export async function findWorkspaceBySource(db, { noticeId = '', solicitationNumber = '' } = {}) {
+  const notice = String(noticeId || '').trim().toLowerCase()
+  const solicitation = String(solicitationNumber || '').trim().toLowerCase()
+  if (!db || (!notice && !solicitation)) return null
+  const row = await db.prepare(`SELECT * FROM opportunity_workspaces
+      WHERE (? != '' AND lower(notice_id) = ?)
+         OR (? != '' AND lower(solicitation_number) = ?)
+         OR (? != '' AND lower(opportunity_key) = ?)
+      ORDER BY updated_at DESC LIMIT 1`)
+    .bind(notice, notice, solicitation, solicitation, notice, notice).first()
+  return publicWorkspace(row)
+}
+
 export async function claimWorkspaceRun(db, opportunityKey, instanceId, { force = false } = {}) {
   const key = normalizeWorkspaceKey(opportunityKey)
   const now = new Date().toISOString()
@@ -131,6 +144,12 @@ export async function updateWorkspace(db, opportunityKey, patch = {}) {
 export async function getWorkspaceFile(db, opportunityKey, sourceUrl) {
   return db.prepare('SELECT * FROM opportunity_workspace_files WHERE opportunity_key = ? AND source_url = ?')
     .bind(normalizeWorkspaceKey(opportunityKey), sourceUrl).first()
+}
+
+export async function listWorkspaceFileRecords(db, opportunityKey) {
+  const result = await db.prepare('SELECT * FROM opportunity_workspace_files WHERE opportunity_key = ? ORDER BY created_at')
+    .bind(normalizeWorkspaceKey(opportunityKey)).all()
+  return result.results || []
 }
 
 export async function recordWorkspaceFile(db, input) {
