@@ -60,14 +60,18 @@ async function postJson(url, body, options = {}) {
   return readJson(response, options.service || 'GSA eBuy')
 }
 
-function requireSuccessfulEbuyResponse(payload, action) {
+function requireSuccessfulEbuyResponse(payload, action, acceptsResponse = null) {
   const status = Number(payload?.header?.status)
+  const response = payload?.response
   // eBuy uses both service-style `0` and HTTP-style `200` success values
-  // across otherwise identical response envelopes.
-  if (![0, 200].includes(status) || !payload?.response) {
-    throw connectorError(payload?.response?.message || `GSA eBuy could not ${action}`, 'ebuy_response_error')
+  // across otherwise identical response envelopes. Some seller-login replies
+  // use a different envelope status even though the requested contract list
+  // is present, so that endpoint also supplies a payload-specific validator.
+  const acceptedByPayload = Boolean(response && acceptsResponse?.(response))
+  if (!response || (![0, 200].includes(status) && !acceptedByPayload)) {
+    throw connectorError(response?.message || `GSA eBuy could not ${action}`, 'ebuy_response_error')
   }
-  return payload.response
+  return response
 }
 
 function cleanContracts(response) {
@@ -178,7 +182,11 @@ export async function authenticateEbuyAccount(credentials) {
     service: 'GSA eBuy seller login',
     headers: { ...ebuyBrowserHeaders(CALLBACK_URL), 'Content-Type': 'text/plain' },
   })
-  const loginResponse = requireSuccessfulEbuyResponse(login, 'load seller contracts')
+  const loginResponse = requireSuccessfulEbuyResponse(
+    login,
+    'load seller contracts',
+    (response) => Array.isArray(response.sellerEmails),
+  )
   const contracts = cleanContracts(loginResponse)
   if (!contracts.length) throw connectorError('No active seller contracts were returned for this eBuy account', 'ebuy_no_contracts', 409)
   return {
