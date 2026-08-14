@@ -691,8 +691,8 @@ export default function Settings({ toast }) {
         <div className={styles.collapsible}>
           <button className={styles.collapsibleHeader} onClick={() => toggleSection('folderMigration')}>
             <span>
-              <span className={styles.collapsibleTitle}>Legacy opportunity folders</span>
-              <span className={styles.collapsibleHint}>Review copied OneDrive folders and connect them to pipeline opportunities</span>
+              <span className={styles.collapsibleTitle}>SharePoint folder linking</span>
+              <span className={styles.collapsibleHint}>Connect copied opportunity and partner folders to CRM records</span>
             </span>
             <span className={`${styles.chevron} ${openSections.folderMigration ? styles.chevronOpen : ''}`}>›</span>
           </button>
