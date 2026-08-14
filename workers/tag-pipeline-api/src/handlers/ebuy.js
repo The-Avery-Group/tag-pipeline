@@ -5,18 +5,10 @@ import {
   hasRunningEbuySync,
   listEbuyOpportunities,
   purgeExpiredEbuyRecords,
-  recordArchivedEbuyAttachment,
   updateEbuyReviewState,
 } from '../lib/ebuyRepository.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
-import { archiveEbuyFile, deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
-
-const FIXTURE_ATTACHMENT = {
-  id: 'RFI-DEMO-001-archive-test',
-  requestId: 'RFI-DEMO-001',
-  fileName: 'TAG_eBuy_Archive_Test.txt',
-  contentType: 'text/plain; charset=utf-8',
-}
+import { deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -30,19 +22,6 @@ function requireDatabase(env) {
     throw error
   }
   return env.EBUY_DB
-}
-
-async function startFixtureSync(env) {
-  if (!env.EBUY_SYNC_WORKFLOW) {
-    return json({ error: 'The eBuy sync Workflow is not configured', code: 'ebuy_workflow_not_configured' }, 503)
-  }
-  const instanceId = `ebuy-fixture-${crypto.randomUUID()}`
-  const created = await env.EBUY_SYNC_WORKFLOW.createBatch([{
-    id: instanceId,
-    params: { mode: 'fixture' },
-    retention: { successRetention: '1 day', errorRetention: '3 days' },
-  }])
-  return json({ ok: true, started: created.length > 0, instanceId, mode: 'fixture' }, 202)
 }
 
 async function startLiveSync(env, source = 'manual', scheduledTime = null) {
@@ -71,47 +50,12 @@ export async function startScheduledEbuySync(env, scheduledTime) {
   return response.json()
 }
 
-async function archiveFixtureAttachment(env) {
-  const db = requireDatabase(env)
-  if (!await getEbuyOpportunity(db, FIXTURE_ATTACHMENT.requestId)) {
-    return json({ error: 'Synchronize the test eBuy archive before archiving its attachment', code: 'ebuy_fixture_required' }, 409)
-  }
-
-  const archivedAt = new Date().toISOString()
-  const content = new TextEncoder().encode([
-    'TAG CRM eBuy attachment archive test',
-    '',
-    `Request ID: ${FIXTURE_ATTACHMENT.requestId}`,
-    `Archived at: ${archivedAt}`,
-    '',
-    'This harmless test file verifies the Cloudflare Worker, Microsoft Graph, SharePoint, and D1 attachment path.',
-  ].join('\n'))
-  const sourceHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', content))]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
-  const archived = await archiveEbuyFile(env, {
-    requestId: FIXTURE_ATTACHMENT.requestId,
-    fileName: FIXTURE_ATTACHMENT.fileName,
-    contentType: FIXTURE_ATTACHMENT.contentType,
-    body: content,
-  })
-  const attachment = await recordArchivedEbuyAttachment(db, {
-    ...FIXTURE_ATTACHMENT,
-    byteSize: content.byteLength,
-    sourceHash,
-    driveId: archived.driveId,
-    itemId: archived.itemId,
-    webUrl: archived.webUrl,
-  })
-  return json({ ok: true, attachment })
-}
-
 export async function getEbuyStatus(env) {
   const connection = await getEbuyConnectionStatus(env.EBUY_DB, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
-  const storage = await ebuyStorageStatus(env.EBUY_DB, { excludeFixtures: Boolean(connection.configured) })
+  const storage = await ebuyStorageStatus(env.EBUY_DB, { excludeFixtures: true })
   const connector = {
     enabled: Boolean(connection.configured),
-    mode: connection.configured ? 'live' : 'fixture',
+    mode: connection.configured ? 'live' : 'disconnected',
     message: connection.configured
       ? connection.status === 'error'
         ? connection.lastErrorMessage || 'The latest eBuy connection attempt needs attention.'
@@ -144,24 +88,15 @@ export async function handleEbuy(req, env, identity = {}) {
       return json({ ok: true, ...(await testStoredEbuyConnection(env)) })
     }
     if (path === '/ebuy/sync' && req.method === 'POST') return startLiveSync(env)
-    if (path === '/ebuy/sync/fixture' && req.method === 'POST') {
-      requireDatabase(env)
-      return startFixtureSync(env)
-    }
-    if (path === '/ebuy/archive/test-attachment' && req.method === 'POST') {
-      requireDatabase(env)
-      return archiveFixtureAttachment(env)
-    }
     if (path === '/ebuy/opportunities' && req.method === 'GET') {
       const db = requireDatabase(env)
-      const connection = await getEbuyConnectionStatus(db, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
       return json(await listEbuyOpportunities(db, {
         search: url.searchParams.get('q') || '',
         requestType: url.searchParams.get('type') || 'all',
         reviewState: url.searchParams.get('state') || 'all',
         lifecycle: url.searchParams.get('lifecycle') || 'all',
         includeDismissed: url.searchParams.get('includeDismissed') === 'true',
-        excludeFixtures: Boolean(connection.configured),
+        excludeFixtures: true,
         page: url.searchParams.get('page') || 1,
         limit: url.searchParams.get('limit') || 25,
       }))
