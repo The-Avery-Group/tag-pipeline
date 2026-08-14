@@ -64,7 +64,7 @@ function cacheTablesForLocation(location) {
   if (path === '/contacts') {
     return ['ContactsTable', 'ContactInteractionsTable', 'PipelineTable', 'DataValidationTable']
   }
-  if (path === '/partners') return ['PartnersTable', 'PipelineTable']
+  if (path === '/partners') return ['PartnersTable', 'PipelineTable', 'NotesTable']
   if (path === '/settings') return ['DataValidationTable', 'EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable']
   if (path === '/lookup') {
     return params.get('view') === 'people'
