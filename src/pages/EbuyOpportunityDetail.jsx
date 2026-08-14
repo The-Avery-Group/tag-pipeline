@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
+import RichText from '@/components/Common/RichText'
 import { usePipeline } from '@/hooks/usePipeline'
 import { ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
+import {
+  formatEbuyChangedField,
+  formatEbuyCloseDuration,
+  formatEbuyDateTime,
+} from '@/utils/ebuyHelpers'
 import styles from './EbuyOpportunityDetail.module.css'
 
-function formatDateTime(value) {
-  const date = value ? new Date(value) : null
-  return date && !Number.isNaN(date.getTime())
-    ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-    : 'Not provided'
-}
+function singleLine(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
 
 function Field({ label, children, wide = false }) {
   return <div className={`${styles.field} ${wide ? styles.wide : ''}`}><span>{label}</span><div>{children || 'Not provided'}</div></div>
@@ -73,14 +74,14 @@ export default function EbuyOpportunityDetail({ toast }) {
   if (error || !opportunity) return <div className="page-body"><div className={styles.error}><strong>eBuy opportunity could not load</strong><span>{error?.message || 'The archived record was not found.'}</span><button className="btn" onClick={() => navigate(returnTo)}>Back to discovery</button></div></div>
 
   return <>
-    <Topbar title={opportunity.title || opportunity.requestId} subtitle1={`GSA eBuy · ${opportunity.requestId}`} showFilter={false} showNew={false} />
+    <Topbar title={singleLine(opportunity.title) || opportunity.requestId} subtitle1={`GSA eBuy · ${opportunity.requestId}`} showFilter={false} showNew={false} />
     <div className={`page-body ${styles.page}`}>
       <button className={styles.back} onClick={() => navigate(returnTo)}>← Back to eBuy discovery</button>
       <section className={styles.hero}>
         <div>
-          <div className={styles.badges}><span>{opportunity.requestType || 'Other'}</span><span>{opportunity.lifecycleStatus}</span>{opportunity.reviewState !== 'new' && <span>{opportunity.reviewState.replaceAll('_', ' ')}</span>}</div>
-          <h1>{opportunity.title}</h1>
-          <p>{opportunity.buyerAgency || opportunity.buyerDepartment || 'Agency not provided'}</p>
+          <div className={styles.badges}><span>{opportunity.requestType || 'Other'}</span><span>{opportunity.lifecycleStatus}</span><span className={styles.closeDuration}>{formatEbuyCloseDuration(opportunity.closesAt)}</span>{opportunity.reviewState !== 'new' && <span>{opportunity.reviewState.replaceAll('_', ' ')}</span>}</div>
+          <h1>{singleLine(opportunity.title)}</h1>
+          <p>{opportunity.buyerAgency || 'Agency not provided'}{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency ? ` · ${opportunity.buyerDepartment}` : ''}</p>
         </div>
         <div className={styles.heroActions}>
           <button className={`${styles.flag} ${opportunity.reviewState === 'flagged' ? styles.flagActive : ''}`} onClick={() => changeState(opportunity.reviewState === 'flagged' ? 'new' : 'flagged')} disabled={actioning}>⚑ {opportunity.reviewState === 'flagged' ? 'Flagged' : 'Flag'}</button>
@@ -95,10 +96,11 @@ export default function EbuyOpportunityDetail({ toast }) {
         <header><div><span className={styles.eyebrow}>Overview</span><h2>Opportunity summary</h2></div></header>
         <div className={styles.grid}>
           <Field label="Request ID">{opportunity.requestId}</Field><Field label="Reference number">{opportunity.referenceNumber}</Field>
-          <Field label="Posted">{formatDateTime(opportunity.postedAt)}</Field><Field label="Closes">{formatDateTime(opportunity.closesAt)}</Field>
+          <Field label="Posted">{formatEbuyDateTime(opportunity.postedAt)}</Field><Field label="Closes">{formatEbuyDateTime(opportunity.closesAt)}</Field>
+          <Field label="Time remaining">{formatEbuyCloseDuration(opportunity.closesAt)}</Field><Field label="Amendments">{opportunity.amendments?.length || 0}</Field>
           <Field label="Department">{opportunity.buyerDepartment}</Field><Field label="Agency">{opportunity.buyerAgency}</Field>
           <Field label="Set aside">{opportunity.setAsideType}</Field><Field label="Follow-on">{opportunity.isFollowOn ? 'Yes' : 'No'}</Field>
-          <Field label="Description" wide>{opportunity.description}</Field>
+          <Field label="Description" wide><RichText value={opportunity.description} /></Field>
         </div>
       </section>
 
@@ -112,20 +114,29 @@ export default function EbuyOpportunityDetail({ toast }) {
         </div>
       </section>
 
-      <div className={styles.twoColumn}>
-        <section className={styles.card}>
-          <header><div><span className={styles.eyebrow}>Buyer</span><h2>Contact</h2></div></header>
-          <div className={styles.grid}><Field label="Name">{opportunity.buyerName}</Field><Field label="Phone">{opportunity.buyerPhone}</Field><Field label="Email" wide>{opportunity.buyerEmail ? <a href={`mailto:${opportunity.buyerEmail}`}>{opportunity.buyerEmail}</a> : null}</Field></div>
-        </section>
-        <section className={styles.card}>
-          <header><div><span className={styles.eyebrow}>Archive</span><h2>Record history</h2></div></header>
-          <ul className={styles.history}>{opportunity.versions?.map((version, index) => <li key={`${version.capturedAt}-${index}`}><strong>{formatDateTime(version.capturedAt)}</strong><span>{version.changedFields?.length ? version.changedFields.join(', ') : 'Snapshot saved'}</span></li>)}{!opportunity.versions?.length && <li>No versions archived yet.</li>}</ul>
-        </section>
-      </div>
+      <section className={styles.card}>
+        <header><div><span className={styles.eyebrow}>Buyer</span><h2>Contact</h2></div></header>
+        <div className={styles.grid}><Field label="Name">{opportunity.buyerName}</Field><Field label="Phone">{opportunity.buyerPhone}</Field><Field label="Email" wide>{opportunity.buyerEmail ? <a href={`mailto:${opportunity.buyerEmail}`}>{opportunity.buyerEmail}</a> : null}</Field></div>
+      </section>
+
+      <section className={styles.card}>
+        <header><div><span className={styles.eyebrow}>Archive</span><h2>Record history</h2></div><span className={styles.count}>{opportunity.versions?.length || 0}</span></header>
+        <div className={styles.history}>{opportunity.versions?.map((version, index) => {
+          const fields = (version.changedFields || []).map(formatEbuyChangedField).filter(Boolean)
+          return <article className={styles.historyItem} key={`${version.capturedAt}-${index}`}>
+            <div className={styles.historyMarker} aria-hidden="true" />
+            <div className={styles.historyContent}>
+              <div className={styles.historyHeading}><strong>{index === opportunity.versions.length - 1 ? 'Initial archive snapshot' : 'Archived record updated'}</strong><time>{formatEbuyDateTime(version.capturedAt)}</time></div>
+              <span className={styles.historySummary}>{fields.length ? `${fields.length} field${fields.length === 1 ? '' : 's'} recorded as changed` : 'Snapshot saved with no material field changes'}</span>
+              {fields.length > 0 && <div className={styles.changeChips}>{fields.map((field) => <span key={field}>{field}</span>)}</div>}
+            </div>
+          </article>
+        })}{!opportunity.versions?.length && <p className={styles.empty}>No archived record changes yet.</p>}</div>
+      </section>
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Updates</span><h2>Amendments</h2></div><span className={styles.count}>{opportunity.amendments?.length || 0}</span></header>
-        <div className={styles.list}>{opportunity.amendments?.map((amendment) => <article key={amendment.id}><div><strong>{amendment.label || 'Amendment'}</strong><span>{formatDateTime(amendment.posted_at)}</span></div><p>{amendment.description || 'No description provided.'}</p></article>)}{!opportunity.amendments?.length && <p className={styles.empty}>No amendments were included in this archive.</p>}</div>
+        <div className={styles.list}>{opportunity.amendments?.map((amendment) => <article className={styles.amendmentItem} key={amendment.id}><div className={styles.amendmentHeading}><strong>{amendment.label || 'Amendment'}</strong><time>{formatEbuyDateTime(amendment.posted_at)}</time></div><p>{amendment.description || 'No description provided.'}</p></article>)}{!opportunity.amendments?.length && <p className={styles.empty}>No amendments were included in this archive.</p>}</div>
       </section>
 
       <section className={styles.card}>
