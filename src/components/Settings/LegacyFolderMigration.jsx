@@ -9,6 +9,7 @@ import {
   buildLegacyFolderMatches,
   migrationConfidenceLabel,
 } from '@/utils/legacyFolderMigration'
+import PartnerFolderLinker from '@/components/Partner/PartnerFolderLinker'
 import styles from './LegacyFolderMigration.module.css'
 
 const APPLY_BATCH_SIZE = 8
@@ -49,6 +50,7 @@ function summary(matches) {
 }
 
 export default function LegacyFolderMigration({ toast }) {
+  const [mode, setMode] = useState('opportunities')
   const [folders, setFolders] = useState([])
   const [matches, setMatches] = useState([])
   const [scanning, setScanning] = useState(false)
@@ -182,7 +184,14 @@ export default function LegacyFolderMigration({ toast }) {
     }
   }
 
-  return <div className={styles.body}>
+  return <div className={styles.wrapper}>
+    <div className={styles.modeTabs} role="tablist" aria-label="SharePoint folder migration type">
+      <button type="button" role="tab" aria-selected={mode === 'opportunities'} className={mode === 'opportunities' ? styles.modeActive : ''} onClick={() => setMode('opportunities')}>Opportunities</button>
+      <button type="button" role="tab" aria-selected={mode === 'partners'} className={mode === 'partners' ? styles.modeActive : ''} onClick={() => setMode('partners')}>Partners</button>
+    </div>
+    {mode === 'partners'
+      ? <PartnerFolderLinker inline toast={toast} onComplete={() => forceRefreshCache(['PartnersTable', 'NotesTable'])} />
+      : <div className={styles.body}>
     <div className={styles.intro}>
       <div>
         <strong>Connect copied OneDrive folders to pipeline opportunities</strong>
@@ -252,5 +261,6 @@ export default function LegacyFolderMigration({ toast }) {
         </table>
       </div>
     </>}
+  </div>}
   </div>
 }
