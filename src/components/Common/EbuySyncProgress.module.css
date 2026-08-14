@@ -1,0 +1,12 @@
+.progress { background: color-mix(in srgb, var(--blue-50) 58%, var(--surface)); border: .5px solid var(--blue-200); border-radius: var(--radius-md); padding: 9px 12px; }
+.heading, .meta { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+.heading { color: var(--gray-800); font-size: 11px; }
+.heading strong { font-weight: 650; }
+.heading > span { color: var(--blue-700); font-variant-numeric: tabular-nums; font-weight: 700; }
+.track { background: var(--blue-100); border-radius: 999px; height: 5px; margin-top: 7px; overflow: hidden; }
+.track > span { background: var(--blue-600); border-radius: inherit; display: block; height: 100%; transition: width 220ms ease; }
+.meta { color: var(--gray-500); font-size: 9px; justify-content: flex-start; margin-top: 6px; }
+.meta span + span::before { content: '·'; margin-right: 10px; }
+.compact { margin-top: 11px; padding: 8px 10px; }
+.compact .track { height: 4px; }
+@media (max-width: 600px) { .meta { align-items: flex-start; flex-direction: column; gap: 2px; }.meta span + span::before { content: none; }.heading { align-items: flex-start; } }
