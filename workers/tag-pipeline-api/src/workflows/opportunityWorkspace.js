@@ -3,9 +3,15 @@ import { opportunityWorkspaceFolderName } from '../lib/opportunityWorkspaceDomai
 import {
   getWorkspace,
   getWorkspaceFile,
+  listWorkspaceFileRecords,
   recordWorkspaceFile,
   updateWorkspace,
 } from '../lib/opportunityWorkspaceRepository.js'
+import {
+  getEbuyWorkspaceArchive,
+  updateEbuyAttachmentLocation,
+} from '../lib/ebuyRepository.js'
+import { alertFingerprint, alertStorageReady, upsertOpportunityAlert } from '../lib/opportunityAlerts.js'
 import {
   beginWorkspaceTemplateCopy,
   findCopiedWorkspaceFolder,
@@ -20,11 +26,17 @@ import {
   fetchSAMAttachment,
   fetchWorkspaceSAMNotice,
 } from '../lib/opportunityWorkspaceSam.js'
+import {
+  deleteEmptyEbuyArchiveFolder,
+  moveArchivedEbuyFile,
+} from '../lib/sharepointArchive.js'
 
 const COPY_POLL_LIMIT = 30
 
 export async function runOpportunityWorkspaceWorkflow(env, event, step) {
   const opportunityKey = event.payload?.opportunityKey
+  const syncAttachments = event.payload?.syncAttachments === true
+  const sourceRevision = String(event.payload?.sourceRevision || '')
   if (!env.EBUY_DB || !opportunityKey) return { ok: false, error: 'Opportunity workspace metadata is unavailable' }
 
   try {
@@ -85,10 +97,102 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
       progressPhase: 'Finding SAM.gov attachments',
     }))
 
-    await step.do('Write workspace link to pipeline', {
-      retries: { limit: 4, delay: '5 seconds', backoff: 'exponential' },
-      timeout: '2 minutes',
-    }, () => updatePipelineFolderLink(env, workspace, folders.webUrl))
+    if (!syncAttachments) {
+      await step.do('Write workspace link to pipeline', {
+        retries: { limit: 4, delay: '5 seconds', backoff: 'exponential' },
+        timeout: '2 minutes',
+      }, () => updatePipelineFolderLink(env, workspace, folders.webUrl))
+    }
+
+    // eBuy files are first preserved in their own archive. Once the user adds
+    // that opportunity to the pipeline, move those same DriveItems into the
+    // standard opportunity workspace. IDs—not display folder names—join the
+    // records, so small naming differences between eBuy and SAM are harmless.
+    const ebuyArchive = await step.do('Check for an eBuy opportunity archive', () => (
+      getEbuyWorkspaceArchive(env.EBUY_DB, opportunityKey)
+    ))
+    if (ebuyArchive) {
+      const attachments = ebuyArchive.attachments || []
+      await step.do('Record eBuy attachment transfer start', () => updateWorkspace(env.EBUY_DB, opportunityKey, {
+        attachmentTotal: attachments.length,
+        archivedCount: 0,
+        failedCount: 0,
+        progressPhase: attachments.length ? 'Moving eBuy attachments into the workspace' : 'No eBuy attachments found',
+      }))
+      let movedCount = 0
+      let failedCount = 0
+      let sourceDriveId = env.EBUY_ARCHIVE_DRIVE_ID || env.DRIVE_ID || folders.driveId
+      for (let index = 0; index < attachments.length; index += 1) {
+        const attachment = attachments[index]
+        sourceDriveId ||= attachment.sharepoint_drive_id || ''
+        try {
+          const moved = await step.do(`Move eBuy attachment ${index + 1}`, {
+            retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' },
+            timeout: '2 minutes',
+          }, () => moveArchivedEbuyFile(env, {
+            sourceDriveId: attachment.sharepoint_drive_id,
+            itemId: attachment.sharepoint_item_id,
+            targetDriveId: folders.driveId,
+            targetFolderId: folders.samFolderId,
+            fileName: attachment.file_name,
+          }))
+          await step.do(`Record moved eBuy attachment ${index + 1}`, () => updateEbuyAttachmentLocation(
+            env.EBUY_DB,
+            attachment.id,
+            moved,
+          ))
+          movedCount++
+        } catch (error) {
+          failedCount++
+          console.warn(JSON.stringify({
+            event: 'opportunity_workspace_ebuy_attachment_move_failed',
+            opportunityKey,
+            attachmentId: attachment.id,
+            message: error.message,
+          }))
+        }
+        await step.do(`Update eBuy attachment transfer ${index + 1}`, () => updateWorkspace(env.EBUY_DB, opportunityKey, {
+          archivedCount: movedCount,
+          failedCount,
+          progressPhase: `Moved ${movedCount} of ${attachments.length} eBuy attachments`,
+        }))
+      }
+
+      let archiveRemoved = attachments.length === 0
+      if (!failedCount && sourceDriveId) {
+        const removal = await step.do('Remove empty eBuy opportunity archive', {
+          retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' },
+          timeout: '1 minute',
+        }, () => deleteEmptyEbuyArchiveFolder(env, sourceDriveId, ebuyArchive.requestId))
+        archiveRemoved = removal.deleted
+      }
+      const completedAt = new Date().toISOString()
+      const retainedArchive = !failedCount && !archiveRemoved
+      await step.do('Complete eBuy opportunity workspace', () => updateWorkspace(env.EBUY_DB, opportunityKey, {
+        status: failedCount || retainedArchive ? 'partial' : 'ready',
+        progressPhase: failedCount
+          ? `${failedCount} eBuy attachment${failedCount === 1 ? '' : 's'} need attention`
+          : retainedArchive
+            ? 'Workspace ready; the eBuy archive contains additional files'
+            : 'Workspace ready',
+        archivedCount: movedCount,
+        failedCount,
+        errorMessage: failedCount
+          ? `${failedCount} eBuy attachment${failedCount === 1 ? '' : 's'} could not be moved`
+          : retainedArchive
+            ? 'The eBuy archive folder was retained because it is not empty'
+            : null,
+        completedAt,
+      }))
+      return {
+        ok: true,
+        partial: Boolean(failedCount || retainedArchive),
+        workspaceUrl: folders.webUrl,
+        archivedCount: movedCount,
+        failedCount,
+        eBuyArchiveRemoved: archiveRemoved,
+      }
+    }
 
     let notice = { noticeId: workspace.noticeId || '', resourceLinks: [] }
     try {
@@ -114,6 +218,12 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
 
     let archivedCount = 0
     let failedCount = 0
+    const changedFiles = []
+    const priorRecords = await step.do('Load archived attachment records', () => listWorkspaceFileRecords(env.EBUY_DB, opportunityKey))
+    const currentSources = new Set(notice.resourceLinks)
+    const removedFiles = syncAttachments
+      ? priorRecords.filter((record) => record.archive_status === 'archived' && !currentSources.has(record.source_url))
+      : []
     for (let index = 0; index < notice.resourceLinks.length; index += 1) {
       const sourceUrl = notice.resourceLinks[index]
       const id = await attachmentRecordId(opportunityKey, sourceUrl)
@@ -124,8 +234,16 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
           timeout: '5 minutes',
         }, async () => {
           const prior = await getWorkspaceFile(env.EBUY_DB, opportunityKey, sourceUrl)
-          if (prior?.archive_status === 'archived' && prior.sharepoint_item_id) return { ok: true, reused: true }
+          if (!syncAttachments && prior?.archive_status === 'archived' && prior.sharepoint_item_id) return { ok: true, reused: true }
           const attachment = await fetchSAMAttachment(env, sourceUrl, index)
+          if (
+            prior?.archive_status === 'archived' && prior.sharepoint_item_id &&
+            prior.source_signature && attachment.sourceSignature &&
+            prior.source_signature === attachment.sourceSignature
+          ) {
+            if (attachment.response.body) await attachment.response.body.cancel().catch(() => {})
+            return { ok: true, reused: true }
+          }
           const uploaded = await uploadSAMAttachment(env, {
             driveId: folders.driveId,
             folderId: folders.samFolderId,
@@ -148,7 +266,7 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
             webUrl: uploaded.webUrl,
             archivedAt: new Date().toISOString(),
           })
-          return { ok: true }
+          return { ok: true, changed: Boolean(syncAttachments && prior?.archive_status === 'archived'), added: Boolean(syncAttachments && !prior?.sharepoint_item_id), fileName: uploaded.name || attachment.fileName }
         })
       } catch (error) {
         await step.do(`Record failed SAM attachment ${index + 1}`, () => recordWorkspaceFile(env.EBUY_DB, {
@@ -170,6 +288,7 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
       }
       if (result.ok) archivedCount += 1
       else failedCount += 1
+      if (result.changed || result.added) changedFiles.push({ name: result.fileName, change: result.added ? 'added' : 'updated' })
       await step.do(`Update attachment progress ${index + 1}`, () => updateWorkspace(env.EBUY_DB, opportunityKey, {
         archivedCount,
         failedCount,
@@ -186,6 +305,23 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
       errorMessage: failedCount ? `${failedCount} SAM.gov attachment${failedCount === 1 ? '' : 's'} could not be saved` : null,
       completedAt,
     }))
+    if (syncAttachments && (changedFiles.length || removedFiles.length)) {
+      await step.do('Record SAM attachment alert', async () => {
+        if (!(await alertStorageReady(env.EBUY_DB))) return null
+        return upsertOpportunityAlert(env.EBUY_DB, {
+          opportunityKey,
+          type: 'sam_files',
+          fingerprint: alertFingerprint({ sourceRevision, current: notice.resourceLinks }),
+          summary: `${changedFiles.length + removedFiles.length} SAM.gov attachment change${changedFiles.length + removedFiles.length === 1 ? '' : 's'} found`,
+          details: {
+            changedFiles,
+            removedFiles: removedFiles.map((file) => ({ name: file.file_name, sourceUrl: file.source_url })),
+            sourceRevision,
+            note: removedFiles.length ? 'Files removed from SAM.gov remain preserved in SharePoint.' : '',
+          },
+        })
+      })
+    }
     console.info(JSON.stringify({
       event: 'opportunity_workspace_complete',
       opportunityKey,
