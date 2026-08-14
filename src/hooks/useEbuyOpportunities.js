@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getEbuyStatus,
   listEbuyOpportunities,
+  startEbuyLiveSync,
   updateEbuyOpportunityState,
 } from '@/services/ebuyService'
 
@@ -10,7 +11,9 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [startingSync, setStartingSync] = useState(false)
   const requestRef = useRef(0)
+  const terminalRunRef = useRef(null)
 
   const load = useCallback(async ({ silent = false } = {}) => {
     const request = ++requestRef.current
@@ -36,6 +39,48 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     return () => window.clearTimeout(timer)
   }, [load, search])
 
+  useEffect(() => {
+    if (status?.lastSync?.status !== 'running') return undefined
+    let disposed = false
+    const refreshProgress = async () => {
+      try {
+        const nextStatus = await getEbuyStatus()
+        if (disposed) return
+        setStatus(nextStatus)
+        const run = nextStatus?.lastSync
+        if (run && ['success', 'error'].includes(run.status) && terminalRunRef.current !== run.id) {
+          terminalRunRef.current = run.id
+          await load({ silent: true })
+        }
+      } catch {
+        // Keep the last known progress visible through a temporary status-read failure.
+      }
+    }
+    const timer = window.setInterval(refreshProgress, 2000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [load, status?.lastSync?.status])
+
+  const synchronize = useCallback(async () => {
+    if (startingSync || status?.lastSync?.status === 'running') return { alreadyRunning: true }
+    setStartingSync(true)
+    setError(null)
+    try {
+      const result = await startEbuyLiveSync()
+      setStatus((current) => ({
+        ...(current || {}),
+        lastSync: {
+          ...(current?.lastSync || {}),
+          status: 'running',
+          started_at: new Date().toISOString(),
+          progress: { phase: 'preparing', percent: 2, message: result.alreadyRunning ? 'Joining the active eBuy synchronization' : 'Preparing eBuy synchronization' },
+        },
+      }))
+      return result
+    } finally {
+      setStartingSync(false)
+    }
+  }, [startingSync, status?.lastSync?.status])
+
   const updateState = useCallback(async (requestId, reviewState, pipelineContractId = null) => {
     const previous = data.opportunities
     setData((current) => ({
@@ -57,5 +102,9 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     }
   }, [data.opportunities])
 
-  return { ...data, status, loading, error, refresh: load, updateState }
+  return {
+    ...data, status, loading, error,
+    syncing: startingSync || status?.lastSync?.status === 'running',
+    refresh: load, synchronize, updateState,
+  }
 }
