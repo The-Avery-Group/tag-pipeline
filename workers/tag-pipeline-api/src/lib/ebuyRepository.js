@@ -49,6 +49,15 @@ function publicOpportunity(row) {
   }
 }
 
+function publicSyncRun(row) {
+  if (!row) return null
+  const details = decode(row.details_json, {})
+  const progress = details.progress || (row.status === 'success'
+    ? { phase: 'complete', percent: 100, message: 'eBuy synchronization complete' }
+    : null)
+  return { ...row, details, progress }
+}
+
 export async function ebuyStorageStatus(db, { excludeFixtures = false } = {}) {
   if (!db) return { status: 'not_configured', message: 'The eBuy D1 database binding is not configured.' }
   try {
@@ -62,7 +71,7 @@ export async function ebuyStorageStatus(db, { excludeFixtures = false } = {}) {
       status: latest?.status === 'error' ? 'error' : 'ready',
       message: latest?.status === 'error' ? latest.error_message || 'The latest eBuy sync failed.' : 'The eBuy archive is ready.',
       opportunityCount: Number(count?.count || 0),
-      lastSync: latest || null,
+      lastSync: publicSyncRun(latest),
     }
   } catch (error) {
     return { status: 'error', message: error.message }
@@ -286,6 +295,18 @@ export async function startEbuySyncRun(db, mode, details = {}) {
   return { id, startedAt }
 }
 
+export async function updateEbuySyncRunProgress(db, id, result = {}, progress = {}) {
+  const details = { ...(result?.details || {}), progress }
+  await db.prepare(`UPDATE ebuy_sync_runs SET discovered_count = ?, inserted_count = ?, updated_count = ?,
+    unchanged_count = ?, removed_count = ?, archived_file_count = ?, details_json = ?
+    WHERE id = ? AND status = 'running'`)
+    .bind(
+      Number(result?.discovered || 0), Number(result?.inserted || 0), Number(result?.updated || 0),
+      Number(result?.unchanged || 0), Number(result?.removed || 0), Number(result?.archivedFiles || 0),
+      encode(details), id,
+    ).run()
+}
+
 export async function hasRunningEbuySync(db) {
   const threshold = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()
   const row = await db.prepare("SELECT id FROM ebuy_sync_runs WHERE status = 'running' AND started_at >= ? ORDER BY started_at DESC LIMIT 1").bind(threshold).first()
@@ -312,10 +333,16 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
 
   for (const sourceRecord of records) {
     const record = normalizeEbuyOpportunity(sourceRecord, nowIso)
-    const hash = await hashEbuyOpportunity(record)
     const existing = await db.prepare('SELECT * FROM ebuy_opportunities WHERE request_id = ?').bind(record.requestId).first()
+    const previousRecord = decode(existing?.raw_json, {})
+    // Discovery summaries arrive before the slower detail request. Preserve
+    // known file and amendment metadata until the detail pass replaces it so
+    // a transient eBuy failure cannot erase the information needed to retry.
+    if (!record.attachments.length && Array.isArray(previousRecord.attachments)) record.attachments = previousRecord.attachments
+    if (!record.amendments.length && Array.isArray(previousRecord.amendments)) record.amendments = previousRecord.amendments
+    const hash = await hashEbuyOpportunity(record)
     const lifecycle = lifecycleForEbuyOpportunity(record, now)
-    const changed = existing ? changedEbuyFields(decode(existing.raw_json, {}), record) : Object.keys(record)
+    const changed = existing ? changedEbuyFields(previousRecord, record) : Object.keys(record)
     const state = existing?.review_state || 'new'
     const purgeAfter = retentionDeadline(state, lifecycle, now, settings)
     const rawJson = encode({ ...record, fixtureSource: source === 'fixture' ? 'sanitized-g2x-schema' : undefined })
