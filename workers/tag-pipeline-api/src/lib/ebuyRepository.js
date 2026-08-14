@@ -269,8 +269,31 @@ export async function countPendingEbuyAttachments(db, runStartedAt) {
   return Number(row?.count || 0)
 }
 
+export async function getEbuyAttachmentArchiveProgress(db, runStartedAt) {
+  const row = await db.prepare(`SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN a.archive_status = 'archived' THEN 1 ELSE 0 END) AS archived,
+      SUM(CASE WHEN a.archive_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN a.archive_status = 'error' THEN 1 ELSE 0 END) AS failed
+    FROM ebuy_attachments a
+    JOIN ebuy_opportunities o ON o.request_id = a.request_id
+    WHERE o.last_seen_at >= ?`).bind(runStartedAt).first()
+  return {
+    total: Number(row?.total || 0),
+    archived: Number(row?.archived || 0),
+    pending: Number(row?.pending || 0),
+    failed: Number(row?.failed || 0),
+  }
+}
+
 export async function nextPendingEbuyAttachment(db, runStartedAt) {
-  const row = await db.prepare(`SELECT a.*, o.raw_json
+  const row = await db.prepare(`SELECT a.*, o.raw_json,
+      EXISTS(
+        SELECT 1 FROM ebuy_attachments archived
+        WHERE archived.request_id = a.request_id
+          AND archived.archive_status = 'archived'
+          AND archived.sharepoint_item_id IS NOT NULL
+      ) AS archive_folder_ready
     FROM ebuy_attachments a JOIN ebuy_opportunities o ON o.request_id = a.request_id
     WHERE a.archive_status = 'pending' AND o.last_seen_at >= ?
     ORDER BY a.updated_at, a.request_id, a.id LIMIT 1`).bind(runStartedAt).first()
@@ -282,6 +305,7 @@ export async function nextPendingEbuyAttachment(db, runStartedAt) {
     id: row.id,
     requestId: row.request_id,
     contractNumber: opportunity?.sourceDetails?.contractNumber || opportunity?.vehicleSources?.[0] || '',
+    archiveFolderReady: Boolean(row.archive_folder_ready),
     attachment: attachment || {
       id: row.id,
       fileName: row.file_name,
