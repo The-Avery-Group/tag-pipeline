@@ -66,7 +66,7 @@ test('live eBuy authentication preserves the first-party request context from th
   }
 })
 
-test('live eBuy attachment download sends the source attachment DTO expected by eBuy', async () => {
+test('live eBuy attachment download sends the official client download command', async () => {
   const originalFetch = globalThis.fetch
   let captured
   globalThis.fetch = async (url, options = {}) => {
@@ -96,13 +96,9 @@ test('live eBuy attachment download sends the source attachment DTO expected by 
     assert.equal(captured.options.headers.Origin, 'https://www.ebuy.gsa.gov/')
     assert.equal(captured.options.headers.Referer, 'https://www.ebuy.gsa.gov/ebuy/seller/prepare-quote/RFQ1829030')
     assert.deepEqual(JSON.parse(captured.options.body.get('data')), {
-      docName: 'Statement of Work.pdf',
+      fileName: 'Statement of Work.pdf',
       docPath: '/documents/statement-of-work.pdf',
-      docSeqNum: 4,
-      docType: 1,
-      docSessionId: 12345,
-      docSessionDate: 1_786_000_000_000,
-      seqNum: 4,
+      action: 'download',
     })
   } finally {
     globalThis.fetch = originalFetch
