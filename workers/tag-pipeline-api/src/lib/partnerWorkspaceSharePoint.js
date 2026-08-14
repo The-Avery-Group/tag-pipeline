@@ -17,6 +17,12 @@ function normalizedHeader(value) {
   return String(value || '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
+export function partnerWorkbookValue(row, header, ...fallbackHeaders) {
+  const wanted = [header, ...fallbackHeaders].map(normalizedHeader)
+  const sourceHeader = Object.keys(row || {}).find((key) => wanted.includes(normalizedHeader(key)))
+  return sourceHeader ? row[sourceHeader] : ''
+}
+
 export function normalizePartnerFolderName(value) {
   const words = String(value || '')
     .normalize('NFKD')
@@ -130,13 +136,13 @@ export async function scanPartnerFolders(env) {
     normalizedName: normalizePartnerFolderName(folder.name),
   }))
   const partnerRows = partners.map((partner) => {
-    const name = String(partner['Partner Name'] || '').trim()
-    const currentLink = String(partner[PARTNER_FOLDER_HEADER] || partner[LEGACY_PARTNER_FOLDER_HEADER] || '').trim()
+    const name = String(partnerWorkbookValue(partner, 'Partner Name')).trim()
+    const currentLink = String(partnerWorkbookValue(partner, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
     const normalizedCurrentLink = currentLink.replace(/\/$/, '').toLowerCase()
     const linkedFolder = folders.find((folder) => folder.webUrl.replace(/\/$/, '').toLowerCase() === normalizedCurrentLink)
     const matches = folders.filter((folder) => folder.normalizedName === normalizePartnerFolderName(name))
     return {
-      uei: String(partner['UEI Number'] || '').trim().toUpperCase(),
+      uei: String(partnerWorkbookValue(partner, 'UEI Number')).trim().toUpperCase(),
       partnerName: name,
       currentLink,
       status: linkedFolder ? 'linked' : matches.length === 1 ? 'matched' : matches.length > 1 ? 'ambiguous' : 'unmatched',
@@ -164,13 +170,13 @@ export async function applyPartnerFolderLinks(env, mappings) {
   for (const mapping of mappings || []) {
     const uei = String(mapping?.uei || '').trim().toUpperCase()
     const folder = folderById.get(String(mapping?.folderId || '').trim())
-    const row = rows.find((candidate) => String(candidate['UEI Number'] || '').trim().toUpperCase() === uei)
+    const row = rows.find((candidate) => String(partnerWorkbookValue(candidate, 'UEI Number')).trim().toUpperCase() === uei)
     if (!uei || !folder || !row) {
       skipped += 1
       results.push({ uei, status: 'skipped', reason: !row ? 'Partner no longer exists' : 'Selected SharePoint folder is unavailable' })
       continue
     }
-    const currentLink = String(row[PARTNER_FOLDER_HEADER] || row[LEGACY_PARTNER_FOLDER_HEADER] || '').trim()
+    const currentLink = String(partnerWorkbookValue(row, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
     const expectedCurrentLink = String(mapping?.expectedCurrentLink || '').trim()
     if (currentLink.replace(/\/$/, '').toLowerCase() === String(folder.webUrl || '').replace(/\/$/, '').toLowerCase()) {
       results.push({ uei, status: 'already_linked', webUrl: folder.webUrl || currentLink })
@@ -197,9 +203,9 @@ export async function applyPartnerFolderLinks(env, mappings) {
 async function partnerFolder(env, uei) {
   const { token, driveId, root } = await workbookContext(env)
   const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
-  const partner = partners.find((candidate) => String(candidate['UEI Number'] || '').trim().toUpperCase() === String(uei || '').trim().toUpperCase())
+  const partner = partners.find((candidate) => String(partnerWorkbookValue(candidate, 'UEI Number')).trim().toUpperCase() === String(uei || '').trim().toUpperCase())
   if (!partner) throw Object.assign(new Error('Partner was not found in PartnersTable'), { status: 404 })
-  const link = String(partner[PARTNER_FOLDER_HEADER] || partner[LEGACY_PARTNER_FOLDER_HEADER] || '').trim()
+  const link = String(partnerWorkbookValue(partner, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
   if (!link) throw Object.assign(new Error('Link this partner to its SharePoint folder before uploading files'), { status: 409 })
   const { body: folder } = await graphResponse(
     `https://graph.microsoft.com/v1.0/shares/${encodedSharingUrl(link)}/driveItem?$select=id,name,webUrl,parentReference,folder`,
