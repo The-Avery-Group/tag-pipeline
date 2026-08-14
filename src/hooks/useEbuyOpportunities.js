@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getEbuyStatus,
   listEbuyOpportunities,
-  startEbuyFixtureSync,
   updateEbuyOpportunityState,
 } from '@/services/ebuyService'
 
@@ -11,7 +10,6 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [syncing, setSyncing] = useState(false)
   const requestRef = useRef(0)
 
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -59,30 +57,5 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     }
   }, [data.opportunities])
 
-  const syncFixture = useCallback(async () => {
-    if (syncing) return
-    setSyncing(true)
-    setError(null)
-    const startedAt = Date.now()
-    try {
-      await startEbuyFixtureSync()
-      for (let attempt = 0; attempt < 30; attempt++) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000))
-        const nextStatus = await getEbuyStatus()
-        setStatus(nextStatus)
-        const lastStarted = Date.parse(nextStatus.lastSync?.started_at || 0)
-        if (lastStarted >= startedAt - 2000 && ['success', 'error'].includes(nextStatus.lastSync?.status)) {
-          if (nextStatus.lastSync.status === 'error') throw new Error(nextStatus.lastSync.error_message || 'Test archive sync failed')
-          await load({ silent: true })
-          return nextStatus
-        }
-      }
-      throw new Error('The test sync is still running. Its status will remain available after you leave this page.')
-    } finally {
-      setSyncing(false)
-    }
-  }, [load, syncing])
-
-  return { ...data, status, loading, error, syncing, refresh: load, syncFixture, updateState }
+  return { ...data, status, loading, error, refresh: load, updateState }
 }
-
