@@ -131,7 +131,24 @@ export default function EbuyOpportunityDetail({ toast }) {
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Files</span><h2>Attachments</h2></div><span className={styles.count}>{opportunity.attachments?.length || 0}</span></header>
-        <div className={styles.list}>{opportunity.attachments?.map((attachment) => <article key={attachment.id} className={styles.file}><div><strong>{attachment.fileName}</strong><span>{attachment.byteSize ? `${Math.ceil(attachment.byteSize / 1024)} KB` : 'Size unavailable'} · {attachment.archiveStatus}</span></div>{attachment.sharepointWebUrl ? <a className="btn" href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived file</a> : <span className={styles.pending}>{attachment.archiveStatus === 'fixture' ? 'Test metadata only' : 'Awaiting archive'}</span>}</article>)}{!opportunity.attachments?.length && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
+        <div className={styles.list}>{opportunity.attachments?.map((attachment) => {
+          const archived = attachment.archiveStatus === 'archived'
+          const failed = attachment.archiveStatus === 'error'
+          const size = attachment.byteSize
+            ? `${Math.ceil(attachment.byteSize / 1024)} KB`
+            : archived ? 'Size not reported' : 'Size pending'
+          const status = failed ? 'Archive failed' : archived ? 'Archived' : attachment.archiveStatus === 'fixture' ? 'Test record' : 'Awaiting archive'
+          return <article key={attachment.id} className={styles.file}>
+            <div>
+              <strong>{attachment.fileName}</strong>
+              <span>{size} · {status}</span>
+              {failed && <span className={styles.fileError}>{attachment.errorMessage || 'The file could not be archived during the last synchronization.'}</span>}
+            </div>
+            {attachment.sharepointWebUrl
+              ? <a className="btn" href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived file</a>
+              : <span className={styles.pending}>{attachment.archiveStatus === 'fixture' ? 'Test metadata only' : failed ? 'Retries on next sync' : 'Awaiting archive'}</span>}
+          </article>
+        })}{!opportunity.attachments?.length && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
       </section>
     </div>
   </>
