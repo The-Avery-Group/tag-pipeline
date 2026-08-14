@@ -92,8 +92,8 @@ test('live eBuy attachment download sends the source attachment DTO expected by 
     assert.equal(captured.url, 'https://www.ebuy.gsa.gov/ebuy/api/services/ebuyservices/rfq/RFQ1829030/rfqAttachment/')
     assert.equal(captured.options.method, 'POST')
     assert.equal(captured.options.headers.Accept, 'application/json, text/plain, */*')
-    assert.equal(captured.options.headers.Authorization, 'Bearer contract-jwt')
-    assert.equal(captured.options.headers.Origin, 'https://www.ebuy.gsa.gov')
+    assert.equal(captured.options.headers.Authorization, undefined)
+    assert.equal(captured.options.headers.Origin, 'https://www.ebuy.gsa.gov/')
     assert.equal(captured.options.headers.Referer, 'https://www.ebuy.gsa.gov/ebuy/seller/prepare-quote/RFQ1829030')
     assert.deepEqual(JSON.parse(captured.options.body.get('data')), {
       docName: 'Statement of Work.pdf',
@@ -138,7 +138,8 @@ test('live eBuy attachment download retries a protected upload path when the att
     assert.equal(response.status, 200)
     assert.equal(calls.length, 2)
     assert.equal(calls[1].url, 'https://www.ebuy.gsa.gov/ebuy_upload/202608/RFI1830128/folder/003%20-%20Statement%20of%20Work.123.docx')
-    assert.equal(calls[1].options.headers.Authorization, 'Bearer contract-jwt')
+    assert.equal(calls[1].options.headers.Authorization, undefined)
+    assert.equal(calls[1].options.headers.Origin, 'https://www.ebuy.gsa.gov/')
   } finally {
     globalThis.fetch = originalFetch
   }
