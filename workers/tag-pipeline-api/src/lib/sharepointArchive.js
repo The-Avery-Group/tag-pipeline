@@ -34,9 +34,20 @@ async function ensureFolder(driveId, token, parentId, folderName) {
   })
 }
 
-export async function ensureEbuyArchiveFolder(env, requestId) {
+export async function ensureEbuyArchiveFolder(env, requestId, { fastLookup = false } = {}) {
   const driveId = env.EBUY_ARCHIVE_DRIVE_ID || env.DRIVE_ID || DEFAULT_DRIVE_ID
   const token = await getAppOnlyGraphToken(env)
+  if (fastLookup) {
+    const path = ['TAG CRM', 'eBuy Archive', safeSegment(requestId)].map(encodeURIComponent).join('/')
+    const existing = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (existing.ok) {
+      const opportunity = await existing.json()
+      return { driveId, folderId: opportunity.id, webUrl: opportunity.webUrl, token }
+    }
+    if (existing.status !== 404) throw new Error(`Could not inspect SharePoint archive folder (${existing.status})`)
+  }
   const root = await ensureFolder(driveId, token, 'root', 'TAG CRM')
   const archive = await ensureFolder(driveId, token, root.id, 'eBuy Archive')
   const opportunity = await ensureFolder(driveId, token, archive.id, safeSegment(requestId))
