@@ -6,10 +6,18 @@ import {
   updateEbuyOpportunityState,
 } from '@/services/ebuyService'
 
+const listCache = new Map()
+let statusCache = null
+
+function listCacheKey({ search, type, state, includeDismissed }) {
+  return JSON.stringify([search, type, state, Boolean(includeDismissed)])
+}
+
 export function useEbuyOpportunities({ search = '', type = 'all', state = 'all', includeDismissed = false } = {}) {
-  const [data, setData] = useState({ opportunities: [], total: 0 })
-  const [status, setStatus] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const key = listCacheKey({ search, type, state, includeDismissed })
+  const [data, setData] = useState(() => listCache.get(key) || { opportunities: [], total: 0 })
+  const [status, setStatus] = useState(statusCache)
+  const [loading, setLoading] = useState(() => !listCache.has(key))
   const [error, setError] = useState(null)
   const [startingSync, setStartingSync] = useState(false)
   const requestRef = useRef(0)
@@ -26,18 +34,28 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
       if (request !== requestRef.current) return
       setData(nextData)
       setStatus(nextStatus)
+      listCache.set(key, nextData)
+      statusCache = nextStatus
       setError(null)
     } catch (loadError) {
       if (request === requestRef.current) setError(loadError)
     } finally {
       if (request === requestRef.current && !silent) setLoading(false)
     }
-  }, [includeDismissed, search, state, type])
+  }, [includeDismissed, key, search, state, type])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => load(), search ? 220 : 0)
+    const cached = listCache.get(key)
+    if (cached) {
+      setData(cached)
+      setStatus(statusCache)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
+    const timer = window.setTimeout(() => load({ silent: Boolean(cached) }), search ? 220 : 0)
     return () => window.clearTimeout(timer)
-  }, [load, search])
+  }, [key, load, search])
 
   useEffect(() => {
     if (status?.lastSync?.status !== 'running') return undefined
@@ -47,6 +65,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
         const nextStatus = await getEbuyStatus()
         if (disposed) return
         setStatus(nextStatus)
+        statusCache = nextStatus
         const run = nextStatus?.lastSync
         if (run && ['success', 'error'].includes(run.status) && terminalRunRef.current !== run.id) {
           terminalRunRef.current = run.id
@@ -66,15 +85,19 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     setError(null)
     try {
       const result = await startEbuyLiveSync()
-      setStatus((current) => ({
-        ...(current || {}),
-        lastSync: {
-          ...(current?.lastSync || {}),
-          status: 'running',
-          started_at: new Date().toISOString(),
-          progress: { phase: 'preparing', percent: 2, message: result.alreadyRunning ? 'Joining the active eBuy synchronization' : 'Preparing eBuy synchronization' },
-        },
-      }))
+      setStatus((current) => {
+        const next = {
+          ...(current || {}),
+          lastSync: {
+            ...(current?.lastSync || {}),
+            status: 'running',
+            started_at: new Date().toISOString(),
+            progress: { phase: 'preparing', percent: 2, message: result.alreadyRunning ? 'Joining the active eBuy synchronization' : 'Preparing eBuy synchronization' },
+          },
+        }
+        statusCache = next
+        return next
+      })
       return result
     } finally {
       setStartingSync(false)
@@ -83,24 +106,36 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
 
   const updateState = useCallback(async (requestId, reviewState, pipelineContractId = null) => {
     const previous = data.opportunities
-    setData((current) => ({
-      ...current,
-      opportunities: current.opportunities.map((item) => item.requestId === requestId
+    setData((current) => {
+      const next = {
+        ...current,
+        opportunities: current.opportunities.map((item) => item.requestId === requestId
         ? { ...item, reviewState, pipelineContractId: pipelineContractId || item.pipelineContractId }
         : item),
-    }))
+      }
+      listCache.set(key, next)
+      return next
+    })
     try {
       const result = await updateEbuyOpportunityState(requestId, reviewState, pipelineContractId)
-      setData((current) => ({
-        ...current,
-        opportunities: current.opportunities.map((item) => item.requestId === requestId ? result.opportunity : item),
-      }))
+      setData((current) => {
+        const next = {
+          ...current,
+          opportunities: current.opportunities.map((item) => item.requestId === requestId ? result.opportunity : item),
+        }
+        listCache.set(key, next)
+        return next
+      })
       return result.opportunity
     } catch (updateError) {
-      setData((current) => ({ ...current, opportunities: previous }))
+      setData((current) => {
+        const next = { ...current, opportunities: previous }
+        listCache.set(key, next)
+        return next
+      })
       throw updateError
     }
-  }, [data.opportunities])
+  }, [data.opportunities, key])
 
   return {
     ...data, status, loading, error,
