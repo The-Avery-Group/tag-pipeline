@@ -29,14 +29,6 @@ export async function updateEbuyOpportunityState(requestId, reviewState, pipelin
   })
 }
 
-export async function startEbuyFixtureSync() {
-  return workerJson('/ebuy/sync/fixture', { method: 'POST' })
-}
-
-export async function archiveEbuyTestAttachment() {
-  return workerJson('/ebuy/archive/test-attachment', { method: 'POST' })
-}
-
 export async function connectEbuyAccount(credentials) {
   return workerJson('/ebuy/connection', {
     method: 'POST',
