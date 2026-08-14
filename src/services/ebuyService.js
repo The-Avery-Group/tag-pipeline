@@ -12,8 +12,7 @@ export async function listEbuyOpportunities(options = {}) {
   if (options.state && options.state !== 'all') query.set('state', options.state)
   if (options.lifecycle && options.lifecycle !== 'all') query.set('lifecycle', options.lifecycle)
   if (options.includeDismissed) query.set('includeDismissed', 'true')
-  query.set('page', String(options.page || 1))
-  query.set('limit', String(options.limit || 25))
+  query.set('all', 'true')
   return workerJson(`/ebuy/opportunities?${query.toString()}`, { cache: 'no-store' })
 }
 
