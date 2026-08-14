@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import Topbar from '@/components/Layout/Topbar'
+import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
 import FollowUpEmailTemplates from '@/components/Settings/FollowUpEmailTemplates'
 import LegacyFolderMigration from '@/components/Settings/LegacyFolderMigration'
 import { useAuth } from '@/auth/AuthContext'
@@ -10,6 +11,7 @@ import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import {
   connectEbuyAccount,
   disconnectEbuyAccount,
+  getEbuyStatus,
   startEbuyLiveSync,
   testEbuyConnection,
 } from '@/services/ebuyService'
@@ -205,12 +207,23 @@ export default function Settings({ toast }) {
   }
 
   const handleEbuyLiveSync = async () => {
-    if (ebuyLiveSyncing) return
+    if (ebuyLiveSyncing || integrationStatus?.ebuy?.lastSync?.status === 'running') return
     setEbuyLiveSyncing(true)
     try {
       const result = await startEbuyLiveSync()
+      setIntegrationStatus((current) => ({
+        ...(current || {}),
+        ebuy: {
+          ...(current?.ebuy || {}),
+          lastSync: {
+            ...(current?.ebuy?.lastSync || {}),
+            status: 'running',
+            started_at: new Date().toISOString(),
+            progress: { phase: 'preparing', percent: 2, message: result.alreadyRunning ? 'Joining the active eBuy synchronization' : 'Preparing eBuy synchronization' },
+          },
+        },
+      }))
       toast?.success(result.alreadyRunning ? 'eBuy synchronization is already running' : 'eBuy synchronization started')
-      window.setTimeout(() => loadIntegrationStatus(), 1800)
     } catch (error) {
       toast?.error(`Could not start eBuy synchronization: ${error.message}`)
     } finally {
@@ -304,6 +317,21 @@ export default function Settings({ toast }) {
   }, [])
 
   useEffect(() => { loadIntegrationStatus() }, [])
+
+  useEffect(() => {
+    if (integrationStatus?.ebuy?.lastSync?.status !== 'running') return undefined
+    let disposed = false
+    const refreshEbuyProgress = async () => {
+      try {
+        const ebuy = await getEbuyStatus()
+        if (!disposed) setIntegrationStatus((current) => ({ ...(current || {}), ebuy }))
+      } catch {
+        // Preserve the last durable progress value through temporary status failures.
+      }
+    }
+    const timer = window.setInterval(refreshEbuyProgress, 2000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [integrationStatus?.ebuy?.lastSync?.status])
 
   const handleSaveSAM = async () => {
     setSavingSAM(true)
@@ -568,12 +596,15 @@ export default function Settings({ toast }) {
                 {integrationStatus?.ebuy?.status === 'migration_required' && <p className={styles.setupNotice}>Apply the latest D1 migration before connecting the account.</p>}
 
                 {integrationStatus?.ebuy?.connector?.connection?.configured && !showEbuyConnectionForm && (
-                  <div className={styles.ebuyTestActions}>
-                    <button className="btn btn-primary" type="button" onClick={handleEbuyLiveSync} disabled={ebuyLiveSyncing}>{ebuyLiveSyncing ? 'Starting…' : 'Synchronize now'}</button>
-                    <button className="btn" type="button" onClick={handleEbuyConnectionTest} disabled={ebuyTestingConnection}>{ebuyTestingConnection ? 'Checking…' : 'Check connection'}</button>
-                    <button className="btn" type="button" onClick={() => setShowEbuyConnectionForm(true)}>Replace credentials</button>
-                    <button className="btn btn-danger" type="button" onClick={handleEbuyDisconnect} disabled={ebuyDisconnecting}>{ebuyDisconnecting ? 'Disconnecting…' : 'Disconnect'}</button>
-                  </div>
+                  <>
+                    <div className={styles.ebuyTestActions}>
+                      <button className="btn btn-primary" type="button" onClick={handleEbuyLiveSync} disabled={ebuyLiveSyncing || integrationStatus?.ebuy?.lastSync?.status === 'running'}>{integrationStatus?.ebuy?.lastSync?.status === 'running' ? 'Synchronizing…' : ebuyLiveSyncing ? 'Starting…' : 'Synchronize now'}</button>
+                      <button className="btn" type="button" onClick={handleEbuyConnectionTest} disabled={ebuyTestingConnection}>{ebuyTestingConnection ? 'Checking…' : 'Check connection'}</button>
+                      <button className="btn" type="button" onClick={() => setShowEbuyConnectionForm(true)}>Replace credentials</button>
+                      <button className="btn btn-danger" type="button" onClick={handleEbuyDisconnect} disabled={ebuyDisconnecting}>{ebuyDisconnecting ? 'Disconnecting…' : 'Disconnect'}</button>
+                    </div>
+                    <EbuySyncProgress run={integrationStatus?.ebuy?.lastSync} compact />
+                  </>
                 )}
               </div>
 
