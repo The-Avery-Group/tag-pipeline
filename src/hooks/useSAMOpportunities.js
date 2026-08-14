@@ -13,8 +13,11 @@ import {
 import { retryIdempotent } from '@/services/workbookMutations'
 import { notifyNewOpportunity } from '@/services/notifyService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
-import { normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
-import { isSAMOpportunityFlagged } from '@/utils/samOpportunityHelpers'
+import {
+  cleanSAMOpportunityTitle,
+  isSAMOpportunityFlagged,
+  normalizeSAMNoticeType,
+} from '@/utils/samOpportunityHelpers'
 import { parseSAMPOCs } from '@/utils/samPoc'
 import { requestOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 
@@ -348,7 +351,7 @@ export function useSAMOpportunities() {
       'Notice Type':                            normalizeSAMNoticeType(row['Notice Type']),
       'Opportunity Outlook':                     outlook,
       'Contract Number / Notice ID':             row['Solicitation Number'] || row['Notice ID'] || '',
-      'Project Title / Description*':            row['Title']               || '',
+      'Project Title / Description*':            cleanSAMOpportunityTitle(row['Title']),
       'Solicitation Number':                     row['Solicitation Number'] || '',
       'Set- Aside*':                             row['Set-Aside Type']      || '',
       'Department*':                             row['Department']          || '',
