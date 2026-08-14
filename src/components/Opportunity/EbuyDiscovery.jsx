@@ -22,10 +22,9 @@ export default function EbuyDiscovery({ search, pipeline, add, toast, onCountCha
   const [type, setType] = useState('all')
   const [state, setState] = useState('all')
   const [includeDismissed, setIncludeDismissed] = useState(false)
-  const [page, setPage] = useState(1)
   const [actioning, setActioning] = useState(new Set())
   const actionRef = useRef(new Set())
-  const archive = useEbuyOpportunities({ search, type, state, includeDismissed, page })
+  const archive = useEbuyOpportunities({ search, type, state, includeDismissed })
   const pipelineIds = useMemo(() => new Set(pipeline.map((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase())), [pipeline])
   useEffect(() => { onCountChange?.(archive.total) }, [archive.total, onCountChange])
 
@@ -69,13 +68,13 @@ export default function EbuyDiscovery({ search, pipeline, add, toast, onCountCha
     <section className={styles.workspace} aria-label="GSA eBuy opportunities">
       <div className={styles.toolbar}>
         <div className={styles.filters}>
-          <label><span>Type</span><select value={type} onChange={(event) => { setType(event.target.value); setPage(1) }}>
+          <label><span>Type</span><select value={type} onChange={(event) => setType(event.target.value)}>
             <option value="all">All types</option><option value="RFI">RFI</option><option value="RFQ">RFQ</option><option value="RFP">RFP</option>
           </select></label>
-          <label><span>Review state</span><select value={state} onChange={(event) => { setState(event.target.value); setPage(1) }}>
+          <label><span>Review state</span><select value={state} onChange={(event) => setState(event.target.value)}>
             <option value="all">All active</option><option value="new">New</option><option value="flagged">Flagged</option><option value="tracked">Tracked</option><option value="added_to_pipeline">In pipeline</option>
           </select></label>
-          <label className={styles.check}><input type="checkbox" checked={includeDismissed} onChange={(event) => { setIncludeDismissed(event.target.checked); setPage(1) }} /> Show dismissed</label>
+          <label className={styles.check}><input type="checkbox" checked={includeDismissed} onChange={(event) => setIncludeDismissed(event.target.checked)} /> Show dismissed</label>
         </div>
         <div className={styles.syncSummary}>
           <span>{archive.total} archived opportunit{archive.total === 1 ? 'y' : 'ies'}</span>
@@ -123,11 +122,6 @@ export default function EbuyDiscovery({ search, pipeline, add, toast, onCountCha
           </table>
         </div>
       )}
-      {archive.totalPages > 1 && <div className={styles.pagination}>
-        <button className="btn" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button>
-        <span>Page {page} of {archive.totalPages}</span>
-        <button className="btn" disabled={page >= archive.totalPages} onClick={() => setPage((value) => value + 1)}>Next</button>
-      </div>}
     </section>
   )
 }
