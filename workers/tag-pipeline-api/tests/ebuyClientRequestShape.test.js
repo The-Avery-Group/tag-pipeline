@@ -25,7 +25,9 @@ test('live eBuy authentication preserves the first-party request context from th
     }),
     jsonResponse({ access_token: 'access-token', expires_in: 3600 }),
     jsonResponse({
-      header: { status: '200' },
+      // The seller-login endpoint can return a nonstandard envelope status
+      // even when its contract-list payload is successful.
+      header: { status: 1 },
       response: {
         sellerEmails: ['47QRAA22D0000'],
         sellerContractInfoList: [{ contractNumber: '47QRAA22D0000', contractVehicle: 'MAS', companyName: 'TAG' }],
