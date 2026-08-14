@@ -4,6 +4,8 @@ import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
 import RichText from '@/components/Common/RichText'
+import PartnerFilesPanel from '@/components/Partner/PartnerFilesPanel'
+import PartnerNotesPanel from '@/components/Partner/PartnerNotesPanel'
 import { usePartners } from '@/hooks/usePartners'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
@@ -17,7 +19,7 @@ const FIELDS = [
   ['UEI Number', 'UEI', 'input', true, 'identity'],
   ['Contact Information', 'Contact details', 'textarea', false, 'contact'],
   ['Link to website', 'Website', 'input', false, 'contact'],
-  ['Link to onedrive folder', 'OneDrive folder', 'input', false, 'contact'],
+  ['Link to Partner Folder', 'Partner SharePoint folder', 'input', false, 'contact'],
   ['NAICS Codes', 'NAICS codes', 'input', false, 'market'],
   ['Agencies Worked with', 'Agencies worked with', 'textarea', false, 'market'],
   ['Contracts Vehicles', 'Contract vehicles', 'textarea', false, 'market'],
@@ -101,9 +103,9 @@ export default function Partners({ toast }) {
   useEffect(() => {
     if (!requestedPartnerUEI) return
     const match = partners.find((partner) => String(partner['UEI Number'] || '').trim().toUpperCase() === requestedPartnerUEI)
-    if (match && match._rowIndex !== selected?._rowIndex) {
-      setSelected(match)
-      setEditing(false)
+    if (match) {
+      setSelected((current) => current?._rowIndex === match._rowIndex ? { ...current, ...match } : match)
+      if (match._rowIndex !== selected?._rowIndex) setEditing(false)
     }
   }, [partners, requestedPartnerUEI, selected?._rowIndex])
   const matchedOpportunities = useMemo(() => {
@@ -195,10 +197,11 @@ export default function Partners({ toast }) {
             <div className={styles.profileActions}><button className="btn" disabled={saveAction.isLoading} onClick={() => { setEditing(false); if (!selected) setForm(EMPTY()) }}>Cancel</button><button className="btn btn-primary" disabled={saveAction.isLoading} onClick={save}>{saveAction.isLoading ? 'Saving…' : selected ? 'Save changes' : 'Add partner'}</button></div>
           </div> : selected ? <div className={styles.profile}>
             <div className={styles.profileHeader}><div><div className={styles.eyebrow}>Partner profile</div><h2>{partnerName(selected)}</h2><p>UEI: {selected['UEI Number']}</p></div><div className={styles.headerActions}><button className="btn text-sm" onClick={startEdit}><ActionIcon name="edit" /> Edit</button><button className="btn btn-ghost text-sm" style={{ color: 'var(--red-600)' }} onClick={() => setDeleteTarget(selected)}>Delete</button></div></div>
-            <div className={styles.profileSection}><h3>Contact and links</h3><DetailField label="Contact details" value={selected['Contact Information']} /><DetailField label="Website" value={selected['Link to website']} link="Open website" /><DetailField label="OneDrive folder" value={selected['Link to onedrive folder']} link="Open folder" /></div>
+            <div className={styles.profileSection}><h3>Contact and links</h3><DetailField label="Contact details" value={selected['Contact Information']} /><DetailField label="Website" value={selected['Link to website']} link="Open website" /><DetailField label="Partner SharePoint folder" value={selected['Link to Partner Folder']} link="Open folder" /></div>
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
-            <div className={styles.profileSection}><h3>Notes</h3><DetailField label="Notes" value={selected.Notes} rich /></div>
+            <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
+            <PartnerFilesPanel key={`partner-files-${selected['UEI Number']}`} partner={selected} />
             <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities match this partner’s UEI or name.</p> : matchedOpportunities.map(({ opportunity, matchLabel }) => <button type="button" key={opportunity._rowIndex || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}?row=${opportunity._rowIndex}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]} · {matchLabel}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
           </div> : <div className={styles.emptyProfile}><div>◇</div><strong>Select a partner</strong><span>Choose one from the list to view its profile, or add a new partner.</span><button className="btn btn-primary" onClick={startAdd}>Add partner</button></div>}
         </section>
