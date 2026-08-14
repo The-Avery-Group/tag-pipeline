@@ -35,6 +35,20 @@ async function request(url, options = {}, timeoutMs = 25_000) {
     return await fetch(url, { ...options, signal: controller.signal })
   } catch (cause) {
     if (cause?.name === 'AbortError') throw connectorError('GSA eBuy did not respond before the connection timed out', 'ebuy_timeout', 504)
+    let endpoint = 'unavailable'
+    try {
+      endpoint = new URL(url).pathname
+    } catch {
+      // Never log credentials, query parameters, or request bodies.
+    }
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'ebuy_request_network_error',
+      method: options?.method || 'GET',
+      endpoint,
+      cause: cause?.name || 'Error',
+      message: String(cause?.message || 'Network request failed').slice(0, 300),
+    }))
     throw connectorError('GSA eBuy could not be reached', 'ebuy_network_error', 502)
   } finally {
     clearTimeout(timer)
@@ -349,7 +363,7 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     headers: {
       Accept: 'application/json, text/plain, */*',
       ...ebuyBrowserHeaders(`${EBUY_ORIGIN}/ebuy/seller/prepare-quote/${encodeURIComponent(requestId)}`),
-      Origin: `${EBUY_ORIGIN}/`,
+      Authorization: `Bearer ${jwtToken}`,
       Expires: '0',
       'If-Modified-Since': '0',
     },
@@ -357,9 +371,7 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
   }, 60_000)
   const contentType = String(response.headers.get('Content-Type') || '').toLowerCase()
   if (response.ok && !contentType.includes('application/json')) return response
-  if ([401, 403].includes(response.status)) {
-    throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${response.status})`, 'ebuy_authentication_failed', 401)
-  }
+  const authenticationFailure = [401, 403].includes(response.status)
 
   const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null
   const upstreamMessage = payload?.response?.message || payload?.message
@@ -378,7 +390,7 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
       headers: {
         Accept: '*/*',
         ...ebuyBrowserHeaders(`${EBUY_ORIGIN}/ebuy/seller/prepare-quote/${encodeURIComponent(requestId)}`),
-        Origin: `${EBUY_ORIGIN}/`,
+        Authorization: `Bearer ${jwtToken}`,
         Expires: '0',
         'If-Modified-Since': '0',
       },
@@ -388,6 +400,10 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     if ([401, 403].includes(direct.status)) {
       throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${direct.status})`, 'ebuy_authentication_failed', 401)
     }
+  }
+
+  if (authenticationFailure) {
+    throw connectorError(`GSA eBuy could not download ${attachment.fileName} (${response.status})`, 'ebuy_authentication_failed', 401)
   }
 
   throw connectorError(upstreamMessage, 'ebuy_attachment_download_failed')
