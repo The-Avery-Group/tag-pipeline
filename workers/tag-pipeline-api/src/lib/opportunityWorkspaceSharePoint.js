@@ -14,7 +14,7 @@ const BLOCKED_UPLOAD_EXTENSIONS = new Set([
   'wsf', 'wsh',
 ])
 
-function driveIdFor(env) {
+export function driveIdFor(env) {
   // DRIVE_ID may point at a separate capabilities-document library. Keep the
   // opportunity archive anchored to the workbook library unless its own
   // explicit override is configured.
@@ -28,7 +28,7 @@ function encodedSharingUrl(value) {
   return `u!${btoa(binary).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-')}`
 }
 
-async function graphResponse(url, token, options = {}) {
+export async function graphResponse(url, token, options = {}) {
   const response = await fetch(url, {
     ...options,
     headers: { Authorization: `Bearer ${token}`, ...(options.headers || {}) },
@@ -47,7 +47,7 @@ async function graphResponse(url, token, options = {}) {
   return { response, body }
 }
 
-async function getItem(env, token, driveId, itemId) {
+export async function getItem(env, token, driveId, itemId) {
   const { body } = await graphResponse(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}?$select=id,name,webUrl,parentReference,folder,file,size,lastModifiedDateTime`,
     token,
@@ -237,7 +237,7 @@ export async function finishRecordedWorkspaceFolders(env, workspace) {
   }
 }
 
-async function childByName(env, token, driveId, parentId, name) {
+export async function childByName(env, token, driveId, parentId, name) {
   const encoded = encodeURIComponent(name)
   const response = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}:/${encoded}?$select=id,name,webUrl,parentReference,folder,file,size,lastModifiedDateTime`,
@@ -388,7 +388,7 @@ export async function updatePipelineFolderLink(env, workspace, webUrl) {
   return { updated: true }
 }
 
-function fullItemPath(item) {
+export function fullItemPath(item) {
   const parentPath = String(item?.parentReference?.path || '').replace(/\/$/, '')
   return `${parentPath}/${item?.name || ''}`
 }
