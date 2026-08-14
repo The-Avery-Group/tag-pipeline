@@ -336,14 +336,13 @@ export async function downloadEbuyAttachment(requestId, attachment, jwtToken) {
     return request(attachment.docPath, { headers: { Accept: '*/*' } }, 60_000)
   }
   const form = new FormData()
+  // This endpoint does not accept the attachment DTO returned by the detail
+  // service. The official eBuy client sends a small download command instead.
+  // Keep this shape aligned with RfqHelperService.downloadRfqFile.
   form.append('data', JSON.stringify({
-    docName: attachment.fileName,
+    fileName: attachment.fileName,
     docPath: attachment.docPath,
-    docSeqNum: attachment.docSeqNum,
-    docType: attachment.docType,
-    docSessionId: attachment.docSessionId,
-    docSessionDate: attachment.docSessionDate,
-    seqNum: attachment.seqNum,
+    action: 'download',
   }))
   const response = await request(`${EBUY_API}/rfq/${encodeURIComponent(requestId)}/rfqAttachment/`, {
     method: 'POST',
