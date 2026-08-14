@@ -6,6 +6,8 @@ import {
   hasRunningEbuySync,
   listEbuyOpportunities,
   purgeExpiredEbuyRecords,
+  reconcileEbuyPipelineRecords,
+  unlinkEbuyPipelineRecord,
   updateEbuyReviewState,
 } from '../lib/ebuyRepository.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
@@ -97,6 +99,14 @@ export async function handleEbuy(req, env, identity = {}) {
       return json({ ok: true, ...(await testStoredEbuyConnection(env)) })
     }
     if (path === '/ebuy/sync' && req.method === 'POST') return startLiveSync(env)
+    if (path === '/ebuy/pipeline/reconcile' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json({ ok: true, ...(await reconcileEbuyPipelineRecords(requireDatabase(env), body.pipeline || [])) })
+    }
+    if (path === '/ebuy/pipeline/unlink' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json({ ok: true, ...(await unlinkEbuyPipelineRecord(requireDatabase(env), body.pipelineContractId)) })
+    }
     if (path === '/ebuy/opportunities' && req.method === 'GET') {
       const db = requireDatabase(env)
       return json(await listEbuyOpportunities(db, {
