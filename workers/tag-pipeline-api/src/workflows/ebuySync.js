@@ -1,5 +1,4 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers'
-import { EBUY_FIXTURE_OPPORTUNITIES } from '../fixtures/ebuyOpportunities.js'
 import {
   downloadEbuyAttachment,
   getEbuyContractToken,
@@ -12,6 +11,7 @@ import {
   clearEbuySyncCandidates,
   completeLiveEbuySnapshot,
   countPendingEbuySyncCandidates,
+  deleteEbuyFixtureRecords,
   finishEbuySyncCandidate,
   finishEbuySyncRun,
   getArchivedEbuyAttachmentIds,
@@ -143,7 +143,7 @@ async function processCandidateBatch(env, runId, limit = 4) {
 
 export async function runEbuySyncWorkflow(env, event, step) {
   if (!env.EBUY_DB) throw new Error('The EBUY_DB binding is unavailable')
-  const mode = event.payload?.mode || 'fixture'
+  const mode = event.payload?.mode || 'live'
   const run = await step.do('Create eBuy sync record', () => startEbuySyncRun(env.EBUY_DB, mode, {
     instanceId: event.instanceId,
     source: event.payload?.source || 'manual',
@@ -151,12 +151,8 @@ export async function runEbuySyncWorkflow(env, event, step) {
   const totals = { discovered: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
 
   try {
-    if (mode === 'fixture') {
-      const fixtureResult = await step.do('Synchronize eBuy test archive', {
-        retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '2 minutes',
-      }, () => syncEbuyOpportunities(env.EBUY_DB, EBUY_FIXTURE_OPPORTUNITIES, { source: 'fixture', completeSnapshot: false }))
-      mergeCounts(totals, fixtureResult)
-    } else if (mode === 'live') {
+    if (mode === 'live') {
+      await step.do('Remove legacy eBuy demo records', () => deleteEbuyFixtureRecords(env.EBUY_DB))
       const connection = await step.do('Authenticate company eBuy connection', {
         retries: { limit: 1, delay: '20 seconds', backoff: 'constant' }, timeout: '1 minute',
       }, async () => {
