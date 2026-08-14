@@ -282,6 +282,7 @@
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 20px;
+  font-size: 17px;
   height: 22px;
   justify-content: center;
   margin: -3px 0;
@@ -290,24 +291,11 @@
   width: 20px;
 }
 
-.samFlagButton svg {
-  fill: none;
-  height: 16px;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-  width: 16px;
-}
-
-.samFlagPennant { fill: transparent; }
-
 .samFlagButton:hover:not(:disabled) {
   color: var(--red-600);
 }
 
 .samFlagActive { color: var(--red-600); }
-.samFlagActive .samFlagPennant { fill: currentColor; }
 .samFlagSaving { cursor: wait; opacity: 0.55; }
 .samFlagButton:focus-visible {
   border-radius: var(--radius-sm);
