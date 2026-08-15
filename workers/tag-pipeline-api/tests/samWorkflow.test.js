@@ -8,7 +8,7 @@ test('shared SAM flags are recognized for cleanup protection', () => {
   assert.equal(isFlaggedSAMOpportunity({ Flagged: '' }), false)
 })
 
-test('scheduled SAM pulls create one idempotent workflow instance per day', async () => {
+test('scheduled SAM pulls create one idempotent workflow instance per six-hour slot', async () => {
   let batch = null
   const env = {
     SAM_PULL_WORKFLOW: {
@@ -22,9 +22,9 @@ test('scheduled SAM pulls create one idempotent workflow instance per day', asyn
   const result = await startScheduledSAMPull(env, Date.parse('2026-07-27T12:00:00.000Z'))
 
   assert.equal(result.started, true)
-  assert.equal(result.instanceId, 'sam-pull-2026-07-27')
+  assert.equal(result.instanceId, 'sam-pull-2026-07-27-12')
   assert.deepEqual(batch, [{
-    id: 'sam-pull-2026-07-27',
+    id: 'sam-pull-2026-07-27-12',
     params: { scheduledTime: '2026-07-27T12:00:00.000Z' },
     retention: { successRetention: '1 day', errorRetention: '3 days' },
   }])
@@ -42,7 +42,24 @@ test('an existing scheduled SAM workflow is treated as already started', async (
   const result = await startScheduledSAMPull(env, Date.parse('2026-07-27T12:00:00.000Z'))
 
   assert.equal(result.started, false)
-  assert.equal(result.instanceId, 'sam-pull-2026-07-27')
+  assert.equal(result.instanceId, 'sam-pull-2026-07-27-12')
+})
+
+test('scheduled SAM pulls use distinct workflow instances for each same-day slot', async () => {
+  const ids = []
+  const env = {
+    SAM_PULL_WORKFLOW: {
+      async createBatch(value) {
+        ids.push(value[0].id)
+        return [{ id: value[0].id }]
+      },
+    },
+  }
+
+  await startScheduledSAMPull(env, Date.parse('2026-07-27T06:00:00.000Z'))
+  await startScheduledSAMPull(env, Date.parse('2026-07-27T12:00:00.000Z'))
+
+  assert.deepEqual(ids, ['sam-pull-2026-07-27-06', 'sam-pull-2026-07-27-12'])
 })
 
 test('a missing Workflow binding fails clearly instead of leaving a partial pull', async () => {
