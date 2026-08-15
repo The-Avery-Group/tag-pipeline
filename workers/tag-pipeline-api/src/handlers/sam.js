@@ -661,8 +661,19 @@ function matchingPOC(raw, email) {
 }
 
 function exactOrganizationMatch(left, right) {
-  const a = normalized(left)
-  const b = normalized(right)
+  const key = (value) => {
+    const aliased = normalized(value)
+      .replace(/department of (?:defense|war) education activity|\bdowea\b/g, ' dodea ')
+      .replace(/\bdept\b/g, ' department ')
+      .replace(/&/g, ' and ')
+      .replace(/[^a-z0-9\s]/g, ' ')
+    return aliased.split(/\s+/)
+      .filter((token) => token && !new Set(['the', 'of', 'department', 'united', 'states', 'us']).has(token))
+      .sort()
+      .join(' ')
+  }
+  const a = key(left)
+  const b = key(right)
   return Boolean(a && b && a === b)
 }
 
