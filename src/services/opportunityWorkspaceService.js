@@ -41,6 +41,10 @@ export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/files${query}`)
 }
 
+export function listOpportunityWorkspaceFlatFiles(opportunityKey) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/file-index`)
+}
+
 export function createOpportunityReferenceUpload(opportunityKey, file) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/uploads`, {
     method: 'POST',
