@@ -47,9 +47,9 @@
   text-transform: none;
 }
 
-.department { position: relative; }
+.agencyFilter { position: relative; }
 
-.departmentButton,
+.agencyButton,
 .controlButton {
   background: var(--surface);
   border: .5px solid var(--gray-300);
@@ -61,7 +61,7 @@
   padding: 3px 10px;
 }
 
-.departmentButton:hover,
+.agencyButton:hover,
 .controlButton:hover:not(:disabled) {
   border-color: var(--blue-300);
   color: var(--blue-700);
@@ -75,7 +75,7 @@
   color: var(--blue-800);
 }
 
-.departmentMenu {
+.agencyMenu {
   background: var(--surface-raised);
   border: .5px solid var(--gray-200);
   border-radius: var(--radius-md);
@@ -89,7 +89,7 @@
   z-index: 100;
 }
 
-.departmentHeading {
+.agencyHeading {
   align-items: center;
   border-bottom: .5px solid var(--gray-100);
   color: var(--gray-500);
@@ -99,7 +99,7 @@
   padding: 7px 10px;
 }
 
-.departmentHeading button {
+.agencyHeading button {
   background: none;
   border: 0;
   color: var(--blue-600);
@@ -108,7 +108,7 @@
   padding: 0;
 }
 
-.departmentOption {
+.agencyOption {
   align-items: center;
   border-bottom: .5px solid var(--gray-100);
   color: var(--gray-800);
@@ -119,10 +119,27 @@
   padding: 7px 12px;
 }
 
-.departmentOption:last-child { border-bottom: 0; }
-.departmentOption:hover { background: var(--blue-50); }
-.departmentOption input { cursor: pointer; flex: 0 0 auto; }
-.departmentEmpty { color: var(--gray-500); display: block; font-size: 11px; padding: 12px; }
+.agencyOption:last-child { border-bottom: 0; }
+.agencyOption:hover { background: var(--blue-50); }
+.agencyOption input { cursor: pointer; flex: 0 0 auto; }
+.agencyEmpty { color: var(--gray-500); display: block; font-size: 11px; padding: 12px; }
+
+.typeBadge {
+  border: .5px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.typeRFI { background: var(--blue-50); color: var(--blue-700); }
+.typeMRAS { background: var(--purple-50, var(--blue-50)); color: var(--purple-700, var(--blue-700)); }
+.typeRFP { background: var(--green-50); color: var(--green-700); }
+.typeRFQ { background: var(--amber-50); color: var(--amber-700); }
+.typeOther { background: var(--gray-50); color: var(--gray-600); }
 
 .statusArea { justify-content: flex-end; }
 .status { margin-right: 4px; text-align: right; white-space: nowrap; }
@@ -160,7 +177,7 @@
   .count { flex: 1 1 100%; }
   .typeFilter { flex: 1 1 180px; justify-content: space-between; }
   .typeFilter select { flex: 1; min-width: 0; }
-  .department { flex: 1 1 120px; }
-  .departmentButton { width: 100%; }
-  .departmentMenu { max-width: calc(100vw - 48px); min-width: 220px; }
+  .agencyFilter { flex: 1 1 120px; }
+  .agencyButton { width: 100%; }
+  .agencyMenu { max-width: calc(100vw - 48px); min-width: 220px; }
 }
