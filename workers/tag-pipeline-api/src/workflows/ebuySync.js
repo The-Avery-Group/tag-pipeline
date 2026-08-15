@@ -27,10 +27,13 @@ import {
   stageEbuySyncCandidates,
   startEbuySyncRun,
   syncEbuyOpportunities,
+  updateEbuyAttachmentLocation,
   updateEbuySyncRunProgress,
 } from '../lib/ebuyRepository.js'
-import { archiveEbuyFile, ensureEbuyArchiveFolder } from '../lib/sharepointArchive.js'
+import { getWorkspace } from '../lib/opportunityWorkspaceRepository.js'
+import { archiveEbuyFile, deleteEmptyEbuyArchiveFolder, ensureEbuyArchiveFolder, moveArchivedEbuyFile } from '../lib/sharepointArchive.js'
 import { EBUY_ARCHIVE_FILES_PER_CHECKPOINT, scheduleEbuyArchiveContinuation } from './ebuySyncChain.js'
+import { refreshEbuyFollowOnWatches } from '../handlers/rfiFollowUpMonitor.js'
 
 function mergeCounts(target, result) {
   for (const field of ['discovered', 'inserted', 'updated', 'unchanged', 'removed', 'archivedFiles']) {
@@ -142,7 +145,30 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
       itemId: archived.itemId,
       webUrl: archived.webUrl,
     })
-    return { processed: 1, archivedFiles: 1, requestId: pending.requestId, attachmentId: pending.id }
+    let finalLocation = archived
+    if (pending.pipelineContractId) {
+      const workspace = await getWorkspace(env.EBUY_DB, pending.pipelineContractId)
+      if (workspace?.sharePointDriveId && workspace?.samFolderId) {
+        finalLocation = await moveArchivedEbuyFile(env, {
+          sourceDriveId: archived.driveId,
+          itemId: archived.itemId,
+          targetDriveId: workspace.sharePointDriveId,
+          targetFolderId: workspace.samFolderId,
+          fileName: pending.attachment.fileName,
+        })
+        await updateEbuyAttachmentLocation(env.EBUY_DB, pending.id, finalLocation)
+        try {
+          await deleteEmptyEbuyArchiveFolder(env, archived.driveId, pending.requestId)
+        } catch (cleanupError) {
+          console.warn(JSON.stringify({
+            event: 'ebuy_attachment_archive_cleanup_deferred',
+            requestId: pending.requestId,
+            message: cleanupError.message,
+          }))
+        }
+      }
+    }
+    return { processed: 1, archivedFiles: 1, requestId: pending.requestId, attachmentId: pending.id, workspaceFile: finalLocation.webUrl }
   } catch (error) {
     // Authentication and transport failures affect the connection rather than
     // this individual file. Stop the run and leave this and later files pending
@@ -393,6 +419,7 @@ export async function runEbuySyncWorkflow(env, event, step) {
       }))
     } else {
       await step.do('Record successful eBuy connection run', () => recordEbuyConnectionResult(env.EBUY_DB, { ok: true, synced: true }))
+      await step.do('Refresh eBuy follow-on evidence', () => refreshEbuyFollowOnWatches(env))
       await step.do('Clear eBuy sync staging records', () => clearEbuySyncCandidates(env.EBUY_DB, run.id))
     }
     await step.do('Complete eBuy sync record', () => finishEbuySyncRun(env.EBUY_DB, run.id, totals, incompleteError))
