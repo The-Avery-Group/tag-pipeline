@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  isFollowOnSourceOpportunity,
   isRfiWorkflowNoticeType,
   isRfiWorkflowOpportunity,
   isResponseOpportunity,
@@ -26,6 +27,14 @@ test('MRAS and RFI use the same workflow', () => {
 test('legacy submitted RFI records remain in the workflow when Notice Type is blank', () => {
   assert.equal(isRfiWorkflowOpportunity({ 'TAG Pipeline Activity Phase': 'Submitted RFI' }), true)
   assert.equal(isRfiWorkflowOpportunity({ 'TAG Opportunity Phase': 'Identified', 'Opportunity Outlook': 'New' }), false)
+})
+
+test('follow-on matching monitors RFI, MRAS, and RFQ sources but not RFP sources', () => {
+  for (const noticeType of ['RFI', 'MRAS', 'RFQ']) {
+    assert.equal(isFollowOnSourceOpportunity({ 'Notice Type': noticeType }), true)
+  }
+  assert.equal(isFollowOnSourceOpportunity({ 'Notice Type': 'RFP' }), false)
+  assert.equal(isFollowOnSourceOpportunity({ 'TAG Pipeline Activity Phase': 'Submitted RFQ' }), true)
 })
 
 test('Responses includes every supported notice type and legacy submitted phases', () => {
