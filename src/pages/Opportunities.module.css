@@ -325,6 +325,72 @@
   outline-offset: 2px;
 }
 
+.samDiscoveryTable {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 1380px;
+  width: 100%;
+}
+
+.samDiscoveryTable th,
+.samDiscoveryTable td { vertical-align: middle; }
+
+.samOpportunityCell { font-weight: 500; }
+
+.samTitleCell {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 360px;
+  min-width: 285px;
+}
+
+.samTypeCell { width: 72px; }
+
+.samAgencyCell {
+  font-size: 12px;
+  min-width: 190px;
+}
+
+.samAgencyCell > span { display: block; }
+
+.samAgencyCell small {
+  color: var(--gray-500);
+  display: block;
+  font-size: 10px;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.samSetAsideCell {
+  color: var(--gray-600);
+  font-size: 11px;
+  min-width: 140px;
+}
+
+.samNaicsCell {
+  color: var(--gray-500);
+  font-size: 11px;
+  min-width: 72px;
+}
+
+.samDateCell {
+  font-size: 11px;
+  line-height: 1.35;
+  min-width: 118px;
+}
+
+.samPocCell {
+  color: var(--gray-500);
+  font-size: 11px;
+  max-width: 140px;
+  min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .samTypeFilter {
   align-items: center;
   background: var(--surface);
@@ -361,35 +427,6 @@
 
 .samSortHeader:hover {
   color: var(--blue-700);
-}
-
-.noticeTypeBadge {
-  border: 0.5px solid currentColor;
-  border-radius: 999px;
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1;
-  padding: 2px 5px;
-}
-
-.noticeTypeRFI {
-  background: var(--blue-50);
-  color: var(--blue-700);
-}
-
-.noticeTypeMRAS {
-  background: var(--purple-50, var(--blue-50));
-  color: var(--purple-700, var(--blue-700));
-}
-
-.noticeTypeRFP {
-  background: var(--green-50);
-  color: var(--green-700);
-}
-
-.noticeTypeRFQ {
-  background: var(--amber-50);
-  color: var(--amber-700);
 }
 
 .searchBar {
