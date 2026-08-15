@@ -5,10 +5,41 @@ import {
   normalizeEbuyOpportunity,
   retentionDeadline,
 } from './ebuyDomain.js'
+import { alertFingerprint, alertStorageReady, getOpportunityAlert, upsertOpportunityAlert } from './opportunityAlerts.js'
 
 function encode(value) { return JSON.stringify(value ?? null) }
 function decode(value, fallback) {
   try { return value ? JSON.parse(value) : fallback } catch { return fallback }
+}
+
+function attachmentIdentity(attachment = {}) {
+  return String(attachment.id || attachment.docSeqNum || attachment.fileName || '').trim()
+}
+
+function attachmentSnapshot(attachment = {}) {
+  return {
+    id: attachmentIdentity(attachment),
+    name: String(attachment.fileName || attachment.name || 'Attachment').trim(),
+    amendmentId: String(attachment.amendmentId || '').trim(),
+    contentType: String(attachment.contentType || '').trim().toLowerCase(),
+    byteSize: Number(attachment.byteSize || 0) || null,
+    sourceUrl: String(attachment.sourceUrl || attachment.docPath || '').trim(),
+  }
+}
+
+function attachmentChanges(previous = [], current = []) {
+  const before = new Map(previous.map((item) => [attachmentIdentity(item), attachmentSnapshot(item)]).filter(([key]) => key))
+  const after = new Map(current.map((item) => [attachmentIdentity(item), attachmentSnapshot(item)]).filter(([key]) => key))
+  const changes = []
+  for (const [id, snapshot] of after) {
+    const prior = before.get(id)
+    if (!prior) changes.push({ id, name: snapshot.name, change: 'added' })
+    else if (JSON.stringify(prior) !== JSON.stringify(snapshot)) changes.push({ id, name: snapshot.name, change: 'updated' })
+  }
+  for (const [id, snapshot] of before) {
+    if (!after.has(id)) changes.push({ id, name: snapshot.name, change: 'removed' })
+  }
+  return changes
 }
 
 function publicOpportunity(row) {
@@ -306,7 +337,7 @@ export async function getEbuyAttachmentArchiveProgress(db, runStartedAt) {
 }
 
 export async function nextPendingEbuyAttachment(db, runStartedAt) {
-  const row = await db.prepare(`SELECT a.*, o.raw_json,
+  const row = await db.prepare(`SELECT a.*, o.raw_json, o.pipeline_contract_id,
       EXISTS(
         SELECT 1 FROM ebuy_attachments archived
         WHERE archived.request_id = a.request_id
@@ -323,6 +354,7 @@ export async function nextPendingEbuyAttachment(db, runStartedAt) {
   return {
     id: row.id,
     requestId: row.request_id,
+    pipelineContractId: row.pipeline_contract_id || '',
     contractNumber: opportunity?.sourceDetails?.contractNumber || opportunity?.vehicleSources?.[0] || '',
     archiveFolderReady: Boolean(row.archive_folder_ready),
     attachment: attachment || {
@@ -411,7 +443,13 @@ export async function getEbuyOpportunity(db, requestId) {
   ])
   return {
     ...publicOpportunity(row),
-    versions: (versions.results || []).map((item) => ({ changedFields: decode(item.changed_fields_json, []), capturedAt: item.captured_at })),
+    versions: (versions.results || []).map((item, index, list) => ({
+      changedFields: decode(item.changed_fields_json, []),
+      capturedAt: item.captured_at,
+      // Versions are returned newest first. The oldest row is the immutable
+      // baseline, not a user-facing "change" caused by the first pull.
+      initial: index === list.length - 1,
+    })),
     amendments: amendments.results || [],
     attachments: (attachments.results || []).map((item) => ({
       id: item.id, amendmentId: item.amendment_id, fileName: item.file_name,
@@ -420,6 +458,26 @@ export async function getEbuyOpportunity(db, requestId) {
       errorMessage: item.error_message,
     })),
   }
+}
+
+export async function findEbuyPipelineSource(db, opportunityKey) {
+  const key = String(opportunityKey || '').trim()
+  if (!key) return null
+  const row = await db.prepare(`SELECT * FROM ebuy_opportunities
+    WHERE lower(request_id) = lower(?) OR lower(COALESCE(pipeline_contract_id, '')) = lower(?)
+    ORDER BY updated_at DESC LIMIT 1`).bind(key, key).first()
+  return publicOpportunity(row)
+}
+
+export async function listEbuyFollowOnCandidates(db, { postedAfter = null, postedBefore = null } = {}) {
+  const where = ["request_type IN ('RFP', 'RFQ')", "review_state != 'dismissed'", "lifecycle_status != 'unavailable'"]
+  const bindings = []
+  if (postedAfter) { where.push('posted_at > ?'); bindings.push(postedAfter) }
+  if (postedBefore) { where.push('posted_at <= ?'); bindings.push(postedBefore) }
+  const result = await db.prepare(`SELECT * FROM ebuy_opportunities
+    WHERE ${where.join(' AND ')}
+    ORDER BY posted_at DESC, request_id DESC LIMIT 1000`).bind(...bindings).all()
+  return (result.results || []).map(publicOpportunity)
 }
 
 export async function startEbuySyncRun(db, mode, details = {}) {
@@ -481,6 +539,9 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
     const state = existing?.review_state || 'new'
     const purgeAfter = retentionDeadline(state, lifecycle, now, settings)
     const rawJson = encode({ ...record, fixtureSource: source === 'fixture' ? 'sanitized-g2x-schema' : undefined })
+    const fileChanges = existing
+      ? attachmentChanges(previousRecord.attachments, record.attachments)
+      : []
     const statement = db.prepare(`INSERT INTO ebuy_opportunities (
       request_id, source_id, request_type, title, description, reference_number,
       buyer_agency, buyer_department, buyer_name, buyer_email, buyer_phone,
@@ -510,7 +571,10 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
         hash, rawJson, existing?.first_seen_at || nowIso, nowIso, purgeAfter, existing?.created_at || nowIso, nowIso)
 
     const batch = [statement]
-    if (!existing || existing.content_hash !== hash) {
+    // changedEbuyFields uses the material allow-list. Comparing the stored
+    // hash alone would create a false history row when the hashing algorithm
+    // is upgraded, even though the source opportunity did not change.
+    if (!existing || changed.length > 0) {
       batch.push(db.prepare('INSERT INTO ebuy_versions (request_id, content_hash, snapshot_json, changed_fields_json, captured_at) VALUES (?, ?, ?, ?, ?)')
         .bind(record.requestId, hash, rawJson, encode(changed), nowIso))
     }
@@ -522,14 +586,35 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
     }
     for (const attachment of record.attachments) {
       const id = String(attachment.id || `${record.requestId}:${attachment.fileName || crypto.randomUUID()}`)
+      const changedAttachment = fileChanges.some((item) => item.id === id && item.change !== 'removed')
       batch.push(db.prepare(`INSERT INTO ebuy_attachments (id, request_id, amendment_id, file_name, content_type, byte_size, source_url, archive_status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET amendment_id = excluded.amendment_id, file_name = excluded.file_name, content_type = excluded.content_type, byte_size = excluded.byte_size, source_url = COALESCE(excluded.source_url, source_url), updated_at = excluded.updated_at`)
-        .bind(id, record.requestId, attachment.amendmentId || null, String(attachment.fileName || 'Attachment'), String(attachment.contentType || 'application/octet-stream'), Number(attachment.byteSize || 0) || null, attachment.sourceUrl || null, source === 'fixture' ? 'fixture' : 'pending', nowIso, nowIso))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET amendment_id = excluded.amendment_id, file_name = excluded.file_name, content_type = excluded.content_type, byte_size = excluded.byte_size, source_url = COALESCE(excluded.source_url, source_url), archive_status = CASE WHEN ? THEN 'pending' ELSE archive_status END, error_message = CASE WHEN ? THEN NULL ELSE error_message END, updated_at = excluded.updated_at`)
+        .bind(id, record.requestId, attachment.amendmentId || null, String(attachment.fileName || 'Attachment'), String(attachment.contentType || 'application/octet-stream'), Number(attachment.byteSize || 0) || null, attachment.sourceUrl || null, source === 'fixture' ? 'fixture' : 'pending', nowIso, nowIso, changedAttachment ? 1 : 0, changedAttachment ? 1 : 0))
     }
     await db.batch(batch)
+    if (existing?.pipeline_contract_id && fileChanges.length && await alertStorageReady(db)) {
+      const fingerprint = alertFingerprint(fileChanges.map(({ id, name, change }) => ({ id, name, change })))
+      const added = fileChanges.filter((item) => item.change === 'added').length
+      const updated = fileChanges.filter((item) => item.change === 'updated').length
+      const removedFiles = fileChanges.filter((item) => item.change === 'removed').length
+      await upsertOpportunityAlert(db, {
+        opportunityKey: existing.pipeline_contract_id,
+        type: 'ebuy_files',
+        fingerprint,
+        summary: added && !updated && !removedFiles
+          ? `${added} new eBuy file${added === 1 ? '' : 's'}`
+          : 'eBuy files updated',
+        details: {
+          source: 'GSA eBuy',
+          requestId: record.requestId,
+          files: fileChanges,
+          awaitingArchive: fileChanges.some((item) => item.change !== 'removed'),
+        },
+      })
+    }
     seen.push(record.requestId)
     if (!existing) result.inserted++
-    else if (existing.content_hash !== hash) result.updated++
+    else if (changed.length > 0) result.updated++
     else result.unchanged++
   }
 
@@ -713,6 +798,8 @@ export async function recordArchivedEbuyAttachment(db, {
     .bind(id, requestId, fileName, contentType, byteSize, sourceHash, driveId, itemId, webUrl, now, now, now)
     .run()
 
+  await refreshEbuyFileAlertArchiveState(db, requestId)
+
   return {
     id,
     requestId,
@@ -727,6 +814,30 @@ export async function recordArchivedEbuyAttachment(db, {
   }
 }
 
+export async function refreshEbuyFileAlertArchiveState(db, requestId) {
+  if (!db || !(await alertStorageReady(db))) return null
+  const opportunity = await db.prepare('SELECT pipeline_contract_id FROM ebuy_opportunities WHERE request_id = ?')
+    .bind(requestId).first()
+  if (!opportunity?.pipeline_contract_id) return null
+  const alert = await getOpportunityAlert(db, opportunity.pipeline_contract_id, 'ebuy_files')
+  if (!alert || alert.status !== 'active') return alert
+  const counts = await db.prepare(`SELECT
+      SUM(CASE WHEN archive_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN archive_status = 'error' THEN 1 ELSE 0 END) AS failed
+    FROM ebuy_attachments WHERE request_id = ?`).bind(requestId).first()
+  return (await upsertOpportunityAlert(db, {
+    opportunityKey: opportunity.pipeline_contract_id,
+    type: 'ebuy_files',
+    fingerprint: alert.fingerprint,
+    summary: alert.summary,
+    details: {
+      ...alert.details,
+      awaitingArchive: Number(counts?.pending || 0) > 0,
+      archiveFailures: Number(counts?.failed || 0),
+    },
+  })).alert
+}
+
 export async function getArchivedEbuyAttachmentIds(db, requestId) {
   const rows = await db.prepare("SELECT id FROM ebuy_attachments WHERE request_id = ? AND archive_status = 'archived' AND sharepoint_item_id IS NOT NULL")
     .bind(requestId).all()
@@ -736,6 +847,8 @@ export async function getArchivedEbuyAttachmentIds(db, requestId) {
 export async function recordEbuyAttachmentFailure(db, id, message) {
   await db.prepare(`UPDATE ebuy_attachments SET archive_status = 'error', error_message = ?, updated_at = ? WHERE id = ?`)
     .bind(String(message || 'Attachment archive failed'), new Date().toISOString(), id).run()
+  const row = await db.prepare('SELECT request_id FROM ebuy_attachments WHERE id = ?').bind(id).first()
+  if (row?.request_id) await refreshEbuyFileAlertArchiveState(db, row.request_id)
 }
 
 export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = null } = {}) {
