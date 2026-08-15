@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   agencyAbbreviation,
+  organizationFolderKey,
   opportunityWorkspaceFolderName,
   safeSharePointSegment,
   workspaceCalendarYear,
@@ -15,6 +16,23 @@ test('opportunity workspace uses known agency abbreviations and a safe title', (
     opportunityWorkspaceFolderName({ agency: 'Department of Defense Education Activity', title: 'Esports: Program / Support?' }),
     'DODEA_Esports_ Program _ Support_',
   )
+})
+
+test('organization folders match SAM and eBuy word-order variations', () => {
+  assert.equal(
+    organizationFolderKey('STATE, DEPARTMENT OF'),
+    organizationFolderKey('Department of State'),
+  )
+  assert.equal(
+    organizationFolderKey('Centers for Disease Control and Prevention (CDC)'),
+    organizationFolderKey('CDC'),
+  )
+  assert.equal(
+    organizationFolderKey('DEPT OF DEFENSE'),
+    organizationFolderKey('Department of Defense'),
+  )
+  assert.equal(organizationFolderKey('DOW'), organizationFolderKey('Department of Defense'))
+  assert.equal(organizationFolderKey('ARMY'), organizationFolderKey('Department of the Army'))
 })
 
 test('SharePoint folder segments remove reserved characters and trailing periods', () => {
