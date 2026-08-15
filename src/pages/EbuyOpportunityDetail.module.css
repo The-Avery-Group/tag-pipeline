@@ -45,7 +45,7 @@
   gap: 6px;
 }
 
-.badges span {
+.badges span:not([data-notice-type]) {
   background: var(--blue-50);
   border: .5px solid var(--blue-200);
   border-radius: 999px;
