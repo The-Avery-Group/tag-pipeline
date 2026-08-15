@@ -9,6 +9,7 @@ import { ThemeProvider } from '@/theme/ThemeContext'
 import { ToastContainer } from '@/components/Common/Toast'
 import Sidebar from '@/components/Layout/Sidebar'
 import Modal from '@/components/Common/Modal'
+import AppUpdatePrompt from '@/components/Common/AppUpdatePrompt'
 import { SaveShortcutProvider } from '@/shortcuts/SaveShortcutContext'
 import {
   warmCache,
@@ -25,6 +26,7 @@ import {
   onSessionRefreshRequired,
 } from '@/services/graphService'
 import '@/styles/global.css'
+import { reloadWithCacheBypass } from '@/services/appUpdateService'
 const SearchModal = lazy(() => import('@/pages/SearchModal'))
 const AIChat = lazy(() => import('@/pages/AIChat').then((module) => ({ default: module.AIChat })))
 
@@ -117,7 +119,7 @@ class RouteErrorBoundary extends Component {
           <p style={{ margin: '0 0 18px', color: 'var(--gray-500)', lineHeight: 1.55 }}>
             Reload the app to retrieve the latest version. If this keeps happening, please report it to your administrator.
           </p>
-          <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          <button className="btn btn-primary" onClick={() => reloadWithCacheBypass()}>
             Reload app
           </button>
         </div>
@@ -303,6 +305,7 @@ export default function App() {
         <BrowserRouter basename="/tag-pipeline">
           <ThemeProvider>
             <SaveShortcutProvider>
+              <AppUpdatePrompt />
               <AppShell />
             </SaveShortcutProvider>
           </ThemeProvider>
