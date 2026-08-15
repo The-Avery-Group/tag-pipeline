@@ -41,8 +41,74 @@ export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/files${query}`)
 }
 
-export function listOpportunityWorkspaceFlatFiles(opportunityKey) {
-  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/file-index`)
+function dossierFileSource(path) {
+  const topLevelFolder = String(path || '').split('/').filter(Boolean)[0] || ''
+  if (topLevelFolder === '2. RFI Documents') return 'SAM.gov'
+  if (topLevelFolder === '7. Reference Materials') return 'Reference material'
+  return 'Workspace'
+}
+
+async function buildFlatFileIndexFromFolderListings(opportunityKey) {
+  const { workspace } = await getOpportunityWorkspace(opportunityKey)
+  const folders = [{ id: '', path: '' }]
+  const files = []
+  let folderIndex = 0
+  let rootListing = null
+
+  // Compatibility path for a frontend deployed before the Worker's dedicated
+  // file-index route. Keep the same bounds as the Worker-side index so an
+  // unusually large workspace cannot cause unbounded browser requests.
+  while (folderIndex < folders.length && folderIndex < 45 && files.length < 5000) {
+    const folder = folders[folderIndex]
+    folderIndex += 1
+    let listing
+    try {
+      listing = await listOpportunityWorkspaceFiles(opportunityKey, folder.id)
+    } catch (error) {
+      if (error.status === 404) {
+        const missing = new Error('The SharePoint workspace folder could not be found. Open Opportunity files and repair the workspace.')
+        missing.status = 404
+        missing.code = 'workspace_folder_missing'
+        throw missing
+      }
+      throw error
+    }
+    if (!rootListing) rootListing = listing
+    for (const item of listing.items || []) {
+      const path = [folder.path, item.name].filter(Boolean).join('/')
+      if (item.type === 'folder') {
+        folders.push({ id: item.id, path })
+        continue
+      }
+      files.push({
+        ...item,
+        path,
+        folderPath: folder.path,
+        source: dossierFileSource(path),
+      })
+    }
+  }
+
+  return {
+    workspace: {
+      webUrl: rootListing?.parent?.webUrl || workspace?.webUrl || '',
+      name: rootListing?.parent?.name || workspace?.title || '',
+    },
+    files: files.sort((left, right) => String(right.lastModifiedDateTime || '').localeCompare(String(left.lastModifiedDateTime || ''))),
+    count: files.length,
+    partial: folderIndex < folders.length || files.length >= 5000,
+    indexedAt: new Date().toISOString(),
+    compatibilityMode: true,
+  }
+}
+
+export async function listOpportunityWorkspaceFlatFiles(opportunityKey) {
+  try {
+    return await workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/file-index`)
+  } catch (error) {
+    if (error.status !== 404) throw error
+    return buildFlatFileIndexFromFolderListings(opportunityKey)
+  }
 }
 
 export function createOpportunityReferenceUpload(opportunityKey, file) {
