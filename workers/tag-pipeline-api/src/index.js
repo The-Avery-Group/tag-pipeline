@@ -194,8 +194,8 @@ export default {
 
   // All scheduled times are UTC. Nigeria is UTC+1 year-round. SAM and eBuy
   // opportunity synchronization share the four six-hour weekday checkpoints;
-  // RFI follow-on checks remain three times weekly, and response-deadline
-  // reminders may still run on weekends.
+  // follow-on checks run once each weekday and response-deadline reminders
+  // may still run on weekends.
   async scheduled(controller, env, ctx) {
     if (controller.cron === '0 0,6,12,18 * * *') {
       const scheduledDate = new Date(controller.scheduledTime)
@@ -226,7 +226,7 @@ export default {
         }))
       }
 
-      if (scheduledHour === 12 && [1, 3, 5].includes(weekday)) {
+      if (scheduledHour === 12 && isWeekday) {
         ctx.waitUntil(runRFIFollowUpMonitor(env))
       }
     }
