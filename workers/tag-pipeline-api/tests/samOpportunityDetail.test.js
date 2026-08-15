@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeSAMOpportunityDetail, samOrganizationHierarchy } from '../src/lib/samOpportunityDetail.js'
+import { normalizeSAMOpportunityDetail, samDescriptionText, samOrganizationHierarchy } from '../src/lib/samOpportunityDetail.js'
 import { samArchiveInputForDiscoveryRow } from '../src/handlers/sam.js'
 
 test('SAM detail keeps every organization level without inventing an additional section', () => {
@@ -66,4 +66,25 @@ test('new SAM discovery rows carry enough identity to start attachment archiving
     department: 'DEPT OF DEFENSE',
     agency: 'DEPT OF THE ARMY',
   })
+})
+
+test('SAM description HTML becomes readable text and hides SAM API links', () => {
+  const text = samDescriptionText({ description: [
+    { body: '<p>Please see the <strong>statement of work</strong>.</p><p><a href="https://piee.eb.mil/sol">Open PIEE</a></p><p>https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid=abc</p>' },
+  ] })
+  assert.equal(text, 'Please see the statement of work.\n\n[Open PIEE](https://piee.eb.mil/sol)')
+})
+
+test('SAM detail omits API self links and an unresolved description endpoint', () => {
+  const detail = normalizeSAMOpportunityDetail({
+    noticeId: 'abc',
+    description: 'https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid=abc',
+    additionalInfoLink: 'https://api.sam.gov/prod/opportunities/v2/search?noticeid=abc',
+    links: [
+      { href: 'https://api.sam.gov/prod/opportunities/v2/search?noticeid=abc', label: 'API' },
+      { href: 'https://piee.eb.mil/sol', label: 'PIEE' },
+    ],
+  })
+  assert.equal(detail.description, '')
+  assert.deepEqual(detail.links, [{ url: 'https://piee.eb.mil/sol', label: 'PIEE' }])
 })
