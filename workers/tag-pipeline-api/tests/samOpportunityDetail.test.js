@@ -75,6 +75,14 @@ test('SAM description HTML becomes readable text and hides SAM API links', () =>
   assert.equal(text, 'Please see the statement of work.\n\n[Open PIEE](https://piee.eb.mil/sol)')
 })
 
+test('SAM description decodes named bullets and common document punctuation', () => {
+  const text = samDescriptionText({
+    body: '<p>Requirements:</p><p>&bull; Program support<br>&bull; Reporting &amp; analysis &mdash; monthly</p>',
+  })
+
+  assert.equal(text, 'Requirements:\n\n• Program support\n• Reporting & analysis — monthly')
+})
+
 test('SAM detail omits API self links and an unresolved description endpoint', () => {
   const detail = normalizeSAMOpportunityDetail({
     noticeId: 'abc',
