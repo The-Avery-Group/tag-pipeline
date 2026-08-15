@@ -309,9 +309,12 @@
   border: 0;
   color: var(--gray-900);
   cursor: pointer;
+  flex: 1;
   font: 600 12px var(--font);
+  min-width: 0;
   padding: 0;
   text-align: left;
+  white-space: normal;
 }
 
 .samTitleButton:hover {
@@ -344,6 +347,14 @@
   gap: 6px;
   max-width: 360px;
   min-width: 285px;
+}
+
+.samTitleIdentity {
+  align-items: flex-start;
+  display: flex;
+  flex: 1 1 220px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .samTypeCell { width: 72px; }
