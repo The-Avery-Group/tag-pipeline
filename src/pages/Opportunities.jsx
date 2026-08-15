@@ -1183,28 +1183,30 @@ export default function Opportunities({ toast }) {
                           </td>}
 						  <td className={styles.samOpportunityCell}>
                             <div className={styles.samTitleCell}>
-                              <button
-                                type="button"
-                                className={`${styles.samFlagButton} ${isFlagged ? styles.samFlagActive : ''} ${isFlagSaving ? styles.samFlagSaving : ''}`}
-                                aria-label={isFlagged ? `Remove team flag from ${cleanSAMOpportunityTitle(opp.Title)}` : `Flag ${cleanSAMOpportunityTitle(opp.Title)} for the team`}
-                                aria-pressed={isFlagged}
-                                title={isFlagSaving ? 'Saving team flag' : isFlagged ? 'Remove team flag' : 'Flag for the team'}
-                                disabled={isFlagSaving}
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handleToggleFlag(opp)
-                                }}
-                              >
-                                ⚑
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.samTitleButton}
-                                onClick={() => openSAMOpportunity(opp)}
-                                title="Open opportunity details"
-                              >
-                                {cleanSAMOpportunityTitle(opp['Title'])}
-                              </button>
+                              <div className={styles.samTitleIdentity}>
+                                <button
+                                  type="button"
+                                  className={`${styles.samFlagButton} ${isFlagged ? styles.samFlagActive : ''} ${isFlagSaving ? styles.samFlagSaving : ''}`}
+                                  aria-label={isFlagged ? `Remove team flag from ${cleanSAMOpportunityTitle(opp.Title)}` : `Flag ${cleanSAMOpportunityTitle(opp.Title)} for the team`}
+                                  aria-pressed={isFlagged}
+                                  title={isFlagSaving ? 'Saving team flag' : isFlagged ? 'Remove team flag' : 'Flag for the team'}
+                                  disabled={isFlagSaving}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    handleToggleFlag(opp)
+                                  }}
+                                >
+                                  ⚑
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.samTitleButton}
+                                  onClick={() => openSAMOpportunity(opp)}
+                                  title="Open opportunity details"
+                                >
+                                  {cleanSAMOpportunityTitle(opp.Title)}
+                                </button>
+                              </div>
                               {samStatusBadge(opp.Status)}
                               {samChangeBadge(opp)}
                               {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Save failed</span>}
