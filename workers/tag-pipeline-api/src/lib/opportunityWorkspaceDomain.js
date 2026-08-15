@@ -1,5 +1,24 @@
 const INVALID_SHAREPOINT_CHARS = /["*:<>?/\\|#%]/g
 const ACRONYM_STOP_WORDS = new Set(['AND', 'FOR', 'OF', 'THE'])
+const ORGANIZATION_STOP_WORDS = new Set(['AND', 'FOR', 'OF', 'THE', 'US', 'UNITED', 'STATES'])
+const ORGANIZATION_ALIASES = new Map([
+  ['ASFR', 'ASSISTANT SECRETARY FINANCIAL RESOURCES'],
+  ['CDC', 'CENTERS DISEASE CONTROL PREVENTION'],
+  ['DCSA', 'DEFENSE COUNTERINTELLIGENCE SECURITY AGENCY'],
+  ['DHA', 'DEFENSE HEALTH AGENCY'],
+  ['DOD', 'DEPARTMENT DEFENSE'],
+  ['DODEA', 'DEPARTMENT DEFENSE EDUCATION ACTIVITY'],
+  ['DOW', 'DEPARTMENT DEFENSE'],
+  ['DOWEA', 'DEPARTMENT DEFENSE EDUCATION ACTIVITY'],
+  ['DOS', 'DEPARTMENT STATE'],
+  ['HHS', 'DEPARTMENT HEALTH HUMAN SERVICES'],
+  ['NASA', 'NATIONAL AERONAUTICS SPACE ADMINISTRATION'],
+  ['NIH', 'NATIONAL INSTITUTES HEALTH'],
+  ['ARMY', 'DEPARTMENT ARMY'],
+  ['DEPARTMENT OF WAR', 'DEPARTMENT DEFENSE'],
+  ['DEPARTMENT OF WAR EDUCATION ACTIVITY', 'DEPARTMENT DEFENSE EDUCATION ACTIVITY'],
+  ['VA', 'DEPARTMENT VETERANS AFFAIRS'],
+])
 
 const AGENCY_ALIASES = new Map([
   ['DEPARTMENT OF DEFENSE EDUCATION ACTIVITY', 'DODEA'],
@@ -43,6 +62,18 @@ function normalizedAgencyName(value) {
     .toUpperCase()
 }
 
+export function organizationFolderKey(value) {
+  const withoutAcronymSuffix = String(value || '').replace(/\([A-Z][A-Z0-9&.\s-]{1,14}\)/g, ' ')
+  let normalized = normalizedAgencyName(withoutAcronymSuffix)
+  if (!normalized) return ''
+  if (ORGANIZATION_ALIASES.has(normalized)) normalized = ORGANIZATION_ALIASES.get(normalized)
+  const tokens = normalized
+    .split(' ')
+    .map((token) => token === 'DEPT' ? 'DEPARTMENT' : token)
+    .filter((token) => token && !ORGANIZATION_STOP_WORDS.has(token))
+  return [...new Set(tokens)].sort().join('|')
+}
+
 export function agencyAbbreviation(value) {
   const normalized = normalizedAgencyName(value)
   if (!normalized) return 'AGENCY'
@@ -68,4 +99,3 @@ export function workspaceCalendarYear(value, fallbackDate = new Date()) {
   if (Number.isInteger(numeric) && numeric >= 2000 && numeric <= 2100) return numeric
   return fallbackDate.getFullYear()
 }
-
