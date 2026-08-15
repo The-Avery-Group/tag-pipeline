@@ -465,7 +465,7 @@ export async function listWorkspaceChildren(env, workspace, parentId = '') {
 
 function dossierSource(path) {
   const first = String(path || '').split('/').filter(Boolean)[0] || ''
-  if (first === SAM_DOCUMENTS_FOLDER_NAME) return 'SAM.gov'
+  if (first === SAM_DOCUMENTS_FOLDER_NAME) return 'Source documents'
   if (first === REFERENCE_MATERIALS_FOLDER_NAME) return 'Reference material'
   return 'Workspace'
 }
