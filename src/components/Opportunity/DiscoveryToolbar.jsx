@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
 import styles from './DiscoveryToolbar.module.css'
 
 export const DISCOVERY_TYPE_OPTIONS = [
@@ -10,7 +11,20 @@ export const DISCOVERY_TYPE_OPTIONS = [
   { value: 'All', label: 'All types' },
 ]
 
-function DepartmentFilter({ departments, selected, onToggle, onClear }) {
+export function readStoredDiscoveryType(storageKey, fallback) {
+  try {
+    const stored = localStorage.getItem(storageKey)
+    return DISCOVERY_TYPE_OPTIONS.some((option) => option.value === stored) ? stored : fallback
+  } catch { return fallback }
+}
+
+export function DiscoveryTypeBadge({ type }) {
+  const normalized = normalizeSAMNoticeType(type)
+  const label = normalized || String(type || '').trim() || 'Other'
+  return <span className={`${styles.typeBadge} ${styles[`type${normalized || 'Other'}`]}`}>{label}</span>
+}
+
+function AgencyFilter({ agencies, selected, onToggle, onClear }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
 
@@ -23,25 +37,25 @@ function DepartmentFilter({ departments, selected, onToggle, onClear }) {
     return () => document.removeEventListener('mousedown', close)
   }, [open])
 
-  return <div className={styles.department} ref={rootRef}>
+  return <div className={styles.agencyFilter} ref={rootRef}>
     <button
       type="button"
-      className={styles.departmentButton}
+      className={styles.agencyButton}
       onClick={() => setOpen((value) => !value)}
       aria-expanded={open}
-      title="Filter by department"
-    >🏛 Dept{selected.size > 0 ? ` (${selected.size})` : ''}</button>
-    {open && <div className={styles.departmentMenu}>
-      <div className={styles.departmentHeading}>
-        <span>Filter by department</span>
+      title="Filter by agency"
+    >🏛 Agency{selected.size > 0 ? ` (${selected.size})` : ''}</button>
+    {open && <div className={styles.agencyMenu}>
+      <div className={styles.agencyHeading}>
+        <span>Filter by agency</span>
         {selected.size > 0 && <button type="button" onClick={onClear}>Clear</button>}
       </div>
-      {departments.length > 0
-        ? departments.map((department) => <label key={department} className={styles.departmentOption}>
-          <input type="checkbox" checked={selected.has(department)} onChange={() => onToggle(department)} />
-          <span>{department}</span>
+      {agencies.length > 0
+        ? agencies.map((agency) => <label key={agency} className={styles.agencyOption}>
+          <input type="checkbox" checked={selected.has(agency)} onChange={() => onToggle(agency)} />
+          <span>{agency}</span>
         </label>)
-        : <span className={styles.departmentEmpty}>No departments available</span>}
+        : <span className={styles.agencyEmpty}>No agencies available</span>}
     </div>}
   </div>
 }
@@ -50,10 +64,10 @@ export default function DiscoveryToolbar({
   count,
   type,
   onTypeChange,
-  departments = [],
-  selectedDepartments = new Set(),
-  onDepartmentToggle,
-  onDepartmentClear,
+  agencies = [],
+  selectedAgencies = new Set(),
+  onAgencyToggle,
+  onAgencyClear,
   status,
   controlsOpen,
   onControlsToggle,
@@ -71,11 +85,11 @@ export default function DiscoveryToolbar({
           {DISCOVERY_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </label>
-      <DepartmentFilter
-        departments={departments}
-        selected={selectedDepartments}
-        onToggle={onDepartmentToggle}
-        onClear={onDepartmentClear}
+      <AgencyFilter
+        agencies={agencies}
+        selected={selectedAgencies}
+        onToggle={onAgencyToggle}
+        onClear={onAgencyClear}
       />
       {controlsOpen && <div className={styles.manualControls}>{children}</div>}
     </div>
