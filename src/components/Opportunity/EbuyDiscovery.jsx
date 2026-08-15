@@ -4,7 +4,7 @@ import { useEbuyOpportunities } from '@/hooks/useEbuyOpportunities'
 import { ebuyToPipelineRecord, reconcileEbuyPipeline } from '@/services/ebuyService'
 import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
 import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
-import { formatEbuyDateTime } from '@/utils/ebuyHelpers'
+import { formatEbuyDateTime, normalizeEbuyNoticeType } from '@/utils/ebuyHelpers'
 import { samTypeMatches } from '@/utils/samOpportunityHelpers'
 import styles from './EbuyDiscovery.module.css'
 
@@ -48,7 +48,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
     .filter(Boolean))].sort(), [archive.opportunities])
   const visibleOpportunities = useMemo(() => archive.opportunities.filter((item) => {
     if (!includeDismissed && item.reviewState === 'dismissed') return false
-    if (!samTypeMatches({ 'Notice Type': item.requestType }, type)) return false
+    if (!samTypeMatches({ 'Notice Type': normalizeEbuyNoticeType(item) }, type)) return false
     const agency = String(item.buyerAgency || '').trim()
     return agencies.size === 0 || agencies.has(agency)
   }), [agencies, archive.opportunities, includeDismissed, type])
@@ -224,7 +224,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                     {reviewLabel(opportunity.reviewState) && <span className={styles.state}>{reviewLabel(opportunity.reviewState)}</span>}
                     </div>
                   </td>
-                  <td className={styles.typeCell}><DiscoveryTypeBadge type={opportunity.requestType} /></td>
+                  <td className={styles.typeCell}><DiscoveryTypeBadge type={normalizeEbuyNoticeType(opportunity)} /></td>
                   <td className={styles.mono}>{opportunity.requestId}</td><td className={styles.agencyCell}><span className={styles.agency}>{opportunity.buyerAgency || 'Not provided'}</span>{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency && <small>{opportunity.buyerDepartment}</small>}</td>
                   <td className={styles.setAsideCell}>{opportunity.setAsideType || 'Not provided'}</td><td>{opportunity.vehiclePairs?.join(', ') || opportunity.vehicleSources?.join(', ') || 'Not provided'}</td>
                   <td>{Number(opportunity.amendmentCount || opportunity.amendments?.length || 0) > 0 ? <span className={styles.amendment}>Yes · {Number(opportunity.amendmentCount || opportunity.amendments?.length)}</span> : <span className={styles.noAmendment}>No</span>}</td>
