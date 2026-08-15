@@ -1,0 +1,166 @@
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.filters,
+.statusArea,
+.manualControls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.count,
+.status {
+  color: var(--gray-500);
+  font-size: 11px;
+}
+
+.typeFilter {
+  align-items: center;
+  color: var(--gray-500);
+  display: flex;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 6px;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.typeFilter select {
+  appearance: auto;
+  background: var(--surface);
+  border: .5px solid var(--gray-300);
+  border-radius: var(--radius-md);
+  color: var(--gray-800);
+  font: 600 11px var(--font);
+  min-height: 28px;
+  padding: 3px 26px 3px 8px;
+  text-transform: none;
+}
+
+.department { position: relative; }
+
+.departmentButton,
+.controlButton {
+  background: var(--surface);
+  border: .5px solid var(--gray-300);
+  border-radius: var(--radius-md);
+  color: var(--gray-700);
+  cursor: pointer;
+  font: 600 11px var(--font);
+  min-height: 28px;
+  padding: 3px 10px;
+}
+
+.departmentButton:hover,
+.controlButton:hover:not(:disabled) {
+  border-color: var(--blue-300);
+  color: var(--blue-700);
+}
+
+.controlButton:disabled { cursor: default; opacity: .5; }
+
+.controlButtonActive {
+  background: var(--blue-50);
+  border-color: var(--blue-200);
+  color: var(--blue-800);
+}
+
+.departmentMenu {
+  background: var(--surface-raised);
+  border: .5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 14px var(--shadow-color);
+  left: 0;
+  max-height: 260px;
+  min-width: 240px;
+  overflow-y: auto;
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 100;
+}
+
+.departmentHeading {
+  align-items: center;
+  border-bottom: .5px solid var(--gray-100);
+  color: var(--gray-500);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  padding: 7px 10px;
+}
+
+.departmentHeading button {
+  background: none;
+  border: 0;
+  color: var(--blue-600);
+  cursor: pointer;
+  font: 600 10px var(--font);
+  padding: 0;
+}
+
+.departmentOption {
+  align-items: center;
+  border-bottom: .5px solid var(--gray-100);
+  color: var(--gray-800);
+  cursor: pointer;
+  display: flex;
+  font-size: 11px;
+  gap: 8px;
+  padding: 7px 12px;
+}
+
+.departmentOption:last-child { border-bottom: 0; }
+.departmentOption:hover { background: var(--blue-50); }
+.departmentOption input { cursor: pointer; flex: 0 0 auto; }
+.departmentEmpty { color: var(--gray-500); display: block; font-size: 11px; padding: 12px; }
+
+.statusArea { justify-content: flex-end; }
+.status { margin-right: 4px; text-align: right; white-space: nowrap; }
+
+.manualControls :global(.btn) {
+  min-height: 28px;
+  padding: 3px 10px;
+}
+
+.selectionBar {
+  align-items: center;
+  background: var(--surface);
+  border: .5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  color: var(--gray-700);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+}
+
+.selectionBar > div { display: flex; flex-wrap: wrap; gap: 6px; }
+
+@media (max-width: 900px) {
+  .toolbar { align-items: stretch; flex-direction: column; }
+  .statusArea { justify-content: flex-start; }
+  .status { flex: 1 1 100%; margin-right: 0; text-align: left; white-space: normal; }
+}
+
+@media (max-width: 600px) {
+  .filters { align-items: stretch; }
+  .count { flex: 1 1 100%; }
+  .typeFilter { flex: 1 1 180px; justify-content: space-between; }
+  .typeFilter select { flex: 1; min-width: 0; }
+  .department { flex: 1 1 120px; }
+  .departmentButton { width: 100%; }
+  .departmentMenu { max-width: calc(100vw - 48px); min-width: 220px; }
+}
