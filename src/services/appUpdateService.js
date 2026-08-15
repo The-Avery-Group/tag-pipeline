@@ -33,7 +33,16 @@ export async function fetchDeployedAppVersion({ fetchImpl = fetch, now = Date.no
 }
 
 export function reloadWithCacheBypass(buildId = Date.now(), locationObject = window.location) {
-  const url = new URL(locationObject.href)
-  url.searchParams.set('_tag_build', String(buildId))
-  locationObject.replace(url.toString())
+  const current = new URL(locationObject.href)
+  const basePath = String(viteEnv.BASE_URL || '/tag-pipeline/')
+  const normalizedBase = basePath.endsWith('/') ? basePath : `${basePath}/`
+  const baseWithoutTrailingSlash = normalizedBase.slice(0, -1)
+  const routePath = current.pathname.startsWith(baseWithoutTrailingSlash)
+    ? current.pathname.slice(baseWithoutTrailingSlash.length) || '/'
+    : '/'
+  const returnRoute = `${routePath.startsWith('/') ? routePath : `/${routePath}`}${current.search}${current.hash}`
+  const entryUrl = new URL(normalizedBase, current.origin)
+  entryUrl.searchParams.set('_tag_build', String(buildId))
+  if (returnRoute !== '/') entryUrl.searchParams.set('redirect', returnRoute)
+  locationObject.replace(entryUrl.toString())
 }
