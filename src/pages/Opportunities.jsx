@@ -13,6 +13,7 @@ import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import ExpiringContractDiscovery from '@/components/Opportunity/ExpiringContractDiscovery'
 import EbuyDiscovery from '@/components/Opportunity/EbuyDiscovery'
+import DiscoveryToolbar, { DiscoverySelectionBar } from '@/components/Opportunity/DiscoveryToolbar'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
@@ -233,6 +234,7 @@ export default function Opportunities({ toast }) {
   const discoverySource = searchParams.get('source') === 'ebuy' ? 'ebuy' : 'sam'
   const search    = searchParams.get('search') || ''
   const [ebuyCount, setEbuyCount] = useState(0)
+  const [showDismissedEbuy, setShowDismissedEbuy] = useState(false)
   const rfiFollowUpIds = useMemo(() => {
     try {
       const values = JSON.parse(searchParams.get('rfiFollowUps') || '[]')
@@ -601,14 +603,12 @@ export default function Opportunities({ toast }) {
   const [selectionMode, setSelectionMode] = useState(false)
   const [bulkProgress, setBulkProgress] = useState(null)
   const [showSyncDetails, setShowSyncDetails] = useState(false)
-  const [deptOpen,      setDeptOpen]      = useState(false)       // controlled dept filter
   const [deptFilter,    setDeptFilter]    = useState(() => {
     try {
       const saved = localStorage.getItem('sam_dept_filter_selection')
       return saved ? new Set(JSON.parse(saved)) : new Set()
     } catch { return new Set() }
   })   // persisted multi-select department filter
-  const deptFilterRef   = useRef(null)   // for click-outside detection
   const tableScrollRef  = useRef(null)                            // scroll position retention
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
@@ -660,18 +660,6 @@ export default function Opportunities({ toast }) {
       localStorage.setItem('sam_dept_filter_selection', JSON.stringify([...deptFilter]))
     } catch {}
   }, [deptFilter])
-
-  // Close dept filter when clicking outside
-  useEffect(() => {
-    if (!deptOpen) return
-    const handler = (e) => {
-      if (deptFilterRef.current && !deptFilterRef.current.contains(e.target)) {
-        setDeptOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [deptOpen])
 
   // ── Scroll save/restore safety net ──────────────────────────────────
   // Save continuously, not only before button actions. SAM row refreshes are
@@ -1021,28 +1009,46 @@ export default function Opportunities({ toast }) {
             onClick={() => setSamKeyExpired(false)}>✕</button>
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span className="text-sm text-muted">
-            {visibleSAMOpps.length} opportunit{visibleSAMOpps.length !== 1 ? 'ies' : 'y'}
-            {search.trim() && samOpps.some((o) => o.Status === 'dismissed') && <> · search includes dismissed</>}
-          </span>
-          <label className={styles.samTypeFilter}>
-            <span>Type</span>
-            <select value={samTypeFilter} onChange={(event) => {
-              saveScroll()
-              setSAMTypeFilter(event.target.value)
-              setSelectedRows(new Set())
-            }}>
-              <option value="RFI_MRAS">RFIs and MRAS</option>
-              <option value="RFI">RFIs only</option>
-              <option value="MRAS">MRAS only</option>
-              <option value="RFP">RFPs</option>
-              <option value="RFQ">RFQs</option>
-              <option value="All">All types</option>
-            </select>
-          </label>
-          {showSyncDetails && <>
+      <DiscoveryToolbar
+        count={visibleSAMOpps.length}
+        type={samTypeFilter}
+        onTypeChange={(value) => {
+          saveScroll()
+          setSAMTypeFilter(value)
+          setSelectedRows(new Set())
+        }}
+        departments={samDepartments}
+        selectedDepartments={deptFilter}
+        onDepartmentToggle={(department) => setDeptFilter((current) => {
+          const next = new Set(current)
+          next.has(department) ? next.delete(department) : next.add(department)
+          setSelectedRows(new Set())
+          return next
+        })}
+        onDepartmentClear={() => { setDeptFilter(new Set()); setSelectedRows(new Set()) }}
+        status={<>
+          {samRunStatus?.success === true && <>
+            {`Last synced: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}`}
+            {samRunStatus.written > 0 ? <> · {samRunStatus.written} new total</> : <> · No new opportunities found</>}
+            {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
+            {samRunStatus.warnings?.length > 0 && <span style={{ color: 'var(--amber-600)' }} title={samRunStatus.warnings.join('\n')}>
+              {' '}· ⚠ {samRunStatus.warnings.length} warning{samRunStatus.warnings.length === 1 ? '' : 's'}
+            </span>}
+          </>}
+          {samRunStatus?.status === 'partial' && <span style={{ color: 'var(--blue-600)' }}>
+            Progress saved · {samRunStatus.written || 0} new total · continuing automatically
+          </span>}
+          {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
+            Opportunity sync failed: {samRunStatus.error || 'No error detail was recorded.'}
+          </span>}
+          {samRunStatus?.success == null && 'Opportunity sync has not run yet'}
+        </>}
+        controlsOpen={showSyncDetails}
+        onControlsToggle={() => setShowSyncDetails((value) => !value)}
+        selectionMode={selectionMode}
+        onSelectionToggle={() => { setSelectionMode((value) => !value); setSelectedRows(new Set()) }}
+        selectionDisabled={isPulling || checkingSAMChanges || Boolean(bulkProgress)}
+      >
           <button className="btn btn-primary text-xs" title="Pull opportunities from SAM.gov" style={{ padding: '3px 10px' }}
             onClick={() => handlePull()} disabled={isPulling}>
             {isPulling ? '⏳ Pulling…' : '↻ Pull'}
@@ -1057,91 +1063,10 @@ export default function Opportunities({ toast }) {
             </span>
           )}
           {!checkingSAMChanges && samCheckError && <span className="text-xs" style={{ color: 'var(--red-600)' }}>{samCheckError}</span>}
-          {/* Department filter — controlled multi-select, stays open on selection, always visible */}
-          {samDepartments.length > 0 && (
-            <div ref={deptFilterRef} style={{ position: 'relative' }}>
-              <button className="btn text-xs" title="Filter by department" style={{ padding: '3px 10px' }}
-                onClick={() => setDeptOpen((v) => !v)}>
-                🏛 Dept{deptFilter.size > 0 ? ` (${deptFilter.size})` : ''}
-              </button>
-              {deptOpen && (
-                <div className={styles.deptDropdown}>
-                  <div style={{ padding: '6px 10px', borderBottom: '0.5px solid var(--gray-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="text-xs text-muted">Filter by department</span>
-                    {deptFilter.size > 0 && (
-                      <button className="text-xs" style={{ background: 'none', border: 'none', color: 'var(--blue-600)', cursor: 'pointer', padding: 0, fontFamily: 'var(--font)' }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => setDeptFilter(new Set())}>Clear</button>
-                    )}
-                  </div>
-                  {samDepartments.map((dept) => (
-                    <label key={dept} className={styles.deptOption}
-                      onMouseDown={(e) => e.preventDefault()}>
-                      <input type="checkbox"
-                        checked={deptFilter.has(dept)}
-                        onChange={() => {
-                          setDeptFilter((prev) => {
-                            const next = new Set(prev)
-                            next.has(dept) ? next.delete(dept) : next.add(dept)
-                            return next
-                          })
-                        }}
-                      />
-                      <span className="text-xs">{dept}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          </>}
-        </div>
-        <div className={styles.newToolbarStatus}>
-          <div className={styles.syncControlRow}>
-            <span className={`text-xs text-muted ${styles.pullSummary}`}>
-              {samRunStatus?.success === true && (
-                <>
-                  {`Last pulled: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}`}
-                  {samRunStatus.written > 0
-                    ? <> · {samRunStatus.written} new total</>
-                    : <> · No new opportunities found</>}
-                  {samRunStatus.deduped > 0 && <> · {samRunStatus.deduped} duplicate{samRunStatus.deduped === 1 ? '' : 's'} removed</>}
-                  {samRunStatus.warnings?.length > 0 && (
-                    <span style={{ color: 'var(--amber-600)' }} title={samRunStatus.warnings.join('\n')}>
-                      {' '}· ⚠ {samRunStatus.warnings.length} warning{samRunStatus.warnings.length === 1 ? '' : 's'}
-                    </span>
-                  )}
-                </>
-              )}
-              {samRunStatus?.status === 'partial' && (
-                <span style={{ color: 'var(--blue-600)' }}>
-                  Progress saved · {samRunStatus.written || 0} new total · continuing automatically
-                </span>
-              )}
-              {samRunStatus?.success === false && samRunStatus?.status !== 'partial' && (
-                <span style={{ color: 'var(--red-600)' }} title={samRunStatus.warnings?.join('\n') || ''}>
-                  Opportunity pull failed: {samRunStatus.error || 'No error detail was recorded.'}
-                </span>
-              )}
-              {samRunStatus?.success == null && 'Opportunity pull has not run yet'}
-            </span>
-            <button className={`btn text-xs ${showSyncDetails ? styles.syncDetailsActive : styles.syncDetailsButton}`} title="Discovery controls" style={{ padding: '3px 10px' }} onClick={() => setShowSyncDetails((value) => !value)}>
-              Controls
-            </button>
-            <button className="btn text-xs" style={{ padding: '3px 10px' }} onClick={() => {
-              setSelectionMode((value) => !value)
-              setSelectedRows(new Set())
-            }} disabled={isPulling || checkingSAMChanges || Boolean(bulkProgress)}>
-              {selectionMode ? 'Cancel' : 'Select'}
-            </button>
-          </div>
-          {pullMessage && !isPulling && (
-            <span style={{ fontSize: 11, color: pullMessage.type === 'error' ? 'var(--red-600)' : pullMessage.type === 'success' ? 'var(--green-600)' : 'var(--gray-600)' }}>
-              {pullMessage.text}
-            </span>
-          )}
-        </div>
-      </div>
+      </DiscoveryToolbar>
+      {pullMessage && !isPulling && <span style={{ display: 'block', fontSize: 11, marginBottom: 8, color: pullMessage.type === 'error' ? 'var(--red-600)' : pullMessage.type === 'success' ? 'var(--green-600)' : 'var(--gray-600)' }}>
+        {pullMessage.text}
+      </span>}
       {(isPulling || checkingSAMChanges || bulkProgress) && (
         <div className={styles.discoveryProgress}>
           <div className={styles.discoveryProgressHeader}>
@@ -1152,14 +1077,11 @@ export default function Opportunities({ toast }) {
         </div>
       )}
       {selectionMode && !bulkProgress && (
-        <div className={styles.bulkToolbar}>
-          <span><strong>{selectedRows.size}</strong> selected</span>
-          <div>
+        <DiscoverySelectionBar count={selectedRows.size}>
             <button className={`btn text-xs ${styles.newActionPipeline}`} disabled={!selectedRows.size} onClick={() => handleBulkAction('pipeline')}>Add to pipeline</button>
             <button className={`btn text-xs ${styles.newAction} ${styles.newActionTrack}`} disabled={!selectedRows.size} onClick={() => handleBulkAction('track')}>Track</button>
             <button className={`btn text-xs ${styles.newAction} ${styles.newActionDismiss}`} disabled={!selectedRows.size} onClick={() => handleBulkAction('dismiss')}>Dismiss</button>
-          </div>
-        </div>
+        </DiscoverySelectionBar>
       )}
       <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         {samLoading
@@ -1622,16 +1544,19 @@ export default function Opportunities({ toast }) {
             {search && (
               <button className={styles.searchClear} onClick={() => setSearch('')} aria-label="Clear search">✕</button>
             )}
-            {activeTab === 'New' && discoverySource === 'sam' && samOpps.some((opportunity) => opportunity.Status === 'dismissed') && (
+            {activeTab === 'New' && (
               <button
                 type="button"
-                className={`${styles.searchVisibilityButton} ${showDismissed ? styles.searchVisibilityActive : ''}`}
-                onClick={() => { saveScroll(); setShowDismissed((current) => !current) }}
-                aria-pressed={showDismissed}
-                title={showDismissed ? 'Hide dismissed opportunities' : 'Show dismissed opportunities'}
+                className={`${styles.searchVisibilityButton} ${(discoverySource === 'sam' ? showDismissed : showDismissedEbuy) ? styles.searchVisibilityActive : ''}`}
+                onClick={() => {
+                  if (discoverySource === 'sam') { saveScroll(); setShowDismissed((current) => !current) }
+                  else setShowDismissedEbuy((current) => !current)
+                }}
+                aria-pressed={discoverySource === 'sam' ? showDismissed : showDismissedEbuy}
+                title={(discoverySource === 'sam' ? showDismissed : showDismissedEbuy) ? 'Hide dismissed opportunities' : 'Show dismissed opportunities'}
               >
                 <span className={styles.visibilityIcon} aria-hidden="true">◉</span>
-                <span className={styles.visibilityLabel}>{showDismissed ? 'Hide dismissed' : 'Show dismissed'}</span>
+                <span className={styles.visibilityLabel}>{(discoverySource === 'sam' ? showDismissed : showDismissedEbuy) ? 'Hide dismissed' : 'Show dismissed'}</span>
               </button>
             )}
             {activeTab === 'Responses' && hiddenResponseCount > 0 && (
@@ -1823,7 +1748,7 @@ export default function Opportunities({ toast }) {
         )}
         {activeTab === 'New' && discoverySource === 'sam' && renderNewTab()}
         {activeTab === 'New' && discoverySource === 'ebuy' && (
-          <EbuyDiscovery search={search} pipeline={pipeline} pipelineLoading={loading} add={add} toast={toast} onCountChange={setEbuyCount} />
+          <EbuyDiscovery search={search} pipeline={pipeline} pipelineLoading={loading} includeDismissed={showDismissedEbuy} add={add} toast={toast} onCountChange={setEbuyCount} />
         )}
 
         {/* ── Pipeline tabs: Responses / Expiring / Tracked ── */}
