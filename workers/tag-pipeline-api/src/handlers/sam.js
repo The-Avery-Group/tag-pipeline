@@ -30,6 +30,16 @@ const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
 import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
+import { normalizeSAMOpportunityDetail } from '../lib/samOpportunityDetail.js'
+import {
+  claimSAMArchive,
+  ensureSAMArchive,
+  findSAMArchive,
+  getSAMArchive,
+  markSAMArchiveReviewState,
+  samArchiveStorageReady,
+  updateSAMArchive,
+} from '../lib/samArchiveRepository.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances delegated pulls while it remains open. Autonomous pulls use a
 // Cloudflare Workflow so every unit gets its own retryable durable step.
@@ -407,6 +417,130 @@ function mapRecord(raw, naicsCode) {
   }
 }
 
+export function samArchiveInputForDiscoveryRow(row = {}) {
+  const noticeId = String(row['Notice ID'] || '').trim()
+  const solicitationNumber = String(row['Solicitation Number'] || '').trim()
+  const opportunityKey = String(solicitationNumber || noticeId).trim().toLowerCase()
+  if (!opportunityKey) return null
+  return {
+    opportunityKey,
+    noticeId,
+    solicitationNumber,
+    title: String(row.Title || '').trim(),
+    department: String(row.Department || '').trim(),
+    agency: String(row.Agency || '').trim(),
+  }
+}
+
+function safeArchiveInstancePart(value) {
+  return String(value || 'opportunity').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 55)
+}
+
+async function queueNewSAMArchives(env, rows) {
+  if (!env.SAM_ARCHIVE_WORKFLOW?.createBatch) return { queued: 0, unavailable: true }
+  const requests = rows
+    .map(samArchiveInputForDiscoveryRow)
+    .filter(Boolean)
+    .map((archiveInput) => ({
+      id: `sam-archive-new-${safeArchiveInstancePart(archiveInput.opportunityKey)}-${crypto.randomUUID().slice(0, 8)}`,
+      params: { opportunityKey: archiveInput.opportunityKey, cursor: 0, archiveInput },
+      retention: { successRetention: '3 days', errorRetention: '7 days' },
+    }))
+  if (!requests.length) return { queued: 0 }
+  const instances = await env.SAM_ARCHIVE_WORKFLOW.createBatch(requests)
+  return { queued: instances.filter(Boolean).length }
+}
+
+export async function fetchSAMOpportunityRecord(env, { noticeId = '', solicitationNumber = '' } = {}) {
+  if (!env.SAM_API_KEY) throw Object.assign(new Error('SAM_API_KEY not configured'), { status: 503 })
+  const notice = String(noticeId || '').trim()
+  const solicitation = String(solicitationNumber || '').trim()
+  if (!notice && !solicitation) throw Object.assign(new Error('A notice ID or solicitation number is required'), { status: 400 })
+  const today = new Date()
+  const from = new Date(today)
+  from.setUTCDate(from.getUTCDate() - MAX_SAM_DATE_RANGE_DAYS)
+  const params = new URLSearchParams({
+    api_key: env.SAM_API_KEY,
+    postedFrom: formatDateParam(from),
+    postedTo: formatDateParam(today),
+    limit: '10',
+    offset: '0',
+  })
+  if (notice) params.set('noticeid', notice)
+  else params.set('solnum', solicitation)
+  const response = await fetchWithRetry(`${SAM_BASE}?${params}`)
+  if (response.status === 401) {
+    await setKeyExpired(env, true)
+    throw Object.assign(new Error('SAM API key expired or invalid'), { status: 502, code: 'KEY_EXPIRED' })
+  }
+  if (response.status === 204) throw Object.assign(new Error('The SAM.gov opportunity was not found'), { status: 404 })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) throw Object.assign(new Error(payload?.message || `SAM.gov opportunity lookup failed (${response.status})`), { status: 502 })
+  const records = payload?.opportunitiesData || []
+  const record = records.find((item) => notice && normalizeNoticeId(item.noticeId) === normalizeNoticeId(notice))
+    || records.find((item) => solicitation && normalizeSolNum(item.solicitationNumber) === normalizeSolNum(solicitation))
+    || records[0]
+  if (!record) throw Object.assign(new Error('The SAM.gov opportunity was not found'), { status: 404 })
+  return record
+}
+
+function mergeSAMArchive(detail, archive) {
+  if (!archive) return { ...detail, archive: null }
+  const files = new Map(archive.files.map((file) => [file.sourceUrl, file]))
+  return {
+    ...detail,
+    attachments: detail.attachments.map((attachment) => ({
+      ...attachment,
+      ...(files.get(attachment.sourceUrl) || {}),
+    })),
+    archive: {
+      opportunityKey: archive.opportunityKey,
+      archiveStatus: archive.archiveStatus,
+      progressPhase: archive.progressPhase,
+      attachmentTotal: archive.attachmentTotal,
+      archivedCount: archive.archivedCount,
+      failedCount: archive.failedCount,
+      errorMessage: archive.errorMessage,
+      webUrl: archive.webUrl,
+      updatedAt: archive.updatedAt,
+    },
+  }
+}
+
+async function startSAMArchive(env, detail, { force = false } = {}) {
+  if (!env.EBUY_DB || !(await samArchiveStorageReady(env.EBUY_DB))) {
+    throw Object.assign(new Error('Apply the latest D1 migration to enable the SAM.gov archive'), { status: 503, code: 'migration_required' })
+  }
+  if (!env.SAM_ARCHIVE_WORKFLOW?.createBatch) {
+    throw Object.assign(new Error('SAM.gov archive Workflow is not configured'), { status: 503 })
+  }
+  const opportunityKey = String(detail.solicitationNumber || detail.noticeId).trim().toLowerCase()
+  let archive = await ensureSAMArchive(env.EBUY_DB, {
+    opportunityKey,
+    noticeId: detail.noticeId,
+    solicitationNumber: detail.solicitationNumber,
+    title: detail.title,
+    department: detail.organization?.department,
+    agency: detail.organization?.subTier,
+    attachmentTotal: detail.attachments.length,
+  })
+  const instanceId = `sam-archive-${crypto.randomUUID()}`
+  const claimed = await claimSAMArchive(env.EBUY_DB, opportunityKey, instanceId, { force })
+  if (!claimed) return { started: false, archive }
+  try {
+    const instances = await env.SAM_ARCHIVE_WORKFLOW.createBatch([{
+      id: instanceId,
+      params: { opportunityKey, cursor: 0 },
+      retention: { successRetention: '3 days', errorRetention: '7 days' },
+    }])
+    archive = await updateSAMArchive(env.EBUY_DB, opportunityKey, { workflowInstanceId: instances[0]?.id || instanceId })
+    return { started: Boolean(instances[0]), instanceId: instances[0]?.id || instanceId, archive }
+  } catch (error) {
+    await updateSAMArchive(env.EBUY_DB, opportunityKey, { archiveStatus: 'error', progressPhase: 'SAM.gov archive could not start', errorMessage: error.message })
+    throw Object.assign(new Error(`Could not start the SAM.gov archive: ${error.message}`), { status: 502 })
+  }
+}
+
 function normalizedNoticeType(value) {
   return normalizeDiscoveryNoticeType(value)
 }
@@ -417,10 +551,10 @@ function solicitationDedupKey(solicitationNumber, noticeType) {
 }
 
 // ── RFI follow-on matcher ────────────────────────────────────────────────
-// Finds follow-on RFP/RFQ notices for an RFI/Sources-Sought opportunity.
+// Finds RFP or RFQ follow-ons for an RFI, MRAS, or RFQ opportunity.
 // The SAM API cannot express every one of our matching rules as a query
-// parameter, so we retrieve recent RFP/RFQ notices and apply the four hard
-// requirements below before returning any candidate to the browser.
+// parameter. Procurement type is the only hard gate; organizational continuity,
+// POC, NAICS, title language, and explicit source references are weighted evidence.
 
 const TITLE_STOP_WORDS = new Set([
   'and', 'for', 'the', 'with', 'from', 'this', 'that', 'will', 'services',
@@ -457,12 +591,12 @@ function normalizedFollowUpRules(rules = {}) {
   }
 }
 
-function requestedFollowUpTypes(noticeTypes) {
-  const text = String(noticeTypes || '').toUpperCase()
-  const types = []
-  if (text.includes('RFP')) types.push('o')
-  if (text.includes('RFQ')) types.push('k')
-  return types.length ? types : ['o', 'k']
+export function requestedFollowUpTypes(noticeTypes) {
+  // Keep the argument for backwards-compatible settings/workbook rows while
+  // enforcing the supported follow-on path consistently. SAM uses `o` for
+  // solicitation/RFP records and `k` for combined/RFQ records.
+  void noticeTypes
+  return ['o', 'k']
 }
 
 function normalized(value) {
@@ -502,21 +636,64 @@ function matchingPOC(raw, email) {
   return raw.pointOfContact.find((poc) => normalized(poc?.email) === target) || null
 }
 
-function followUpCandidate(raw, source) {
+function exactOrganizationMatch(left, right) {
+  const a = normalized(left)
+  const b = normalized(right)
+  return Boolean(a && b && a === b)
+}
+
+function candidateText(raw) {
+  return normalized([
+    raw.title,
+    raw.description,
+    raw.additionalInfoLink,
+    raw.solicitationNumber,
+  ].filter(Boolean).join(' '))
+}
+
+function sourceReferences(raw, source) {
+  const text = candidateText(raw)
+  return [source.noticeId, source.solicitationNumber]
+    .map(normalized)
+    .filter((value) => value.length >= 5 && text.includes(value))
+}
+
+export function followUpCandidate(raw, source) {
   const rules = normalizedFollowUpRules(source.rules)
   const sourceSubmission = dateFromValue(source.submissionDate)
   const candidatePosted = dateFromValue(raw.postedDate)
-  // A follow-on must be posted strictly AFTER the RFI was submitted. This
+  // A follow-on must be posted strictly AFTER the source was submitted. This
   // guards against a broad API response ever admitting an older notice.
   if (sourceSubmission && (!candidatePosted || candidatePosted <= sourceSubmission)) return null
   const org = parseOrg(raw.fullParentPathName)
-  if (rules.departmentRule === 'Exact' && normalized(org.department) !== normalized(source.department)) return null
-  if (rules.agencyRule === 'Exact' && normalized(org.agency) !== normalized(source.agency)) return null
-  const poc = rules.pocRule === 'Exact' ? matchingPOC(raw, source.pocEmail) : null
-  if (rules.pocRule === 'Exact' && !poc) return null
+  const departmentMatches = exactOrganizationMatch(org.department, source.department)
+  const agencyMatches = exactOrganizationMatch(org.agency, source.agency)
+  const officeMatches = exactOrganizationMatch(org.office, source.office)
+  const poc = matchingPOC(raw, source.pocEmail)
   const overlap = titleOverlapPercent(source.title, raw.title)
-  if (overlap < rules.titleOverlapPercent) return null
   if (normalized(raw.noticeId) === normalized(source.noticeId)) return null
+
+  const references = sourceReferences(raw, source)
+  const candidateNaics = String(raw.naicsCode || raw.naics || '').trim()
+  const naicsMatches = Boolean(candidateNaics && source.naicsCode && normalized(candidateNaics) === normalized(source.naicsCode))
+  const reasons = []
+  let score = 0
+  if (references.length) { score += 50; reasons.push(`References ${references.join(' or ')}`) }
+  if (poc) { score += 30; reasons.push('Same point of contact') }
+  if (agencyMatches) { score += 25; reasons.push('Same agency') }
+  if (departmentMatches) { score += 10; reasons.push('Same department') }
+  if (officeMatches) { score += 10; reasons.push('Same office') }
+  if (naicsMatches) { score += 15; reasons.push('Same NAICS') }
+  const titlePoints = Math.min(25, Math.round(overlap / 4))
+  if (titlePoints) { score += titlePoints; reasons.push(`${overlap}% title keyword overlap`) }
+
+  // Exact/Ignore settings now control whether a signal contributes rather
+  // than rejecting a candidate outright. This keeps older per-opportunity
+  // settings useful without repeating the hard-gate failure mode.
+  if (rules.departmentRule === 'Ignore' && departmentMatches) score -= 10
+  if (rules.agencyRule === 'Ignore' && agencyMatches) score -= 25
+  if (rules.pocRule === 'Ignore' && poc) score -= 30
+  if (score < 30) return null
 
   return {
     noticeId:           String(raw.noticeId || '').trim(),
@@ -528,13 +705,17 @@ function followUpCandidate(raw, source) {
     office:             org.office,
     responseDate:       parseResponseDate(raw.responseDeadLine),
     postedDate:         parseResponseDate(raw.postedDate),
-    naicsCode:          String(raw.naicsCode || raw.naics || '').trim(),
+    naicsCode:          candidateNaics,
     samLink:            String(raw.uiLink || '').trim(),
     pocName:            String(poc?.fullName || poc?.fullname || '').trim(),
     pocEmail:           String(poc?.email || '').trim(),
     pocPhone:           String(poc?.phone || '').trim(),
     type:               String(raw.type || '').trim(),
+    noticeType:         normalizeDiscoveryNoticeType(raw.type, raw.baseType, raw.title),
     keywordOverlapPercent: overlap,
+    matchScore:         score,
+    confidence:         score >= 70 ? 'Strong' : score >= 45 ? 'Likely' : 'Possible',
+    matchReasons:       reasons,
   }
 }
 
@@ -576,7 +757,7 @@ export async function findRFIFollowUps(env, source) {
 
   if (submissionDate) {
     // Start on the following day: a follow-on must be posted strictly after
-    // the RFI submission date, never on or before it.
+    // the source submission date, never on or before it.
     from.setUTCDate(from.getUTCDate() + 1)
     to.setUTCDate(to.getUTCDate() + rules.submissionWindowDays)
   } else {
@@ -599,7 +780,10 @@ export async function findRFIFollowUps(env, source) {
     const key = candidate.noticeId || candidate.solicitationNumber
     if (key && !unique.has(key)) unique.set(key, candidate)
   }
-  return [...unique.values()].sort((a, b) => String(a.responseDate || '').localeCompare(String(b.responseDate || '')))
+  return [...unique.values()].sort((a, b) =>
+    Number(b.matchScore || 0) - Number(a.matchScore || 0) ||
+    String(a.responseDate || '').localeCompare(String(b.responseDate || ''))
+  )
 }
 
 // ── KV helpers ────────────────────────────────────────────────────────────
@@ -640,9 +824,12 @@ async function handleFollowUps(req, env) {
   const source = {
     department: url.searchParams.get('department')?.trim() || '',
     agency:     url.searchParams.get('agency')?.trim() || '',
+    office:     url.searchParams.get('office')?.trim() || '',
+    naicsCode:  url.searchParams.get('naicsCode')?.trim() || '',
     pocEmail:   url.searchParams.get('pocEmail')?.trim() || '',
     title:      url.searchParams.get('title')?.trim() || '',
     noticeId:   url.searchParams.get('noticeId')?.trim() || '',
+    solicitationNumber: url.searchParams.get('solicitationNumber')?.trim() || '',
     submissionDate: url.searchParams.get('submissionDate')?.trim() || '',
     rules: {
       departmentRule: url.searchParams.get('departmentRule')?.trim(),
@@ -658,10 +845,7 @@ async function handleFollowUps(req, env) {
   source.rules = normalizedFollowUpRules(source.rules)
   const missing = Object.entries(source)
     .filter(([key, value]) => {
-      if (key === 'noticeId' || key === 'submissionDate' || key === 'rules') return false
-      if (key === 'department') return source.rules.departmentRule === 'Exact' && !value
-      if (key === 'agency') return source.rules.agencyRule === 'Exact' && !value
-      if (key === 'pocEmail') return source.rules.pocRule === 'Exact' && !value
+      if (['noticeId', 'solicitationNumber', 'submissionDate', 'rules', 'department', 'agency', 'office', 'naicsCode', 'pocEmail'].includes(key)) return false
       return !value
     })
     .map(([key]) => key)
@@ -994,6 +1178,7 @@ async function runSAMPull(
   // Skipped entirely if phase 1 hit a fatal error (nothing valid to write).
   let totalWritten = 0
   let totalRepaired = 0
+  const writtenRows = []
   if (!fatalError && (toWrite.length > 0 || typeRepairs.length > 0)) {
     await setRunLog(env, {
       status: 'running', phase: 'writing', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
@@ -1020,8 +1205,24 @@ async function runSAMPull(
       try {
         await appendOpportunity(env, token, c.mapped, existingHeaders)
         totalWritten++
+        writtenRows.push(c.mapped)
       } catch (err) {
         console.error(`[SAM] Write failed for ${c.noticeId}:`, err.message)
+      }
+    }
+
+    // Archive preservation is detached from the workbook write. One batch
+    // call starts small, durable file workflows without spending this pull's
+    // remaining Graph/SAM subrequest budget or rolling back a saved record.
+    if (writtenRows.length) {
+      try {
+        const archiveQueue = await queueNewSAMArchives(env, writtenRows)
+        if (archiveQueue.unavailable) {
+          naicsErrors.push('SAM.gov attachment archiving is not configured; opportunity records were still saved.')
+        }
+      } catch (error) {
+        console.warn(JSON.stringify({ event: 'sam_archive_queue_failed', count: writtenRows.length, message: error.message }))
+        naicsErrors.push(`SAM.gov attachment archiving will need a retry: ${error.message}`)
       }
     }
   }
@@ -1191,6 +1392,57 @@ export async function startScheduledSAMPull(env, scheduledTime = Date.now()) {
 export async function handleSAM(req, env, ctx) {
   const url = new URL(req.url)
 
+  // GET /sam/opportunity — live SAM.gov record enriched with archive state.
+  if (url.pathname === '/sam/opportunity' && req.method === 'GET') {
+    try {
+      const record = await fetchSAMOpportunityRecord(env, {
+        noticeId: url.searchParams.get('noticeId') || '',
+        solicitationNumber: url.searchParams.get('solicitationNumber') || '',
+      })
+      const detail = normalizeSAMOpportunityDetail(record)
+      const archive = env.EBUY_DB && await samArchiveStorageReady(env.EBUY_DB)
+        ? await findSAMArchive(env.EBUY_DB, detail)
+        : null
+      return json({ opportunity: mergeSAMArchive(detail, archive) })
+    } catch (error) {
+      return json({ error: error.message, code: error.code || 'sam_opportunity_failed' }, error.status || 500)
+    }
+  }
+
+  // POST /sam/archive — start or retry bounded SharePoint preservation.
+  if (url.pathname === '/sam/archive' && req.method === 'POST') {
+    try {
+      const body = await req.json().catch(() => ({}))
+      const record = await fetchSAMOpportunityRecord(env, body)
+      const detail = normalizeSAMOpportunityDetail(record)
+      return json({ ok: true, ...(await startSAMArchive(env, detail, { force: body.force === true })) }, 202)
+    } catch (error) {
+      return json({ error: error.message, code: error.code || 'sam_archive_failed' }, error.status || 500)
+    }
+  }
+
+  if (url.pathname === '/sam/archive/status' && req.method === 'GET') {
+    if (!env.EBUY_DB || !(await samArchiveStorageReady(env.EBUY_DB))) return json({ archive: null })
+    return json({ archive: await getSAMArchive(env.EBUY_DB, url.searchParams.get('key') || '') })
+  }
+
+  if (url.pathname === '/sam/archive/review' && req.method === 'POST') {
+    const body = await req.json().catch(() => ({}))
+    if (!env.EBUY_DB || !(await samArchiveStorageReady(env.EBUY_DB))) return json({ archive: null })
+    let archive = await findSAMArchive(env.EBUY_DB, body)
+    // Dismiss can win the race against the automatically queued archive.
+    // Persist the review state as a lightweight placeholder so the archive
+    // Workflow cannot later recreate the opportunity as an undismissed item.
+    if (!archive) {
+      archive = await ensureSAMArchive(env.EBUY_DB, {
+        opportunityKey: body.solicitationNumber || body.noticeId,
+        noticeId: body.noticeId,
+        solicitationNumber: body.solicitationNumber,
+      })
+    }
+    return json({ archive: await markSAMArchiveReviewState(env.EBUY_DB, archive.opportunityKey, body.reviewState) })
+  }
+
   // GET /sam/key-status
   if (url.pathname === '/sam/key-status' && req.method === 'GET') {
     const expired = await getKeyExpired(env)
@@ -1203,7 +1455,7 @@ export async function handleSAM(req, env, ctx) {
     return json(log || { success: null, status: null, timestamp: null })
   }
 
-  // GET /sam/follow-ups — find RFP/RFQ notices that follow an RFI
+  // GET /sam/follow-ups — find RFP or RFQ notices following an RFI/MRAS/RFQ
   if (url.pathname === '/sam/follow-ups' && req.method === 'GET') {
     return handleFollowUps(req, env)
   }
