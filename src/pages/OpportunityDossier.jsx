@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -54,6 +54,7 @@ function SummaryGrid({ opportunity }) {
 export default function OpportunityDossier() {
   const { contractNumber } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const opportunityKey = decodeURIComponent(contractNumber || '')
   const { pipeline, loading: pipelineLoading } = usePipeline()
   const { notes, loading: notesLoading } = useNotes(opportunityKey)
@@ -66,6 +67,7 @@ export default function OpportunityDossier() {
   const [fileError, setFileError] = useState('')
   const [fileSearch, setFileSearch] = useState('')
   const [fileSource, setFileSource] = useState('All')
+  const filesRef = useRef(null)
 
   const opportunity = useMemo(() => pipeline.find((item) => normalized(item[C.id]) === normalized(opportunityKey)), [opportunityKey, pipeline])
   const linkedContacts = useMemo(() => {
@@ -107,10 +109,39 @@ export default function OpportunityDossier() {
     )
   }, [fileData.files, fileSearch, fileSource])
 
+  const focusedAlert = useMemo(() => {
+    const type = searchParams.get('alert')
+    return alerts.alerts.find((alert) => alert.type === type) || null
+  }, [alerts.alerts, searchParams])
+  const changedFileNames = useMemo(() => new Set([
+    ...(focusedAlert?.details?.files || []),
+    ...(focusedAlert?.details?.changedFiles || []),
+    ...(focusedAlert?.details?.removedFiles || []),
+  ].map((file) => normalized(file?.name || file?.fileName || file)).filter(Boolean)), [focusedAlert])
+
+  useEffect(() => {
+    if (searchParams.get('focus') !== 'files') return
+    const timer = window.setTimeout(() => filesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120)
+    return () => window.clearTimeout(timer)
+  }, [searchParams])
+
+  const reviewAlert = async (alert) => {
+    if (['sam_files', 'ebuy_files'].includes(alert.type)) {
+      const next = new URLSearchParams(searchParams)
+      next.set('focus', 'files')
+      next.set('alert', alert.type)
+      setSearchParams(next, { replace: true })
+      window.setTimeout(() => filesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
+    } else if (alert.type === 'rfi_follow_on') {
+      navigate(`/opportunities/${encodeURIComponent(opportunityKey)}?focus=follow-ups`)
+    }
+    await alerts.acknowledge(alert.type, alert.fingerprint).catch(() => {})
+  }
+
   if (pipelineLoading) return <div className="page-body"><div className="skeleton" style={{ height: 44 }} /></div>
   if (!opportunity) return <div className="page-body"><button className="btn btn-ghost" onClick={() => navigate('/opportunities')}>← Opportunities</button><p className="text-muted mt-3">Opportunity not found.</p></div>
 
-  const activeAlerts = alerts.alerts.filter((alert) => alert.status === 'active')
+  const activeAlerts = alerts.alerts.filter((alert) => alert.badgeVisible)
   return <>
     <Topbar title="Opportunity dossier" subtitle1={opportunity[C.title]} subtitle2={opportunityKey} showFilter={false} showNew={false} />
     <main className={`page-body ${styles.page}`}>
@@ -121,7 +152,7 @@ export default function OpportunityDossier() {
 
       {activeAlerts.length > 0 && <div className={styles.alertStrip}>
         <strong>Needs review</strong>
-        <div>{activeAlerts.map((alert) => <button key={alert.type} type="button" onClick={() => alerts.acknowledge(alert.type, alert.fingerprint)} title="Mark reviewed">{alert.summary || 'Opportunity information changed'}</button>)}</div>
+        <div>{activeAlerts.map((alert) => <button key={alert.type} type="button" onClick={() => reviewAlert(alert)} title="Open evidence and mark reviewed">{alert.summary || 'Opportunity information changed'}</button>)}</div>
       </div>}
 
       <Section title="Overview"><SummaryGrid opportunity={opportunity} /></Section>
@@ -141,15 +172,19 @@ export default function OpportunityDossier() {
         {tasksLoading ? <div className="skeleton" style={{ height: 60 }} /> : tasks.length ? <div className={styles.taskList}>{tasks.map((task) => <div key={task.TaskID || task._rowIndex} className={styles.task}><div><strong>{task.Title}</strong><span>{[task.AssignedTo, task.Priority, task.DueDate && `Due ${formatDate(task.DueDate)}`].filter(Boolean).join(' · ')}</span></div><span className="badge badge-tracking">{task.Status || 'To do'}</span></div>)}</div> : <p className="text-muted text-sm">No tasks for this opportunity.</p>}
       </Section>
 
-      <Section title={`Files${fileData.files?.length ? ` · ${fileData.files.length}` : ''}`}>
+      <div ref={filesRef} className={styles.focusTarget}><Section title={`Files${fileData.files?.length ? ` · ${fileData.files.length}` : ''}`}>
+        {focusedAlert && ['sam_files', 'ebuy_files'].includes(focusedAlert.type) && <div className={styles.fileEvidence}>
+          <div><strong>{focusedAlert.summary}</strong><span>{focusedAlert.details?.source || (focusedAlert.type === 'ebuy_files' ? 'GSA eBuy' : 'SAM.gov')} · detected {formatDate(focusedAlert.detectedAt)}</span></div>
+          <button className="btn btn-ghost text-xs" onClick={() => alerts.acknowledge(focusedAlert.type, focusedAlert.fingerprint)}>Mark reviewed</button>
+        </div>}
         <div className={styles.fileTools}>
           <input className="form-input" value={fileSearch} onChange={(event) => setFileSearch(event.target.value)} placeholder="Search all opportunity files…" />
-          <select className="form-select" value={fileSource} onChange={(event) => setFileSource(event.target.value)}><option>All</option><option>SAM.gov</option><option>Reference material</option><option>Workspace</option></select>
+          <select className="form-select" value={fileSource} onChange={(event) => setFileSource(event.target.value)}><option>All</option><option>Source documents</option><option>Reference material</option><option>Workspace</option></select>
           <button className="btn" onClick={loadFiles} disabled={filesLoading}>{filesLoading ? 'Refreshing…' : 'Refresh'}</button>
         </div>
-        {fileError ? <div className="callout callout-error">{fileError}</div> : filesLoading ? <div className="skeleton" style={{ height: 120 }} /> : visibleFiles.length ? <div className={styles.tableWrap}><table className={styles.fileTable}><thead><tr><th>Name</th><th>Source</th><th>Location</th><th>Modified</th><th className={styles.number}>Size</th></tr></thead><tbody>{visibleFiles.map((file) => <tr key={file.id}><td><a href={file.webUrl} target="_blank" rel="noreferrer">{file.name}</a></td><td><span className={styles.sourceBadge}>{file.source}</span></td><td title={file.folderPath}>{file.folderPath || 'Workspace root'}</td><td>{formatDate(file.lastModifiedDateTime)}</td><td className={styles.number}>{formatBytes(file.size)}</td></tr>)}</tbody></table></div> : <p className="text-muted text-sm">No files match this view.</p>}
+        {fileError ? <div className="callout callout-error">{fileError}</div> : filesLoading ? <div className="skeleton" style={{ height: 120 }} /> : visibleFiles.length ? <div className={styles.tableWrap}><table className={styles.fileTable}><thead><tr><th>Name</th><th>Source</th><th>Location</th><th>Modified</th><th className={styles.number}>Size</th></tr></thead><tbody>{visibleFiles.map((file) => <tr key={file.id} className={changedFileNames.has(normalized(file.name)) ? styles.changedFile : undefined}><td><a href={file.webUrl} target="_blank" rel="noreferrer">{file.name}</a>{changedFileNames.has(normalized(file.name)) && <span className={styles.changedMarker}>Changed</span>}</td><td><span className={styles.sourceBadge}>{file.source}</span></td><td title={file.folderPath}>{file.folderPath || 'Workspace root'}</td><td>{formatDate(file.lastModifiedDateTime)}</td><td className={styles.number}>{formatBytes(file.size)}</td></tr>)}</tbody></table></div> : <p className="text-muted text-sm">No files match this view.</p>}
         {fileData.partial && <p className="text-muted text-xs" style={{ marginTop: 8 }}>This workspace is unusually large. Open SharePoint to see the remaining files.</p>}
-      </Section>
+      </Section></div>
 
       <Section title="Requirements and constraints">
         <div className={styles.summaryGrid}><div className={styles.summaryItem}><span>Known requirement</span><strong>{opportunity[C.title]}</strong></div>{opportunity[C.classification] && <div className={styles.summaryItem}><span>Contract classification</span><strong>{opportunity[C.classification]}</strong></div>}{opportunity[C.setAside] && <div className={styles.summaryItem}><span>Set-aside</span><strong>{opportunity[C.setAside]}</strong></div>}</div>
