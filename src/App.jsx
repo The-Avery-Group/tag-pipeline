@@ -33,6 +33,7 @@ const Opportunities     = lazy(() => import('@/pages/Opportunities'))
 const OpportunityDetail = lazy(() => import('@/pages/OpportunityDetail'))
 const OpportunityDossier = lazy(() => import('@/pages/OpportunityDossier'))
 const EbuyOpportunityDetail = lazy(() => import('@/pages/EbuyOpportunityDetail'))
+const SAMOpportunityDetail = lazy(() => import('@/pages/SAMOpportunityDetail'))
 const PipelineBoard     = lazy(() => import('@/pages/PipelineBoard'))
 const Tasks             = lazy(() => import('@/pages/Tasks'))
 const Contacts          = lazy(() => import('@/pages/Contacts'))
@@ -52,6 +53,7 @@ function cacheTablesForLocation(location) {
 
   if (path === '/') return ['PipelineTable', 'TasksTable']
   if (path.startsWith('/opportunities/ebuy/')) return ['PipelineTable']
+  if (path.startsWith('/opportunities/sam/')) return ['PipelineTable', 'NewOpportunitiesTable']
   if (path.startsWith('/opportunities/')) {
     return ['PipelineTable', 'NotesTable', 'TasksTable', 'ContactsTable', 'PartnersTable', 'DataValidationTable', 'EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable']
   }
@@ -254,6 +256,7 @@ function AppShell() {
               <Route path="/"                              element={<Dashboard toast={toast} />} />
               <Route path="/opportunities"                 element={<Opportunities toast={toast} />} />
               <Route path="/opportunities/ebuy/:requestId"  element={<EbuyOpportunityDetail toast={toast} />} />
+              <Route path="/opportunities/sam/:noticeId"    element={<SAMOpportunityDetail toast={toast} />} />
               <Route path="/opportunities/:contractNumber/dossier" element={<OpportunityDossier />} />
               <Route path="/opportunities/:contractNumber" element={<OpportunityDetail toast={toast} />} />
               <Route path="/pipeline-board"                element={<PipelineBoard toast={toast} />} />
