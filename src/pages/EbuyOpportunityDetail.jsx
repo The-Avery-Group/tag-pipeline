@@ -6,6 +6,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
 import {
   formatEbuyChangedField,
+  formatEbuyAttachmentMeta,
   formatEbuyCloseDuration,
   formatEbuyDateTime,
 } from '@/utils/ebuyHelpers'
@@ -26,12 +27,14 @@ export default function EbuyOpportunityDetail({ toast }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [actioning, setActioning] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const actionRef = useRef(false)
   const inPipeline = useMemo(() => pipeline.some((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase()), [pipeline, requestId])
   const returnTo = searchParams.get('returnTo') || '/opportunities?tab=New&source=ebuy'
 
   useEffect(() => {
     let active = true
+    setHistoryOpen(false)
     setLoading(true)
     getEbuyOpportunity(decodeURIComponent(requestId)).then((result) => {
       if (active) { setOpportunity(result); setError(null) }
@@ -97,9 +100,9 @@ export default function EbuyOpportunityDetail({ toast }) {
         <div className={styles.grid}>
           <Field label="Request ID">{opportunity.requestId}</Field><Field label="Reference number">{opportunity.referenceNumber}</Field>
           <Field label="Posted">{formatEbuyDateTime(opportunity.postedAt)}</Field><Field label="Closes">{formatEbuyDateTime(opportunity.closesAt)}</Field>
-          <Field label="Time remaining">{formatEbuyCloseDuration(opportunity.closesAt)}</Field><Field label="Amendments">{opportunity.amendments?.length || 0}</Field>
           <Field label="Department">{opportunity.buyerDepartment}</Field><Field label="Agency">{opportunity.buyerAgency}</Field>
           <Field label="Set aside">{opportunity.setAsideType}</Field><Field label="Follow-on">{opportunity.isFollowOn ? 'Yes' : 'No'}</Field>
+          <Field label="Amendments">{opportunity.amendments?.length || 0}</Field>
           <Field label="Description" wide><RichText value={opportunity.description} /></Field>
         </div>
       </section>
@@ -120,8 +123,14 @@ export default function EbuyOpportunityDetail({ toast }) {
       </section>
 
       <section className={styles.card}>
-        <header><div><span className={styles.eyebrow}>Archive</span><h2>Record history</h2></div><span className={styles.count}>{opportunity.versions?.length || 0}</span></header>
-        <div className={styles.history}>{opportunity.versions?.map((version, index) => {
+        <header><div><span className={styles.eyebrow}>Archive</span><h2>Record history</h2></div><button
+          type="button"
+          className={styles.sectionToggle}
+          onClick={() => setHistoryOpen((value) => !value)}
+          aria-expanded={historyOpen}
+          title={historyOpen ? 'Collapse record history' : 'Expand record history'}
+        ><span className={styles.count}>{opportunity.versions?.length || 0}</span><span className={`${styles.sectionChevron} ${historyOpen ? styles.sectionChevronOpen : ''}`} aria-hidden="true">⌄</span></button></header>
+        {historyOpen && <div className={styles.history}>{opportunity.versions?.map((version, index) => {
           const fields = (version.changedFields || []).map(formatEbuyChangedField).filter(Boolean)
           return <article className={styles.historyItem} key={`${version.capturedAt}-${index}`}>
             <div className={styles.historyMarker} aria-hidden="true" />
@@ -131,7 +140,7 @@ export default function EbuyOpportunityDetail({ toast }) {
               {fields.length > 0 && <div className={styles.changeChips}>{fields.map((field) => <span key={field}>{field}</span>)}</div>}
             </div>
           </article>
-        })}{!opportunity.versions?.length && <p className={styles.empty}>No archived record changes yet.</p>}</div>
+        })}{!opportunity.versions?.length && <p className={styles.empty}>No archived record changes yet.</p>}</div>}
       </section>
 
       <section className={styles.card}>
@@ -142,16 +151,11 @@ export default function EbuyOpportunityDetail({ toast }) {
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Files</span><h2>Attachments</h2></div><span className={styles.count}>{opportunity.attachments?.length || 0}</span></header>
         <div className={styles.list}>{opportunity.attachments?.map((attachment) => {
-          const archived = attachment.archiveStatus === 'archived'
           const failed = attachment.archiveStatus === 'error'
-          const size = attachment.byteSize
-            ? `${Math.ceil(attachment.byteSize / 1024)} KB`
-            : archived ? 'Size not reported' : 'Size pending'
-          const status = failed ? 'Archive failed' : archived ? 'Archived' : 'Awaiting archive'
           return <article key={attachment.id} className={styles.file}>
             <div>
               <strong>{attachment.fileName}</strong>
-              <span>{size} · {status}</span>
+              <span>{formatEbuyAttachmentMeta(attachment)}</span>
               {failed && <span className={styles.fileError}>{attachment.errorMessage || 'The file could not be archived during the last synchronization.'}</span>}
             </div>
             {attachment.sharepointWebUrl
