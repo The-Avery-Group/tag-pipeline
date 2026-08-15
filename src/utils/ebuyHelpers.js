@@ -57,6 +57,15 @@ export function formatEbuyCloseDuration(value, now = new Date()) {
   return future ? `Closes in ${parts.join(' ')}` : `Closed ${parts.join(' ')} ago`
 }
 
+export function formatEbuyAttachmentMeta(attachment = {}) {
+  const archived = attachment.archiveStatus === 'archived'
+  const failed = attachment.archiveStatus === 'error'
+  const byteSize = Number(attachment.byteSize || 0)
+  const size = byteSize > 0 ? `${Math.ceil(byteSize / 1024)} KB` : ''
+  const status = failed ? 'Archive failed' : archived ? 'Archived' : 'Awaiting archive'
+  return [size, status].filter(Boolean).join(' · ')
+}
+
 const EBUY_FIELD_LABELS = {
   requestType: 'Request type', title: 'Title', description: 'Description', referenceNumber: 'Reference number',
   buyerAgency: 'Agency', buyerDepartment: 'Department', buyerName: 'Buyer name', buyerEmail: 'Buyer email',
