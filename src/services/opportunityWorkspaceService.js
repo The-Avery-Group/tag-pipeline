@@ -43,7 +43,7 @@ export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
 
 function dossierFileSource(path) {
   const topLevelFolder = String(path || '').split('/').filter(Boolean)[0] || ''
-  if (topLevelFolder === '2. RFI Documents') return 'SAM.gov'
+  if (topLevelFolder === '2. RFI Documents') return 'Source documents'
   if (topLevelFolder === '7. Reference Materials') return 'Reference material'
   return 'Workspace'
 }
