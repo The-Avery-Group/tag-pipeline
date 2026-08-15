@@ -13,7 +13,7 @@ import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import ExpiringContractDiscovery from '@/components/Opportunity/ExpiringContractDiscovery'
 import EbuyDiscovery from '@/components/Opportunity/EbuyDiscovery'
-import DiscoveryToolbar, { DiscoverySelectionBar } from '@/components/Opportunity/DiscoveryToolbar'
+import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
@@ -21,7 +21,6 @@ import {
   cleanSAMOpportunityTitle,
   dedupeSAMOpportunities,
   isSAMOpportunityFlagged,
-  normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
 } from '@/utils/samOpportunityHelpers'
@@ -593,7 +592,7 @@ export default function Opportunities({ toast }) {
   const { statusByOpportunity: rfiFollowUpStatus, markSeen: markFollowUpsSeen } = useRfiFollowUpMonitor(pipeline, contacts, { replace: true })
 
   const [showDismissed, setShowDismissed] = useState(false)
-  const [samTypeFilter, setSAMTypeFilter] = useState('RFI_MRAS')
+  const [samTypeFilter, setSAMTypeFilter] = useState(() => readStoredDiscoveryType('sam_type_filter', 'RFI_MRAS'))
   const [samSortMode, setSAMSortMode] = useState('dateAdded')
   const [samKeyExpired, setSamKeyExpired] = useState(false)
   const [actioningRow,  setActioningRow]  = useState(null)
@@ -603,12 +602,12 @@ export default function Opportunities({ toast }) {
   const [selectionMode, setSelectionMode] = useState(false)
   const [bulkProgress, setBulkProgress] = useState(null)
   const [showSyncDetails, setShowSyncDetails] = useState(false)
-  const [deptFilter,    setDeptFilter]    = useState(() => {
+  const [agencyFilter, setAgencyFilter] = useState(() => {
     try {
-      const saved = localStorage.getItem('sam_dept_filter_selection')
+      const saved = localStorage.getItem('sam_agency_filter_selection')
       return saved ? new Set(JSON.parse(saved)) : new Set()
     } catch { return new Set() }
-  })   // persisted multi-select department filter
+  })   // persisted multi-select agency filter
   const tableScrollRef  = useRef(null)                            // scroll position retention
   const [samRunStatus,  setSamRunStatus]  = useState(null)
   const [pulling,       setPulling]       = useState(false)
@@ -654,12 +653,13 @@ export default function Opportunities({ toast }) {
       })
   }, [])
 
-  // Persist dept filter selection to localStorage
+  // Persist discovery filters across page navigation and reloads.
   useEffect(() => {
     try {
-      localStorage.setItem('sam_dept_filter_selection', JSON.stringify([...deptFilter]))
+      localStorage.setItem('sam_type_filter', samTypeFilter)
+      localStorage.setItem('sam_agency_filter_selection', JSON.stringify([...agencyFilter]))
     } catch {}
-  }, [deptFilter])
+  }, [agencyFilter, samTypeFilter])
 
   // ── Scroll save/restore safety net ──────────────────────────────────
   // Save continuously, not only before button actions. SAM row refreshes are
@@ -690,11 +690,14 @@ export default function Opportunities({ toast }) {
     [samSearchIndex, search]
   )
 
-  // Distinct departments from all SAM opportunities (for department filter)
-  const samDepartments = useMemo(() => {
-    const depts = new Set()
-    currentSAMOpps.forEach((o) => { const d = (o['Department'] || '').trim(); if (d) depts.add(d) })
-    return [...depts].sort()
+  // Distinct agencies from all SAM opportunities (for the shared agency filter).
+  const samAgencies = useMemo(() => {
+    const agencies = new Set()
+    currentSAMOpps.forEach((opportunity) => {
+      const agency = String(opportunity.Agency || '').trim()
+      if (agency) agencies.add(agency)
+    })
+    return [...agencies].sort()
   }, [currentSAMOpps])
 
   const visibleSAMOpps = useMemo(() => sortSAMOpportunities(currentSAMOpps.filter((o) => {
@@ -702,10 +705,10 @@ export default function Opportunities({ toast }) {
     const searching = Boolean(search.trim())
     if (s === 'dismissed' && !showDismissed && !searching) return false
     if (!samTypeMatches(o, samTypeFilter)) return false
-    if (deptFilter.size > 0 && !deptFilter.has((o['Department'] || '').trim())) return false
+    if (agencyFilter.size > 0 && !agencyFilter.has(String(o.Agency || '').trim())) return false
     if (searching && !samRowsMatchingSearch.has(o)) return false
     return true
-  }), samSortMode), [currentSAMOpps, deptFilter, samRowsMatchingSearch, samSortMode, samTypeFilter, search, showDismissed])
+  }), samSortMode), [agencyFilter, currentSAMOpps, samRowsMatchingSearch, samSortMode, samTypeFilter, search, showDismissed])
 
   const cycleSAMResponseSort = () => {
     setSAMSortMode((current) =>
@@ -1017,15 +1020,15 @@ export default function Opportunities({ toast }) {
           setSAMTypeFilter(value)
           setSelectedRows(new Set())
         }}
-        departments={samDepartments}
-        selectedDepartments={deptFilter}
-        onDepartmentToggle={(department) => setDeptFilter((current) => {
+        agencies={samAgencies}
+        selectedAgencies={agencyFilter}
+        onAgencyToggle={(agency) => setAgencyFilter((current) => {
           const next = new Set(current)
-          next.has(department) ? next.delete(department) : next.add(department)
+          next.has(agency) ? next.delete(agency) : next.add(agency)
           setSelectedRows(new Set())
           return next
         })}
-        onDepartmentClear={() => { setDeptFilter(new Set()); setSelectedRows(new Set()) }}
+        onAgencyClear={() => { setAgencyFilter(new Set()); setSelectedRows(new Set()) }}
         status={<>
           {samRunStatus?.success === true && <>
             {`Last synced: ${new Date(samRunStatus.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}`}
@@ -1113,7 +1116,7 @@ export default function Opportunities({ toast }) {
                 }}
                 style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, minHeight: 0 }}
               >
-                <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                <table className={`data-table ${styles.samDiscoveryTable}`}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                     <tr>
                       {selectionMode && <th style={{ width: 28, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)', padding: '8px 4px' }}>
@@ -1128,7 +1131,9 @@ export default function Opportunities({ toast }) {
                         />
                       </th>}
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Opportunity</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Type</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Agency</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>Set aside</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>NAICS</th>
                       <th style={{ position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)' }}>
                         <button
@@ -1176,8 +1181,8 @@ export default function Opportunities({ toast }) {
                               }}
                             />
                           </td>}
-						  <td style={{ fontWeight: 500 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+						  <td className={styles.samOpportunityCell}>
+                            <div className={styles.samTitleCell}>
                               <button
                                 type="button"
                                 className={`${styles.samFlagButton} ${isFlagged ? styles.samFlagActive : ''} ${isFlagSaving ? styles.samFlagSaving : ''}`}
@@ -1200,18 +1205,20 @@ export default function Opportunities({ toast }) {
                               >
                                 {cleanSAMOpportunityTitle(opp['Title'])}
                               </button>
-                              {normalizeSAMNoticeType(opp['Notice Type']) && <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
-                                {normalizeSAMNoticeType(opp['Notice Type'])}
-                              </span>}
                               {samStatusBadge(opp.Status)}
                               {samChangeBadge(opp)}
                               {syncFailure && <span className="badge badge-closed-lost" style={{ fontSize: 10 }}>Save failed</span>}
                             </div>
                           </td>
-                          <td className="text-sm text-muted">{opp['Agency'] || '—'}</td>
-                          <td className="text-xs text-muted">{opp['NAICS Code'] || '—'}</td>
-                          <td className="text-sm">{formatDateTime(opp['Response Date'])}</td>
-                          <td className="text-xs text-muted" title={pocDisplay || undefined} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <td className={styles.samTypeCell}><DiscoveryTypeBadge type={opp['Notice Type']} /></td>
+                          <td className={styles.samAgencyCell}>
+                            <span>{opp.Agency || '—'}</span>
+                            {opp.Department && opp.Department !== opp.Agency && <small>{opp.Department}</small>}
+                          </td>
+                          <td className={styles.samSetAsideCell}>{opp['Set-Aside Type'] || '—'}</td>
+                          <td className={styles.samNaicsCell}>{opp['NAICS Code'] || '—'}</td>
+                          <td className={styles.samDateCell}>{formatDateTime(opp['Response Date'])}</td>
+                          <td className={styles.samPocCell} title={pocDisplay || undefined}>
                             {pocDisplay || '—'}
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
