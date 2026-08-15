@@ -105,7 +105,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
   }, [startingSync, status?.lastSync?.status])
 
   const updateState = useCallback(async (requestId, reviewState, pipelineContractId = null) => {
-    const previous = data.opportunities
+    const previous = data.opportunities.find((item) => item.requestId === requestId) || null
     setData((current) => {
       const next = {
         ...current,
@@ -129,7 +129,12 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
       return result.opportunity
     } catch (updateError) {
       setData((current) => {
-        const next = { ...current, opportunities: previous }
+        const next = {
+          ...current,
+          opportunities: previous
+            ? current.opportunities.map((item) => item.requestId === requestId ? previous : item)
+            : current.opportunities,
+        }
         listCache.set(key, next)
         return next
       })
