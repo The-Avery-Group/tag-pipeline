@@ -1388,9 +1388,10 @@ export async function startScheduledSAMPull(env, scheduledTime = Date.now()) {
   }
 
   const timestamp = new Date(Number(scheduledTime) || Date.now())
-  const day = timestamp.toISOString().slice(0, 10)
+  const slot = timestamp.toISOString().slice(0, 13).replace('T', '-')
+  const instanceId = `sam-pull-${slot}`
   const instances = await env.SAM_PULL_WORKFLOW.createBatch([{
-    id: `sam-pull-${day}`,
+    id: instanceId,
     params: { scheduledTime: timestamp.toISOString() },
     retention: { successRetention: '1 day', errorRetention: '3 days' },
   }])
@@ -1399,7 +1400,7 @@ export async function startScheduledSAMPull(env, scheduledTime = Date.now()) {
   console.log(JSON.stringify({
     event: 'scheduled_sam_pull_workflow',
     status: instance ? 'started' : 'already_started',
-    instanceId: instance?.id || `sam-pull-${day}`,
+    instanceId: instance?.id || instanceId,
     scheduledTime: timestamp.toISOString(),
   }))
 
@@ -1407,7 +1408,7 @@ export async function startScheduledSAMPull(env, scheduledTime = Date.now()) {
     ok: true,
     source: 'workflow',
     started: Boolean(instance),
-    instanceId: instance?.id || `sam-pull-${day}`,
+    instanceId: instance?.id || instanceId,
   }
 }
 
