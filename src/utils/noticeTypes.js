@@ -63,6 +63,20 @@ export function isRfiWorkflowOpportunity(opportunity, columns = {}) {
   return String(opportunity?.[activityPhaseColumn] || '').trim() === 'Submitted RFI'
 }
 
+/**
+ * Follow-on discovery starts from submitted market-research records and RFQs.
+ * RFQs remain eligible because an RFQ can later be replaced or followed by an
+ * RFP for the same requirement.
+ */
+export function isFollowOnSourceOpportunity(opportunity, columns = {}) {
+  const noticeTypeColumn = columns.noticeType || 'Notice Type'
+  const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
+  const noticeType = normalizeNoticeType(opportunity?.[noticeTypeColumn])
+  if (noticeType) return ['RFI', 'MRAS', 'RFQ'].includes(noticeType)
+  const activityType = submittedActivityNoticeType(opportunity?.[activityPhaseColumn])
+  return ['RFI', 'MRAS', 'RFQ'].includes(activityType)
+}
+
 export function noticeTypeDisplay(value, fallback = 'Not classified') {
   return normalizeNoticeType(value) || fallback
 }
