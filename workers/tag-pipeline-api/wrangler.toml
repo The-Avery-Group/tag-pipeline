@@ -52,6 +52,11 @@ name = "opportunity-sharepoint-workspace"
 binding = "OPPORTUNITY_WORKSPACE_WORKFLOW"
 class_name = "OpportunityWorkspaceWorkflow"
 
+[[workflows]]
+name = "sam-opportunity-archive"
+binding = "SAM_ARCHIVE_WORKFLOW"
+class_name = "SAMArchiveWorkflow"
+
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
