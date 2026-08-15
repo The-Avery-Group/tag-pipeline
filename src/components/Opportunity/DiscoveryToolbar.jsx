@@ -21,7 +21,7 @@ export function readStoredDiscoveryType(storageKey, fallback) {
 export function DiscoveryTypeBadge({ type }) {
   const normalized = normalizeSAMNoticeType(type)
   const label = normalized || String(type || '').trim() || 'Other'
-  return <span className={`${styles.typeBadge} ${styles[`type${normalized || 'Other'}`]}`}>{label}</span>
+  return <span data-notice-type={normalized || 'Other'} className={`${styles.typeBadge} ${styles[`type${normalized || 'Other'}`]}`}>{label}</span>
 }
 
 function AgencyFilter({ agencies, selected, onToggle, onClear }) {
