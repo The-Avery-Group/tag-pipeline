@@ -1203,6 +1203,15 @@ export default function OpportunityDetail({ toast }) {
   contactSaveActionRef.current = handleCreateAndLinkContact
 
   const valueFormatted = fmtValue(opp[C.value])
+  const fileAlert = opportunityAlerts.byType.ebuy_files?.badgeVisible
+    ? opportunityAlerts.byType.ebuy_files
+    : opportunityAlerts.byType.sam_files?.badgeVisible
+      ? opportunityAlerts.byType.sam_files
+      : null
+  const fileAlertChanges = fileAlert?.details?.files || fileAlert?.details?.changedFiles || []
+  const fileAlertLabel = fileAlertChanges.length && fileAlertChanges.every((file) => file.change === 'added')
+    ? 'New files'
+    : 'Files updated'
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
@@ -1222,16 +1231,15 @@ export default function OpportunityDetail({ toast }) {
             {followUpStatus.badgeState === 'seen' ? 'Follow-ons reviewed' : `${followUpStatus.pendingCount} possible follow-on${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
           {samChangeSuggestion.suggestion && <span className="badge badge-qualify">SAM update available</span>}
-          {opportunityAlerts.byType.sam_files?.badgeVisible && <button
+          {fileAlert && <button
             className="badge badge-qualify"
             style={{ cursor: 'pointer' }}
             onClick={() => {
-              const alert = opportunityAlerts.byType.sam_files
-              opportunityAlerts.acknowledge('sam_files', alert.fingerprint).catch(() => {})
-              navigate(`/opportunities/${encodeURIComponent(decodedCN)}/dossier`)
+              opportunityAlerts.acknowledge(fileAlert.type, fileAlert.fingerprint).catch(() => {})
+              navigate(`/opportunities/${encodeURIComponent(decodedCN)}/dossier?focus=files&alert=${encodeURIComponent(fileAlert.type)}`)
             }}
-            title={opportunityAlerts.byType.sam_files.summary}
-          >Files updated</button>}
+            title={fileAlert.summary}
+          >{fileAlertLabel}</button>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
           {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Exact UEI match to TAG partner ${incumbentPartnerMatch.partner['Partner Name']}`}>Incumbent is a TAG partner</span>}
         </div>}
