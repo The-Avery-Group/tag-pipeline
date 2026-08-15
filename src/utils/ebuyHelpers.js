@@ -89,7 +89,7 @@ const EBUY_FIELD_LABELS = {
   buyerPhone: 'Buyer phone', setAsideType: 'Set-aside', contractType: 'Contract type', awardMethod: 'Award method',
   placeOfPerformance: 'Place of performance', performanceStates: 'Performance states', vehicleSources: 'Vehicle',
   vehicleSins: 'SINs', vehiclePairs: 'Vehicle and SIN', postedAt: 'Posted date', closesAt: 'Closing date',
-  isFollowOn: 'Follow-on status', sourceDetails: 'Source details',
+  isFollowOn: 'Follow-on status', amendments: 'Amendments',
 }
 
 export function formatEbuyChangedField(value) {
