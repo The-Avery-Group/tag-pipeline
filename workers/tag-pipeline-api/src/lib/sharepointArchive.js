@@ -54,10 +54,48 @@ export async function ensureEbuyArchiveFolder(env, requestId, { fastLookup = fal
   return { driveId, folderId: opportunity.id, webUrl: opportunity.webUrl, token }
 }
 
+async function ensureNamedArchiveFolder(env, archiveName, opportunityKey, { fastLookup = false } = {}) {
+  const driveId = env.EBUY_ARCHIVE_DRIVE_ID || env.OPPORTUNITY_WORKSPACE_DRIVE_ID || env.DRIVE_ID || DEFAULT_DRIVE_ID
+  const token = await getAppOnlyGraphToken(env)
+  const safeKey = safeSegment(opportunityKey)
+  if (fastLookup) {
+    const path = ['TAG CRM', archiveName, safeKey].map(encodeURIComponent).join('/')
+    const existing = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (existing.ok) {
+      const opportunity = await existing.json()
+      return { driveId, folderId: opportunity.id, webUrl: opportunity.webUrl, token }
+    }
+    if (existing.status !== 404) throw new Error(`Could not inspect SharePoint archive folder (${existing.status})`)
+  }
+  const root = await ensureFolder(driveId, token, 'root', 'TAG CRM')
+  const archive = await ensureFolder(driveId, token, root.id, archiveName)
+  const opportunity = await ensureFolder(driveId, token, archive.id, safeKey)
+  return { driveId, folderId: opportunity.id, webUrl: opportunity.webUrl, token }
+}
+
+export function ensureSAMArchiveFolder(env, opportunityKey, options = {}) {
+  return ensureNamedArchiveFolder(env, 'SAM.gov Archive', opportunityKey, options)
+}
+
 export async function archiveEbuyFile(env, { requestId, fileName, contentType, body, archiveLocation = null }) {
   const { driveId, folderId, token } = archiveLocation || await ensureEbuyArchiveFolder(env, requestId)
   const encodedName = encodeURIComponent(safeSegment(fileName))
   const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodedName}:/content`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': contentType || 'application/octet-stream' },
+    body,
+  })
+  const item = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(item?.error?.message || `Could not archive ${fileName} (${response.status})`)
+  return { driveId, itemId: item.id, webUrl: item.webUrl, name: item.name, size: item.size }
+}
+
+export async function archiveSAMFile(env, { opportunityKey, fileName, contentType, body, archiveLocation = null }) {
+  const { driveId, folderId, token } = archiveLocation || await ensureSAMArchiveFolder(env, opportunityKey)
+  const encodedName = encodeURIComponent(safeSegment(fileName))
+  const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodedName}:/content?@microsoft.graph.conflictBehavior=rename`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': contentType || 'application/octet-stream' },
     body,
@@ -82,6 +120,7 @@ export async function moveArchivedEbuyFile(env, {
   targetDriveId,
   targetFolderId,
   fileName,
+  conflictLabel = 'eBuy',
 }) {
   if (!sourceDriveId || !itemId || !targetDriveId || !targetFolderId) {
     throw new Error('The archived eBuy file does not have a complete SharePoint location')
@@ -106,7 +145,7 @@ export async function moveArchivedEbuyFile(env, {
     const dot = safeName.lastIndexOf('.')
     const base = dot > 0 ? safeName.slice(0, dot) : safeName
     const extension = dot > 0 ? safeName.slice(dot) : ''
-    result = await move(`${base} (eBuy)${extension}`)
+    result = await move(`${base} (${safeSegment(conflictLabel)})${extension}`)
   }
   if (!result.response.ok) {
     throw new Error(result.body?.error?.message || `Could not move ${safeName} into the opportunity workspace (${result.response.status})`)
@@ -118,6 +157,11 @@ export async function moveArchivedEbuyFile(env, {
     name: result.body.name || safeName,
     size: result.body.size || null,
   }
+}
+
+export async function moveArchivedSAMFile(env, input) {
+  const moved = await moveArchivedEbuyFile(env, { ...input, conflictLabel: 'SAM' })
+  return moved
 }
 
 export async function deleteEmptyEbuyArchiveFolder(env, driveId, requestId) {
@@ -143,5 +187,29 @@ export async function deleteEmptyEbuyArchiveFolder(env, driveId, requestId) {
     method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
   })
   if (!removal.ok && removal.status !== 404) throw new Error(`Could not delete the empty eBuy opportunity archive (${removal.status})`)
+  return { deleted: true }
+}
+
+export async function deleteEmptySAMArchiveFolder(env, driveId, opportunityKey) {
+  if (!driveId || !opportunityKey) return { deleted: false, reason: 'location_missing' }
+  const token = await getAppOnlyGraphToken(env)
+  const path = ['TAG CRM', 'SAM.gov Archive', safeSegment(opportunityKey)].map(encodeURIComponent).join('/')
+  const lookup = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${path}?$select=id,name,folder`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (lookup.status === 404) return { deleted: true, alreadyMissing: true }
+  const folder = await lookup.json().catch(() => null)
+  if (!lookup.ok) throw new Error(folder?.error?.message || `Could not inspect the SAM.gov opportunity archive (${lookup.status})`)
+  const children = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folder.id}/children?$select=id&$top=1`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  )
+  const childBody = await children.json().catch(() => null)
+  if (!children.ok) throw new Error(childBody?.error?.message || `Could not verify the SAM.gov opportunity archive (${children.status})`)
+  if (childBody?.value?.length) return { deleted: false, reason: 'not_empty' }
+  const removal = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folder.id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!removal.ok && removal.status !== 404) throw new Error(`Could not delete the empty SAM.gov opportunity archive (${removal.status})`)
   return { deleted: true }
 }
