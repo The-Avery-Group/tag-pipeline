@@ -1,12 +1,27 @@
 const ARRAY_FIELDS = ['performanceStates', 'vehicleSources', 'vehicleSins', 'vehiclePairs']
 
 function cleanText(value) {
-  return String(value ?? '').trim()
+  return String(value ?? '').replace(/\r\n?/g, '\n').trim()
 }
 
 function cleanArray(value) {
   const list = Array.isArray(value) ? value : value ? [value] : []
-  return [...new Set(list.map(cleanText).filter(Boolean))]
+  return [...new Set(list.map(cleanText).filter(Boolean))].sort((left, right) => left.localeCompare(right))
+}
+
+function canonicalObject(value) {
+  if (Array.isArray(value)) return value.map(canonicalObject)
+  if (!value || typeof value !== 'object') return typeof value === 'string' ? cleanText(value) : value
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalObject(value[key])]))
+}
+
+function materialAmendments(value) {
+  return (Array.isArray(value) ? value : []).map((amendment) => canonicalObject({
+    id: cleanText(amendment?.id),
+    label: cleanText(amendment?.label || amendment?.title),
+    description: cleanText(amendment?.description),
+    postedAt: cleanText(amendment?.postedAt || amendment?.date) || null,
+  })).sort((left, right) => `${left.postedAt || ''}:${left.id}:${left.label}`.localeCompare(`${right.postedAt || ''}:${right.id}:${right.label}`))
 }
 
 export function normalizeEbuyOpportunity(record, now = new Date().toISOString()) {
@@ -34,10 +49,33 @@ export function normalizeEbuyOpportunity(record, now = new Date().toISOString())
 
 export function stableEbuySnapshot(record) {
   const normalized = normalizeEbuyOpportunity(record, 'source-controlled')
-  delete normalized.sourceLastSeenAt
-  delete normalized.amendments
-  delete normalized.attachments
-  return normalized
+  // This is deliberately an allow-list. eBuy sourceDetails contains request
+  // metadata, scrape diagnostics, token/session values, and ordering details
+  // that can change between identical pulls. None of those are opportunity
+  // record changes and therefore must never manufacture a history entry.
+  return {
+    requestType: normalized.requestType,
+    title: normalized.title,
+    description: normalized.description,
+    referenceNumber: normalized.referenceNumber,
+    buyerAgency: normalized.buyerAgency,
+    buyerDepartment: normalized.buyerDepartment,
+    buyerName: normalized.buyerName,
+    buyerEmail: normalized.buyerEmail,
+    buyerPhone: normalized.buyerPhone,
+    setAsideType: normalized.setAsideType,
+    contractType: normalized.contractType,
+    awardMethod: normalized.awardMethod,
+    placeOfPerformance: normalized.placeOfPerformance,
+    performanceStates: normalized.performanceStates,
+    vehicleSources: normalized.vehicleSources,
+    vehicleSins: normalized.vehicleSins,
+    vehiclePairs: normalized.vehiclePairs,
+    postedAt: normalized.postedAt,
+    closesAt: normalized.closesAt,
+    isFollowOn: normalized.isFollowOn,
+    amendments: materialAmendments(normalized.amendments),
+  }
 }
 
 export async function hashEbuyOpportunity(record) {
