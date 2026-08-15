@@ -27,7 +27,10 @@ export function isSAMApiUrl(value) {
 
 function decodeEntities(value) {
   const named = {
-    amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"',
+    amp: '&', apos: "'", bull: '•', copy: '©', deg: '°', gt: '>', hellip: '…',
+    laquo: '«', ldquo: '“', lsquo: '‘', lt: '<', mdash: '—', middot: '·',
+    nbsp: ' ', ndash: '–', quot: '"', raquo: '»', rdquo: '”', reg: '®',
+    rsquo: '’', trade: '™',
   }
   return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity) => {
     if (entity[0] === '#') {
