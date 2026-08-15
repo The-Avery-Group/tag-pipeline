@@ -27,11 +27,18 @@
 .alertStrip button { border: 0; background: transparent; color: var(--amber-600); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
 .alertStrip button:hover { text-decoration: underline; }
 .fileTools { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(145px, 190px) auto; gap: 8px; margin-bottom: 12px; }
+.focusTarget { scroll-margin-top: 72px; }
+.fileEvidence { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; margin-bottom: 10px; border: 1px solid var(--amber-600); border-radius: var(--radius-md); background: var(--amber-50); }
+.fileEvidence strong, .fileEvidence span { display: block; }
+.fileEvidence strong { font-size: 12px; }
+.fileEvidence span { margin-top: 2px; color: var(--gray-600); font-size: 10px; }
 .tableWrap { overflow-x: auto; border: 1px solid var(--gray-200); border-radius: var(--radius-md); }
 .fileTable { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; }
 .fileTable th { background: var(--gray-50); color: var(--gray-600); font-size: 11px; font-weight: 600; text-align: left; }
 .fileTable th, .fileTable td { padding: 9px 10px; border-bottom: 1px solid var(--gray-200); vertical-align: middle; }
 .fileTable tbody tr:last-child td { border-bottom: 0; }
+.fileTable tbody tr.changedFile td { background: var(--amber-50); }
+.changedMarker { display: inline-flex; margin-left: 7px; padding: 1px 5px; border: 1px solid var(--amber-600); border-radius: 999px; color: var(--amber-600); font-size: 9px; font-weight: 700; vertical-align: middle; }
 .fileTable td:nth-child(3) { max-width: 300px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .number { text-align: right !important; white-space: nowrap; }
 .sourceBadge { display: inline-flex; padding: 2px 7px; border: 1px solid var(--gray-300); border-radius: 999px; color: var(--gray-600); font-size: 10px; white-space: nowrap; }
