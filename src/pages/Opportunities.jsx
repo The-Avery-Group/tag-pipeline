@@ -29,6 +29,7 @@ import { OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VAL
 import styles from './Opportunities.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
+import { updateSAMOpportunityArchiveReview } from '@/services/samOpportunityService'
 import {
   NOTICE_TYPE_VALUES,
   isRfiWorkflowOpportunity,
@@ -81,6 +82,11 @@ const C = {
 // ── Tab definitions ───────────────────────────────────────────────────────
 const TABS = ['All', 'Responses', 'Expiring', 'Tracked', 'New']
 const HIDDEN_RESPONSE_PHASES = new Set(['Cancelled', 'Contract Awarded'])
+const SAM_DISCOVERY_SCROLL_KEY = 'tag_crm_sam_discovery_scroll'
+
+function savedSAMDiscoveryScroll() {
+  try { return Math.max(0, Number(sessionStorage.getItem(SAM_DISCOVERY_SCROLL_KEY)) || 0) } catch { return 0 }
+}
 
 // ── Phase badge map ───────────────────────────────────────────────────────
 const PHASE_BADGE = {
@@ -487,6 +493,15 @@ export default function Opportunities({ toast }) {
     navigate(`/opportunities/${encodeURIComponent(cn)}?${detailParams.toString()}`)
   }
 
+  const openSAMOpportunity = (opportunity) => {
+    saveScroll()
+    const noticeId = opportunity['Notice ID'] || opportunity['Solicitation Number'] || ''
+    const detailParams = new URLSearchParams({ row: String(opportunity._rowIndex) })
+    const currentListQuery = searchParams.toString()
+    detailParams.set('returnTo', `/opportunities${currentListQuery ? `?${currentListQuery}` : ''}`)
+    navigate(`/opportunities/sam/${encodeURIComponent(noticeId)}?${detailParams.toString()}`)
+  }
+
   // ── CRUD handlers ─────────────────────────────────────────────────────
   const submitOpp = async ({ setSubmittedRfi = false } = {}) => {
     if (creatingOpportunityRef.current) return
@@ -662,7 +677,7 @@ export default function Opportunities({ toast }) {
   // Save continuously, not only before button actions. SAM row refreshes are
   // also caused by the shared workbook poll, which otherwise has no user
   // event at which to capture the current position.
-  const savedScrollTop = useRef(0)
+  const savedScrollTop = useRef(savedSAMDiscoveryScroll())
   useLayoutEffect(() => {
     const el = tableScrollRef.current
     if (!el) return
@@ -675,6 +690,7 @@ export default function Opportunities({ toast }) {
   // Call this before any state update that might re-render the table.
   const saveScroll = useCallback(() => {
     savedScrollTop.current = tableScrollRef.current?.scrollTop ?? 0
+    try { sessionStorage.setItem(SAM_DISCOVERY_SCROLL_KEY, String(savedScrollTop.current)) } catch {}
   }, [])
 
   const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(reconciledSAMOpps.map((opportunity) =>
@@ -734,6 +750,9 @@ export default function Opportunities({ toast }) {
     saveScroll()
     try {
       await dismiss(row._rowIndex)
+      updateSAMOpportunityArchiveReview({
+        noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
+      }, 'dismissed').catch(() => {})
     } catch (err) {
       toast?.error('Could not dismiss. Use Retry save on this row.')
     } finally {
@@ -757,7 +776,12 @@ export default function Opportunities({ toast }) {
     let failed = 0
     for (const [index, row] of rows.entries()) {
       try {
-        if (kind === 'dismiss') await dismiss(row._rowIndex)
+        if (kind === 'dismiss') {
+          await dismiss(row._rowIndex)
+          updateSAMOpportunityArchiveReview({
+            noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
+          }, 'dismissed').catch(() => {})
+        }
         else await addToPipeline(row, kind === 'track' ? 'Tracking' : 'New')
       } catch {
         failed++
@@ -782,6 +806,9 @@ export default function Opportunities({ toast }) {
         ? (pipelineRecord[C.outlook] === 'Tracking' ? 'tracked' : 'added_to_pipeline')
         : 'new'
       await undismiss(row._rowIndex, restoredStatus)
+      updateSAMOpportunityArchiveReview({
+        noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
+      }, 'new').catch(() => {})
       toast?.success(pipelineRecord ? 'Restored as an existing pipeline opportunity' : 'Restored')
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
@@ -1158,7 +1185,10 @@ export default function Opportunities({ toast }) {
             : (
               <div
                 ref={tableScrollRef}
-                onScroll={(event) => { savedScrollTop.current = event.currentTarget.scrollTop }}
+                onScroll={(event) => {
+                  savedScrollTop.current = event.currentTarget.scrollTop
+                  try { sessionStorage.setItem(SAM_DISCOVERY_SCROLL_KEY, String(savedScrollTop.current)) } catch {}
+                }}
                 style={{ overflowX: 'auto', overflowY: 'auto', flex: 1, minHeight: 0 }}
               >
                 <table className="data-table" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -1269,6 +1299,10 @@ export default function Opportunities({ toast }) {
                                       {isActioning ? '…' : 'Retry save'}
                                     </button>
                                   )}
+                                  <button className={`btn ${styles.newActionSam}`} style={btnSm}
+                                    onClick={() => openSAMOpportunity(opp)}>
+                                    Details
+                                  </button>
                                 </div>
                               )
                               : (
@@ -1313,11 +1347,11 @@ export default function Opportunities({ toast }) {
                                       {isActioning ? '…' : 'Retry save'}
                                     </button>
                                   )}
-                                  {opp['SAM.gov URL'] && (
-                                    <a href={opp['SAM.gov URL']} target="_blank" rel="noreferrer"
-                                      className={`${styles.newAction} ${styles.newActionSam}`} style={{ ...btnSm, textDecoration: 'none' }}>
-                                      SAM.gov
-                                    </a>
+                                  {!selectionMode && (
+                                    <button className={`${styles.newAction} ${styles.newActionSam}`} style={btnSm}
+                                      onClick={() => openSAMOpportunity(opp)}>
+                                      Details
+                                    </button>
                                   )}
                                 </div>
                               )
