@@ -9,7 +9,7 @@ test('prompts only when the deployed build is newer than the running build', () 
   assert.equal(isNewerAppVersion({ buildId: 'older', builtAt: '2026-08-15T09:59:00.000Z' }, current), false)
 })
 
-test('reloads the current route with a build-specific cache bypass', () => {
+test('reloads the base entry with a build-specific cache bypass and preserves the current route', () => {
   let destination = ''
   const location = {
     href: 'https://the-avery-group.github.io/tag-pipeline/opportunities?tab=New',
@@ -17,6 +17,9 @@ test('reloads the current route with a build-specific cache bypass', () => {
   }
   reloadWithCacheBypass('release-123', location)
   const url = new URL(destination)
+  assert.equal(url.origin, 'https://the-avery-group.github.io')
+  // GitHub Pages must receive the known app entry URL directly. The SPA route
+  // is restored by index.html after the fresh build has loaded.
   assert.equal(url.pathname, '/tag-pipeline/')
   assert.equal(url.searchParams.get('_tag_build'), 'release-123')
   assert.equal(url.searchParams.get('redirect'), '/opportunities?tab=New')
