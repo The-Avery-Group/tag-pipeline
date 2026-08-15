@@ -1,3 +1,20 @@
+import { normalizeNoticeType } from './noticeTypes.js'
+
+export function normalizeEbuyNoticeType(opportunity) {
+  const record = opportunity && typeof opportunity === 'object'
+    ? opportunity
+    : { requestType: opportunity }
+  const sourceType = record.sourceDetails?.rfqInfo?.requestTypeString
+  const explicitType = normalizeNoticeType(sourceType) || normalizeNoticeType(record.requestType)
+  const titleType = normalizeNoticeType(record.title)
+
+  // eBuy commonly assigns an RFI-prefixed Request ID to MRAS notices. The
+  // explicit source label and opportunity title are therefore more specific
+  // than the Request ID-derived RFI classification.
+  if (explicitType === 'MRAS' || titleType === 'MRAS') return 'MRAS'
+  return explicitType
+}
+
 export function ebuyToPipelineRecord(opportunity, outlook = 'New') {
   const buyerContact = [opportunity.buyerName, opportunity.buyerEmail, opportunity.buyerPhone]
     .map((value) => String(value || '').trim()).filter(Boolean).join(' | ')
@@ -14,7 +31,7 @@ export function ebuyToPipelineRecord(opportunity, outlook = 'New') {
     'Opportunity Outlook': outlook,
     'Submission Date (Response Date)*': String(opportunity.closesAt || '').slice(0, 10),
     'Solicitation Number': opportunity.referenceNumber || opportunity.requestId,
-    'Notice Type': opportunity.requestType,
+    'Notice Type': normalizeEbuyNoticeType(opportunity),
     'Priority': 'Warm',
     'Set- Aside*': opportunity.setAsideType || '-',
     'Contract Classification*': opportunity.contractType || '',
