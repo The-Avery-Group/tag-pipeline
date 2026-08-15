@@ -17,3 +17,10 @@ export function isRfiWorkflowOpportunity(opportunity) {
   if (noticeType) return isRfiWorkflowNoticeType(noticeType)
   return String(opportunity?.['TAG Pipeline Activity Phase'] || '').trim() === 'Submitted RFI'
 }
+
+export function isFollowOnSourceOpportunity(opportunity) {
+  const noticeType = normalizeNoticeType(opportunity?.['Notice Type'])
+  if (noticeType) return ['RFI', 'MRAS', 'RFQ'].includes(noticeType)
+  const phase = String(opportunity?.['TAG Pipeline Activity Phase'] || '').trim().toUpperCase()
+  return phase === 'SUBMITTED RFI' || phase === 'SUBMITTED MARKET RESEARCH' || phase === 'SUBMITTED RFQ'
+}
