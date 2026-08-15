@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getRFIFollowUpDecisions, getRFIFollowUpOverrides, getSAMSettings } from '@/services/graphService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
-import { isRfiWorkflowOpportunity } from '@/utils/noticeTypes'
+import { isFollowOnSourceOpportunity } from '@/utils/noticeTypes'
 
 const C = {
   phase: 'TAG Opportunity Phase', outlook: 'Opportunity Outlook', contractNumber: 'Contract Number / Notice ID',
   title: 'Project Title / Description*', department: 'Department*', agency: 'Agency*',
+  office: 'Office*', naics: 'NAICS Code*',
   poc: 'Contracting Officer / Specialist (POC)*', solicitation: 'Solicitation Number', submissionDate: 'Submission Date (Response Date)*',
   noticeType: 'Notice Type', activityPhase: 'TAG Pipeline Activity Phase',
 }
@@ -27,7 +28,7 @@ function number(value, fallback, min, max) {
 }
 
 export function isRfiOpportunity(opportunity) {
-  return isRfiWorkflowOpportunity(opportunity, C)
+  return isFollowOnSourceOpportunity(opportunity, C)
 }
 
 export function findRfiPocEmail(opportunity, contacts = []) {
@@ -49,10 +50,11 @@ export function effectiveRfiFollowUpCriteria(opportunity, contacts, globalRules 
   const agency = resolveValue('agencyRule', 'Agency Rule', 'Agency Override', opportunity?.[C.agency] || '')
   const poc = resolveValue('pocRule', 'POC Rule', 'POC Email Override', findRfiPocEmail(opportunity, contacts))
   const numeric = (key, low, high) => usingGlobal ? global[key] : number(override[key === 'titleOverlapPercent' ? 'Title Overlap %' : key === 'submissionWindowDays' ? 'Submission Window Days' : key === 'noSubmissionLookbackDays' ? 'No-Submission Lookback Days' : 'No-Submission Lookahead Days'], global[key], low, high)
-  const noticeTypes = usingGlobal ? global.noticeTypes : String(override['Notice Types'] || global.noticeTypes)
+  const noticeTypes = 'RFP, RFQ'
   return {
     opportunityId: opportunity?.[C.contractNumber] || '', rowIndex: opportunity?._rowIndex,
-    title: opportunity?.[C.title] || '', department: department.value, agency: agency.value, pocEmail: poc.value,
+    title: opportunity?.[C.title] || '', department: department.value, agency: agency.value,
+    office: opportunity?.[C.office] || '', naicsCode: opportunity?.[C.naics] || '', pocEmail: poc.value,
     noticeId: opportunity?.[C.contractNumber] || '', solicitationNumber: opportunity?.[C.solicitation] || '', submissionDate: opportunity?.[C.submissionDate] || '',
     rules: {
       monitoringEnabled: enabled, departmentRule: department.rule, agencyRule: agency.rule, pocRule: poc.rule,
@@ -146,14 +148,16 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
   const applyDecision = useCallback((opportunityId, candidate, decision) => {
     const id = normalized(opportunityId)
     const candidateId = normalized(candidate.noticeId || candidate.solicitationNumber)
+    const candidateSource = normalized(candidate.source || 'SAM.gov')
     setStatusByOpportunity((previous) => {
       const current = previous[id]
       if (!current) return previous
       const candidates = (current.candidates || []).map((item) =>
-        normalized(item.noticeId || item.solicitationNumber) === candidateId ? { ...item, decision } : item
+        normalized(item.noticeId || item.solicitationNumber) === candidateId &&
+          normalized(item.source || 'SAM.gov') === candidateSource ? { ...item, decision } : item
       )
       const pendingCount = candidates.filter((item) => !item.decision).length
-      return { ...previous, [id]: { ...current, candidates, pendingCount, badgeVisible: pendingCount > 0 && (!current.seenUntil || Date.parse(current.seenUntil) > Date.now()), badgeState: pendingCount === 0 ? 'none' : current.badgeState } }
+      return { ...previous, [id]: { ...current, candidates, pendingCount, badgeVisible: pendingCount > 0, badgeState: pendingCount === 0 ? 'none' : current.badgeState } }
     })
   }, [])
 
@@ -178,20 +182,6 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     fingerprint.current = snapshot
     synchronize().then(loadStatus).catch((err) => setError(err.message))
   }, [buildWatches, loadStatus, loading, synchronize])
-
-  useEffect(() => {
-    const expirations = Object.values(statusByOpportunity)
-      .map((status) => Date.parse(status.seenUntil || ''))
-      .filter((value) => Number.isFinite(value) && value > Date.now())
-    if (!expirations.length) return undefined
-    const timer = window.setTimeout(() => {
-      const now = Date.now()
-      setStatusByOpportunity((previous) => Object.fromEntries(Object.entries(previous).map(([key, status]) => [key,
-        status.seenUntil && Date.parse(status.seenUntil) <= now ? { ...status, badgeVisible: false } : status,
-      ])))
-    }, Math.max(0, Math.min(...expirations) - Date.now() + 100))
-    return () => window.clearTimeout(timer)
-  }, [statusByOpportunity])
 
   return { globalRules, overrides, decisions, statusByOpportunity, loading, checking, error, refreshConfiguration, synchronize, loadStatus, checkOne, markSeen, applyDecision }
 }
