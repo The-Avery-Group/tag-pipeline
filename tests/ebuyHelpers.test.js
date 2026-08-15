@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   ebuyToPipelineRecord,
+  formatEbuyAttachmentMeta,
   formatEbuyChangedField,
   formatEbuyCloseDuration,
   formatEbuyDateTime,
@@ -31,4 +32,10 @@ test('formats eBuy dates in a 12-hour clock and shows time until closing', () =>
     'Closes in 2 days 2 hours',
   )
   assert.equal(formatEbuyChangedField('buyerAgency'), 'Agency')
+})
+
+test('attachment metadata omits an unavailable size once the file is archived', () => {
+  assert.equal(formatEbuyAttachmentMeta({ archiveStatus: 'archived', byteSize: null }), 'Archived')
+  assert.equal(formatEbuyAttachmentMeta({ archiveStatus: 'archived', byteSize: 2049 }), '3 KB · Archived')
+  assert.equal(formatEbuyAttachmentMeta({ archiveStatus: 'pending', byteSize: null }), 'Awaiting archive')
 })
