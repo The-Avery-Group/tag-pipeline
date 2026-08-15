@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
+import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
 import { ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
 import {
@@ -9,6 +10,7 @@ import {
   formatEbuyAttachmentMeta,
   formatEbuyCloseDuration,
   formatEbuyDateTime,
+  normalizeEbuyNoticeType,
 } from '@/utils/ebuyHelpers'
 import styles from './EbuyOpportunityDetail.module.css'
 
@@ -82,7 +84,7 @@ export default function EbuyOpportunityDetail({ toast }) {
       <button className={styles.back} onClick={() => navigate(returnTo)}>← Back to eBuy discovery</button>
       <section className={styles.hero}>
         <div>
-          <div className={styles.badges}><span>{opportunity.requestType || 'Other'}</span><span>{opportunity.lifecycleStatus}</span><span className={styles.closeDuration}>{formatEbuyCloseDuration(opportunity.closesAt)}</span>{opportunity.reviewState !== 'new' && <span>{opportunity.reviewState.replaceAll('_', ' ')}</span>}</div>
+          <div className={styles.badges}><DiscoveryTypeBadge type={normalizeEbuyNoticeType(opportunity)} /><span>{opportunity.lifecycleStatus}</span><span className={styles.closeDuration}>{formatEbuyCloseDuration(opportunity.closesAt)}</span>{opportunity.reviewState !== 'new' && <span>{opportunity.reviewState.replaceAll('_', ' ')}</span>}</div>
           <h1>{singleLine(opportunity.title)}</h1>
           <p>{opportunity.buyerAgency || 'Agency not provided'}{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency ? ` · ${opportunity.buyerDepartment}` : ''}</p>
         </div>
