@@ -1,5 +1,5 @@
 import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
-import { safeSharePointSegment } from './opportunityWorkspaceDomain.js'
+import { organizationFolderKey, safeSharePointSegment } from './opportunityWorkspaceDomain.js'
 
 export const DEFAULT_WORKSPACE_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 export const WORKSPACE_ROOT_NAME = 'RFI Pipeline and Responses'
@@ -267,6 +267,44 @@ async function ensureFolder(env, token, driveId, parentId, name) {
   return body
 }
 
+async function listChildFolders(token, driveId, parentId) {
+  const folders = []
+  let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}/children?$select=id,name,webUrl,parentReference,folder&$top=200`
+  while (nextUrl) {
+    const { body } = await graphResponse(nextUrl, token)
+    folders.push(...(body.value || []).filter((item) => item.folder))
+    nextUrl = body['@odata.nextLink'] || ''
+  }
+  return folders
+}
+
+async function ensureOrganizationFolder(env, token, driveId, parentId, name) {
+  const safeName = safeSharePointSegment(name, 'Unassigned Organization')
+  const exact = await childByName(env, token, driveId, parentId, safeName)
+  if (exact) return exact
+
+  const requestedKey = organizationFolderKey(safeName)
+  if (requestedKey) {
+    const matches = (await listChildFolders(token, driveId, parentId))
+      .filter((folder) => organizationFolderKey(folder.name) === requestedKey)
+    if (matches.length === 1) {
+      console.info(JSON.stringify({
+        event: 'opportunity_workspace_organization_folder_reused',
+        requestedName: safeName,
+        existingName: matches[0].name,
+      }))
+      return matches[0]
+    }
+    if (matches.length > 1) {
+      throw Object.assign(new Error(`Multiple SharePoint folders match ${safeName}: ${matches.map((folder) => folder.name).join(', ')}`), {
+        status: 409,
+        code: 'ambiguous_organization_folder',
+      })
+    }
+  }
+  return ensureFolder(env, token, driveId, parentId, safeName)
+}
+
 export async function resolveWorkspaceDestination(env, workspace, folderName) {
   if (!env.WORKBOOK_ID) throw new Error('WORKBOOK_ID is not configured')
   const driveId = driveIdFor(env)
@@ -283,8 +321,8 @@ export async function resolveWorkspaceDestination(env, workspace, folderName) {
 
   const root = await ensureFolder(env, token, driveId, workbookParentId, WORKSPACE_ROOT_NAME)
   const year = await ensureFolder(env, token, driveId, root.id, `FY ${workspace.calendarYear}`)
-  const department = await ensureFolder(env, token, driveId, year.id, workspace.department || 'Unassigned Department')
-  const agency = await ensureFolder(env, token, driveId, department.id, workspace.agency || 'Unassigned Agency')
+  const department = await ensureOrganizationFolder(env, token, driveId, year.id, workspace.department || 'Unassigned Department')
+  const agency = await ensureOrganizationFolder(env, token, driveId, department.id, workspace.agency || 'Unassigned Agency')
   const existing = await childByName(env, token, driveId, agency.id, folderName)
   return {
     driveId,
@@ -422,5 +460,64 @@ export async function listWorkspaceChildren(env, workspace, parentId = '') {
       mimeType: item.file?.mimeType || '',
       lastModifiedDateTime: item.lastModifiedDateTime || '',
     })),
+  }
+}
+
+function dossierSource(path) {
+  const first = String(path || '').split('/').filter(Boolean)[0] || ''
+  if (first === SAM_DOCUMENTS_FOLDER_NAME) return 'SAM.gov'
+  if (first === REFERENCE_MATERIALS_FOLDER_NAME) return 'Reference material'
+  return 'Workspace'
+}
+
+export async function listWorkspaceFlatFiles(env, workspace) {
+  if (!workspace?.sharePointDriveId || !workspace?.rootFolderId) {
+    throw Object.assign(new Error('The SharePoint workspace is not ready'), { status: 409 })
+  }
+  const driveId = workspace.sharePointDriveId
+  const token = await getAppOnlyGraphToken(env)
+  const root = await getItem(env, token, driveId, workspace.rootFolderId)
+  if (!root?.folder) throw Object.assign(new Error('The opportunity SharePoint workspace is unavailable'), { status: 409 })
+
+  const folders = [{ id: root.id, path: '' }]
+  const files = []
+  let folderIndex = 0
+  let requestCount = 0
+  let partial = false
+  // Free Workers allow a bounded number of external subrequests. Opportunity
+  // templates are small, but stop cleanly instead of failing the entire
+  // dossier if an unusually deep workspace exceeds that budget.
+  while (folderIndex < folders.length && requestCount < 45 && files.length < 5000) {
+    const folder = folders[folderIndex++]
+    let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folder.id}/children?$select=id,name,webUrl,folder,file,size,lastModifiedDateTime&$top=200`
+    do {
+      requestCount += 1
+      const { body } = await graphResponse(nextUrl, token)
+      for (const item of body.value || []) {
+        if (HIDDEN_SYSTEM_FILES.has(String(item.name || '').toLowerCase())) continue
+        const path = [folder.path, item.name].filter(Boolean).join('/')
+        if (item.folder) folders.push({ id: item.id, path })
+        else files.push({
+          id: item.id,
+          name: item.name,
+          path,
+          folderPath: folder.path,
+          source: dossierSource(path),
+          webUrl: item.webUrl || '',
+          size: Number(item.size || 0),
+          mimeType: item.file?.mimeType || '',
+          lastModifiedDateTime: item.lastModifiedDateTime || '',
+        })
+      }
+      nextUrl = body['@odata.nextLink'] || ''
+    } while (nextUrl && requestCount < 45 && files.length < 5000)
+  }
+  if (folderIndex < folders.length || files.length >= 5000) partial = true
+  return {
+    workspace: { webUrl: root.webUrl || workspace.webUrl || '', name: root.name || workspace.title },
+    files: files.sort((left, right) => String(right.lastModifiedDateTime).localeCompare(String(left.lastModifiedDateTime))),
+    count: files.length,
+    partial,
+    indexedAt: new Date().toISOString(),
   }
 }
