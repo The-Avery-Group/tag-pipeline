@@ -84,6 +84,7 @@ export default function SAMOpportunityDetail({ toast }) {
   const [loadError, setLoadError] = useState(null)
   const [actioning, setActioning] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
   const actionRef = useRef(false)
   const archiveStartedRef = useRef(false)
   const decodedNoticeId = decodeURIComponent(routeNoticeId)
@@ -127,6 +128,7 @@ export default function SAMOpportunityDetail({ toast }) {
     archiveStartedRef.current = false
     setDetail(null)
     setLoadError(null)
+    setDescriptionExpanded(false)
   }, [decodedNoticeId])
 
   useEffect(() => {
@@ -204,6 +206,7 @@ export default function SAMOpportunityDetail({ toast }) {
   const organization = detail.organization || {}
   const filesReady = (detail.attachments || []).filter((file) => ['archived', 'moved'].includes(file.archiveStatus)).length
   const archiveRunning = detail.archive?.archiveStatus === 'running'
+  const descriptionIsLong = clean(detail.description).length > 900 || clean(detail.description).split(/\r?\n/).length > 10
 
   return <>
     <Topbar title={detail.title || detail.noticeId} subtitle1={`SAM.gov · ${detail.noticeId || detail.solicitationNumber}`} showFilter={false} showNew={false} />
@@ -269,7 +272,17 @@ export default function SAMOpportunityDetail({ toast }) {
       </Card>
 
       <Card eyebrow="Requirement" title="Description">
-        <div className={styles.description}>{detail.description ? <RichText value={detail.description} /> : <span className={styles.empty}>No description was provided.</span>}</div>
+        <div className={`${styles.description} ${descriptionIsLong && !descriptionExpanded ? styles.descriptionCollapsed : ''}`}>
+          {detail.description ? <RichText value={detail.description} /> : <span className={styles.empty}>No description was provided.</span>}
+        </div>
+        {descriptionIsLong && <button
+          type="button"
+          className={styles.descriptionToggle}
+          aria-expanded={descriptionExpanded}
+          onClick={() => setDescriptionExpanded((current) => !current)}
+        >
+          {descriptionExpanded ? 'See less' : 'See more'}
+        </button>}
       </Card>
 
       <Card eyebrow="Contacts" title="Contact information" count={(detail.contacts || []).length}>
