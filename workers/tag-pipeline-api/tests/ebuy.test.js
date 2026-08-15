@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EBUY_FIXTURE_OPPORTUNITIES } from '../src/fixtures/ebuyOpportunities.js'
-import { hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportunity, retentionDeadline } from '../src/lib/ebuyDomain.js'
+import { changedEbuyFields, hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportunity, retentionDeadline } from '../src/lib/ebuyDomain.js'
 import { normalizeLiveEbuyOpportunity } from '../src/lib/ebuyClient.js'
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
@@ -76,6 +76,34 @@ test('eBuy content hashing ignores source polling time but detects material chan
   const changed = await hashEbuyOpportunity({ ...source, title: `${source.title} updated` })
   assert.equal(first, second)
   assert.notEqual(first, changed)
+})
+
+test('eBuy history ignores connector metadata and unordered source arrays', async () => {
+  const source = EBUY_FIXTURE_OPPORTUNITIES[0]
+  const first = await hashEbuyOpportunity({
+    ...source,
+    vehiclePairs: ['MAS:541611', 'MAS:54151S'],
+    sourceDetails: { requestId: 'first-request', diagnostics: { elapsed: 10 } },
+  })
+  const second = await hashEbuyOpportunity({
+    ...source,
+    vehiclePairs: ['MAS:54151S', 'MAS:541611'],
+    sourceDetails: { requestId: 'second-request', diagnostics: { elapsed: 999 } },
+  })
+  assert.equal(first, second)
+  assert.deepEqual(changedEbuyFields(
+    { ...source, sourceDetails: { connectorRun: 1 } },
+    { ...source, sourceDetails: { connectorRun: 2 } },
+  ), [])
+})
+
+test('eBuy history records real amendment changes but not attachment archive changes', () => {
+  const source = EBUY_FIXTURE_OPPORTUNITIES[0]
+  const amendment = { id: 'amendment-1', label: 'Amendment 1', description: 'Closing date changed', postedAt: '2026-08-12' }
+  assert.deepEqual(changedEbuyFields(
+    { ...source, amendments: [], attachments: [{ id: 'file-1', fileName: 'old.pdf' }] },
+    { ...source, amendments: [amendment], attachments: [{ id: 'file-2', fileName: 'new.pdf' }] },
+  ), ['amendments'])
 })
 
 test('protected eBuy records never receive an automatic purge date', () => {
@@ -195,6 +223,18 @@ test('live eBuy details normalize into the archive field model', () => {
   assert.deepEqual(record.vehiclePairs, ['MAS:541611'])
   assert.equal(record.attachments[0].id, 'RFI123:4')
   assert.equal(record.amendments[0].label, 'Modification 2')
+})
+
+test('live eBuy normalization preserves the MRAS classification over an RFI request ID', () => {
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFI7654321', title: 'Market Research as a Service for program support',
+  }, {
+    rfqInfo: {
+      rfqId: 'RFI7654321', title: 'Market Research as a Service for program support',
+      requestTypeString: 'RFI',
+    },
+  }, '47QRAA22D0001')
+  assert.equal(record.requestType, 'MRAS')
 })
 
 test('an eBuy discovery summary remains usable when its detail request is temporarily unavailable', () => {
