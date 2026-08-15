@@ -1270,7 +1270,14 @@ export default function Opportunities({ toast }) {
                               >
                                 ⚑
                               </button>
-                              <span>{cleanSAMOpportunityTitle(opp['Title'])}</span>
+                              <button
+                                type="button"
+                                className={styles.samTitleButton}
+                                onClick={() => openSAMOpportunity(opp)}
+                                title="Open opportunity details"
+                              >
+                                {cleanSAMOpportunityTitle(opp['Title'])}
+                              </button>
                               {normalizeSAMNoticeType(opp['Notice Type']) && <span className={`${styles.noticeTypeBadge} ${styles[`noticeType${normalizeSAMNoticeType(opp['Notice Type'])}`]}`}>
                                 {normalizeSAMNoticeType(opp['Notice Type'])}
                               </span>}
