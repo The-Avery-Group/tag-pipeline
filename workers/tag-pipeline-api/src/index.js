@@ -25,11 +25,14 @@ import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiF
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
 import { getEbuyStatus, handleEbuy, startScheduledEbuySync } from './handlers/ebuy.js'
 import { purgeExpiredEbuyRecords } from './lib/ebuyRepository.js'
-import { deleteArchivedEbuyFile } from './lib/sharepointArchive.js'
+import { deleteArchivedEbuyFile, deleteEmptySAMArchiveFolder } from './lib/sharepointArchive.js'
 import { AuthError, verifyEntraRequest } from './lib/auth.js'
 import { getAutomationHealth } from './lib/automationHealth.js'
 import { handleOpportunityWorkspaces } from './handlers/opportunityWorkspaces.js'
 import { handlePartnerWorkspaces } from './handlers/partnerWorkspaces.js'
+import { handleOpportunityAlerts } from './handlers/opportunityAlerts.js'
+import { purgeOldOpportunityAlertEvents } from './lib/opportunityAlerts.js'
+import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -141,6 +144,12 @@ export default {
       } else if (path === '/sam/search' && req.method === 'GET') {
         response = await handleSAM(req, env, ctx)
 
+      } else if (path === '/sam/opportunity' && req.method === 'GET') {
+        response = await handleSAM(req, env, ctx)
+
+      } else if (path.startsWith('/sam/archive') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleSAM(req, env, ctx)
+
       } else if (path.startsWith('/sam/changes/') && ['GET', 'POST'].includes(req.method)) {
         response = await handleSAMMonitor(req, env)
 
@@ -161,6 +170,9 @@ export default {
 
       } else if (path.startsWith('/opportunity-workspaces') && ['GET', 'POST'].includes(req.method)) {
         response = await handleOpportunityWorkspaces(req, env)
+
+      } else if (path.startsWith('/opportunity-alerts') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleOpportunityAlerts(req, env)
 
       } else if (path.startsWith('/partner-workspaces') && ['GET', 'POST'].includes(req.method)) {
         response = await handlePartnerWorkspaces(req, env)
@@ -233,6 +245,15 @@ export default {
         }).catch((error) => {
           console.error(JSON.stringify({ event: 'ebuy_retention_failed', message: error.message }))
         }))
+        ctx.waitUntil(purgeOldOpportunityAlertEvents(env.EBUY_DB).catch((error) => {
+          console.error(JSON.stringify({ event: 'opportunity_alert_retention_failed', message: error.message }))
+        }))
+        ctx.waitUntil(purgeDismissedSAMArchives(env.EBUY_DB, {
+          deleteFile: (driveId, itemId) => deleteArchivedEbuyFile(env, driveId, itemId),
+          deleteFolder: (driveId, opportunityKey) => deleteEmptySAMArchiveFolder(env, driveId, opportunityKey),
+        }).catch((error) => {
+          console.error(JSON.stringify({ event: 'sam_archive_retention_failed', message: error.message }))
+        }))
       }
     }
   },
@@ -242,3 +263,4 @@ export { SAMPullWorkflow } from './workflows/samPull.js'
 export { ExpiringContractsWorkflow } from './workflows/expiringContracts.js'
 export { EbuySyncWorkflow } from './workflows/ebuySync.js'
 export { OpportunityWorkspaceWorkflow } from './workflows/opportunityWorkspace.js'
+export { SAMArchiveWorkflow } from './workflows/samArchive.js'
