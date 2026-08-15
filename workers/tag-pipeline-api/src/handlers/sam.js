@@ -30,7 +30,7 @@ const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
 import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
-import { normalizeSAMOpportunityDetail } from '../lib/samOpportunityDetail.js'
+import { isSAMApiUrl, normalizeSAMOpportunityDetail, samDescriptionText } from '../lib/samOpportunityDetail.js'
 import {
   claimSAMArchive,
   ensureSAMArchive,
@@ -482,6 +482,30 @@ export async function fetchSAMOpportunityRecord(env, { noticeId = '', solicitati
     || records[0]
   if (!record) throw Object.assign(new Error('The SAM.gov opportunity was not found'), { status: 404 })
   return record
+}
+
+export async function resolveSAMOpportunityDescription(env, record) {
+  const descriptionUrl = String(record?.description || '').trim()
+  if (!isSAMApiUrl(descriptionUrl)) {
+    return { ...record, descriptionText: samDescriptionText(record?.description) }
+  }
+  try {
+    const url = new URL(descriptionUrl)
+    if (!/\/opportunities\/v1\/noticedesc$/i.test(url.pathname)) return { ...record, descriptionText: '' }
+    url.searchParams.set('api_key', env.SAM_API_KEY)
+    const response = await fetchWithRetry(url.toString())
+    if (!response.ok) {
+      console.warn(JSON.stringify({ event: 'sam_description_fetch_failed', noticeId: record?.noticeId, status: response.status }))
+      return { ...record, descriptionText: '' }
+    }
+    const raw = await response.text()
+    let payload = raw
+    try { payload = JSON.parse(raw) } catch { /* some SAM responses are plain HTML/text */ }
+    return { ...record, descriptionText: samDescriptionText(payload) }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: 'sam_description_fetch_failed', noticeId: record?.noticeId, message: error.message }))
+    return { ...record, descriptionText: '' }
+  }
 }
 
 function mergeSAMArchive(detail, archive) {
@@ -1399,7 +1423,7 @@ export async function handleSAM(req, env, ctx) {
         noticeId: url.searchParams.get('noticeId') || '',
         solicitationNumber: url.searchParams.get('solicitationNumber') || '',
       })
-      const detail = normalizeSAMOpportunityDetail(record)
+      const detail = normalizeSAMOpportunityDetail(await resolveSAMOpportunityDescription(env, record))
       const archive = env.EBUY_DB && await samArchiveStorageReady(env.EBUY_DB)
         ? await findSAMArchive(env.EBUY_DB, detail)
         : null
