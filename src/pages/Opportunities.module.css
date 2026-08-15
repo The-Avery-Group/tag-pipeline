@@ -303,6 +303,28 @@
   outline-offset: 1px;
 }
 
+.samTitleButton {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--gray-900);
+  cursor: pointer;
+  font: 600 12px var(--font);
+  padding: 0;
+  text-align: left;
+}
+
+.samTitleButton:hover {
+  color: var(--blue-700);
+  text-decoration: underline;
+}
+
+.samTitleButton:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--blue-500);
+  outline-offset: 2px;
+}
+
 .samTypeFilter {
   align-items: center;
   background: var(--surface);
