@@ -137,9 +137,9 @@ export default function EbuyOpportunityDetail({ toast }) {
           return <article className={styles.historyItem} key={`${version.capturedAt}-${index}`}>
             <div className={styles.historyMarker} aria-hidden="true" />
             <div className={styles.historyContent}>
-              <div className={styles.historyHeading}><strong>{index === opportunity.versions.length - 1 ? 'Initial archive snapshot' : 'Archived record updated'}</strong><time>{formatEbuyDateTime(version.capturedAt)}</time></div>
-              <span className={styles.historySummary}>{fields.length ? `${fields.length} field${fields.length === 1 ? '' : 's'} recorded as changed` : 'Snapshot saved with no material field changes'}</span>
-              {fields.length > 0 && <div className={styles.changeChips}>{fields.map((field) => <span key={field}>{field}</span>)}</div>}
+              <div className={styles.historyHeading}><strong>{version.initial ? 'Initial archive snapshot' : 'Opportunity record changed'}</strong><time>{formatEbuyDateTime(version.capturedAt)}</time></div>
+              <span className={styles.historySummary}>{version.initial ? 'Material-field baseline saved' : `${fields.length} material field${fields.length === 1 ? '' : 's'} changed in GSA eBuy`}</span>
+              {!version.initial && fields.length > 0 && <div className={styles.changeChips}>{fields.map((field) => <span key={field}>{field}</span>)}</div>}
             </div>
           </article>
         })}{!opportunity.versions?.length && <p className={styles.empty}>No archived record changes yet.</p>}</div>}
