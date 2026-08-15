@@ -17,7 +17,7 @@ test('reloads the current route with a build-specific cache bypass', () => {
   }
   reloadWithCacheBypass('release-123', location)
   const url = new URL(destination)
-  assert.equal(url.pathname, '/tag-pipeline/opportunities')
-  assert.equal(url.searchParams.get('tab'), 'New')
+  assert.equal(url.pathname, '/tag-pipeline/')
   assert.equal(url.searchParams.get('_tag_build'), 'release-123')
+  assert.equal(url.searchParams.get('redirect'), '/opportunities?tab=New')
 })
