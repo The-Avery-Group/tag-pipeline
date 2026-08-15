@@ -161,6 +161,37 @@
   padding: 3px 7px;
 }
 
+.sectionToggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--gray-500);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  padding: 3px 2px 3px 5px;
+}
+
+.sectionToggle:hover {
+  background: var(--gray-50);
+  color: var(--blue-700);
+}
+
+.sectionToggle:focus-visible {
+  outline: 2px solid var(--blue-500);
+  outline-offset: 2px;
+}
+
+.sectionChevron {
+  display: inline-block;
+  font-size: 15px;
+  line-height: 1;
+  transition: transform .18s ease;
+}
+
+.sectionChevronOpen { transform: rotate(180deg); }
+
 .list,
 .history {
   display: grid;
