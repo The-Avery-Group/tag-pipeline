@@ -3,13 +3,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useEbuyOpportunities } from '@/hooks/useEbuyOpportunities'
 import { ebuyToPipelineRecord, reconcileEbuyPipeline } from '@/services/ebuyService'
 import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
-import DiscoveryToolbar, { DiscoverySelectionBar } from '@/components/Opportunity/DiscoveryToolbar'
+import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
 import { formatEbuyDateTime } from '@/utils/ebuyHelpers'
 import { samTypeMatches } from '@/utils/samOpportunityHelpers'
 import styles from './EbuyDiscovery.module.css'
 
 const listScrollPositions = new Map()
-const listViewState = { type: 'All', departments: [] }
+const listViewState = { type: 'All', agencies: [] }
 
 function singleLine(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
 
@@ -20,12 +20,12 @@ function reviewLabel(value) {
 export default function EbuyDiscovery({ search, pipeline, pipelineLoading = false, includeDismissed = false, add, toast, onCountChange }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const [type, setType] = useState(() => listViewState.type)
-  const [departments, setDepartments] = useState(() => {
+  const [type, setType] = useState(() => readStoredDiscoveryType('ebuy_type_filter', listViewState.type))
+  const [agencies, setAgencies] = useState(() => {
     try {
-      const saved = localStorage.getItem('ebuy_dept_filter_selection')
-      return new Set(saved ? JSON.parse(saved) : listViewState.departments)
-    } catch { return new Set(listViewState.departments) }
+      const saved = localStorage.getItem('ebuy_agency_filter_selection')
+      return new Set(saved ? JSON.parse(saved) : listViewState.agencies)
+    } catch { return new Set(listViewState.agencies) }
   })
   const [controlsOpen, setControlsOpen] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
@@ -43,21 +43,24 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
   })).filter((item) => item.id), [pipeline])
   const reconciliationKey = useMemo(() => pipelineSnapshot
     .map((item) => `${item.id.toLowerCase()}:${item.outlook.toLowerCase()}`).sort().join('|'), [pipelineSnapshot])
-  const availableDepartments = useMemo(() => [...new Set(archive.opportunities
-    .map((item) => String(item.buyerDepartment || item.buyerAgency || '').trim())
+  const availableAgencies = useMemo(() => [...new Set(archive.opportunities
+    .map((item) => String(item.buyerAgency || '').trim())
     .filter(Boolean))].sort(), [archive.opportunities])
   const visibleOpportunities = useMemo(() => archive.opportunities.filter((item) => {
     if (!includeDismissed && item.reviewState === 'dismissed') return false
     if (!samTypeMatches({ 'Notice Type': item.requestType }, type)) return false
-    const department = String(item.buyerDepartment || item.buyerAgency || '').trim()
-    return departments.size === 0 || departments.has(department)
-  }), [archive.opportunities, departments, includeDismissed, type])
-  const scrollKey = `${searchParams.toString()}|${type}|${[...departments].sort().join(',')}|${includeDismissed}`
+    const agency = String(item.buyerAgency || '').trim()
+    return agencies.size === 0 || agencies.has(agency)
+  }), [agencies, archive.opportunities, includeDismissed, type])
+  const scrollKey = `${searchParams.toString()}|${type}|${[...agencies].sort().join(',')}|${includeDismissed}`
   useEffect(() => { onCountChange?.(visibleOpportunities.length) }, [onCountChange, visibleOpportunities.length])
   useEffect(() => {
-    Object.assign(listViewState, { type, departments: [...departments] })
-    try { localStorage.setItem('ebuy_dept_filter_selection', JSON.stringify([...departments])) } catch {}
-  }, [departments, type])
+    Object.assign(listViewState, { type, agencies: [...agencies] })
+    try {
+      localStorage.setItem('ebuy_type_filter', type)
+      localStorage.setItem('ebuy_agency_filter_selection', JSON.stringify([...agencies]))
+    } catch {}
+  }, [agencies, type])
 
   useEffect(() => {
     if (pipelineLoading || reconciliationRef.current === reconciliationKey) return
@@ -159,15 +162,15 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
         count={visibleOpportunities.length}
         type={type}
         onTypeChange={(value) => { setType(value); setSelectedRows(new Set()) }}
-        departments={availableDepartments}
-        selectedDepartments={departments}
-        onDepartmentToggle={(department) => setDepartments((current) => {
+        agencies={availableAgencies}
+        selectedAgencies={agencies}
+        onAgencyToggle={(agency) => setAgencies((current) => {
           const next = new Set(current)
-          next.has(department) ? next.delete(department) : next.add(department)
+          next.has(agency) ? next.delete(agency) : next.add(agency)
           setSelectedRows(new Set())
           return next
         })}
-        onDepartmentClear={() => { setDepartments(new Set()); setSelectedRows(new Set()) }}
+        onAgencyClear={() => { setAgencies(new Set()); setSelectedRows(new Set()) }}
         status={lastSync?.completed_at
           ? <>Last synced: {new Date(lastSync.completed_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}{lastSyncChanges ? ` · ${Number(lastSync.inserted_count || 0)} new · ${Number(lastSync.updated_count || 0)} updated` : ' · No changes'}</>
           : 'Opportunity sync has not run yet'}
@@ -203,7 +206,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
               checked={visibleOpportunities.length > 0 && visibleOpportunities.every((item) => selectedRows.has(item.requestId))}
               onChange={(event) => setSelectedRows(event.target.checked ? new Set(visibleOpportunities.map((item) => item.requestId)) : new Set())}
               aria-label="Select all visible eBuy opportunities"
-            /></th>}<th>Opportunity</th><th>Type</th><th>Request ID</th><th>Agency</th><th>Set aside</th><th>Contract</th><th>Amendment</th><th>Posted</th><th>Closes</th><th>Actions</th></tr></thead>
+            /></th>}<th>Opportunity</th><th>Type</th><th>Request ID</th><th>Agency</th><th>Set aside</th><th>Contract</th><th>Amendment</th><th>Closes</th><th>Actions</th></tr></thead>
             <tbody>
               {visibleOpportunities.map((opportunity) => {
                 const busy = actioning.has(opportunity.requestId)
@@ -221,11 +224,11 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                     {reviewLabel(opportunity.reviewState) && <span className={styles.state}>{reviewLabel(opportunity.reviewState)}</span>}
                     </div>
                   </td>
-                  <td><span className={styles.typeBadge}>{opportunity.requestType || 'Other'}</span></td>
-                  <td className={styles.mono}>{opportunity.requestId}</td><td><span className={styles.agency}>{opportunity.buyerAgency || 'Not provided'}</span>{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency && <small>{opportunity.buyerDepartment}</small>}</td>
-                  <td>{opportunity.setAsideType || 'Not provided'}</td><td>{opportunity.vehiclePairs?.join(', ') || opportunity.vehicleSources?.join(', ') || 'Not provided'}</td>
+                  <td className={styles.typeCell}><DiscoveryTypeBadge type={opportunity.requestType} /></td>
+                  <td className={styles.mono}>{opportunity.requestId}</td><td className={styles.agencyCell}><span className={styles.agency}>{opportunity.buyerAgency || 'Not provided'}</span>{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency && <small>{opportunity.buyerDepartment}</small>}</td>
+                  <td className={styles.setAsideCell}>{opportunity.setAsideType || 'Not provided'}</td><td>{opportunity.vehiclePairs?.join(', ') || opportunity.vehicleSources?.join(', ') || 'Not provided'}</td>
                   <td>{Number(opportunity.amendmentCount || opportunity.amendments?.length || 0) > 0 ? <span className={styles.amendment}>Yes · {Number(opportunity.amendmentCount || opportunity.amendments?.length)}</span> : <span className={styles.noAmendment}>No</span>}</td>
-                  <td className={styles.dateCell}>{formatEbuyDateTime(opportunity.postedAt)}</td><td className={styles.dateCell}>{formatEbuyDateTime(opportunity.closesAt)}</td>
+                  <td className={styles.dateCell}>{formatEbuyDateTime(opportunity.closesAt)}</td>
                   <td><div className={styles.actions}>
                     {inPipeline
                       ? <button className={`${styles.action} ${styles.pipeline}`} onClick={() => openDetail(opportunity)}>View details</button>
@@ -238,7 +241,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                   </div></td>
                 </tr>
               })}
-              {!visibleOpportunities.length && !archive.error && <tr><td colSpan={selectionMode ? 11 : 10} className={styles.empty}>No eBuy opportunities match this view.</td></tr>}
+              {!visibleOpportunities.length && !archive.error && <tr><td colSpan={selectionMode ? 10 : 9} className={styles.empty}>No eBuy opportunities match this view.</td></tr>}
             </tbody>
           </table>
         </div>
