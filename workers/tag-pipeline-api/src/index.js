@@ -192,41 +192,42 @@ export default {
     return cors(env, req, response)
   },
 
-  // All scheduled times are UTC. Nigeria is UTC+1 year-round. SAM pulls run
-  // at 12:00 UTC (1 PM WAT) on weekdays; RFI follow-on checks remain three
-  // times weekly; response-deadline reminders may still run on weekends.
+  // All scheduled times are UTC. Nigeria is UTC+1 year-round. SAM and eBuy
+  // opportunity synchronization share the four six-hour weekday checkpoints;
+  // RFI follow-on checks remain three times weekly, and response-deadline
+  // reminders may still run on weekends.
   async scheduled(controller, env, ctx) {
     if (controller.cron === '0 0,6,12,18 * * *') {
-      ctx.waitUntil(startScheduledEbuySync(env, controller.scheduledTime).catch((error) => {
-        console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
-      }))
-
-      // The existing SAM work remains at midnight and noon UTC. The 06:00
-      // and 18:00 invocations are reserved for the four-times-daily eBuy sync.
-      const scheduledHour = new Date(controller.scheduledTime).getUTCHours()
-      if (![0, 12].includes(scheduledHour)) return
-      ctx.waitUntil((async () => {
-        const run = await env.CACHE?.get('sam_monitor_run', 'json')
-        const cursor = run?.nextCursor ?? 0
-        return runSAMMonitorCheck(env, cursor, { scheduled: true })
-      })())
-
       const scheduledDate = new Date(controller.scheduledTime)
-      if (scheduledDate.getUTCHours() === 0 && [1, 4].includes(scheduledDate.getUTCDay())) {
+      const scheduledHour = scheduledDate.getUTCHours()
+      const weekday = scheduledDate.getUTCDay()
+      const isWeekday = weekday >= 1 && weekday <= 5
+
+      if (isWeekday) {
+        ctx.waitUntil(startScheduledEbuySync(env, controller.scheduledTime).catch((error) => {
+          console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
+        }))
+        ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
+      }
+
+      // SAM change monitoring keeps its existing twice-daily cadence.
+      if ([0, 12].includes(scheduledHour)) {
+        ctx.waitUntil((async () => {
+          const run = await env.CACHE?.get('sam_monitor_run', 'json')
+          const cursor = run?.nextCursor ?? 0
+          return runSAMMonitorCheck(env, cursor, { scheduled: true })
+        })())
+      }
+
+      if (scheduledHour === 0 && [1, 4].includes(weekday)) {
         ctx.waitUntil(startExpiringContractsRefresh(env, {
           scheduledTime: controller.scheduledTime,
           source: 'scheduled',
         }))
       }
 
-      // The noon UTC SAM-change pass also starts the independent weekday
-      // pull/follow-up work, so the two jobs share one cron trigger.
-      if (scheduledHour === 12) {
-        const weekday = new Date(controller.scheduledTime).getUTCDay()
-        if (weekday >= 1 && weekday <= 5) {
-          ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
-        }
-        if ([1, 3, 5].includes(weekday)) ctx.waitUntil(runRFIFollowUpMonitor(env))
+      if (scheduledHour === 12 && [1, 3, 5].includes(weekday)) {
+        ctx.waitUntil(runRFIFollowUpMonitor(env))
       }
     }
     // One minute after the workload-heavy SAM pull, compare the capabilities
