@@ -28,8 +28,15 @@ import {
 } from '../lib/opportunityWorkspaceSam.js'
 import {
   deleteEmptyEbuyArchiveFolder,
+  deleteEmptySAMArchiveFolder,
   moveArchivedEbuyFile,
+  moveArchivedSAMFile,
 } from '../lib/sharepointArchive.js'
+import {
+  findSAMArchive,
+  updateSAMArchive,
+  updateSAMArchiveFileLocation,
+} from '../lib/samArchiveRepository.js'
 
 const COPY_POLL_LIMIT = 30
 
@@ -191,6 +198,85 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
         archivedCount: movedCount,
         failedCount,
         eBuyArchiveRemoved: archiveRemoved,
+      }
+    }
+
+    // SAM discovery uses the same preservation model as eBuy: files are kept
+    // in a source archive before pursuit. Move existing DriveItems into the
+    // standard workspace instead of downloading and uploading them again.
+    const samArchive = await step.do('Check for a SAM.gov opportunity archive', () => (
+      findSAMArchive(env.EBUY_DB, {
+        opportunityKey,
+        noticeId: workspace.noticeId,
+        solicitationNumber: workspace.solicitationNumber,
+      })
+    ))
+    if (samArchive) {
+      const archivedFiles = (samArchive.files || []).filter((file) => file.archiveStatus === 'archived' && file.itemId)
+      let movedCount = 0
+      let moveFailures = 0
+      await step.do('Record SAM.gov archive transfer start', () => updateWorkspace(env.EBUY_DB, opportunityKey, {
+        attachmentTotal: samArchive.attachmentTotal,
+        archivedCount: 0,
+        failedCount: 0,
+        progressPhase: archivedFiles.length ? 'Moving SAM.gov archive into the workspace' : 'Checking current SAM.gov attachments',
+      }))
+      for (let index = 0; index < archivedFiles.length; index += 1) {
+        const file = archivedFiles[index]
+        try {
+          const moved = await step.do(`Move SAM.gov archive file ${index + 1}`, {
+            retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '2 minutes',
+          }, () => moveArchivedSAMFile(env, {
+            sourceDriveId: file.sharePointDriveId,
+            itemId: file.itemId,
+            targetDriveId: folders.driveId,
+            targetFolderId: folders.samFolderId,
+            fileName: file.fileName,
+          }))
+          await step.do(`Record moved SAM.gov archive file ${index + 1}`, async () => {
+            await updateSAMArchiveFileLocation(env.EBUY_DB, file.id, moved)
+            await recordWorkspaceFile(env.EBUY_DB, {
+              id: await attachmentRecordId(opportunityKey, file.sourceUrl),
+              opportunityKey,
+              sourceNoticeId: samArchive.noticeId,
+              sourceUrl: file.sourceUrl,
+              fileName: moved.name || file.fileName,
+              contentType: file.contentType,
+              byteSize: moved.size || file.byteSize,
+              sourceSignature: file.sourceSignature,
+              archiveStatus: 'archived',
+              driveId: moved.driveId,
+              itemId: moved.itemId,
+              webUrl: moved.webUrl,
+              archivedAt: new Date().toISOString(),
+            })
+          })
+          movedCount++
+        } catch (error) {
+          moveFailures++
+          console.warn(JSON.stringify({
+            event: 'opportunity_workspace_sam_archive_move_failed', opportunityKey,
+            archiveFileId: file.id, message: error.message,
+          }))
+        }
+        await step.do(`Update SAM.gov archive transfer ${index + 1}`, () => updateWorkspace(env.EBUY_DB, opportunityKey, {
+          archivedCount: movedCount,
+          failedCount: moveFailures,
+          progressPhase: `Moved ${movedCount} of ${archivedFiles.length} SAM.gov archive files`,
+        }))
+      }
+      if (!moveFailures && samArchive.sharePointDriveId) {
+        const removal = await step.do('Remove empty SAM.gov opportunity archive', {
+          retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' }, timeout: '1 minute',
+        }, () => deleteEmptySAMArchiveFolder(env, samArchive.sharePointDriveId, samArchive.opportunityKey))
+        await step.do('Record SAM.gov archive transfer completion', () => updateSAMArchive(env.EBUY_DB, samArchive.opportunityKey, {
+          archiveStatus: removal.deleted ? 'moved' : 'partial',
+          progressPhase: removal.deleted ? 'Moved into opportunity workspace' : 'Moved files; archive folder retained',
+          archivedCount: movedCount,
+          failedCount: moveFailures,
+          errorMessage: removal.deleted ? null : 'The SAM.gov archive folder was retained because it is not empty',
+          completedAt: new Date().toISOString(),
+        }))
       }
     }
 
