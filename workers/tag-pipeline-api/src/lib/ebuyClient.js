@@ -1,4 +1,5 @@
 import { generateTotp } from './ebuyTotp.js'
+import { normalizeNoticeType } from './noticeTypes.js'
 
 const EBUY_ORIGIN = 'https://www.ebuy.gsa.gov'
 const EBUY_API = `${EBUY_ORIGIN}/ebuy/api/services/ebuyservices`
@@ -259,11 +260,15 @@ function isoDate(value) {
 }
 
 function requestType(info, summary = {}) {
+  const explicit = normalizeNoticeType(info?.requestTypeString || summary.requestTypeString)
+  const titleType = normalizeNoticeType(info?.title || summary.title)
+  // MRAS records can retain an RFI-prefixed eBuy Request ID. Prefer the
+  // specific source label/title before falling back to that identifier.
+  if (explicit === 'MRAS' || titleType === 'MRAS') return 'MRAS'
+  if (explicit) return explicit
   const requestId = String(info?.rfqId || summary?.rfqId || summary?.requestId || '').trim().toUpperCase()
   const idType = ['RFI', 'RFQ', 'RFP'].find((type) => requestId.startsWith(type))
   if (idType) return idType
-  const explicit = String(info?.requestTypeString || summary.requestTypeString || '').trim().toUpperCase()
-  if (explicit) return explicit
   if (info?.sourceSought) return 'RFI'
   return ({ 2: 'RFI', 3: 'RFP' })[Number(info?.requestType)] || 'RFQ'
 }
