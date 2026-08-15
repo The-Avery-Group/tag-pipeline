@@ -1,14 +1,22 @@
-import { findRFIFollowUps } from './sam.js'
+import { findRFIFollowUps, followUpCandidate } from './sam.js'
 import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
+import { findEbuyPipelineSource, listEbuyFollowOnCandidates } from '../lib/ebuyRepository.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
-import { isRfiWorkflowOpportunity } from '../lib/noticeTypes.js'
+import { isFollowOnSourceOpportunity } from '../lib/noticeTypes.js'
+import {
+  acknowledgeOpportunityAlert,
+  alertFingerprint,
+  alertStorageReady,
+  getOpportunityAlert,
+  resolveOpportunityAlert,
+  upsertOpportunityAlert,
+} from '../lib/opportunityAlerts.js'
 
 const WATCH_PREFIX = 'rfi_followup_watch:'
 const RUN_KEY = 'rfi_followup_monitor_run'
 const STATUS_SNAPSHOT_KEY = 'rfi_followup_status_snapshot_v1'
 const BATCH_SIZE = 3
 const DAILY_MS = 24 * 60 * 60 * 1000
-const SEEN_MS = 12 * 60 * 60 * 1000
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
 function json(data, status = 200) {
@@ -39,7 +47,7 @@ function hash(value) {
 }
 
 function watchKey(opportunityId) { return `${WATCH_PREFIX}${hash(normalized(opportunityId))}` }
-function candidateKey(candidate) { return normalized(candidate.noticeId || candidate.solicitationNumber) }
+function candidateKey(candidate) { return `${normalized(candidate.source || 'SAM.gov')}:${normalized(candidate.noticeId || candidate.solicitationNumber)}` }
 
 function defaults() {
   return {
@@ -58,7 +66,7 @@ function rules(input = {}) {
     agencyRule: exactOrIgnore(input.agencyRule, base.agencyRule),
     pocRule: exactOrIgnore(input.pocRule, base.pocRule),
     titleOverlapPercent: number(input.titleOverlapPercent, base.titleOverlapPercent, 1, 100),
-    noticeTypes: clean(input.noticeTypes) || base.noticeTypes,
+    noticeTypes: 'RFP, RFQ',
     submissionWindowDays: number(input.submissionWindowDays, base.submissionWindowDays, 1, 364),
     noSubmissionLookbackDays: number(input.noSubmissionLookbackDays, base.noSubmissionLookbackDays, 0, 364),
     noSubmissionLookaheadDays: number(input.noSubmissionLookaheadDays, base.noSubmissionLookaheadDays, 0, 364),
@@ -70,6 +78,7 @@ function normalizeDecision(decision) {
     noticeId: clean(decision?.noticeId || decision?.['Follow-up Notice ID']),
     solicitationNumber: clean(decision?.solicitationNumber || decision?.['Follow-up Solicitation Number']),
     decision: clean(decision?.decision || decision?.Decision),
+    source: clean(decision?.source || decision?.['Candidate Source'] || 'SAM.gov'),
   }
 }
 
@@ -82,7 +91,8 @@ function canonicalDecisions(decisions = []) {
 function normalizeWatch(input, existing = null) {
   const opportunityId = clean(input.opportunityId || input.contractNumber || input['Opportunity ID'])
   const source = {
-    department: clean(input.department), agency: clean(input.agency), pocEmail: clean(input.pocEmail),
+    department: clean(input.department), agency: clean(input.agency), office: clean(input.office),
+    naicsCode: clean(input.naicsCode), pocEmail: clean(input.pocEmail),
     title: clean(input.title), noticeId: clean(input.noticeId || opportunityId),
     solicitationNumber: clean(input.solicitationNumber), submissionDate: clean(input.submissionDate),
     rules: rules(input.rules),
@@ -117,26 +127,41 @@ async function listWatches(env) {
 }
 
 function decisionFor(watch, candidate) {
-  const id = candidateKey(candidate)
+  const id = normalized(candidate.noticeId || candidate.solicitationNumber)
+  const source = normalized(candidate.source || 'SAM.gov')
   return watch.decisions?.find((entry) =>
-    (entry.noticeId && normalized(entry.noticeId) === id) ||
-    (entry.solicitationNumber && normalized(entry.solicitationNumber) === id)
+    (!entry.source || normalized(entry.source) === source) && (
+      (entry.noticeId && normalized(entry.noticeId) === id) ||
+      (entry.solicitationNumber && normalized(entry.solicitationNumber) === id)
+    )
   )?.decision || ''
 }
 
 function publicWatch(watch) {
   const candidates = (watch.candidates || []).map((candidate) => ({ ...candidate, decision: decisionFor(watch, candidate) }))
   const pendingCount = candidates.filter((candidate) => !candidate.decision).length
-  const seenUntil = watch.seenUntil || null
-  const seen = Boolean(seenUntil && Date.parse(seenUntil) > Date.now())
   return {
     opportunityId: watch.opportunityId, rowIndex: watch.rowIndex, rules: watch.source?.rules || defaults(),
     candidates, matchCount: candidates.length, pendingCount,
-    badgeVisible: pendingCount > 0 && (!seenUntil || Date.parse(seenUntil) > Date.now()),
-    badgeState: pendingCount === 0 ? 'none' : seen ? 'seen' : 'active',
-    seenUntil, lastCheckedAt: watch.lastCheckedAt || null, lastError: watch.lastError || null,
+    badgeVisible: pendingCount > 0,
+    badgeState: pendingCount === 0 ? 'none' : 'active',
+    seenUntil: null, lastCheckedAt: watch.lastCheckedAt || null, lastError: watch.lastError || null,
     source: watch.source,
   }
+}
+
+async function durablePublicWatch(env, watch) {
+  const result = watch && Object.hasOwn(watch, 'matchCount') ? watch : publicWatch(watch)
+  if (!env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return result
+  const alert = await getOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on')
+  if (alert?.status === 'active' && alert.badgeVisible === false) {
+    return { ...result, badgeVisible: false, badgeState: 'acknowledged' }
+  }
+  return result
+}
+
+async function durableWatches(env, watches) {
+  return Promise.all((watches || []).map((watch) => durablePublicWatch(env, watch)))
 }
 
 async function writeStatusSnapshot(env, watches) {
@@ -201,17 +226,145 @@ async function updateStatusSnapshotEntry(env, watch) {
   await persistStatusSnapshot(env, snapshot)
 }
 
-async function checkWatch(env, watch) {
-  if (!watch.source?.rules?.monitoringEnabled) return watch
-  try {
-    const candidates = await findRFIFollowUps(env, watch.source)
+async function syncDurableFollowOnAlert(env, watch) {
+  if (!env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return
+  const pending = (watch.candidates || []).filter((candidate) => !decisionFor(watch, candidate))
+  if (pending.length) {
+    await upsertOpportunityAlert(env.EBUY_DB, {
+      opportunityKey: watch.opportunityId,
+      type: 'rfi_follow_on',
+      fingerprint: alertFingerprint(pending.map((candidate) => ({ id: candidateKey(candidate) }))),
+      summary: `${pending.length} possible RFP or RFQ follow-on${pending.length === 1 ? '' : 's'} found`,
+      details: { candidates: pending.map((candidate) => ({ source: candidate.source || 'SAM.gov', noticeId: candidate.noticeId, noticeType: candidate.noticeType, title: candidate.title, matchScore: candidate.matchScore, confidence: candidate.confidence, detailUrl: candidate.detailUrl || candidate.samLink || '' })) },
+    })
+  } else if (watch.resultFingerprint) {
+    await resolveOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on')
+  }
+}
+
+function eBuyCandidateAsSAM(candidate) {
+  return {
+    noticeId: candidate.requestId,
+    solicitationNumber: candidate.referenceNumber || candidate.requestId,
+    title: candidate.title,
+    description: candidate.description,
+    fullParentPathName: [candidate.buyerDepartment, candidate.buyerAgency].filter(Boolean).join('.'),
+    pointOfContact: candidate.buyerEmail ? [{ fullName: candidate.buyerName, email: candidate.buyerEmail, phone: candidate.buyerPhone }] : [],
+    postedDate: candidate.postedAt,
+    responseDeadLine: candidate.closesAt,
+    type: candidate.requestType === 'RFQ' ? 'k' : 'o',
+    baseType: candidate.requestType,
+    typeOfSetAsideDescription: candidate.setAsideType,
+    uiLink: '',
+  }
+}
+
+function dateWindow(source) {
+  const submission = Date.parse(source.submissionDate || '')
+  if (Number.isFinite(submission)) {
+    return {
+      postedAfter: new Date(submission).toISOString(),
+      postedBefore: new Date(submission + Number(source.rules?.submissionWindowDays || 364) * DAILY_MS).toISOString(),
+    }
+  }
+  const now = Date.now()
+  return {
+    postedAfter: new Date(now - Number(source.rules?.noSubmissionLookbackDays || 150) * DAILY_MS).toISOString(),
+    postedBefore: new Date(now + Number(source.rules?.noSubmissionLookaheadDays || 150) * DAILY_MS).toISOString(),
+  }
+}
+
+async function findCrossSourceFollowUps(env, watch) {
+  const eBuySource = env.EBUY_DB ? await findEbuyPipelineSource(env.EBUY_DB, watch.opportunityId) : null
+  const source = eBuySource ? {
+    ...watch.source,
+    title: watch.source.title || eBuySource.title,
+    department: watch.source.department || eBuySource.buyerDepartment,
+    agency: watch.source.agency || eBuySource.buyerAgency,
+    pocEmail: watch.source.pocEmail || eBuySource.buyerEmail,
+    noticeId: eBuySource.requestId,
+    solicitationNumber: eBuySource.referenceNumber || watch.source.solicitationNumber,
+  } : watch.source
+  const candidates = eBuySource ? (await findLocalEbuyFollowUps(env, watch) || []) : []
+  // eBuy-origin records use the authenticated eBuy archive first. SAM.gov is
+  // the fallback only when that primary source has no credible match, which
+  // avoids duplicate evidence and unnecessary public API requests.
+  if (!eBuySource || candidates.length === 0) {
+    const samCandidates = await findRFIFollowUps(env, source)
+    candidates.push(...samCandidates.map((candidate) => ({ ...candidate, source: 'SAM.gov', detailUrl: candidate.samLink || '' })))
+  }
+  const unique = new Map()
+  for (const candidate of candidates) {
+    const family = normalized(candidate.solicitationNumber || candidate.noticeId).replace(/[^a-z0-9]/g, '')
+    const key = family || candidateKey(candidate)
+    const current = unique.get(key)
+    if (!current || Number(candidate.matchScore || 0) > Number(current.matchScore || 0) || (candidate.source === 'GSA eBuy' && current.source !== 'GSA eBuy')) unique.set(key, candidate)
+  }
+  return [...unique.values()].sort((left, right) => Number(right.matchScore || 0) - Number(left.matchScore || 0))
+}
+
+async function findLocalEbuyFollowUps(env, watch) {
+  if (!env.EBUY_DB) return null
+  const eBuySource = await findEbuyPipelineSource(env.EBUY_DB, watch.opportunityId)
+  if (!eBuySource) return null
+  const source = {
+    ...watch.source,
+    title: watch.source.title || eBuySource.title,
+    department: watch.source.department || eBuySource.buyerDepartment,
+    agency: watch.source.agency || eBuySource.buyerAgency,
+    pocEmail: watch.source.pocEmail || eBuySource.buyerEmail,
+    noticeId: eBuySource.requestId,
+    solicitationNumber: eBuySource.referenceNumber || watch.source.solicitationNumber,
+  }
+  const archived = await listEbuyFollowOnCandidates(env.EBUY_DB, dateWindow(source))
+  return archived.map((opportunity) => {
+    const match = followUpCandidate(eBuyCandidateAsSAM(opportunity), source)
+    return match ? {
+      ...match,
+      source: 'GSA eBuy',
+      detailUrl: `/opportunities/ebuy/${encodeURIComponent(opportunity.requestId)}`,
+      samLink: '',
+    } : null
+  }).filter(Boolean)
+}
+
+export async function refreshEbuyFollowOnWatches(env) {
+  if (!env.CACHE || !env.EBUY_DB) return { checked: 0, changed: 0 }
+  const watches = await listWatches(env)
+  let checked = 0
+  let changed = 0
+  for (const watch of watches) {
+    if (!watch.source?.rules?.monitoringEnabled) continue
+    const local = await findLocalEbuyFollowUps(env, watch)
+    if (!local) continue
+    checked++
+    const previousSam = (watch.candidates || []).filter((candidate) => (candidate.source || 'SAM.gov') !== 'GSA eBuy')
+    const candidates = [...local, ...previousSam]
     const fingerprint = hash(candidates.map(candidateKey).sort().join('|'))
-    if (watch.resultFingerprint && watch.resultFingerprint !== fingerprint) watch.seenUntil = null
+    if (fingerprint !== watch.resultFingerprint) changed++
     watch.candidates = candidates
     watch.resultFingerprint = fingerprint
     watch.lastCheckedAt = new Date().toISOString()
     watch.lastError = null
     watch.needsCheck = false
+    await writeWatch(env, watch)
+    await syncDurableFollowOnAlert(env, watch)
+  }
+  if (checked) await writeStatusSnapshot(env, watches)
+  return { checked, changed }
+}
+
+async function checkWatch(env, watch) {
+  if (!watch.source?.rules?.monitoringEnabled) return watch
+  try {
+    const candidates = await findCrossSourceFollowUps(env, watch)
+    const fingerprint = hash(candidates.map(candidateKey).sort().join('|'))
+    watch.candidates = candidates
+    watch.resultFingerprint = fingerprint
+    watch.lastCheckedAt = new Date().toISOString()
+    watch.lastError = null
+    watch.needsCheck = false
+    await syncDurableFollowOnAlert(env, watch)
   } catch (error) {
     watch.lastCheckedAt = new Date().toISOString()
     watch.lastError = error.message
@@ -239,6 +392,7 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
     if (!previous || previous.inputFingerprint !== watch.inputFingerprint) {
       watch.syncedAt = new Date().toISOString()
       await writeWatch(env, watch)
+      await syncDurableFollowOnAlert(env, watch)
       written.push(watch)
       finalWatches.set(watch.key, watch)
     } else {
@@ -248,6 +402,12 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
   if (replace) {
     const removed = existing.filter((watch) => !incomingKeys.has(watch.key))
     await Promise.all(removed.map((watch) => env.CACHE.delete(watch.key)))
+    if (env.EBUY_DB && await alertStorageReady(env.EBUY_DB)) {
+      await Promise.all(removed.map(async (watch) => {
+        const alert = await getOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on')
+        if (alert?.status === 'active') await resolveOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on')
+      }))
+    }
     removed.forEach((watch) => finalWatches.delete(watch.key))
     if (removed.length || written.length) await writeStatusSnapshot(env, [...finalWatches.values()])
   } else if (written.length) {
@@ -285,7 +445,7 @@ function effectiveRules(globalRules, override) {
     agencyRule: override['Agency Rule'] === 'Ignore' ? 'Ignore' : 'Exact',
     pocRule: override['POC Rule'] === 'Ignore' ? 'Ignore' : 'Exact',
     titleOverlapPercent: override['Title Overlap %'] || globalRules.titleOverlapPercent,
-    noticeTypes: override['Notice Types'] || globalRules.noticeTypes,
+    noticeTypes: 'RFP, RFQ',
     submissionWindowDays: override['Submission Window Days'] || globalRules.submissionWindowDays,
     noSubmissionLookbackDays: override['No-Submission Lookback Days'] || globalRules.noSubmissionLookbackDays,
     noSubmissionLookaheadDays: override['No-Submission Lookahead Days'] || globalRules.noSubmissionLookaheadDays,
@@ -300,7 +460,7 @@ async function syncFromWorkbook(env) {
     graphRows(env, token, 'RFIFollowUpOverridesTable'), graphRows(env, token, 'RFIFollowUpDecisionsTable'),
   ])
   const globalRules = appSettings(settingsRows)
-  const watches = pipeline.filter(isRfiWorkflowOpportunity).map((item) => {
+  const watches = pipeline.filter(isFollowOnSourceOpportunity).map((item) => {
     const opportunityId = clean(item['Contract Number / Notice ID'])
     const override = overrides.find((row) => normalized(row['Opportunity ID']) === normalized(opportunityId))
     const names = clean(item['Contracting Officer / Specialist (POC)*']).split(',').map(clean)
@@ -309,6 +469,7 @@ async function syncFromWorkbook(env) {
     return {
       opportunityId, title: item['Project Title / Description*'], department: override?.['Department Rule'] === 'Override' ? override['Department Override'] : item['Department*'],
       agency: override?.['Agency Rule'] === 'Override' ? override['Agency Override'] : item['Agency*'],
+      office: item['Office*'], naicsCode: item['NAICS Code*'],
       pocEmail: override?.['POC Rule'] === 'Override' ? override['POC Email Override'] : contact?.Email,
       noticeId: opportunityId, solicitationNumber: item['Solicitation Number'], submissionDate: workbookDate(item['Submission Date (Response Date)*']),
       rules: r,
@@ -354,11 +515,11 @@ export async function handleRFIFollowUpMonitor(req, env) {
       readStatusSnapshot(env),
       readRunStatus(env),
     ])
-    if (snapshot) return json({ watches: snapshot.watches, run: run || null })
+    if (snapshot) return json({ watches: await durableWatches(env, snapshot.watches), run: run || null })
     try {
       const watches = await listWatches(env)
       await writeStatusSnapshot(env, watches)
-      return json({ watches: watches.map(publicWatch), run: run || null })
+      return json({ watches: await durableWatches(env, watches), run: run || null })
     } catch (error) {
       console.warn(JSON.stringify({
         event: 'rfi_followup_status_fallback_failed',
@@ -373,17 +534,21 @@ export async function handleRFIFollowUpMonitor(req, env) {
     if (!watch) return json({ error: 'Follow-up watch not found. Synchronize this RFI first.' }, 404)
     await checkWatch(env, watch)
     await updateStatusSnapshotEntry(env, watch)
-    return json({ ok: true, watch: publicWatch(watch) })
+    return json({ ok: true, watch: await durablePublicWatch(env, watch) })
   }
   if (path === '/sam/follow-up-monitor/seen' && req.method === 'POST') {
     const body = await req.json()
     const watch = await readWatch(env, watchKey(body.opportunityId))
     if (!watch) return json({ error: 'Follow-up watch not found.' }, 404)
-    const pending = (watch.candidates || []).filter((candidate) => !decisionFor(watch, candidate)).length
-    if (pending > 0) watch.seenUntil = new Date(Date.now() + SEEN_MS).toISOString()
+    watch.seenUntil = null
     await writeWatch(env, watch)
+    if (env.EBUY_DB && await alertStorageReady(env.EBUY_DB)) {
+      const alert = await env.EBUY_DB.prepare("SELECT fingerprint FROM opportunity_alerts WHERE opportunity_key = ? AND alert_type = 'rfi_follow_on'")
+        .bind(watch.opportunityId).first()
+      if (alert?.fingerprint) await acknowledgeOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on', alert.fingerprint)
+    }
     await updateStatusSnapshotEntry(env, watch)
-    return json({ ok: true, watch: publicWatch(watch) })
+    return json({ ok: true, watch: await durablePublicWatch(env, watch) })
   }
   return json({ error: 'Not found' }, 404)
 }
