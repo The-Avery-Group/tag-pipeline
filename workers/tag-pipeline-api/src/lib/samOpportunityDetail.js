@@ -16,6 +16,62 @@ function unique(values) {
   return [...new Set(values.map(clean).filter(Boolean))]
 }
 
+export function isSAMApiUrl(value) {
+  try {
+    const url = new URL(clean(value))
+    return /(^|\.)api(?:-alpha)?\.sam\.gov$/i.test(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+function decodeEntities(value) {
+  const named = {
+    amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"',
+  }
+  return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity) => {
+    if (entity[0] === '#') {
+      const hex = entity[1]?.toLowerCase() === 'x'
+      const codePoint = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10)
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match
+    }
+    return named[entity.toLowerCase()] ?? match
+  })
+}
+
+function descriptionCandidate(value) {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(descriptionCandidate).filter(Boolean).join('\n\n')
+  if (!value || typeof value !== 'object') return ''
+  for (const field of ['body', 'description', 'content', 'text', 'data']) {
+    const candidate = descriptionCandidate(value[field])
+    if (candidate) return candidate
+  }
+  return ''
+}
+
+export function samDescriptionText(value) {
+  let source = descriptionCandidate(value).trim()
+  if (!source || isSAMApiUrl(source) || /^description not found\.?$/i.test(source)) return ''
+  source = source
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<a\b[^>]*href\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_match, _quote, href, label) => {
+      const text = decodeEntities(String(label || '').replace(/<[^>]+>/g, '')).trim() || 'Open link'
+      return isSAMApiUrl(href) ? text : `[${text}](${href})`
+    })
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/\s*(p|div|h[1-6]|blockquote)\s*>/gi, '\n\n')
+    .replace(/<\/\s*(li|ul|ol|table|tr)\s*>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+  return decodeEntities(source)
+    .replace(/https?:\/\/api(?:-alpha)?\.sam\.gov\/\S+/gi, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function pathParts(value) {
   return clean(value).split('.').map(clean).filter(Boolean)
 }
@@ -101,7 +157,7 @@ function normalizeLinks(raw) {
   add(raw?.links)
   const seen = new Set()
   return values.filter((item) => {
-    if (!/^https?:\/\//i.test(item.url) || seen.has(item.url)) return false
+    if (!/^https?:\/\//i.test(item.url) || isSAMApiUrl(item.url) || seen.has(item.url)) return false
     seen.add(item.url)
     return true
   })
@@ -133,7 +189,7 @@ export function normalizeSAMOpportunityDetail(raw = {}) {
     naicsCode: clean(raw.naicsCode),
     placeOfPerformance: placeText(raw.placeOfPerformance),
     initiative: clean(raw.initiative),
-    description: clean(raw.description),
+    description: samDescriptionText(raw.descriptionText || raw.description),
     contacts: normalizeContacts(raw.pointOfContact),
     contractingOfficeAddress: addressText(raw.officeAddress),
     links: normalizeLinks(raw),
@@ -142,6 +198,8 @@ export function normalizeSAMOpportunityDetail(raw = {}) {
       fileName: fileNameFromUrl(url, index),
       archiveStatus: 'pending',
     })),
-    samUrl: clean(raw.uiLink),
+    samUrl: isSAMApiUrl(raw.uiLink)
+      ? (clean(raw.noticeId) ? `https://sam.gov/opp/${encodeURIComponent(clean(raw.noticeId))}/view` : '')
+      : clean(raw.uiLink),
   }
 }
