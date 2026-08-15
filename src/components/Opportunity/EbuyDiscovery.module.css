@@ -10,11 +10,13 @@
 .title { background: none; border: 0; color: var(--gray-900); cursor: pointer; font: 600 12px var(--font); padding: 0; text-align: left; }
 .title:hover { color: var(--blue-700); text-decoration: underline; }
 .flag { background: none; border: 0; color: var(--gray-400); cursor: pointer; font-size: 17px; padding: 2px; }.flagActive { color: var(--red-600); }.flag:disabled { opacity: .5; }
-.typeBadge, .state { border: .5px solid var(--blue-200); border-radius: 999px; color: var(--blue-700); font-size: 9px; font-weight: 700; padding: 2px 6px; white-space: nowrap; }
-.state { border-color: var(--gray-200); color: var(--gray-500); }
+.state { border: .5px solid var(--gray-200); border-radius: 999px; color: var(--gray-500); font-size: 9px; font-weight: 700; padding: 2px 6px; white-space: nowrap; }
+.typeCell { width: 72px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: nowrap; }
+.agencyCell { min-width: 190px; }
 .agency { display: block; font-size: 12px; }
 .table td small { color: var(--gray-500); display: block; font-size: 10px; line-height: 1.35; margin-top: 2px; }
+.setAsideCell { color: var(--gray-600); font-size: 11px; min-width: 140px; }
 .amendment { color: var(--blue-700); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .noAmendment { color: var(--gray-500); font-size: 11px; }
 .dateCell { font-size: 11px; line-height: 1.35; min-width: 118px; }
