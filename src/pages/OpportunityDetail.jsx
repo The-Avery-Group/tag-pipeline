@@ -11,6 +11,7 @@ import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
 import { useSAMChangeSuggestion } from '@/hooks/useSAMChangeSuggestion'
+import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
 import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardHistory'
 import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import PeopleSearch from '@/components/PeopleSearch/PeopleSearch'
@@ -52,8 +53,8 @@ import styles from './OpportunityDetail.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import {
   NOTICE_TYPE_VALUES,
+  isFollowOnSourceOpportunity,
   isResponseOpportunity,
-  isRfiWorkflowOpportunity,
   normalizeNoticeType,
 } from '@/utils/noticeTypes'
 
@@ -447,6 +448,7 @@ export default function OpportunityDetail({ toast }) {
   const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI])
   const rfiFollowUpMonitor = useRfiFollowUpMonitor(opp ? [opp] : [], contacts)
   const samChangeSuggestion = useSAMChangeSuggestion(opp, C)
+  const opportunityAlerts = useOpportunityAlerts(decodedCN)
   const followUpPanelRef = useRef(null)
   const focusFollowUps = searchParams.get('focus') === 'follow-ups'
 
@@ -685,7 +687,7 @@ export default function OpportunityDetail({ toast }) {
   const f = (key) => cur[key]
   const set = (key) => (val) => setForm((prev) => ({ ...prev, [key]: val }))
   const isResponseRecord = isResponseOpportunity(cur, C)
-  const isRfiWorkflow = isRfiWorkflowOpportunity(cur, C)
+  const hasFollowOnMatcher = isFollowOnSourceOpportunity(cur, C)
   const noticeType = normalizeNoticeType(f(C.noticeType))
   const noticeTypeBadgeClass = noticeType === 'MRAS'
     ? 'badge-qualify'
@@ -710,7 +712,7 @@ export default function OpportunityDetail({ toast }) {
     ]],
     ['Follow-up', [
       ['Follow-up emails', 'followup-email'],
-      ...(isRfiWorkflow ? [[noticeType === 'MRAS' ? 'MRAS matcher' : 'RFI matcher', 'followup-rfi']] : []),
+      ...(hasFollowOnMatcher ? [[`${noticeType || 'RFI'} matcher`, 'followup-rfi']] : []),
     ]],
   ]
   const hasSubmissionDate = !Number.isNaN(localDate(f(C.submDate)).getTime())
@@ -1080,7 +1082,7 @@ export default function OpportunityDetail({ toast }) {
     if (existing) {
       await linkRelatedOpportunities(source, { contractNumber, title: existing[C.title] })
       await invalidateCache(['PipelineTable', 'ContactsTable'])
-      toast?.success('Existing follow-on linked to this RFI')
+      toast?.success(`Existing follow-on linked to this ${noticeType || 'opportunity'}`)
       return
     }
 
@@ -1113,13 +1115,14 @@ export default function OpportunityDetail({ toast }) {
       [C.agency]: candidate.agency || '',
       [C.office]: candidate.office || '',
       [C.naics]: candidate.naicsCode || '',
+      [C.noticeType]: candidate.noticeType || '',
       [C.poc]: contactName,
       [C.submDate]: candidate.responseDate || '',
       [C.otherLinks]: candidate.samLink || '',
     })
     await linkRelatedOpportunities(source, { contractNumber, title: candidate.title || '' })
     await invalidateCache(['PipelineTable', 'ContactsTable'])
-    toast?.success('Follow-on added and linked to this RFI')
+    toast?.success(`Follow-on added and linked to this ${noticeType || 'opportunity'}`)
   }
 
   const openAddTask = () => {
@@ -1219,6 +1222,16 @@ export default function OpportunityDetail({ toast }) {
             {followUpStatus.badgeState === 'seen' ? 'Follow-ons reviewed' : `${followUpStatus.pendingCount} possible follow-on${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
           {samChangeSuggestion.suggestion && <span className="badge badge-qualify">SAM update available</span>}
+          {opportunityAlerts.byType.sam_files?.badgeVisible && <button
+            className="badge badge-qualify"
+            style={{ cursor: 'pointer' }}
+            onClick={() => {
+              const alert = opportunityAlerts.byType.sam_files
+              opportunityAlerts.acknowledge('sam_files', alert.fingerprint).catch(() => {})
+              navigate(`/opportunities/${encodeURIComponent(decodedCN)}/dossier`)
+            }}
+            title={opportunityAlerts.byType.sam_files.summary}
+          >Files updated</button>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
           {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Exact UEI match to TAG partner ${incumbentPartnerMatch.partner['Partner Name']}`}>Incumbent is a TAG partner</span>}
         </div>}
@@ -1309,6 +1322,11 @@ export default function OpportunityDetail({ toast }) {
             {!editing
               ? (
                 <>
+                  <button
+                    className="btn"
+                    onClick={() => navigate(`/opportunities/${encodeURIComponent(decodedCN)}/dossier`)}
+                    title="Open the consolidated opportunity dossier"
+                  >Open dossier</button>
                   <button
                     className="btn btn-ghost"
                     style={{ fontSize: 12, color: 'var(--blue-600)' }}
@@ -1713,7 +1731,7 @@ export default function OpportunityDetail({ toast }) {
           user={user}
           toast={toast}
         /></div>
-        {isRfiWorkflow && (
+        {hasFollowOnMatcher && (
           <div id="followup-rfi" className={styles.sectionAnchor}><RfiFollowUpPanel
             opp={opp}
             contacts={contacts}
