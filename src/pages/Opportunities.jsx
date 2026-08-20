@@ -30,6 +30,8 @@ import styles from './Opportunities.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import { updateSAMOpportunityArchiveReview } from '@/services/samOpportunityService'
+import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
+import { deleteOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 import {
   NOTICE_TYPE_VALUES,
   isRfiWorkflowOpportunity,
@@ -77,10 +79,12 @@ const C = {
   incumbentUEI: 'Incumbent (Company UEI)',
   otherLinks:   'Other Links*',
   slideDeck:    'Link to Slide Deck',
+  archived:     'Archived',
+  flagged:      'Flagged',
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
-const TABS = ['All', 'Responses', 'Expiring', 'Tracked', 'New']
+const TABS = ['All', 'Responses', 'Expiring', 'Tracked', 'New', 'Archive']
 const HIDDEN_RESPONSE_PHASES = new Set(['Cancelled', 'Contract Awarded'])
 const SAM_DISCOVERY_SCROLL_KEY = 'tag_crm_sam_discovery_scroll'
 
@@ -117,6 +121,8 @@ function getTabRows(pipeline, tab) {
       return pipeline.filter((o) => o[C.outlook] === 'Expiring')
     case 'Tracked':
       return pipeline.filter((o) => o[C.outlook] === 'Tracking')
+    case 'Archive':
+      return pipeline
     default:
       return []
   }
@@ -135,6 +141,7 @@ const TAB_DEFAULT_SORT = {
   Expiring: { key: C.endDate,  dir: 'asc'  },
   Tracked:  { key: C.lastMod,  dir: 'desc' },
   New:      { key: 'Response Date', dir: 'asc'  },
+  Archive:  { key: 'Archived At', dir: 'desc' },
 }
 
 // ── Value formatter ───────────────────────────────────────────────────────
@@ -192,9 +199,10 @@ function reconciledSAMStatus(opportunity, linkedOpportunity) {
 export default function Opportunities({ toast }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { pipeline, loading, add, remove } = usePipeline()
+  const { pipeline, archivedPipeline, allPipeline, loading, add, update, remove, restore, permanentRemove } = usePipeline()
   const { contacts } = useContacts()
   const { notes } = useNotes()
+  const opportunityAlertQueue = useOpportunityAlerts()
   const { lists } = useValidationLists()
   useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
 
@@ -256,6 +264,7 @@ export default function Opportunities({ toast }) {
     rfiMonth:       searchParams.get('rfiMonth') || '',
     classification: searchParams.get('classification') || '',
     vehicle:        searchParams.get('vehicle') || '',
+    flagged:        searchParams.get('flagged') || '',
     agency:         new Set((searchParams.get('agency') || '').split(',').filter(Boolean)),
   }), [searchParams])
 
@@ -371,6 +380,7 @@ export default function Opportunities({ toast }) {
     Expiring: getTabRows(pipeline, 'Expiring').length,
     Tracked:  getTabRows(pipeline, 'Tracked').length,
     New:      0,
+    Archive:  archivedPipeline.length,
   }), [pipeline])
 
   const hiddenResponseCount = useMemo(() => getTabRows(pipeline, 'Responses')
@@ -379,36 +389,45 @@ export default function Opportunities({ toast }) {
   // ── Distinct agencies present in the active tab (for the agency filter) ──
   const tabAgencies = useMemo(() => {
     const ags = new Set()
-    getVisibleTabRows(pipeline, activeTab, showHiddenResponses).forEach((o) => {
+    getVisibleTabRows(activeTab === 'Archive' ? archivedPipeline : pipeline, activeTab, showHiddenResponses).forEach((o) => {
       const a = String(o[C.agency] || '').trim()
       if (a) ags.add(a)
     })
     return [...ags].sort()
-  }, [pipeline, activeTab, showHiddenResponses])
+  }, [pipeline, archivedPipeline, activeTab, showHiddenResponses])
+
+  const setAsideFilterOptions = useMemo(() => {
+    const values = new Set()
+    ;[...pipeline, ...archivedPipeline].forEach((row) => {
+      const value = String(row[C.setAside] || '').trim()
+      if (value && value !== '-') values.add(value)
+    })
+    return [...values].sort()
+  }, [pipeline, archivedPipeline])
 
   // ── Distinct Classification / Contract Vehicle values present in the
   //    active tab (no fixed validation list for these — derived from data,
   //    same approach as tabAgencies) ────────────────────────────────────
   const classificationOptions = useMemo(() => {
     const vals = new Set()
-    getVisibleTabRows(pipeline, activeTab, showHiddenResponses).forEach((o) => {
+    ;[...pipeline, ...archivedPipeline].forEach((o) => {
       const v = String(o[C.classification] || '').trim()
       if (v) vals.add(v)
     })
     return [...vals].sort()
-  }, [pipeline, activeTab, showHiddenResponses])
+  }, [pipeline, archivedPipeline])
 
   const vehicleOptions = useMemo(() => {
     const vals = new Set()
-    getVisibleTabRows(pipeline, activeTab, showHiddenResponses).forEach((o) => {
+    ;[...pipeline, ...archivedPipeline].forEach((o) => {
       const v = String(o[C.vehicle] || '').trim()
       if (v) vals.add(v)
     })
     return [...vals].sort()
-  }, [pipeline, activeTab, showHiddenResponses])
+  }, [pipeline, archivedPipeline])
 
   const noteSearchIndex = useMemo(() => buildSearchIndex(notes), [notes])
-  const pipelineSearchIndex = useMemo(() => buildSearchIndex(pipeline), [pipeline])
+  const pipelineSearchIndex = useMemo(() => buildSearchIndex(allPipeline), [allPipeline])
   const noteContractsMatchingSearch = useMemo(() => {
     if (!search.trim()) return new Set()
     return new Set(filterSearchIndex(noteSearchIndex, search)
@@ -424,7 +443,7 @@ export default function Opportunities({ toast }) {
   const filtered = useMemo(() => {
     if (activeTab === 'New') return []
 
-    let rows = getVisibleTabRows(pipeline, activeTab, showHiddenResponses)
+    let rows = getVisibleTabRows(activeTab === 'Archive' ? archivedPipeline : pipeline, activeTab, showHiddenResponses)
 
     if (rfiFollowUpIds.size > 0) {
       rows = rows.filter((o) => rfiFollowUpIds.has(String(o[C.contractNum] || '').trim()))
@@ -444,6 +463,7 @@ export default function Opportunities({ toast }) {
     if (filters.primeOrSub)     rows = rows.filter((o) => o[C.primeOrSub]     === filters.primeOrSub)
     if (filters.classification) rows = rows.filter((o) => o[C.classification] === filters.classification)
     if (filters.vehicle)        rows = rows.filter((o) => o[C.vehicle]        === filters.vehicle)
+    if (filters.flagged)        rows = rows.filter((o) => /^(yes|true|1)$/i.test(String(o[C.flagged] || '')))
     if (filters.endBand)        rows = rows.filter((o) => getEndDateBand(o[C.endDate]) === filters.endBand)
     if (filters.endYear)         rows = rows.filter((o) => {
       const d = new Date((o[C.endDate] || '') + 'T00:00:00')
@@ -465,7 +485,7 @@ export default function Opportunities({ toast }) {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, showHiddenResponses, sortKey, sortDir])
+  }, [pipeline, archivedPipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, showHiddenResponses, sortKey, sortDir])
 
   // ── Tab switch — filters are scoped to the tab that applied them. Search
   // remains because it is a separate, deliberate cross-tab lookup.
@@ -473,7 +493,7 @@ export default function Opportunities({ toast }) {
     updateParams({
       tab,
       outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', rfiFollowUps: '',
+      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
     })
     setShowFilter(false)
     setAgencyFilterOpen(false)
@@ -557,10 +577,21 @@ export default function Opportunities({ toast }) {
       await deleteAction.run(() => remove(confirmDelete._rowIndex), {
         onError: (err) => toast?.error(`Failed to delete: ${err.message}`),
       })
-      toast?.success('Opportunity deleted')
+      toast?.success('Opportunity archived')
       setConfirmDelete(null)
     } catch {
       // Error already toasted via onError — leave the modal open so the user can retry
+    }
+  }
+
+  const togglePipelineFlag = async (event, opportunity) => {
+    event.stopPropagation()
+    const flagged = /^(yes|true|1)$/i.test(String(opportunity[C.flagged] || ''))
+    try {
+      await update(opportunity._rowIndex, { [C.flagged]: flagged ? '' : 'Yes' }, opportunity)
+      toast?.success(flagged ? 'Flag removed' : 'Opportunity flagged for the team')
+    } catch (error) {
+      toast?.error(`Could not update flag: ${error.message}`)
     }
   }
 
@@ -1314,6 +1345,24 @@ export default function Opportunities({ toast }) {
     </span>
   )
 
+  const OpportunityTitle = ({ opportunity, children }) => {
+    const flagged = /^(yes|true|1)$/i.test(String(opportunity[C.flagged] || ''))
+    const key = normalizeOpportunityKey(opportunity[C.contractNum])
+    const alertCount = opportunityAlertQueue.alerts.filter((alert) => normalizeOpportunityKey(alert.opportunityKey) === key).length
+    return <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 7 }}>
+      <button
+        type="button"
+        className={`${styles.pipelineFlagButton} ${flagged ? styles.pipelineFlagActive : ''}`}
+        title={flagged ? 'Remove team flag' : 'Flag for the team'}
+        aria-label={flagged ? 'Remove team flag' : 'Flag for the team'}
+        aria-pressed={flagged}
+        onClick={(event) => togglePipelineFlag(event, opportunity)}
+      >⚑</button>
+      <span>{children}</span>
+      {alertCount > 0 && <span className={styles.opportunityChangeDot} title={`${alertCount} unreviewed change${alertCount === 1 ? '' : 's'}`} aria-label={`${alertCount} unreviewed changes`}>{alertCount}</span>}
+    </span>
+  }
+
   // ── Empty state message ───────────────────────────────────────────────
   const emptyMsg = search
     ? `No opportunities match "${search}".`
@@ -1326,6 +1375,7 @@ export default function Opportunities({ toast }) {
             : 'No response opportunities yet. Set Notice Type to RFI, MRAS, RFP, or RFQ to include an opportunity here.',
           Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
           Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
+          Archive:  'No archived opportunities.',
           New:      '',
         }[activeTab]
 
@@ -1352,7 +1402,7 @@ export default function Opportunities({ toast }) {
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
-              <td style={{ fontWeight: 500, maxWidth: 240 }}>{opp[C.title]}</td>
+              <td style={{ fontWeight: 500, maxWidth: 240 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td>
                 <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>
@@ -1402,7 +1452,7 @@ export default function Opportunities({ toast }) {
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 300 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <span>{opp[C.title]}</span>{rfiFollowUpBadge(opp)}
+                  <OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle>{rfiFollowUpBadge(opp)}
                 </div>
               </td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
@@ -1437,7 +1487,7 @@ export default function Opportunities({ toast }) {
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
-              <td style={{ fontWeight: 500, maxWidth: 260 }}>{opp[C.title]}</td>
+              <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
               <td className="text-sm">{fmtValue(opp[C.value])}</td>
@@ -1479,7 +1529,7 @@ export default function Opportunities({ toast }) {
           return (
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
-              <td style={{ fontWeight: 500, maxWidth: 260 }}>{opp[C.title]}</td>
+              <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
               <td>
                 <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>
@@ -1501,6 +1551,42 @@ export default function Opportunities({ toast }) {
           )
         })}
       </tbody>
+    </table>
+  )
+
+  const ArchiveTable = () => (
+    <table className="data-table">
+      <thead><tr><th>Opportunity</th><th>ID</th><th>Agency</th><th>Archived</th><th>Archived by</th><th>Reason</th><th /></tr></thead>
+      <tbody>{filtered.map((opp) => (
+        <tr key={opp['Opportunity ID'] || opp._rowIndex} onClick={() => openOpportunity(opp)}>
+          <td style={{ fontWeight: 500, maxWidth: 300 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
+          <td className="text-xs text-muted">{opp[C.contractNum]}</td>
+          <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+          <td className="text-sm text-muted">{formatDateTime(opp['Archived At'])}</td>
+          <td className="text-sm text-muted">{opp['Archived By'] || '—'}</td>
+          <td className="text-sm text-muted">{opp['Archive Reason'] || '—'}</td>
+          <td onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn btn-sm" onClick={async () => {
+                try { await restore(opp._rowIndex); toast?.success('Opportunity restored') }
+                catch (error) { toast?.error(`Could not restore: ${error.message}`) }
+              }}>Restore</button>
+              <button className="btn btn-ghost btn-icon" title="Permanently delete CRM record" onClick={async () => {
+                if (!window.confirm('Permanently delete this CRM record? SharePoint files will be retained.')) return
+                const deleteSharePoint = window.confirm('Also permanently delete this opportunity’s SharePoint workspace and files? Select Cancel to retain the files.')
+                try {
+                  await deleteOpportunityWorkspace(opp[C.contractNum], { deleteSharePoint }).catch((error) => {
+                    if (deleteSharePoint) throw error
+                  })
+                  await permanentRemove(opp._rowIndex)
+                  toast?.success(deleteSharePoint ? 'Opportunity and SharePoint workspace deleted' : 'CRM record deleted; SharePoint files retained')
+                }
+                catch (error) { toast?.error(`Could not delete: ${error.message}`) }
+              }}>✕</button>
+            </div>
+          </td>
+        </tr>
+      ))}</tbody>
     </table>
   )
 
@@ -1607,7 +1693,7 @@ export default function Opportunities({ toast }) {
                 <select className="form-input" value={filters.setAside}
                   onChange={(e) => setFilters((f) => ({ ...f, setAside: e.target.value }))}>
                   <option value="">All</option>
-                  {setAsideOptions.map((s) => <option key={s}>{s}</option>)}
+                  {setAsideFilterOptions.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
               <div className="form-field">
@@ -1697,6 +1783,14 @@ export default function Opportunities({ toast }) {
                 </select>
               </div>
               <div className="form-field">
+                <label className="form-label">Team flag</label>
+                <select className="form-input" value={filters.flagged}
+                  onChange={(e) => setFilters((f) => ({ ...f, flagged: e.target.value }))}>
+                  <option value="">All</option>
+                  <option value="yes">Flagged only</option>
+                </select>
+              </div>
+              <div className="form-field">
                 <label className="form-label">Expiring</label>
                 <select className="form-input" value={filters.endBand}
                   onChange={(e) => setFilters((f) => ({ ...f, endBand: e.target.value }))}>
@@ -1710,7 +1804,7 @@ export default function Opportunities({ toast }) {
                 style={{ marginTop: 8, color: 'var(--red-600)' }}
                 onClick={() => updateParams({
                   outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-                  phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '',
+                  phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '',
                 })}>
                 Clear all filters ({activeFilterCount})
               </button>
@@ -1792,6 +1886,7 @@ export default function Opportunities({ toast }) {
                     {activeTab === 'All'      && <AllTable />}
                     {activeTab === 'Responses'&& <ResponsesTable />}
                     {activeTab === 'Tracked'  && <TrackedTable />}
+                    {activeTab === 'Archive'  && <ArchiveTable />}
                   </div>
                 )
             }
@@ -1966,20 +2061,20 @@ export default function Opportunities({ toast }) {
       {/* ── Delete confirmation modal ── */}
       {confirmDelete && (
         <Modal
-          title="Delete opportunity"
+          title="Archive opportunity"
           onClose={() => !deleteAction.isLoading && setConfirmDelete(null)}
           footer={
             <>
               <button className="btn" onClick={() => setConfirmDelete(null)} disabled={deleteAction.isLoading}>Cancel</button>
               <button className="btn btn-danger" onClick={handleDelete} disabled={deleteAction.isLoading}>
-                {deleteAction.isLoading ? 'Deleting…' : 'Delete'}
+                {deleteAction.isLoading ? 'Archiving…' : 'Archive'}
               </button>
             </>
           }
         >
           <p className="text-sm">
-            Delete <strong>{confirmDelete[C.title]}</strong> ({confirmDelete[C.contractNum]})?
-            This cannot be undone.
+            Archive <strong>{confirmDelete[C.title]}</strong> ({confirmDelete[C.contractNum]})?
+            Notes, tasks, drafts, and SharePoint files will be retained. You can restore it from the Archive tab.
           </p>
         </Modal>
       )}
