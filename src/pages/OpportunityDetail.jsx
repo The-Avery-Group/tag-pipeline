@@ -57,6 +57,7 @@ import {
   isResponseOpportunity,
   normalizeNoticeType,
 } from '@/utils/noticeTypes'
+import { isSAMOpportunityFlagged } from '@/utils/samOpportunityHelpers'
 
 // ── Column constants ──────────────────────────────────────────────────────
 const C = {
@@ -95,6 +96,7 @@ const C = {
   vehicle:        'Contract Vehicle',
   classification: 'Contract Classification*',
   noticeType:     'Notice Type',
+  flagged:        'Flagged',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -361,7 +363,7 @@ export default function OpportunityDetail({ toast }) {
   const navigate  = useNavigate()
   const { user }  = useAuth()
 
-  const { pipeline, loading: pipelineLoading, add: addPipelineOpp, update: updateOpp, remove: removeOpp } = usePipeline()
+  const { allPipeline, loading: pipelineLoading, add: addPipelineOpp, update: updateOpp, remove: archiveOpp, restore: restoreOpp } = usePipeline()
   const { notes, loading: notesLoading, add: addNote, update: updateNote, remove: removeNote } = useNotes(decodedCN)
   const { tasks, add: addTask, update: updateTask, remove: removeTask, refreshContext } = useTasks(decodedCN)
   const { contacts, add: addContactRecord }  = useContacts()
@@ -436,14 +438,15 @@ export default function OpportunityDetail({ toast }) {
   const opp = useMemo(
     () => {
       const byRow = routeRowIndex !== null
-        ? pipeline.find((o) => o._rowIndex === routeRowIndex)
+        ? allPipeline.find((o) => o._rowIndex === routeRowIndex)
         : null
-      return byRow || pipeline.find((o) =>
+      return byRow || allPipeline.find((o) =>
         normalizeOpportunityKey(o[C.contractNum]) === normalizeOpportunityKey(decodedCN)
       )
     },
-    [pipeline, decodedCN, routeRowIndex]
+    [allPipeline, decodedCN, routeRowIndex]
   )
+  const archived = /^(yes|true|1)$/i.test(String(opp?.Archived || '').trim())
 
   const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI])
   const rfiFollowUpMonitor = useRfiFollowUpMonitor(opp ? [opp] : [], contacts)
@@ -881,13 +884,27 @@ export default function OpportunityDetail({ toast }) {
   const handleDeleteOpportunity = async () => {
     setDeleting(true)
     try {
-      await removeOpp(opp._rowIndex)
-      toast?.success('Opportunity deleted')
-      navigate('/opportunities')
+      await archiveOpp(opp._rowIndex)
+      toast?.success('Opportunity archived')
+      navigate('/opportunities?tab=Archive')
     } catch (err) {
       toast?.error(`Failed to delete: ${err.message}`)
       setDeleting(false)
       setConfirmDelete(false)
+    }
+  }
+
+  const handleToggleFlag = async () => {
+    if (!opp || saving) return
+    setSaving(true)
+    try {
+      const nextFlagged = !isSAMOpportunityFlagged(opp[C.flagged])
+      await updateOpp(opp._rowIndex, { [C.flagged]: nextFlagged ? 'Yes' : '' })
+      toast?.success(nextFlagged ? 'Opportunity flagged for the team' : 'Team flag removed')
+    } catch (err) {
+      toast?.error(`Could not update flag: ${err.message}`)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -1078,7 +1095,7 @@ export default function OpportunityDetail({ toast }) {
     if (!contractNumber) throw new Error('The follow-on notice has no solicitation or notice ID')
 
     const source = { contractNumber: opp[C.contractNum], title: opp[C.title] }
-    const existing = pipeline.find((item) => item[C.contractNum] === contractNumber)
+    const existing = allPipeline.find((item) => item[C.contractNum] === contractNumber)
     if (existing) {
       await linkRelatedOpportunities(source, { contractNumber, title: existing[C.title] })
       await invalidateCache(['PipelineTable', 'ContactsTable'])
@@ -1251,6 +1268,14 @@ export default function OpportunityDetail({ toast }) {
           ← Opportunities
         </button>
 
+        {archived && <div className={styles.archivedNotice}>
+          <span><strong>Archived opportunity</strong><small>Read-only · notes, tasks, drafts, and SharePoint files are retained.</small></span>
+          <button className="btn btn-primary" onClick={async () => {
+            try { await restoreOpp(opp._rowIndex); toast?.success('Opportunity restored'); navigate(`/opportunities/${encodeURIComponent(decodedCN)}?row=${opp._rowIndex}`, { replace: true }) }
+            catch (error) { toast?.error(`Could not restore: ${error.message}`) }
+          }}>Restore</button>
+        </div>}
+
         <SAMChangeSuggestion
           suggestion={samChangeSuggestion.suggestion}
           applying={applyingSAMUpdate}
@@ -1335,19 +1360,26 @@ export default function OpportunityDetail({ toast }) {
                     onClick={() => navigate(`/opportunities/${encodeURIComponent(decodedCN)}/dossier`)}
                     title="Open the consolidated opportunity dossier"
                   >Open dossier</button>
+                  {!archived && <button
+                    className={`btn ${isSAMOpportunityFlagged(opp?.[C.flagged]) ? styles.flagActive : ''}`}
+                    onClick={handleToggleFlag}
+                    disabled={saving}
+                    aria-pressed={isSAMOpportunityFlagged(opp?.[C.flagged])}
+                    title={isSAMOpportunityFlagged(opp?.[C.flagged]) ? 'Remove team flag' : 'Flag for the team'}
+                  >⚑ {isSAMOpportunityFlagged(opp?.[C.flagged]) ? 'Flagged' : 'Flag'}</button>}
                   <button
                     className="btn btn-ghost"
                     style={{ fontSize: 12, color: 'var(--blue-600)' }}
                     onClick={() => navigate(`/ai-chat?opportunity=${encodeURIComponent(decodedCN)}`)}
                     title="Discuss this opportunity with AI"
                   >✦ Discuss with AI</button>
-                  <button className="btn" onClick={handleEdit}><ActionIcon name="edit" /> Edit</button>
-                  <button
+                  {!archived && <button className="btn" onClick={handleEdit}><ActionIcon name="edit" /> Edit</button>}
+                  {!archived && <button
                     className="btn btn-ghost"
                     style={{ fontSize: 12, color: 'var(--red-600)' }}
                     onClick={() => setConfirmDelete(true)}
                     title="Delete this opportunity"
-                  ><ActionIcon name="delete" /> Delete</button>
+                  ><ActionIcon name="delete" /> Archive</button>}
                 </>
               )
               : (
@@ -1855,20 +1887,20 @@ export default function OpportunityDetail({ toast }) {
       {/* ── Delete confirmation modal ── */}
       {confirmDelete && (
         <Modal
-          title="Delete opportunity"
+          title="Archive opportunity"
           onClose={() => !deleting && setConfirmDelete(false)}
           footer={
             <>
               <button className="btn" onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</button>
               <button className="btn btn-danger" onClick={handleDeleteOpportunity} disabled={deleting}>
-                {deleting ? 'Deleting…' : 'Delete'}
+                {deleting ? 'Archiving…' : 'Archive'}
               </button>
             </>
           }
         >
           <p className="text-sm">
-            Delete <strong>{opp[C.title]}</strong> ({decodedCN})?
-            This removes it from the pipeline permanently and cannot be undone.
+            Archive <strong>{opp[C.title]}</strong> ({decodedCN})?
+            It will become read-only, while its notes, tasks, drafts, and SharePoint files remain available.
           </p>
         </Modal>
       )}
