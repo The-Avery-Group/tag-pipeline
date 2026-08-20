@@ -168,7 +168,7 @@ export default {
       } else if (path.startsWith('/ebuy/') && ['GET', 'POST', 'PATCH', 'DELETE'].includes(req.method)) {
         response = await handleEbuy(req, env, identity)
 
-      } else if (path.startsWith('/opportunity-workspaces') && ['GET', 'POST'].includes(req.method)) {
+      } else if (path.startsWith('/opportunity-workspaces') && ['GET', 'POST', 'DELETE'].includes(req.method)) {
         response = await handleOpportunityWorkspaces(req, env)
 
       } else if (path.startsWith('/opportunity-alerts') && ['GET', 'POST'].includes(req.method)) {
