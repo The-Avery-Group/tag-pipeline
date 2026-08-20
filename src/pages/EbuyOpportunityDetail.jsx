@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
+import CopyValue from '@/components/Common/CopyValue'
+import Modal from '@/components/Common/Modal'
 import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
 import { ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
@@ -17,7 +19,8 @@ import styles from './EbuyOpportunityDetail.module.css'
 function singleLine(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
 
 function Field({ label, children, wide = false }) {
-  return <div className={`${styles.field} ${wide ? styles.wide : ''}`}><span>{label}</span><div>{children || 'Not provided'}</div></div>
+  const copyable = typeof children === 'string' || typeof children === 'number'
+  return <div className={`${styles.field} ${wide ? styles.wide : ''}`}><span>{label}</span><div>{copyable && children ? <CopyValue value={children} label={label}>{children}</CopyValue> : children || 'Not provided'}</div></div>
 }
 
 export default function EbuyOpportunityDetail({ toast }) {
@@ -30,6 +33,7 @@ export default function EbuyOpportunityDetail({ toast }) {
   const [error, setError] = useState(null)
   const [actioning, setActioning] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [dismissedPrompt, setDismissedPrompt] = useState(false)
   const actionRef = useRef(false)
   const inPipeline = useMemo(() => pipeline.some((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase()), [pipeline, requestId])
   const returnTo = searchParams.get('returnTo') || '/opportunities?tab=New&source=ebuy'
@@ -57,6 +61,7 @@ export default function EbuyOpportunityDetail({ toast }) {
       const result = await updateEbuyOpportunityState(opportunity.requestId, reviewState)
       setOpportunity(result.opportunity)
       toast?.success(reviewState === 'flagged' ? 'Flagged for the team' : 'eBuy review state updated')
+      if (reviewState === 'dismissed') setDismissedPrompt(true)
     } catch (stateError) { toast?.error(stateError.message) }
   })
 
@@ -92,6 +97,10 @@ export default function EbuyOpportunityDetail({ toast }) {
           <button className={`${styles.flag} ${opportunity.reviewState === 'flagged' ? styles.flagActive : ''}`} onClick={() => changeState(opportunity.reviewState === 'flagged' ? 'new' : 'flagged')} disabled={actioning}>⚑ {opportunity.reviewState === 'flagged' ? 'Flagged' : 'Flag'}</button>
           {!inPipeline && <button className="btn btn-primary" onClick={() => addToPipeline('New')} disabled={actioning}>+ Add to pipeline</button>}
           {!inPipeline && <button className="btn" onClick={() => addToPipeline('Tracking')} disabled={actioning}>Track</button>}
+          {inPipeline && <button className="btn btn-primary" onClick={() => {
+            const linked = pipeline.find((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase())
+            if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}?row=${linked._rowIndex}`)
+          }}>Open opportunity</button>}
           {opportunity.reviewState !== 'dismissed' && <button className={styles.dismiss} onClick={() => changeState('dismissed')} disabled={actioning}>Dismiss</button>}
         </div>
       </section>
@@ -167,5 +176,9 @@ export default function EbuyOpportunityDetail({ toast }) {
         })}{!opportunity.attachments?.length && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
       </section>
     </div>
+    {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
+      <button className="btn" onClick={() => setDismissedPrompt(false)}>Stay here</button>
+      <button className="btn btn-primary" autoFocus onClick={() => navigate(returnTo)}>Back to opportunities</button>
+    </>}><p className="text-sm">This opportunity is hidden from the active eBuy list.</p></Modal>}
   </>
 }
