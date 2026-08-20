@@ -292,6 +292,7 @@
   border-radius: 10px;
   flex-shrink: 0;
 }
+.collapsibleCountDanger { background: var(--red-50); color: var(--red-600); }
 
 .collapsibleViewAll {
   font-size: 11px;
@@ -317,6 +318,13 @@
   border-top: 0.5px solid var(--gray-200);
   padding: 12px 16px;
 }
+
+.reviewQueue { display: flex; flex-direction: column; gap: 6px; }
+.reviewQueueRow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: .5px solid var(--gray-200); }
+.reviewQueueRow:last-child { border-bottom: 0; }
+.reviewQueueLink { flex: 1; min-width: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.reviewQueueLink strong, .reviewQueueLink small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reviewQueueLink small { margin-top: 2px; color: var(--gray-600); }
 
 /* ── Expand button for fixed-length lists ── */
 .expandBtn {
