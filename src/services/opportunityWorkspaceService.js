@@ -28,6 +28,14 @@ export function getOpportunityWorkspace(opportunityKey) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`)
 }
 
+export function deleteOpportunityWorkspace(opportunityKey, { deleteSharePoint = false } = {}) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deleteSharePoint }),
+  })
+}
+
 export function retryOpportunityWorkspace(opportunityKey, opportunity = null) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/retry`, {
     method: 'POST',
