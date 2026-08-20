@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
+import CopyValue from '@/components/Common/CopyValue'
+import Modal from '@/components/Common/Modal'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { formatDateTime } from '@/utils/kpiHelpers'
@@ -19,7 +21,8 @@ function same(left, right) { return clean(left).toLowerCase() === clean(right).t
 
 function Field({ label, children, wide = false }) {
   if (children === null || children === undefined || children === '') return null
-  return <div className={`${styles.field} ${wide ? styles.wide : ''}`}><span>{label}</span><div>{children}</div></div>
+  const copyable = typeof children === 'string' || typeof children === 'number'
+  return <div className={`${styles.field} ${wide ? styles.wide : ''}`}><span>{label}</span><div>{copyable ? <CopyValue value={children} label={label}>{children}</CopyValue> : children}</div></div>
 }
 
 function Card({ eyebrow, title, count, children }) {
@@ -85,6 +88,8 @@ export default function SAMOpportunityDetail({ toast }) {
   const [actioning, setActioning] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [retryingDetail, setRetryingDetail] = useState(false)
+  const [dismissedPrompt, setDismissedPrompt] = useState(false)
   const actionRef = useRef(false)
   const archiveStartedRef = useRef(false)
   const decodedNoticeId = decodeURIComponent(routeNoticeId)
@@ -111,9 +116,9 @@ export default function SAMOpportunityDetail({ toast }) {
   const loadDetail = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true)
     try {
-      const result = await getSAMOpportunityDetail(identifier)
+      const result = await getSAMOpportunityDetail({ ...identifier, postedDate: row?.['Posted Date'] || row?.PostedDate || '' })
       setDetail(result.opportunity)
-      setLoadError(null)
+      setLoadError(result.warning ? new Error(result.warning) : null)
       return result.opportunity
     } catch (error) {
       setLoadError(error)
@@ -192,6 +197,7 @@ export default function SAMOpportunityDetail({ toast }) {
       else await dismiss(row._rowIndex)
       updateSAMOpportunityArchiveReview(identifier, dismissed ? 'new' : 'dismissed').catch(() => {})
       toast?.success(dismissed ? 'Opportunity restored' : 'Opportunity dismissed')
+      if (!dismissed) setDismissedPrompt(true)
     } catch (error) { toast?.error(error.message) }
   })
 
@@ -212,7 +218,7 @@ export default function SAMOpportunityDetail({ toast }) {
     <Topbar title={detail.title || detail.noticeId} subtitle1={`SAM.gov · ${detail.noticeId || detail.solicitationNumber}`} showFilter={false} showNew={false} />
     <div className={`page-body ${styles.page}`}>
       <button className={styles.back} onClick={() => navigate(returnTo)}>← Back to SAM.gov discovery</button>
-      {loadError && <div className={styles.warning}>Live SAM.gov details could not refresh. Showing the saved discovery information. <button onClick={() => loadDetail()}>Try again</button></div>}
+      {loadError && <div className={styles.warning}><span><strong>Live SAM.gov details could not refresh.</strong> {detail ? 'Showing the last saved opportunity information.' : 'No saved detail is available.'}</span><button disabled={retryingDetail} onClick={async () => { setRetryingDetail(true); await loadDetail(); setRetryingDetail(false) }}>{retryingDetail ? 'Trying again…' : 'Try again'}</button></div>}
 
       <section className={styles.hero}>
         <div className={styles.heroText}>
@@ -308,5 +314,9 @@ export default function SAMOpportunityDetail({ toast }) {
 
       {!detail.links?.length && !detail.attachments?.length && <Card eyebrow="Resources" title="Attachments and links"><p className={styles.empty}>No attachments or external links were included with this notice.</p></Card>}
     </div>
+    {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
+      <button className="btn" onClick={() => setDismissedPrompt(false)}>Stay here</button>
+      <button className="btn btn-primary" autoFocus onClick={() => navigate(returnTo)}>Back to opportunities</button>
+    </>}><p className="text-sm">This opportunity is hidden from the active SAM.gov list.</p></Modal>}
   </>
 }
