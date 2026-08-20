@@ -17,6 +17,8 @@ import {
 } from '@/utils/kpiHelpers'
 import { buildPipelineSummaryContext } from '@/services/groqService'
 import styles from './Dashboard.module.css'
+import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
+import { acknowledgeOpportunityAlert } from '@/services/opportunityAlertService'
 
 const C = {
   phase:       'TAG Opportunity Phase',
@@ -291,14 +293,14 @@ function AgencyChart({ sortedAgencies, onSegmentClick }) {
 
 
 // Collapsible card wrapper — same visual language as PipelineBoard sections
-function CollapsibleCard({ title, count, defaultOpen = true, children, onViewAll }) {
+function CollapsibleCard({ title, count, countDanger = false, defaultOpen = true, children, onViewAll }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className={styles.collapsibleCard}>
       <button className={styles.collapsibleHeader} onClick={() => setOpen((v) => !v)}>
         <span className={styles.collapsibleTitle}>{title}</span>
         {count !== undefined && (
-          <span className={styles.collapsibleCount}>{count}</span>
+          <span className={`${styles.collapsibleCount} ${countDanger && count > 0 ? styles.collapsibleCountDanger : ''}`}>{count}</span>
         )}
         {onViewAll && open && (
           <span
@@ -396,6 +398,7 @@ export default function Dashboard({ toast }) {
   useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
   const { pipeline, loading: pLoading } = usePipeline()
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
+  const reviewQueue = useOpportunityAlerts()
   const [closingTask, setClosingTask] = useState(null)
   const [taskTab, setTaskTab] = useState('overdue')
   const [expandExpiring, setExpandExpiring] = useState(false)
@@ -511,6 +514,38 @@ export default function Dashboard({ toast }) {
           buildPrompt={aiPrompt}
           defaultCollapsed={true}
         />
+
+        <CollapsibleCard title="Review queue" count={reviewQueue.alerts.length} countDanger defaultOpen={false}>
+          {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
+            : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No unreviewed opportunity changes.</p>
+            : <div className={styles.reviewQueue}>
+              {reviewQueue.alerts.map((alert) => (
+                <div className={styles.reviewQueueRow} key={`${alert.opportunityKey}:${alert.type}:${alert.fingerprint}`}>
+                  <button type="button" className={styles.reviewQueueLink} onClick={() => {
+                    const matchedOpportunity = pipeline.find((opportunity) => [
+                      opportunity[C.contractNum],
+                      opportunity['Solicitation Number'],
+                    ].some((value) => String(value || '').trim().toLowerCase() === String(alert.opportunityKey || '').trim().toLowerCase()))
+                    const identifier = matchedOpportunity?.[C.contractNum] || alert.opportunityKey
+                    const key = encodeURIComponent(identifier)
+                    const row = matchedOpportunity?._rowIndex != null ? `&row=${matchedOpportunity._rowIndex}` : ''
+                    navigate(alert.type?.includes('file')
+                      ? `/opportunities/${key}/dossier?focus=files&alert=${encodeURIComponent(alert.type)}${row}`
+                      : `/opportunities/${key}?focus=follow-ups${row}`)
+                  }}>
+                    <strong>{alert.summary || alert.opportunityKey}</strong>
+                    <small>{alert.details || alert.opportunityKey}</small>
+                  </button>
+                  <button className="btn btn-sm" onClick={async () => {
+                    try {
+                      await acknowledgeOpportunityAlert(alert.opportunityKey, alert.type, alert.fingerprint)
+                      await reviewQueue.refresh({ silent: true })
+                    } catch (error) { toast?.error(`Could not mark reviewed: ${error.message}`) }
+                  }}>Mark reviewed</button>
+                </div>
+              ))}
+            </div>}
+        </CollapsibleCard>
 
         {/* ── Row 1: KPI strip ── */}
         <div className={styles.kpiGrid}>
