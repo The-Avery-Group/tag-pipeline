@@ -170,6 +170,18 @@ export async function inspectWorkspaceRoot(env, workspace) {
   }
 }
 
+export async function deleteWorkspaceRoot(env, workspace) {
+  if (!workspace?.sharePointDriveId || !workspace?.rootFolderId) return { deleted: false, reason: 'No SharePoint folder is recorded' }
+  const token = await getAppOnlyGraphToken(env)
+  const item = await getItem(env, token, workspace.sharePointDriveId, workspace.rootFolderId)
+  if (!item?.folder) throw Object.assign(new Error('The recorded SharePoint workspace is not a folder'), { status: 409 })
+  if (String(item.name || '').toLowerCase() === 'copy me for rfi' || String(item.name || '').toLowerCase() === '_templates') {
+    throw Object.assign(new Error('The workspace template cannot be deleted'), { status: 403 })
+  }
+  await graphResponse(`https://graph.microsoft.com/v1.0/drives/${workspace.sharePointDriveId}/items/${encodeURIComponent(workspace.rootFolderId)}`, token, { method: 'DELETE' })
+  return { deleted: true }
+}
+
 export async function describeExistingWorkspaceFolder(env, driveId, folderId) {
   const token = await getAppOnlyGraphToken(env)
   const folder = await getItem(env, token, driveId, folderId)
