@@ -425,6 +425,23 @@ export async function runEbuySyncWorkflow(env, event, step) {
     await step.do('Complete eBuy sync record', () => finishEbuySyncRun(env.EBUY_DB, run.id, totals, incompleteError))
     return { ok: !incompleteError, runId: run.id, ...totals }
   } catch (error) {
+    const transientArchiveFailure = mode === 'live' && ['ebuy_network_error', 'ebuy_timeout'].includes(error?.code)
+    if (transientArchiveFailure && archiveCheckpoint < 8) {
+      const progress = {
+        phase: 'reconnecting',
+        percent: totalAttachments ? Math.min(95, 72 + Math.round((processedAttachments / Math.max(1, totalAttachments)) * 23)) : 70,
+        message: 'GSA eBuy paused unexpectedly · reconnecting automatically',
+        processed: processedCandidates,
+        total: totalCandidates,
+        filesProcessed: processedAttachments,
+        filesTotal: totalAttachments,
+        archivedFiles: totals.archivedFiles,
+      }
+      await step.do('Record automatic eBuy recovery', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, progress))
+      await step.sleep(`Wait before eBuy recovery ${archiveCheckpoint}`, `${Math.min(120, 15 * archiveCheckpoint)} seconds`)
+      const continuation = await scheduleEbuyArchiveContinuation({ env, step, runId: run.id, checkpoint: archiveCheckpoint, source: 'automatic-recovery' })
+      return { ok: true, status: 'continuing', recovery: true, runId: run.id, ...continuation }
+    }
     if (mode === 'live') {
       await step.do('Record eBuy connection failure', () => recordEbuyConnectionResult(env.EBUY_DB, {
         ok: false, code: error.code || 'ebuy_sync_failed', message: error.message, synced: true,
