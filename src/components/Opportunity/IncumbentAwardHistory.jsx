@@ -98,7 +98,7 @@ export default function IncumbentAwardHistory({ incumbentUEI, incumbentName }) {
     {open && <div className={styles.incumbentHistoryBody}>
       <div className={styles.incumbentHistoryControls}>
         <div><button type="button" className={yearType === 'calendar' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('calendar')}>Calendar year</button><button type="button" className={yearType === 'fiscal' ? styles.historyControlActive : styles.historyControl} onClick={() => setYearType('fiscal')}>Fiscal year</button></div>
-        <div>{['year', 'quarter', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>
+        {chartView === 'activity' && <div>{['year', 'quarter', 'month'].map((value) => <button key={value} type="button" className={group === value ? styles.historyControlActive : styles.historyControl} onClick={() => setGroup(value)}>{value}</button>)}</div>}
         <button type="button" className="btn btn-ghost text-xs" onClick={refresh} disabled={loading}>Refresh</button>
       </div>
       {loading ? <div className="text-xs text-muted">Loading incumbent award history…</div>
