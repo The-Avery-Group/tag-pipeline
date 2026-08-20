@@ -485,8 +485,41 @@
 
 .filterGrid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.pipelineFlagButton {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--gray-400);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.2;
+  padding: 0;
+}
+.pipelineFlagButton:hover { color: var(--red-500); }
+.pipelineFlagActive { color: var(--red-600); }
+.opportunityChangeDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--red-600);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 1050px) {
+  .filterGrid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+}
+@media (max-width: 620px) {
+  .filterGrid { grid-template-columns: 1fr; }
 }
 /* ── Tabs ── */
 .tabRow {
