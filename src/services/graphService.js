@@ -398,6 +398,14 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   const cachedAtIndex = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
   const cached = options.original || cachedAtIndex
   let targetRowIndex = rowIndex
+  const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
+  if (identity) {
+    invalidate(tableName)
+    const liveRows = await getSheetRows(tableName)
+    const located = liveRows.find((row) => recordIdentity(tableName, row) === identity)
+    if (!located) throw new Error('This record could not be located by its identifier. Refresh and review it before saving.')
+    targetRowIndex = located._rowIndex
+  }
   const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, { retryReads: true })
   const values = response?.values?.[0]
   if (!values) throw new Error(`Row ${targetRowIndex} not found in ${tableName}`)
@@ -419,7 +427,6 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   // A table row index can move when someone edits the workbook directly.
   // Refuse to write if the record at that index is no longer the record the
   // user started editing, rather than silently changing a different record.
-  const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
   if (identity && identity !== recordIdentity(tableName, current)) {
     // Row insertions and sorting can move a record without changing the
     // record itself. Relocate it by its stable ID, then retain the same
@@ -586,7 +593,42 @@ export const PIPELINE_HEADERS = [
   'Qualification PWIN',               // [39] col AN
   'RFI Notified',                     // [40] col AO — date notification was sent, blank = not yet sent
   'Notice Type',                      // RFI / MRAS / RFP / RFQ
+  'Opportunity ID',                   // immutable internal identity used for safe updates
+  'Archived',                         // Yes when removed from the active CRM
+  'Archived At',
+  'Archived By',
+  'Archive Reason',
+  'Flagged',                          // shared team flag
 ]
+
+const PIPELINE_LIFECYCLE_COLUMNS = [
+  'Opportunity ID', 'Archived', 'Archived At', 'Archived By', 'Archive Reason', 'Flagged',
+]
+let pipelineSchemaPromise = null
+
+async function ensurePipelineSchema() {
+  if (!pipelineSchemaPromise) {
+    pipelineSchemaPromise = (async () => {
+      const schema = await ensureTableColumns('PipelineTable', PIPELINE_LIFECYCLE_COLUMNS)
+      const rows = await getSheetRows('PipelineTable')
+      if (!rows.some((row) => !String(row['Opportunity ID'] || '').trim())) return schema
+
+      const values = rows.map((row) => [
+        String(row['Opportunity ID'] || '').trim() || createStableId('O'),
+      ])
+      await graphFetch(`/tables/PipelineTable/columns/${encodeURIComponent('Opportunity ID')}/dataBodyRange`, {
+        method: 'PATCH',
+        body: JSON.stringify({ values }),
+      })
+      invalidate('PipelineTable')
+      return schema
+    })().catch((error) => {
+      pipelineSchemaPromise = null
+      throw error
+    })
+  }
+  return pipelineSchemaPromise
+}
 
 export const TASKS_HEADERS = [
   'TaskID', 'ContractNumber', 'ContractTitle', 'OpportunityNotes',
@@ -934,6 +976,7 @@ export async function linkRelatedOpportunities(first, second) {
 }
 
 export async function getPipeline() {
+  await ensurePipelineSchema()
   return getSheetRows('PipelineTable')
 }
 
@@ -1124,13 +1167,20 @@ export async function getNotificationRecipients() {
 }
 
 export async function addOpportunity(data) {
+  const schema = await ensurePipelineSchema()
   const record = {
     ...data,
+    'Opportunity ID': String(data?.['Opportunity ID'] || '').trim() || createStableId('O'),
+    Archived: '',
+    'Archived At': '',
+    'Archived By': '',
+    'Archive Reason': '',
+    Flagged: data?.Flagged || '',
     'Last Modified*': new Date().toISOString().split('T')[0],
   }
   const identifier = String(record['Contract Number / Notice ID'] || '').trim()
   if (!identifier) throw new Error('Contract or notice ID is required before creating an opportunity')
-  const headers = await getTableHeaders('PipelineTable')
+  const headers = schema.headers
   return createWorkbookRecord({
     tableName: 'PipelineTable',
     operationKey: `opportunity:${identifier.toLowerCase()}`,
@@ -1147,7 +1197,8 @@ export async function addOpportunity(data) {
 }
 
 export async function updateOpportunity(rowIndex, patch, original) {
-  return updateRow('PipelineTable', rowIndex, {
+  await ensurePipelineSchema()
+  return updateRowWithReconciliation('PipelineTable', rowIndex, {
     ...patch,
     'Last Modified*': new Date().toISOString().split('T')[0],
   }, PIPELINE_HEADERS, { original })
