@@ -118,10 +118,12 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
         {/* Panel header */}
         <div className={styles.panelHeader}>
           <CircleCheck status={form.Status} onClick={() => setField('Status', STATUS_NEXT[form.Status] || 'To Do')} />
-          <input
+          <textarea
             className={styles.panelTitle}
+            rows={1}
             value={form.Title}
             onChange={(e) => setField('Title', e.target.value)}
+            onInput={(e) => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px` }}
             placeholder="Task title"
           />
           <button className={styles.panelClose} onClick={onClose} aria-label="Close">✕</button>
