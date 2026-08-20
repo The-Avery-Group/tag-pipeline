@@ -451,18 +451,23 @@ async function queueNewSAMArchives(env, rows) {
   return { queued: instances.filter(Boolean).length }
 }
 
-export async function fetchSAMOpportunityRecord(env, { noticeId = '', solicitationNumber = '' } = {}) {
+export async function fetchSAMOpportunityRecord(env, { noticeId = '', solicitationNumber = '', postedDate = '' } = {}) {
   if (!env.SAM_API_KEY) throw Object.assign(new Error('SAM_API_KEY not configured'), { status: 503 })
   const notice = String(noticeId || '').trim()
   const solicitation = String(solicitationNumber || '').trim()
   if (!notice && !solicitation) throw Object.assign(new Error('A notice ID or solicitation number is required'), { status: 400 })
   const today = new Date()
-  const from = new Date(today)
-  from.setUTCDate(from.getUTCDate() - MAX_SAM_DATE_RANGE_DAYS)
+  const posted = postedDate ? new Date(postedDate) : null
+  const anchor = posted && !Number.isNaN(posted.getTime()) ? posted : today
+  const from = new Date(anchor)
+  const to = new Date(anchor)
+  from.setUTCDate(from.getUTCDate() - Math.floor(MAX_SAM_DATE_RANGE_DAYS / 2))
+  to.setUTCDate(to.getUTCDate() + Math.floor(MAX_SAM_DATE_RANGE_DAYS / 2))
+  if (to > today) to.setTime(today.getTime())
   const params = new URLSearchParams({
     api_key: env.SAM_API_KEY,
     postedFrom: formatDateParam(from),
-    postedTo: formatDateParam(today),
+    postedTo: formatDateParam(to),
     limit: '10',
     offset: '0',
   })
@@ -1430,17 +1435,23 @@ export async function handleSAM(req, env, ctx) {
 
   // GET /sam/opportunity — live SAM.gov record enriched with archive state.
   if (url.pathname === '/sam/opportunity' && req.method === 'GET') {
+    const cacheKey = `sam:opportunity-detail:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
     try {
       const record = await fetchSAMOpportunityRecord(env, {
         noticeId: url.searchParams.get('noticeId') || '',
         solicitationNumber: url.searchParams.get('solicitationNumber') || '',
+        postedDate: url.searchParams.get('postedDate') || '',
       })
       const detail = normalizeSAMOpportunityDetail(await resolveSAMOpportunityDescription(env, record))
       const archive = env.EBUY_DB && await samArchiveStorageReady(env.EBUY_DB)
         ? await findSAMArchive(env.EBUY_DB, detail)
         : null
-      return json({ opportunity: mergeSAMArchive(detail, archive) })
+      const opportunity = mergeSAMArchive(detail, archive)
+      await env.CACHE?.put(cacheKey, JSON.stringify(opportunity), { expirationTtl: 90 * 24 * 60 * 60 })
+      return json({ opportunity })
     } catch (error) {
+      const cached = cacheKey && await env.CACHE?.get(cacheKey, 'json')
+      if (cached) return json({ opportunity: cached, warning: error.message, stale: true })
       return json({ error: error.message, code: error.code || 'sam_opportunity_failed' }, error.status || 500)
     }
   }
