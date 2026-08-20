@@ -10,15 +10,25 @@ import {
 import { retryIdempotent } from '@/services/workbookMutations'
 import { requestOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 import { unlinkEbuyPipelineOpportunity } from '@/services/ebuyService'
+import { useAuth } from '@/auth/AuthContext'
+
+const isArchived = (opportunity) => /^(yes|true|1)$/i.test(String(opportunity?.Archived || '').trim())
+const opportunityIdentity = (opportunity) => String(
+  opportunity?.['Opportunity ID'] || opportunity?.['Contract Number / Notice ID'] || ''
+).trim()
 
 export function usePipeline() {
-  const [pipeline, setPipeline] = useState([])
+  const { user } = useAuth()
+  const [records, setRecords] = useState([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
   const notifyLock = useRef(false)
   const pipelineRef = useRef([])
 
-  useEffect(() => { pipelineRef.current = pipeline }, [pipeline])
+  const pipeline = records.filter((opportunity) => !isArchived(opportunity))
+  const archivedPipeline = records.filter(isArchived)
+
+  useEffect(() => { pipelineRef.current = records }, [records])
 
   // Tracks in-flight field patches not yet confirmed by a server read, so a
   // racing refresh (background poll, or any other hook's invalidateCache())
@@ -34,7 +44,7 @@ export function usePipeline() {
     try {
       const data = await getPipeline()
       const reconciled = data.map((opp) => {
-        const identity = String(opp['Contract Number / Notice ID'] || '').trim()
+        const identity = opportunityIdentity(opp)
         const patch = pendingPatches.current.get(identity)
         if (!patch) return opp
         const confirmed = Object.keys(patch).every((k) => opp[k] === patch[k])
@@ -44,7 +54,7 @@ export function usePipeline() {
         }
         return { ...opp, ...patch }
       })
-      setPipeline(reconciled)
+      setRecords(reconciled)
     } catch (err) {
       if (!silent) setError(err.message)
     } finally {
@@ -66,7 +76,7 @@ export function usePipeline() {
   const add = useCallback(async (data) => {
     const saved = await addOpportunity(data)
     const identifier = saved['Contract Number / Notice ID']
-    setPipeline((current) => current.some((item) =>
+    setRecords((current) => current.some((item) =>
       item['Contract Number / Notice ID'] === identifier
     ) ? current : [...current, saved])
     if (!saved._alreadyExisted && !notifyLock.current) {
@@ -86,14 +96,14 @@ export function usePipeline() {
 
   const update = useCallback(async (rowIndex, patch, original) => {
     const phaseCol = 'TAG Opportunity Phase'
-    const identity = String(original?.['Contract Number / Notice ID'] || '').trim()
+    const identity = opportunityIdentity(original)
     if (identity) pendingPatches.current.set(identity, patch)
 
     // Optimistic update — apply patch to local state immediately so
     // the UI reflects the change before the API call completes
-    setPipeline((prev) =>
+    setRecords((prev) =>
       prev.map((opp) =>
-        opp._rowIndex === rowIndex ? { ...opp, ...patch } : opp
+        opportunityIdentity(opp) === identity ? { ...opp, ...patch } : opp
       )
     )
 
@@ -114,28 +124,65 @@ export function usePipeline() {
     } catch (err) {
       // Roll back optimistic update on failure
       if (identity) pendingPatches.current.delete(identity)
-      setPipeline((prev) =>
+      setRecords((prev) =>
         prev.map((opp) =>
-          opp._rowIndex === rowIndex ? { ...opp, ...original } : opp
+          opportunityIdentity(opp) === identity ? { ...opp, ...original } : opp
         )
       )
       throw err
     }
   }, [])
 
-  const remove = useCallback(async (rowIndex) => {
+  const archive = useCallback(async (rowIndex, reason = '') => {
     const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
-    setPipeline((current) => current.filter((opportunity) => opportunity._rowIndex !== rowIndex))
+    if (!original) throw new Error('The opportunity could not be located')
+    const patch = {
+      Archived: 'Yes',
+      'Archived At': new Date().toISOString(),
+      'Archived By': user?.displayName || user?.email || '',
+      'Archive Reason': String(reason || '').trim(),
+    }
+    const identity = opportunityIdentity(original)
+    setRecords((current) => current.map((opportunity) =>
+      opportunityIdentity(opportunity) === identity ? { ...opportunity, ...patch } : opportunity
+    ))
+    try {
+      await retryIdempotent(() => updateOpportunity(rowIndex, patch, original))
+      await publishCacheUpdate(['PipelineTable'])
+      verifyCacheInBackground(['PipelineTable'])
+    } catch (error) {
+      await load()
+      throw error
+    }
+  }, [load, user])
+
+  const restore = useCallback(async (rowIndex) => {
+    const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+    if (!original) throw new Error('The opportunity could not be located')
+    const patch = { Archived: '', 'Archived At': '', 'Archived By': '', 'Archive Reason': '' }
+    const identity = opportunityIdentity(original)
+    setRecords((current) => current.map((opportunity) =>
+      opportunityIdentity(opportunity) === identity ? { ...opportunity, ...patch } : opportunity
+    ))
+    try {
+      await retryIdempotent(() => updateOpportunity(rowIndex, patch, original))
+      await publishCacheUpdate(['PipelineTable'])
+      verifyCacheInBackground(['PipelineTable'])
+    } catch (error) {
+      await load()
+      throw error
+    }
+  }, [load])
+
+  const permanentRemove = useCallback(async (rowIndex) => {
+    const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+    setRecords((current) => current.filter((opportunity) => opportunity._rowIndex !== rowIndex))
     try {
       await retryIdempotent(() => deleteOpportunity(rowIndex, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
       const identifier = String(original?.['Contract Number / Notice ID'] || '').trim()
-      if (identifier) {
-        unlinkEbuyPipelineOpportunity(identifier).catch((error) => {
-          console.warn('[eBuy] Pipeline deletion reconciliation will retry on the eBuy page:', error.message)
-        })
-      }
+      if (identifier) unlinkEbuyPipelineOpportunity(identifier).catch(() => {})
     } catch (error) {
       await load()
       throw error
@@ -147,5 +194,18 @@ export function usePipeline() {
     await load()
   }, [load])
 
-  return { pipeline, loading, error, refresh, add, update, remove }
+  return {
+    pipeline,
+    archivedPipeline,
+    allPipeline: records,
+    loading,
+    error,
+    refresh,
+    add,
+    update,
+    archive,
+    remove: archive,
+    restore,
+    permanentRemove,
+  }
 }
