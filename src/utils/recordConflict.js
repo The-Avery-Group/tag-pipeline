@@ -1,5 +1,5 @@
 const TABLE_IDENTITY_COLUMNS = {
-  PipelineTable: 'Contract Number / Notice ID',
+  PipelineTable: ['Opportunity ID', 'Contract Number / Notice ID'],
   TasksTable: 'TaskID',
   NotesTable: 'NoteID',
   ContactsTable: 'ContactID',
