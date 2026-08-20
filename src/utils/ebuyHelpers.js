@@ -21,6 +21,8 @@ export function ebuyToPipelineRecord(opportunity, outlook = 'New') {
   const vehicle = opportunity.vehiclePairs?.length
     ? opportunity.vehiclePairs.join(', ')
     : opportunity.vehicleSources?.join(', ') || ''
+  const base = String(import.meta.env?.BASE_URL || '/tag-pipeline').replace(/\/$/, '')
+  const archivedDetailUrl = `${globalThis.location?.origin || 'https://the-avery-group.github.io'}${base}/opportunities/ebuy/${encodeURIComponent(opportunity.requestId)}`
   return {
     'Contract Number / Notice ID': opportunity.requestId,
     'Project Title / Description*': String(opportunity.title || '').replace(/\s+/g, ' ').trim(),
@@ -40,6 +42,7 @@ export function ebuyToPipelineRecord(opportunity, outlook = 'New') {
     'Contracting Officer / Specialist (POC)*': buyerContact,
     'Office*': opportunity.buyerAgency,
     'Notes*': opportunity.description || '',
+    'Other Links*': `GSA eBuy opportunity | ${archivedDetailUrl}`,
   }
 }
 
