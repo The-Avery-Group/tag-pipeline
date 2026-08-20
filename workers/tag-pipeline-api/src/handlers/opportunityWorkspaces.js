@@ -2,6 +2,7 @@ import {
   claimWorkspaceRun,
   ensureWorkspaceRequest,
   getWorkspace,
+  deleteWorkspaceRecord,
   resetWorkspaceForRebuild,
   updateWorkspace,
   workspaceStorageStatus,
@@ -10,8 +11,10 @@ import {
   createReferenceMaterialUploadSession,
   inspectWorkspaceRoot,
   listWorkspaceChildren,
+  listWorkspaceFlatFiles,
   removeReferenceMaterialUploads,
   resolveWorkspaceFolderLink,
+  deleteWorkspaceRoot,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
 
@@ -127,6 +130,13 @@ export async function handleOpportunityWorkspaces(req, env) {
       return json(await listWorkspaceChildren(env, workspace, url.searchParams.get('parentId') || ''))
     }
 
+    const fileIndexMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/file-index$/)
+    if (fileIndexMatch && req.method === 'GET') {
+      const workspace = await getWorkspace(storage, decodeURIComponent(fileIndexMatch[1]))
+      if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
+      return json(await listWorkspaceFlatFiles(env, workspace))
+    }
+
     const uploadRollbackMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/uploads\/rollback$/)
     if (uploadRollbackMatch && req.method === 'POST') {
       const workspace = await getWorkspace(storage, decodeURIComponent(uploadRollbackMatch[1]))
@@ -144,6 +154,15 @@ export async function handleOpportunityWorkspaces(req, env) {
     }
 
     const detailMatch = path.match(/^\/opportunity-workspaces\/([^/]+)$/)
+    if (detailMatch && req.method === 'DELETE') {
+      const key = decodeURIComponent(detailMatch[1])
+      const workspace = await getWorkspace(storage, key)
+      if (!workspace) return json({ ok: true, deleted: false })
+      const body = await req.json().catch(() => ({}))
+      const sharePoint = body.deleteSharePoint === true ? await deleteWorkspaceRoot(env, workspace) : { deleted: false, retained: true }
+      await deleteWorkspaceRecord(storage, key)
+      return json({ ok: true, deleted: true, sharePoint })
+    }
     if (detailMatch && req.method === 'GET') {
       const workspace = await getWorkspace(storage, decodeURIComponent(detailMatch[1]))
       return workspace ? json({ workspace }) : json({ error: 'Opportunity workspace not found' }, 404)
