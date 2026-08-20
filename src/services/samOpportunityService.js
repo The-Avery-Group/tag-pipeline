@@ -4,6 +4,7 @@ function queryFor(input = {}) {
   const query = new URLSearchParams()
   if (input.noticeId) query.set('noticeId', input.noticeId)
   if (input.solicitationNumber) query.set('solicitationNumber', input.solicitationNumber)
+  if (input.postedDate) query.set('postedDate', input.postedDate)
   return query
 }
 
@@ -30,4 +31,3 @@ export function updateSAMOpportunityArchiveReview(input, reviewState) {
     body: JSON.stringify({ ...input, reviewState }),
   })
 }
-
