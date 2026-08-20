@@ -27,7 +27,7 @@ export default function SearchModal({ onClose }) {
   const [expandedCategories, setExpandedCategories] = useState({})
   const [samOpportunities, setSamOpportunities] = useState([])
 
-  const { pipeline }  = usePipeline()
+  const { pipeline, archivedPipeline }  = usePipeline()
   const { contacts }  = useContacts()
   const { partners }  = usePartners()
   const { tasks }     = useTasks()
@@ -75,13 +75,14 @@ export default function SearchModal({ onClose }) {
 
   const indexes = useMemo(() => ({
     opportunities: buildSearchIndex(pipeline),
+    archivedOpportunities: buildSearchIndex(archivedPipeline),
     samOpportunities: buildSearchIndex(samOpportunities),
     partners: buildSearchIndex(partners),
     contacts: buildSearchIndex(contacts),
     tasks: buildSearchIndex(tasks),
     interactions: buildSearchIndex(contactEngagement.interactions),
     notes: buildSearchIndex(notes),
-  }), [pipeline, samOpportunities, partners, contacts, tasks, contactEngagement.interactions, notes])
+  }), [pipeline, archivedPipeline, samOpportunities, partners, contacts, tasks, contactEngagement.interactions, notes])
 
   const opportunitiesByContract = useMemo(
     () => new Map(pipeline.map((opportunity) => [opportunity['Contract Number / Notice ID'], opportunity])),
@@ -94,9 +95,10 @@ export default function SearchModal({ onClose }) {
   )
 
   const results = useMemo(() => {
-    if (!q) return { opportunities: [], samOpportunities: [], partners: [], contacts: [], tasks: [], interactions: [], notes: [], counts: {} }
+    if (!q) return { opportunities: [], archivedOpportunities: [], samOpportunities: [], partners: [], contacts: [], tasks: [], interactions: [], notes: [], counts: {} }
 
     const allOpportunities = rankSearchIndex(indexes.opportunities, q)
+    const allArchivedOpportunities = rankSearchIndex(indexes.archivedOpportunities, q)
     const allSAMOpportunities = rankSearchIndex(indexes.samOpportunities, q)
     const allContacts = rankSearchIndex(indexes.contacts, q)
     const allPartners = rankSearchIndex(indexes.partners, q)
@@ -118,6 +120,7 @@ export default function SearchModal({ onClose }) {
 
     return {
       opportunities: show('opportunities', allOpportunities),
+      archivedOpportunities: show('archivedOpportunities', allArchivedOpportunities),
       samOpportunities: show('samOpportunities', allSAMOpportunities),
       partners: show('partners', allPartners),
       contacts: show('contacts', allContacts),
@@ -126,6 +129,7 @@ export default function SearchModal({ onClose }) {
       notes: show('notes', allNotes),
       counts: {
         opportunities: allOpportunities.length,
+        archivedOpportunities: allArchivedOpportunities.length,
         samOpportunities: allSAMOpportunities.length,
         partners: allPartners.length,
         contacts: allContacts.length,
@@ -136,7 +140,7 @@ export default function SearchModal({ onClose }) {
     }
   }, [q, indexes, opportunitiesByContract, contactsById, expandedCategories])
 
-  const total = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + results.notes.length
+  const total = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + results.notes.length
   const hasResults = total > 0
 
   const go = (path) => {
@@ -146,6 +150,7 @@ export default function SearchModal({ onClose }) {
 
   const selectableResults = useMemo(() => [
     ...results.opportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}` })),
+    ...results.archivedOpportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}?row=${o._rowIndex}` })),
     ...results.samOpportunities.map((opportunity) => ({
       path: `/opportunities?tab=New&search=${encodeURIComponent(newOpportunityNoticeId(opportunity) || opportunity.Title || '')}`,
     })),
@@ -243,11 +248,33 @@ export default function SearchModal({ onClose }) {
             </div>
           )}
 
+          {results.archivedOpportunities.length > 0 && (
+            <div className={styles.group}>
+              <div className={styles.groupLabel}>Archived opportunities</div>
+              {results.archivedOpportunities.map((o, i) => {
+                const index = results.opportunities.length + i
+                return <button key={o['Opportunity ID'] || o._rowIndex}
+                  className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => go(`/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}?row=${o._rowIndex}`)}>
+                  <div className={styles.resultTitle}>{o['Project Title / Description*']}</div>
+                  <div className={styles.resultMeta}>{o['Contract Number / Notice ID']} · Archived</div>
+                  <div className={styles.resultMeta}>{o['Department*'] || o['Agency*'] || '—'}</div>
+                </button>
+              })}
+              {results.counts.archivedOpportunities > MAX_PER_CATEGORY && (
+                <button className={styles.viewAll} onClick={() => toggleCategory('archivedOpportunities')}>
+                  {expandedCategories.archivedOpportunities ? 'Show fewer' : `View all ${results.counts.archivedOpportunities}`}
+                </button>
+              )}
+            </div>
+          )}
+
           {results.samOpportunities.length > 0 && (
             <div className={styles.group}>
               <div className={styles.groupLabel}>SAM opportunities</div>
               {results.samOpportunities.map((opportunity, i) => {
-                const index = results.opportunities.length + i
+                const index = results.opportunities.length + results.archivedOpportunities.length + i
                 const identifier = newOpportunityNoticeId(opportunity)
                 return (
                   <button key={(opportunity._rowIndex ?? identifier) || opportunity.Title || i}
@@ -272,7 +299,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Partners</div>
               {results.partners.map((partner, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + i
+                const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + i
                 return (
                   <button key={partner._rowIndex || partner['Partner Name']}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -296,7 +323,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Contacts</div>
               {results.contacts.map((c, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + i
+                const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.partners.length + i
                 return (
                 <button key={c.ContactID || c.Name}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -320,7 +347,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Tasks</div>
               {results.tasks.map((t, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + i
+                const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + i
                 return (
                 <button key={t.TaskID || t.Title}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
@@ -346,7 +373,7 @@ export default function SearchModal({ onClose }) {
             <div className={styles.group}>
               <div className={styles.groupLabel}>Contact interactions</div>
               {results.interactions.map((interaction, i) => {
-                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + i
+                const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + i
                 const preview = String(interaction.Notes || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
                   <button key={interaction.InteractionID || interaction._rowIndex}
@@ -372,7 +399,7 @@ export default function SearchModal({ onClose }) {
               <div className={styles.groupLabel}>Opportunity notes</div>
               {results.notes.map((n, i) => {
                 const target = n.opportunity
-                const index = results.opportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + i
+                const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + results.interactions.length + i
                 const title = target?.['Project Title / Description*'] || n.ContractNumber || 'Unlinked opportunity'
                 const preview = String(n.NoteText || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
