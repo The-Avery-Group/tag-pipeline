@@ -76,6 +76,15 @@ export async function getWorkspace(db, opportunityKey) {
   return publicWorkspace(row)
 }
 
+export async function deleteWorkspaceRecord(db, opportunityKey) {
+  const key = normalizeWorkspaceKey(opportunityKey)
+  await db.batch([
+    db.prepare('DELETE FROM opportunity_workspace_files WHERE opportunity_key = ?').bind(key),
+    db.prepare('DELETE FROM opportunity_workspaces WHERE opportunity_key = ?').bind(key),
+  ])
+  return { deleted: true }
+}
+
 export async function findWorkspaceBySource(db, { noticeId = '', solicitationNumber = '' } = {}) {
   const notice = String(noticeId || '').trim().toLowerCase()
   const solicitation = String(solicitationNumber || '').trim().toLowerCase()
