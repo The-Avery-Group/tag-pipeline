@@ -19,11 +19,15 @@ import styles from './TransactionCoding.module.css'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 const dateTime = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', hour12: true })
-const emptyRule = { matchType: 'contains', matchPattern: '', merchant: '', vendor: '', vendorId: '', project: '', account: '', organization: '', priority: 100, active: true }
+const emptyRule = { matchType: 'contains', matchPattern: '', vendor: '', vendorId: '', project: '', account: '', organization: '', priority: 100, active: true }
 
 function amount(cents) { return money.format(Number(cents || 0) / 100) }
 function when(value) { return value ? dateTime.format(new Date(value)) : '—' }
 function statusLabel(row) { return row.exportedAt ? 'Exported' : row.status === 'uncategorized' ? 'Uncategorized' : row.status === 'review' ? 'Needs review' : 'Ready' }
+function notify(toast, message, type = 'info') {
+  const method = type === 'warning' ? 'info' : type
+  toast?.[method]?.(message)
+}
 
 export default function TransactionCoding({ toast }) {
   const inputRef = useRef(null)
@@ -110,7 +114,7 @@ export default function TransactionCoding({ toast }) {
       const message = result.duplicate
         ? 'This statement was already imported. Its existing review is open.'
         : `${result.batch.rowCount} transactions imported.`
-      toast?.(result.warning ? `${message} ${result.warning}` : message, result.warning ? 'warning' : result.duplicate ? 'info' : 'success')
+      notify(toast, result.warning ? `${message} ${result.warning}` : message, result.warning ? 'warning' : result.duplicate ? 'info' : 'success')
     } catch (importError) { setError(importError.message) }
     finally { setBusy('') }
   }
@@ -127,8 +131,6 @@ export default function TransactionCoding({ toast }) {
       if (value === '') delete next[field]
       else {
         next[field] = Number(value)
-        if (field === 'amount') { delete next.debit; delete next.credit }
-        if (field === 'debit' || field === 'credit') delete next.amount
       }
       return next
     })
@@ -141,7 +143,7 @@ export default function TransactionCoding({ toast }) {
       const result = await updateTransaction(editing.id, editing)
       setTransactions((rows) => rows.map((row) => row.id === result.transaction.id ? result.transaction : row))
       setEditing(null); await loadBase()
-      toast?.(result.warning || 'Transaction saved.', result.warning ? 'warning' : 'success')
+      notify(toast, result.warning || 'Transaction saved.', result.warning ? 'warning' : 'success')
     } catch (saveError) { setError(saveError.message) }
     finally { setBusy('') }
   }
@@ -153,7 +155,7 @@ export default function TransactionCoding({ toast }) {
       const result = await createTransactionExport({ batchId: selectedBatch, archive })
       downloadCsv(result.csv, result.export.fileName)
       await Promise.all([loadBase(), loadRows()])
-      toast?.(result.warning || `${result.export.rowCount} ready transactions exported.`, result.warning ? 'warning' : 'success')
+      notify(toast, result.warning || `${result.export.rowCount} ready transactions exported.`, result.warning ? 'warning' : 'success')
     } catch (exportError) { setError(exportError.message) }
     finally { setBusy('') }
   }
@@ -169,7 +171,7 @@ export default function TransactionCoding({ toast }) {
   const saveRule = async () => {
     if (!ruleDraft?.matchPattern || busy) return
     setBusy('rule')
-    try { await createTransactionRule(ruleDraft); setRuleDraft(null); setRules(await getTransactionRules(true)); toast?.('Rule saved to the workbook.', 'success') }
+    try { await createTransactionRule(ruleDraft); setRuleDraft(null); setRules(await getTransactionRules(true)); notify(toast, 'Rule saved to the workbook.', 'success') }
     catch (ruleError) { setError(ruleError.message) }
     finally { setBusy('') }
   }
@@ -200,14 +202,13 @@ export default function TransactionCoding({ toast }) {
             <div className={styles.mappingGrid}>
               {[
                 ['transactionDate', 'Transaction date', false], ['rawDescription', 'Description', true],
-                ['normalizedMerchant', 'Merchant', false], ['amount', 'Amount', false],
-                ['debit', 'Debit', false], ['credit', 'Credit', false],
+                ['amount', 'Amount', false],
                 ['location', 'Location', false], ['city', 'City', false],
               ].map(([field, label, required]) => <label key={field}><span>{label}{required ? ' *' : ''}</span><select value={mapping[field] ?? ''} onChange={(event) => setMappedColumn(field, event.target.value)}><option value="">Not mapped</option>{(inspection.sourceRows[headerIndex] || []).map((header, index) => <option key={`${field}-${index}`} value={index}>{header || `Column ${index + 1}`}</option>)}</select></label>)}
             </div>
-            <p className={styles.mappingHint}>Description is required. Use one Amount column, or map separate Debit and Credit columns.</p>
+            <p className={styles.mappingHint}>Description and Amount are required.</p>
             {mappingError && <div className={styles.mappingError}>{mappingError}</div>}
-            {preview && <div className={styles.normalizedPreview}><h3>Normalized preview</h3><div><table><thead><tr><th>Date</th><th>Description</th><th>Merchant</th><th>Amount</th></tr></thead><tbody>{preview.rows.slice(0, 6).map((row) => <tr key={row.sourceHash}><td>{row.transactionDate || '—'}</td><td>{row.rawDescription}</td><td>{row.normalizedMerchant || '—'}</td><td>{amount(row.amountCents)}</td></tr>)}</tbody></table></div></div>}
+            {preview && <div className={styles.normalizedPreview}><h3>Normalized preview</h3><div><table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>{preview.rows.slice(0, 6).map((row) => <tr key={row.sourceHash}><td>{row.transactionDate || '—'}</td><td>{row.rawDescription}</td><td>{amount(row.amountCents)}</td></tr>)}</tbody></table></div></div>}
             <div className={styles.previewActions}><button className="btn btn-secondary" onClick={() => { setInspection(null); setPreview(null) }}>Cancel</button><button className="btn btn-primary" onClick={runImport} disabled={!preview || Boolean(busy)}>{busy === 'import' ? 'Importing…' : 'Import transactions'}</button></div>
           </section>}
 
@@ -224,7 +225,7 @@ export default function TransactionCoding({ toast }) {
             </div>}
             <div className={styles.tableWrap}>
               <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Vendor</th><th>Project</th><th>Account</th><th>Organization</th><th>Status</th><th aria-label="Actions" /></tr></thead>
-                <tbody>{transactions.map((row) => <tr key={row.id}><td>{row.transactionDate || '—'}</td><td><strong>{row.normalizedMerchant || row.rawDescription}</strong><span className={styles.secondary}>{row.rawDescription}</span></td><td className={row.amountCents < 0 ? styles.credit : ''}>{amount(row.amountCents)}</td><td>{row.vendor || '—'}</td><td>{row.project || '—'}</td><td>{row.account || '—'}</td><td>{row.organization || '—'}</td><td><span className={`${styles.status} ${styles[row.exportedAt ? 'exported' : row.status]}`}>{statusLabel(row)}</span></td><td><button className={styles.reviewBtn} onClick={() => setEditing({ ...row, rememberRule: false, rulePattern: row.normalizedMerchant || row.rawDescription, ruleMatchType: 'contains' })}>Review</button></td></tr>)}</tbody>
+                <tbody>{transactions.map((row) => <tr key={row.id}><td>{row.transactionDate || '—'}</td><td><strong>{row.rawDescription}</strong></td><td className={row.amountCents < 0 ? styles.credit : ''}>{amount(row.amountCents)}</td><td>{row.vendor || '—'}</td><td>{row.project || '—'}</td><td>{row.account || '—'}</td><td>{row.organization || '—'}</td><td><span className={`${styles.status} ${styles[row.exportedAt ? 'exported' : row.status]}`}>{statusLabel(row)}</span></td><td><button className={styles.reviewBtn} onClick={() => setEditing({ ...row, rememberRule: false, rulePattern: row.rawDescription, ruleMatchType: 'contains' })}>Review</button></td></tr>)}</tbody>
               </table>
               {!transactions.length && <div className={styles.empty}>{selectedBatch ? 'No transactions match these filters.' : 'Choose a statement to begin reviewing transactions.'}</div>}
             </div>
@@ -237,9 +238,9 @@ export default function TransactionCoding({ toast }) {
         {tab === 'rules' && <section className={styles.panel}><div className={styles.panelHeader}><div><h2>Categorization rules</h2><p>The SharePoint workbook is the editable source; refresh after direct workbook changes.</p></div><div><button className="btn btn-secondary" onClick={async () => setRules(await getTransactionRules(true))}>Refresh workbook</button> <button className="btn btn-primary" onClick={() => setRuleDraft({ ...emptyRule, id: crypto.randomUUID() })}>Add rule</button></div></div><div className={styles.tableWrap}><table><thead><tr><th>Pattern</th><th>Match</th><th>Vendor</th><th>Vendor ID</th><th>Project</th><th>Account</th><th>Organization</th><th>Priority</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td><strong>{rule.matchPattern}</strong></td><td>{rule.matchType}</td><td>{rule.vendor || '—'}</td><td>{rule.vendorId || '—'}</td><td>{rule.project || '—'}</td><td>{rule.account || '—'}</td><td>{rule.organization || '—'}</td><td>{rule.priority}</td></tr>)}</tbody></table>{!rules.length && <div className={styles.empty}>No saved rules. Review a transaction and select Remember this mapping, or add a rule here.</div>}</div></section>}
       </main>
 
-      {editing && <div className={styles.drawerBackdrop} onMouseDown={(event) => event.target === event.currentTarget && setEditing(null)}><aside className={styles.drawer}><div className={styles.drawerHeader}><div><span>Review transaction</span><strong>{amount(editing.amountCents)}</strong></div><button onClick={() => setEditing(null)} aria-label="Close">×</button></div><p className={styles.raw}>{editing.rawDescription}</p><div className={styles.formGrid}>{['normalizedMerchant','vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={editing[field] || ''} onChange={(event) => setEditing({ ...editing, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={editing.rememberRule} onChange={(event) => setEditing({ ...editing, rememberRule: event.target.checked })} /> Remember this coding for future transactions</label>{editing.rememberRule && <div className={styles.ruleInline}><label><span>Match pattern</span><input value={editing.rulePattern} onChange={(event) => setEditing({ ...editing, rulePattern: event.target.value })} /></label><select value={editing.ruleMatchType} onChange={(event) => setEditing({ ...editing, ruleMatchType: event.target.value })}><option value="contains">Contains</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></div>}<div className={styles.drawerFooter}><button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={saveEdit} disabled={Boolean(busy)}>{busy === 'save' ? 'Saving…' : 'Save transaction'}</button></div></aside></div>}
+      {editing && <div className={styles.drawerBackdrop} onMouseDown={(event) => event.target === event.currentTarget && setEditing(null)}><aside className={styles.drawer}><div className={styles.drawerHeader}><div><span>Review transaction</span><strong>{amount(editing.amountCents)}</strong></div><button onClick={() => setEditing(null)} aria-label="Close">×</button></div><p className={styles.raw}>{editing.rawDescription}</p><div className={styles.formGrid}>{['vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={editing[field] || ''} onChange={(event) => setEditing({ ...editing, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={editing.rememberRule} onChange={(event) => setEditing({ ...editing, rememberRule: event.target.checked })} /> Remember this coding for future transactions</label>{editing.rememberRule && <div className={styles.ruleInline}><label><span>Match pattern</span><input value={editing.rulePattern} onChange={(event) => setEditing({ ...editing, rulePattern: event.target.value })} /></label><select value={editing.ruleMatchType} onChange={(event) => setEditing({ ...editing, ruleMatchType: event.target.value })}><option value="contains">Contains</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></div>}<div className={styles.drawerFooter}><button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={saveEdit} disabled={Boolean(busy)}>{busy === 'save' ? 'Saving…' : 'Save transaction'}</button></div></aside></div>}
 
-      {ruleDraft && <Modal title="Add categorization rule" onClose={() => setRuleDraft(null)} footer={<><button className="btn btn-secondary" onClick={() => setRuleDraft(null)}>Cancel</button><button className="btn btn-primary" onClick={saveRule} disabled={!ruleDraft.matchPattern || Boolean(busy)}>Save rule</button></>}><div className={styles.formGrid}>{['matchPattern','merchant','vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}</div></Modal>}
+      {ruleDraft && <Modal title="Add categorization rule" onClose={() => setRuleDraft(null)} footer={<><button className="btn btn-secondary" onClick={() => setRuleDraft(null)}>Cancel</button><button className="btn btn-primary" onClick={saveRule} disabled={!ruleDraft.matchPattern || Boolean(busy)}>Save rule</button></>}><div className={styles.formGrid}>{['matchPattern','vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}</div></Modal>}
       {csvPreview && <Modal title={csvPreview.fileName} onClose={() => setCsvPreview(null)} footer={<button className="btn btn-primary" onClick={() => downloadCsv(csvPreview.csv, csvPreview.fileName)}>Download CSV</button>}><pre className={styles.csvPreview}>{csvPreview.csv.split('\n').slice(0, 12).join('\n')}</pre><p className={styles.previewNote}>Showing the first 11 transaction rows.</p></Modal>}
     </div>
   )
