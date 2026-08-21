@@ -112,9 +112,9 @@ async function ensureFolder(driveId, parentId, name, token) {
   })
 }
 
-export async function ensureTransactionCodingWorkspace(env) {
+export async function ensureTransactionCodingWorkspace(env, delegatedToken = '') {
   const driveId = env.TRANSACTION_CODING_DRIVE_ID || env.DRIVE_ID || env.OPPORTUNITY_WORKSPACE_DRIVE_ID || DEFAULT_DRIVE_ID
-  const token = await getAppOnlyGraphToken(env)
+  const token = delegatedToken || await getAppOnlyGraphToken(env)
   const workbook = await graphJson(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${env.WORKBOOK_ID}?$select=id,name,parentReference`, token)
   const parentId = workbook?.parentReference?.id
   if (!parentId) throw new Error('Could not determine the CRM workbook SharePoint location')
@@ -195,6 +195,16 @@ export async function saveTransactionRuleToWorkbook(workspace, values) {
       method: 'POST', body: JSON.stringify({ index: null, values: [compatibleValues] }),
     })
   }
+}
+
+export async function deleteTransactionRuleFromWorkbook(workspace, ruleId) {
+  const { rows } = await readTransactionRuleTable(workspace)
+  const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(ruleId || '').trim())
+  if (!existing) return false
+  await workbookJson(workspace, `/tables/TransactionMappingsTable/rows/itemAt(index=${existing._rowIndex})`, {
+    method: 'DELETE',
+  })
+  return true
 }
 
 export async function saveExportToSharePoint(workspace, fileName, csvText) {
