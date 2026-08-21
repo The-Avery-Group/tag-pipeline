@@ -39,6 +39,7 @@ export default function TransactionCoding({ toast }) {
   const [batches, setBatches] = useState([])
   const [selectedBatch, setSelectedBatch] = useState('')
   const [transactions, setTransactions] = useState([])
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState([])
   const [exports, setExports] = useState([])
   const [rules, setRules] = useState([])
   const [preview, setPreview] = useState(null)
@@ -67,8 +68,12 @@ export default function TransactionCoding({ toast }) {
   }, [])
 
   const loadRows = useCallback(async () => {
-    if (!selectedBatch) { setTransactions([]); return }
-    try { setTransactions(await getTransactions(selectedBatch, filter, search)) }
+    if (!selectedBatch) { setTransactions([]); setSelectedTransactionIds([]); return }
+    try {
+      const nextTransactions = await getTransactions(selectedBatch, filter, search)
+      setTransactions(nextTransactions)
+      setSelectedTransactionIds(nextTransactions.filter((row) => row.status === 'ready' && !row.exportedAt).map((row) => row.id))
+    }
     catch (loadError) { setError(loadError.message) }
   }, [selectedBatch, filter, search])
 
@@ -90,6 +95,11 @@ export default function TransactionCoding({ toast }) {
 
   const batch = batches.find((item) => item.id === selectedBatch)
   const totals = useMemo(() => transactions.reduce((result, row) => ({ ...result, amount: result.amount + row.amountCents }), { amount: 0 }), [transactions])
+  const selectedIdSet = useMemo(() => new Set(selectedTransactionIds), [selectedTransactionIds])
+  const selectableTransactions = useMemo(() => transactions.filter((row) => !row.exportedAt), [transactions])
+  const selectedTransactions = useMemo(() => transactions.filter((row) => selectedIdSet.has(row.id) && !row.exportedAt), [transactions, selectedIdSet])
+  const incompleteSelectionCount = selectedTransactions.filter((row) => row.status !== 'ready').length
+  const allShownSelected = selectableTransactions.length > 0 && selectableTransactions.every((row) => selectedIdSet.has(row.id))
 
   const chooseFile = async (event) => {
     const file = event.target.files?.[0]
@@ -145,6 +155,9 @@ export default function TransactionCoding({ toast }) {
     try {
       const result = await updateTransaction(editing.id, editing)
       setTransactions((rows) => rows.map((row) => row.id === result.transaction.id ? result.transaction : row))
+      if (result.transaction.status === 'ready' && !result.transaction.exportedAt) {
+        setSelectedTransactionIds((ids) => ids.includes(result.transaction.id) ? ids : [...ids, result.transaction.id])
+      }
       setEditing(null); await loadBase()
       notify(toast, result.warning || 'Transaction saved.', result.warning ? 'warning' : 'success')
     } catch (saveError) { setError(saveError.message) }
@@ -162,6 +175,7 @@ export default function TransactionCoding({ toast }) {
       ])
       setRules(nextRules)
       setTransactions(nextTransactions)
+      setSelectedTransactionIds(nextTransactions.filter((row) => row.status === 'ready' && !row.exportedAt).map((row) => row.id))
       setBatches(nextBatches)
       notify(toast, 'Rules and transactions refreshed.', 'success')
     } catch (refreshError) { setError(refreshError.message) }
@@ -169,13 +183,14 @@ export default function TransactionCoding({ toast }) {
   }
 
   const runExport = async () => {
-    if (!selectedBatch || busy) return
+    if (!selectedBatch || !selectedTransactionIds.length || busy) return
+    if (incompleteSelectionCount > 0 && !window.confirm(`${incompleteSelectionCount} selected transaction${incompleteSelectionCount === 1 ? ' is' : 's are'} not fully coded. Export the selection anyway?`)) return
     setBusy('export')
     try {
-      const result = await createTransactionExport({ batchId: selectedBatch, archive })
+      const result = await createTransactionExport({ batchId: selectedBatch, transactionIds: selectedTransactionIds, archive })
       downloadCsv(result.csv, result.export.fileName)
       await Promise.all([loadBase(), loadRows()])
-      notify(toast, result.warning || `${result.export.rowCount} ready transactions exported.`, result.warning ? 'warning' : 'success')
+      notify(toast, result.warning || `${result.export.rowCount} selected transactions exported.`, result.warning ? 'warning' : 'success')
     } catch (exportError) { setError(exportError.message) }
     finally { setBusy('') }
   }
@@ -274,12 +289,12 @@ export default function TransactionCoding({ toast }) {
               <div><strong>{batch.rowCount}</strong><span>Transactions</span></div><div><strong>{batch.uncategorizedCount}</strong><span>Uncategorized</span></div><div><strong>{batch.reviewCount}</strong><span>Needs review</span></div><div><strong>{batch.readyCount}</strong><span>Ready</span></div><div><strong>{amount(batch.totalCents)}</strong><span>Statement total</span></div>
             </div>}
             <div className={styles.tableWrap}>
-              <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Vendor</th><th>Project</th><th>Account</th><th>Organization</th><th>Status</th><th aria-label="Actions" /></tr></thead>
-                <tbody>{transactions.map((row) => <tr key={row.id}><td>{row.transactionDate || '—'}</td><td><strong>{row.rawDescription}</strong></td><td className={row.amountCents < 0 ? styles.credit : ''}>{amount(row.amountCents)}</td><td>{row.vendor || '—'}</td><td>{row.project || '—'}</td><td>{row.account || '—'}</td><td>{row.organization || '—'}</td><td><span className={`${styles.status} ${styles[row.exportedAt ? 'exported' : row.status]}`}>{statusLabel(row)}</span></td><td><button className={styles.reviewBtn} onClick={() => setEditing({ ...row, rememberRule: false, rulePattern: row.rawDescription, ruleMatchType: 'contains' })}>Review</button></td></tr>)}</tbody>
+              <table><thead><tr><th className={styles.selectionCell}><input type="checkbox" checked={allShownSelected} disabled={!selectableTransactions.length} onChange={() => setSelectedTransactionIds(allShownSelected ? [] : selectableTransactions.map((row) => row.id))} aria-label="Select all shown transactions" title="Select all shown transactions" /></th><th>Date</th><th>Description</th><th>Amount</th><th>Vendor</th><th>Project</th><th>Account</th><th>Organization</th><th>Status</th><th aria-label="Actions" /></tr></thead>
+                <tbody>{transactions.map((row) => <tr key={row.id}><td className={styles.selectionCell}><input type="checkbox" checked={selectedIdSet.has(row.id)} disabled={Boolean(row.exportedAt)} onChange={() => setSelectedTransactionIds((ids) => ids.includes(row.id) ? ids.filter((id) => id !== row.id) : [...ids, row.id])} aria-label={`Select ${row.rawDescription}`} /></td><td>{row.transactionDate || '—'}</td><td className={styles.descriptionCell}><strong>{row.rawDescription}</strong></td><td className={row.amountCents < 0 ? styles.credit : ''}>{amount(row.amountCents)}</td><td>{row.vendor || '—'}</td><td>{row.project || '—'}</td><td>{row.account || '—'}</td><td>{row.organization || '—'}</td><td><span className={`${styles.status} ${styles[row.exportedAt ? 'exported' : row.status]}`}>{statusLabel(row)}</span></td><td><button className={styles.reviewBtn} onClick={() => setEditing({ ...row, rememberRule: false, rulePattern: row.rawDescription, ruleMatchType: 'contains' })}>Review</button></td></tr>)}</tbody>
               </table>
               {!transactions.length && <div className={styles.empty}>{selectedBatch ? 'No transactions match these filters.' : 'Choose a statement to begin reviewing transactions.'}</div>}
             </div>
-            {batch && <div className={styles.exportBar}><label><input type="checkbox" checked={archive} onChange={(event) => setArchive(event.target.checked)} /> Save a copy to SharePoint</label><span>{transactions.length} shown · {amount(totals.amount)}</span><button className="btn btn-primary" onClick={runExport} disabled={!batch.readyCount || Boolean(busy)}>{busy === 'export' ? 'Exporting…' : 'Export ready CSV'}</button></div>}
+            {batch && <div className={styles.exportBar}><label><input type="checkbox" checked={archive} onChange={(event) => setArchive(event.target.checked)} /> Save a copy to SharePoint</label><button type="button" className={styles.readyOnly} onClick={() => setSelectedTransactionIds(transactions.filter((row) => row.status === 'ready' && !row.exportedAt).map((row) => row.id))}>Select ready</button><span>{selectedTransactionIds.length} selected · {transactions.length} shown · {amount(totals.amount)}{incompleteSelectionCount ? ` · ${incompleteSelectionCount} incomplete` : ''}</span><button className="btn btn-primary" onClick={runExport} disabled={!selectedTransactionIds.length || Boolean(busy)}>{busy === 'export' ? 'Exporting…' : 'Export selected CSV'}</button></div>}
           </section>
         </>}
 
@@ -288,9 +303,26 @@ export default function TransactionCoding({ toast }) {
         {tab === 'rules' && <section className={styles.panel}><div className={styles.panelHeader}><div><h2>Categorization rules</h2><p>The SharePoint workbook is the editable source; refresh after direct workbook changes.</p></div><div><button className="btn btn-secondary" onClick={async () => { try { setRules(await getTransactionRules(true)); notify(toast, 'Workbook rules refreshed.', 'success') } catch (refreshError) { setError(refreshError.message) } }}>Refresh workbook</button> <button className="btn btn-primary" onClick={() => setRuleDraft({ ...emptyRule, id: crypto.randomUUID() })}>Add rule</button></div></div><div className={styles.tableWrap}><table><thead><tr><th>Pattern</th><th>Match</th><th>Vendor</th><th>Vendor ID</th><th>Project</th><th>Account</th><th>Organization</th><th>Priority</th><th>Status</th><th aria-label="Actions" /></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td><strong>{rule.matchPattern}</strong>{rule.source === 'crm_pending' && <span className={styles.secondary}>Workbook sync pending</span>}</td><td>{rule.matchType.replace(/_/g, ' ')}</td><td>{rule.vendor || '—'}</td><td>{rule.vendorId || '—'}</td><td>{rule.project || '—'}</td><td>{rule.account || '—'}</td><td>{rule.organization || '—'}</td><td>{rule.priority}</td><td><span className={`${styles.status} ${rule.active ? styles.ready : ''}`}>{rule.active ? 'Active' : 'Inactive'}</span></td><td className={styles.rowActions}><button className="btn btn-ghost btn-icon" aria-label={`Edit ${rule.matchPattern}`} title="Edit rule" onClick={() => setRuleDraft({ ...rule })}><ActionIcon name="edit" /></button><button className="btn btn-ghost btn-icon" aria-label={`Delete ${rule.matchPattern}`} title="Delete rule" onClick={() => removeRule(rule)} disabled={Boolean(busy)} style={{ color: 'var(--red-600)' }}><ActionIcon name="delete" /></button></td></tr>)}</tbody></table>{!rules.length && <div className={styles.empty}>No saved rules. Review a transaction and select Remember this mapping, or add a rule here.</div>}</div></section>}
       </main>
 
-      {editing && <div className={styles.drawerBackdrop} onMouseDown={(event) => event.target === event.currentTarget && setEditing(null)}><aside className={styles.drawer}><div className={styles.drawerHeader}><div><span>Review transaction</span><strong>{amount(editing.amountCents)}</strong></div><button onClick={() => setEditing(null)} aria-label="Close">×</button></div><p className={styles.raw}>{editing.rawDescription}</p><div className={styles.formGrid}>{['vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={editing[field] || ''} onChange={(event) => setEditing({ ...editing, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={editing.rememberRule} onChange={(event) => setEditing({ ...editing, rememberRule: event.target.checked })} /> Remember this coding for future transactions</label>{editing.rememberRule && <div className={styles.ruleInline}><label><span>Match pattern</span><input value={editing.rulePattern} onChange={(event) => setEditing({ ...editing, rulePattern: event.target.value })} /></label><select value={editing.ruleMatchType} onChange={(event) => setEditing({ ...editing, ruleMatchType: event.target.value })}><option value="contains">Contains</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></div>}<div className={styles.drawerFooter}><button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={saveEdit} disabled={Boolean(busy)}>{busy === 'save' ? 'Saving…' : 'Save transaction'}</button></div></aside></div>}
+      {editing && <div className={styles.drawerBackdrop} onMouseDown={(event) => event.target === event.currentTarget && setEditing(null)}><aside className={styles.drawer}><div className={styles.drawerHeader}><div><span>Review transaction</span><strong>{amount(editing.amountCents)}</strong></div><button onClick={() => setEditing(null)} aria-label="Close">×</button></div><p className={styles.raw}>{editing.rawDescription}</p><div className={styles.formGrid}>{['vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={editing[field] || ''} onChange={(event) => setEditing({ ...editing, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={editing.rememberRule} onChange={(event) => setEditing({ ...editing, rememberRule: event.target.checked })} /> Remember this coding for future transactions</label>{editing.rememberRule && <div className={styles.ruleInline}><label><span>Match pattern</span><input value={editing.rulePattern} onChange={(event) => setEditing({ ...editing, rulePattern: event.target.value })} /></label><select value={editing.ruleMatchType} onChange={(event) => setEditing({ ...editing, ruleMatchType: event.target.value })}><option value="contains">Contains</option><option value="whole_word">Whole word</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></div>}<div className={styles.drawerFooter}><button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={saveEdit} disabled={Boolean(busy)}>{busy === 'save' ? 'Saving…' : 'Save transaction'}</button></div></aside></div>}
 
-      {ruleDraft && <Modal title={rules.some((rule) => rule.id === ruleDraft.id) ? 'Edit categorization rule' : 'Add categorization rule'} onClose={() => setRuleDraft(null)} footer={<>{rules.some((rule) => rule.id === ruleDraft.id) && <button className="btn btn-danger" onClick={() => removeRule(ruleDraft)} disabled={Boolean(busy)}>Delete</button>}<button className="btn btn-secondary" onClick={() => setRuleDraft(null)}>Cancel</button><button className="btn btn-primary" onClick={saveRule} disabled={!ruleDraft.matchPattern || Boolean(busy)}>{busy === 'rule' ? 'Saving…' : 'Save rule'}</button></>}><div className={styles.formGrid}><label><span>Match type</span><select value={ruleDraft.matchType || 'contains'} onChange={(event) => setRuleDraft({ ...ruleDraft, matchType: event.target.value })}><option value="contains">Contains</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></label><label><span>Priority</span><input type="number" value={ruleDraft.priority ?? 100} onChange={(event) => setRuleDraft({ ...ruleDraft, priority: Number(event.target.value) })} /></label>{['matchPattern','vendor','vendorId','project','account','organization','context','notes'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={ruleDraft.active !== false} onChange={(event) => setRuleDraft({ ...ruleDraft, active: event.target.checked })} /> Active rule</label></Modal>}
+      {ruleDraft && (
+        <Modal
+          title={rules.some((rule) => rule.id === ruleDraft.id) ? 'Edit categorization rule' : 'Add categorization rule'}
+          onClose={() => setRuleDraft(null)}
+          footer={<>
+            {rules.some((rule) => rule.id === ruleDraft.id) && <button className="btn btn-danger" onClick={() => removeRule(ruleDraft)} disabled={Boolean(busy)}>Delete</button>}
+            <button className="btn btn-secondary" onClick={() => setRuleDraft(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveRule} disabled={!ruleDraft.matchPattern || Boolean(busy)}>{busy === 'rule' ? 'Saving…' : 'Save rule'}</button>
+          </>}
+        >
+          <div className={styles.formGrid}>
+            <label><span>Match type</span><select value={ruleDraft.matchType || 'contains'} onChange={(event) => setRuleDraft({ ...ruleDraft, matchType: event.target.value })}><option value="contains">Contains</option><option value="whole_word">Whole word</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></label>
+            <label><span>Priority</span><input type="number" value={ruleDraft.priority ?? 100} onChange={(event) => setRuleDraft({ ...ruleDraft, priority: Number(event.target.value) })} /></label>
+            {['matchPattern','vendor','vendorId','project','account','organization','context','notes'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}
+          </div>
+          <label className={styles.remember}><input type="checkbox" checked={ruleDraft.active !== false} onChange={(event) => setRuleDraft({ ...ruleDraft, active: event.target.checked })} /> Active rule</label>
+        </Modal>
+      )}
       {csvPreview && <Modal title={csvPreview.fileName} onClose={() => setCsvPreview(null)} footer={<button className="btn btn-primary" onClick={() => downloadCsv(csvPreview.csv, csvPreview.fileName)}>Download CSV</button>}><pre className={styles.csvPreview}>{csvPreview.csv.split('\n').slice(0, 12).join('\n')}</pre><p className={styles.previewNote}>Showing the first 11 transaction rows.</p></Modal>}
     </div>
   )
