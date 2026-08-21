@@ -42,6 +42,7 @@ const Contacts          = lazy(() => import('@/pages/Contacts'))
 const Partners          = lazy(() => import('@/pages/Partners'))
 const Settings          = lazy(() => import('@/pages/Settings'))
 const Lookup            = lazy(() => import('@/pages/Lookup'))
+const TransactionCoding = lazy(() => import('@/pages/TransactionCoding'))
 const Login             = lazy(() => import('@/pages/Login'))
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'tag_crm_sidebar_collapsed'
 
@@ -79,6 +80,7 @@ function cacheTablesForLocation(location) {
   if (path === '/ai-chat') {
     return ['PipelineTable', 'TasksTable', 'ContactsTable', 'NotesTable']
   }
+  if (path === '/transaction-coding') return []
   return []
 }
 
@@ -268,6 +270,7 @@ function AppShell() {
               <Route path="/partners"                      element={<Partners toast={toast} />} />
               <Route path="/settings"                      element={<Settings toast={toast} />} />
               <Route path="/lookup"                         element={<Lookup toast={toast} />} />
+              <Route path="/transaction-coding"             element={<TransactionCoding toast={toast} />} />
               <Route path="*"                              element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
