@@ -9,7 +9,7 @@ import {
   saveTransactionRuleToWorkbook,
 } from '../src/lib/transactionCodingSharePoint.js'
 import { attemptTransactionRuleSync, TRANSACTION_CODING_HTTP_METHODS } from '../src/handlers/transactionCoding.js'
-import { transactionCodingStorageReady } from '../src/lib/transactionCodingRepository.js'
+import { transactionCodingStorageReady, transactionsForExport } from '../src/lib/transactionCodingRepository.js'
 
 test('categorizes a statement row with the highest-priority matching rule', () => {
   const row = categorizeTransaction({ rawDescription: 'SCRIBD *662092010', amountCents: 1299 }, [
@@ -20,16 +20,40 @@ test('categorizes a statement row with the highest-priority matching rule', () =
   assert.equal(row.status, 'ready')
 })
 
+test('whole-word rules match standalone phrases without matching embedded text', () => {
+  const rule = { id: 'ace', active: true, matchType: 'whole_word', matchPattern: 'ACE', vendor: 'Ace Hardware' }
+  assert.equal(categorizeTransaction({ rawDescription: 'ACE HARDWARE 1234' }, [rule]).ruleId, 'ace')
+  assert.equal(categorizeTransaction({ rawDescription: 'PALACE HOTEL' }, [rule]).ruleId, null)
+  assert.equal(categorizeTransaction({ rawDescription: 'PAYPAL*ACEHARDWARE' }, [{ ...rule, matchType: 'contains' }]).ruleId, 'ace')
+})
+
 test('transaction coding routes allow rule deletion', () => {
   assert.equal(TRANSACTION_CODING_HTTP_METHODS.includes('DELETE'), true)
 })
 
-test('neutral export contains coding fields without a Costpoint-specific schema', () => {
-  const csv = buildNeutralExportCsv([{ id: 'txn-1', transactionDate: '2026-08-01', rawDescription: 'SCRIBD', amountCents: 1299, direction: 'charge', vendor: 'Scribd', vendorId: 'V-1', project: 'P1', account: 'A1', organization: 'O1' }])
+test('neutral export contains coding fields without CRM status or a Costpoint-specific schema', () => {
+  const csv = buildNeutralExportCsv([{ id: 'txn-1', transactionDate: '2026-08-01', rawDescription: 'SCRIBD', amountCents: 1299, direction: 'charge', vendor: 'Scribd', vendorId: 'V-1', project: 'P1', account: 'A1', organization: 'O1', status: 'review' }])
   assert.match(csv, /Transaction ID,Transaction Date,Description/)
   assert.match(csv, /txn-1,2026-08-01,SCRIBD/)
+  assert.doesNotMatch(csv, /Coding Status/)
+  assert.doesNotMatch(csv, /Needs review/)
   assert.doesNotMatch(csv.split('\r\n')[0], /Merchant/)
   assert.doesNotMatch(csv, /Costpoint/i)
+})
+
+test('an explicit export selection can include needs-review rows but rejects stale IDs', async () => {
+  const rows = [
+    { id: 'ready-1', status: 'ready', exported_at: null },
+    { id: 'review-1', status: 'review', exported_at: null },
+  ]
+  const db = {
+    prepare() {
+      return { bind: () => ({ all: async () => ({ results: rows }) }) }
+    },
+  }
+  assert.deepEqual((await transactionsForExport(db, 'batch-1')).map((row) => row.id), ['ready-1'])
+  assert.deepEqual((await transactionsForExport(db, 'batch-1', ['review-1'])).map((row) => row.id), ['review-1'])
+  await assert.rejects(transactionsForExport(db, 'batch-1', ['missing']), /changed or were already exported/i)
 })
 
 test('rule writes follow the workbook columns after a column is removed', () => {
