@@ -1,88 +1,15 @@
-import { strToU8, zipSync } from 'fflate'
 import { getAppOnlyGraphToken } from './graph.js'
 
 const DEFAULT_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const WORKSPACE_NAME = 'Transaction Coding'
 const WORKBOOK_NAME = 'Transaction Coding.xlsx'
 const EXPORTS_NAME = 'Exports'
-const RULE_SHEET_NAME = 'Rules'
 const RULE_TABLE_NAME = 'TransactionMappingsTable'
 
 export const RULE_HEADERS = [
   'Rule ID', 'Active', 'Priority', 'Match Type', 'Match Pattern', 'Vendor', 'Vendor ID',
   'Project', 'Account', 'Organization', 'Context', 'Notes', 'Last Updated', 'Updated By',
 ]
-
-const EXPORT_HEADERS = [
-  'Export ID', 'Batch ID', 'File Name', 'Rows', 'Total Amount', 'SharePoint Link',
-  'Created By', 'Created At', 'Expires At',
-]
-
-const SETTINGS_HEADERS = ['Setting', 'Value', 'Description']
-
-function xml(value) {
-  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-function columnName(index) {
-  let value = index + 1
-  let result = ''
-  while (value) {
-    value--
-    result = String.fromCharCode(65 + (value % 26)) + result
-    value = Math.floor(value / 26)
-  }
-  return result
-}
-
-function sheetXml(rows, tableRelId) {
-  const body = rows.map((row, rowIndex) => `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => {
-    const ref = `${columnName(columnIndex)}${rowIndex + 1}`
-    if (typeof value === 'number') return `<c r="${ref}"><v>${value}</v></c>`
-    return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`
-  }).join('')}</row>`).join('')
-  const maxColumn = columnName(Math.max(0, rows[0].length - 1))
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <dimension ref="A1:${maxColumn}${rows.length}"/>
-  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-  <sheetFormatPr defaultRowHeight="15"/>
-  <sheetData>${body}</sheetData>
-  <autoFilter ref="A1:${maxColumn}${rows.length}"/>
-  <tableParts count="1"><tablePart r:id="${tableRelId}"/></tableParts>
-</worksheet>`
-}
-
-function tableXml(id, name, headers, rowCount) {
-  const lastColumn = columnName(headers.length - 1)
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${name}" displayName="${name}" ref="A1:${lastColumn}${rowCount}" totalsRowShown="0">
-  <autoFilter ref="A1:${lastColumn}${rowCount}"/>
-  <tableColumns count="${headers.length}">${headers.map((header, index) => `<tableColumn id="${index + 1}" name="${xml(header)}"/>`).join('')}</tableColumns>
-  <tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>
-</table>`
-}
-
-export function buildTransactionCodingWorkbook() {
-  const sheets = [
-    { name: 'Rules', table: 'TransactionMappingsTable', headers: RULE_HEADERS, rows: [RULE_HEADERS, ['', 'Yes', 100, 'contains', '', ...Array(RULE_HEADERS.length - 5).fill('')]] },
-    { name: 'Exports', table: 'TransactionCodingExportsTable', headers: EXPORT_HEADERS, rows: [EXPORT_HEADERS, ['', '', '', 0, 0, '', '', '', '']] },
-    { name: 'Settings', table: 'TransactionCodingSettingsTable', headers: SETTINGS_HEADERS, rows: [SETTINGS_HEADERS, ['Retention Days', 60, 'Transaction rows and in-app export history are retained for 60 days'], ['Archive Exports', 'Yes', 'Save generated CSV files to SharePoint by default']] },
-  ]
-  const files = {
-    '[Content_Types].xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/tables/table${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`).join('')}</Types>`),
-    '_rels/.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
-    'xl/workbook.xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((sheet, index) => `<sheet name="${xml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join('')}</sheets></workbook>`),
-    'xl/_rels/workbook.xml.rels': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
-    'xl/styles.xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Aptos"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`),
-  }
-  sheets.forEach((sheet, index) => {
-    files[`xl/worksheets/sheet${index + 1}.xml`] = strToU8(sheetXml(sheet.rows, 'rId1'))
-    files[`xl/worksheets/_rels/sheet${index + 1}.xml.rels`] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table${index + 1}.xml"/></Relationships>`)
-    files[`xl/tables/table${index + 1}.xml`] = strToU8(tableXml(index + 1, sheet.table, sheet.headers, sheet.rows.length))
-  })
-  return zipSync(files, { level: 6 })
-}
 
 async function graphJson(url, token, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options.headers || {}) } })
@@ -123,15 +50,9 @@ export async function ensureTransactionCodingWorkspace(env, delegatedToken = '')
   if (!parentId) throw new Error('Could not determine the CRM workbook SharePoint location')
   const folder = await ensureFolder(driveId, parentId, WORKSPACE_NAME, token)
   const exportsFolder = await ensureFolder(driveId, folder.id, EXPORTS_NAME, token)
-  let codingWorkbook = await childByName(driveId, folder.id, WORKBOOK_NAME, token)
+  const codingWorkbook = await childByName(driveId, folder.id, WORKBOOK_NAME, token)
   if (!codingWorkbook) {
-    const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folder.id}:/${encodeURIComponent(WORKBOOK_NAME)}:/content`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: buildTransactionCodingWorkbook(),
-    })
-    codingWorkbook = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(codingWorkbook?.error?.message || `Could not create the Transaction Coding workbook (${response.status})`)
+    throw new Error('Transaction Coding.xlsx was not found in the Transaction Coding folder. Create the workbook and its required Excel tables before using Transaction Coding.')
   }
   return {
     driveId,
@@ -166,80 +87,16 @@ function workbookTablePath(tableKey, suffix = '') {
   return `/tables/${encodeURIComponent(tableKey)}${suffix}`
 }
 
-async function tableHeaders(workspace, tableKey) {
-  const columns = await workbookJson(workspace, workbookTablePath(tableKey, '/columns'), { retryNotFound: false })
-  return (columns?.value || []).map((column) => column.name)
-}
-
 async function resolveTransactionRuleTable(workspace) {
   try {
     const table = await workbookJson(workspace, workbookTablePath(RULE_TABLE_NAME), { retryNotFound: false })
     return table?.id || table?.name || RULE_TABLE_NAME
   } catch (error) {
-    if (error.status !== 404) throw error
-  }
-
-  let worksheets = await workbookJson(workspace, '/worksheets')
-  let sheet = (worksheets?.value || []).find((item) => String(item.name || '').trim().toLowerCase() === RULE_SHEET_NAME.toLowerCase())
-  if (!sheet) {
-    sheet = await workbookJson(workspace, '/worksheets/add', {
-      method: 'POST',
-      body: JSON.stringify({ name: RULE_SHEET_NAME }),
-    })
-    worksheets = { value: [...(worksheets?.value || []), sheet] }
-  }
-  const sheetKey = sheet?.id || sheet?.name || RULE_SHEET_NAME
-  const sheetPath = `/worksheets/${encodeURIComponent(sheetKey)}`
-  const tables = await workbookJson(workspace, `${sheetPath}/tables`)
-  for (const table of tables?.value || []) {
-    const tableKey = table.id || table.name
-    const headers = await tableHeaders(workspace, tableKey).catch(() => [])
-    if (headers.includes('Rule ID') && headers.includes('Match Pattern')) {
-      if (table.name !== RULE_TABLE_NAME) {
-        await workbookJson(workspace, workbookTablePath(tableKey), {
-          method: 'PATCH',
-          body: JSON.stringify({ name: RULE_TABLE_NAME }),
-        })
-      }
-      return tableKey
+    if (error.status === 404) {
+      throw new Error('TransactionMappingsTable was not found in Transaction Coding.xlsx. Create the Rules table with the required columns before using Transaction Coding.')
     }
+    throw error
   }
-
-  let values = []
-  try {
-    const usedRange = await workbookJson(workspace, `${sheetPath}/usedRange(valuesOnly=true)`, { retryNotFound: false })
-    values = Array.isArray(usedRange?.values) ? usedRange.values : []
-  } catch (error) {
-    if (error.status !== 404) throw error
-  }
-  const existingHeaders = Array.isArray(values[0]) ? values[0].map((value) => String(value || '').trim()) : []
-  if (existingHeaders.some(Boolean) && !(existingHeaders.includes('Rule ID') && existingHeaders.includes('Match Pattern'))) {
-    throw new Error('The Rules worksheet exists but does not contain the categorization rule columns')
-  }
-  const headers = existingHeaders.some(Boolean) ? existingHeaders : RULE_HEADERS
-  if (!values.length) {
-    values = [headers, Array(headers.length).fill('')]
-    const address = `A1:${columnName(headers.length - 1)}2`
-    await workbookJson(workspace, `${sheetPath}/range(address='${address}')`, {
-      method: 'PATCH',
-      body: JSON.stringify({ values }),
-    })
-  }
-  const rowCount = Math.max(2, values.length)
-  const address = `A1:${columnName(headers.length - 1)}${rowCount}`
-  const table = await workbookJson(workspace, `${sheetPath}/tables/add`, {
-    method: 'POST',
-    body: JSON.stringify({ address, hasHeaders: true }),
-  })
-  const tableKey = table?.id || table?.name
-  if (!tableKey) throw new Error('The categorization rules table could not be repaired')
-  if (table.name !== RULE_TABLE_NAME) {
-    await workbookJson(workspace, workbookTablePath(tableKey), {
-      method: 'PATCH',
-      body: JSON.stringify({ name: RULE_TABLE_NAME }),
-    })
-  }
-  return tableKey
 }
 
 async function readTransactionRuleTable(workspace) {
@@ -249,6 +106,10 @@ async function readTransactionRuleTable(workspace) {
     workbookJson(workspace, workbookTablePath(tableKey, '/rows?$top=1000')),
   ])
   const headers = (columns?.value || []).map((column) => column.name)
+  const missingHeaders = RULE_HEADERS.filter((header) => !headers.includes(header))
+  if (missingHeaders.length) {
+    throw new Error(`TransactionMappingsTable is missing required columns: ${missingHeaders.join(', ')}`)
+  }
   return {
     tableKey,
     headers,
