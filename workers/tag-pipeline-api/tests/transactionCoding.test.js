@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { unzipSync } from 'fflate'
 import { buildNeutralExportCsv, categorizeTransaction } from '../src/lib/transactionCodingDomain.js'
 import { buildTransactionCodingWorkbook } from '../src/lib/transactionCodingSharePoint.js'
+import { attemptTransactionRuleSync } from '../src/handlers/transactionCoding.js'
+import { transactionCodingStorageReady } from '../src/lib/transactionCodingRepository.js'
 
 test('categorizes a statement row with the highest-priority matching rule', () => {
   const row = categorizeTransaction({ rawDescription: 'SCRIBD *662092010', normalizedMerchant: 'SCRIBD', amountCents: 1299 }, [
@@ -26,4 +28,35 @@ test('generated workbook contains the rules, exports, and settings tables', () =
   assert.ok(files.includes('xl/tables/table1.xml'))
   assert.ok(files.includes('xl/tables/table2.xml'))
   assert.ok(files.includes('xl/tables/table3.xml'))
+})
+
+test('a temporary SharePoint rule-sync failure does not block statement import', async () => {
+  const warning = await attemptTransactionRuleSync(async () => {
+    throw new Error('Workbook session is temporarily unavailable')
+  })
+  assert.match(warning, /imported using the last saved categorization rules/i)
+})
+
+test('transaction coding storage requires the complete migration', async () => {
+  const db = {
+    prepare() {
+      return {
+        bind() {
+          return {
+            async all() {
+              return {
+                results: [
+                  { name: 'transaction_coding_batches' },
+                  { name: 'transaction_coding_transactions' },
+                  { name: 'transaction_coding_rules' },
+                  { name: 'transaction_coding_exports' },
+                ],
+              }
+            },
+          }
+        },
+      }
+    },
+  }
+  assert.equal(await transactionCodingStorageReady(db), false)
 })
