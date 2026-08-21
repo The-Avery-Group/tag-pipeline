@@ -3,12 +3,9 @@ import { strFromU8, unzipSync } from 'fflate'
 const HEADER_ALIASES = {
   transactionDate: ['date', 'transaction date', 'posted date', 'posting date', 'trans date'],
   rawDescription: ['transaction', 'description', 'transaction description', 'details', 'memo', 'merchant description'],
-  normalizedMerchant: ['merchant', 'vendor', 'payee', 'merchant name'],
   location: ['location', 'address', 'merchant location'],
   city: ['city', 'merchant city'],
   amount: ['amount', 'transaction amount', 'charge amount', 'total'],
-  debit: ['debit', 'debits', 'charge', 'charges'],
-  credit: ['credit', 'credits', 'refund', 'refunds'],
 }
 
 const canonical = (value) => String(value ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ')
@@ -76,7 +73,7 @@ function findHeader(rows) {
         if (mapping[field] == null && aliases.includes(normalized)) mapping[field] = column
       })
     })
-    const score = Object.keys(mapping).length + (mapping.rawDescription != null ? 3 : 0) + ((mapping.amount ?? mapping.debit ?? mapping.credit) != null ? 3 : 0)
+    const score = Object.keys(mapping).length + (mapping.rawDescription != null ? 3 : 0) + (mapping.amount != null ? 3 : 0)
     if (score > best.score) best = { index, score, mapping }
   })
   return best
@@ -111,10 +108,6 @@ function isoDate(value) {
   return Number.isNaN(date.getTime()) ? text : date.toISOString().slice(0, 10)
 }
 
-function merchantFrom(description) {
-  return String(description || '').replace(/\s+(?:\*|#)?\d{5,}\b.*$/i, '').replace(/\s{2,}/g, ' ').trim()
-}
-
 async function digest(value) {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value
   const hash = await crypto.subtle.digest('SHA-256', bytes)
@@ -144,8 +137,8 @@ export async function normalizeTransactionInspection(inspection, options = {}) {
   const sourceRows = inspection?.sourceRows || []
   const headerIndex = Number.isInteger(options.headerIndex) ? options.headerIndex : inspection.headerIndex
   const mapping = options.mapping || inspection.mapping || {}
-  if (mapping.rawDescription == null || (mapping.amount == null && mapping.debit == null && mapping.credit == null)) {
-    throw new Error('Choose a Description column and either an Amount column or Debit and Credit columns.')
+  if (mapping.rawDescription == null || mapping.amount == null) {
+    throw new Error('Choose a Description column and an Amount column.')
   }
   const seen = new Map()
   let skippedCount = 0
@@ -154,9 +147,7 @@ export async function normalizeTransactionInspection(inspection, options = {}) {
     const source = sourceRows[index]
     const description = String(source[mapping.rawDescription] || '').trim()
     if (!description || /^(total(?: new charges)?|ending balance|beginning balance)$/i.test(description)) { skippedCount += 1; continue }
-    let amount = mapping.amount != null ? amountNumber(source[mapping.amount]) : null
-    if (amount == null && mapping.debit != null) amount = Math.abs(amountNumber(source[mapping.debit]) || 0)
-    if (amount == null && mapping.credit != null) amount = -Math.abs(amountNumber(source[mapping.credit]) || 0)
+    const amount = amountNumber(source[mapping.amount])
     if (!amount) { skippedCount += 1; continue }
     const transactionDate = isoDate(source[mapping.transactionDate])
     const location = String(source[mapping.location] || '').trim()
@@ -169,7 +160,6 @@ export async function normalizeTransactionInspection(inspection, options = {}) {
       sourceKey: `${key}|${occurrence}`,
       transactionDate,
       rawDescription: description,
-      normalizedMerchant: String(source[mapping.normalizedMerchant] || '').trim() || merchantFrom(description),
       location,
       city,
       amountCents: Math.round(amount * 100),
