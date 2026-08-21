@@ -1,4 +1,4 @@
-const RULE_FIELDS = ['normalizedMerchant', 'vendor', 'vendorId', 'project', 'account', 'organization']
+const RULE_FIELDS = ['vendor', 'vendorId', 'project', 'account', 'organization']
 
 export function cleanText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -52,7 +52,7 @@ export function transactionStatus(values = {}) {
 }
 
 export function categorizeTransaction(transaction, rules = []) {
-  const description = [transaction.rawDescription, transaction.normalizedMerchant, transaction.location, transaction.city]
+  const description = [transaction.rawDescription, transaction.location, transaction.city]
     .map(cleanText).filter(Boolean).join(' ')
   const ordered = rules.map(publicRule)
     .filter((rule) => rule.active && rule.matchPattern)
@@ -61,7 +61,6 @@ export function categorizeTransaction(transaction, rules = []) {
   if (!rule) return { ...transaction, status: 'uncategorized', confidence: 'none', ruleId: null }
   const result = {
     ...transaction,
-    normalizedMerchant: rule.merchant || transaction.normalizedMerchant || '',
     vendor: rule.vendor,
     vendorId: rule.vendorId,
     project: rule.project,
@@ -80,7 +79,7 @@ export function csvEscape(value) {
 }
 
 export const NEUTRAL_EXPORT_HEADERS = [
-  'Transaction ID', 'Transaction Date', 'Description', 'Merchant', 'Location', 'City',
+  'Transaction ID', 'Transaction Date', 'Description', 'Location', 'City',
   'Amount', 'Transaction Type', 'Vendor', 'Vendor ID', 'Project', 'Account', 'Organization',
 ]
 
@@ -90,7 +89,6 @@ export function buildNeutralExportCsv(rows = []) {
     row.id,
     row.transaction_date ?? row.transactionDate,
     row.raw_description ?? row.rawDescription,
-    row.normalized_merchant ?? row.normalizedMerchant,
     row.location,
     row.city,
     ((Number(row.amount_cents ?? row.amountCents) || 0) / 100).toFixed(2),
@@ -112,7 +110,6 @@ export function ruleWorkbookRow(rule, actor = '') {
     normalized.priority,
     normalized.matchType,
     normalized.matchPattern,
-    normalized.merchant,
     normalized.vendor,
     normalized.vendorId,
     normalized.project,
