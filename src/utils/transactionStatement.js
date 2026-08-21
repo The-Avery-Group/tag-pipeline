@@ -2,9 +2,9 @@ import { strFromU8, unzipSync } from 'fflate'
 
 const HEADER_ALIASES = {
   transactionDate: ['date', 'transaction date', 'posted date', 'posting date', 'trans date'],
-  rawDescription: ['transaction', 'description', 'transaction description', 'details', 'memo', 'merchant description'],
-  location: ['location', 'address', 'merchant location'],
-  city: ['city', 'merchant city'],
+  rawDescription: ['transaction', 'description', 'transaction description', 'details', 'memo'],
+  location: ['location', 'address'],
+  city: ['city'],
   amount: ['amount', 'transaction amount', 'charge amount', 'total'],
 }
 
