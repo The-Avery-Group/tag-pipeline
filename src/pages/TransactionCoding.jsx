@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import ActionIcon from '@/components/Common/ActionIcon'
 import { detectStatementMapping, inspectTransactionStatement, normalizeTransactionInspection } from '@/utils/transactionStatement'
 import {
   createTransactionExport,
   createTransactionRule,
+  deleteTransactionRule,
   downloadCsv,
   getTransactionBatches,
   getTransactionCodingStatus,
@@ -14,6 +16,7 @@ import {
   getTransactions,
   importTransactionStatement,
   updateTransaction,
+  updateTransactionRule,
 } from '@/services/transactionCodingService'
 import styles from './TransactionCoding.module.css'
 
@@ -171,8 +174,30 @@ export default function TransactionCoding({ toast }) {
   const saveRule = async () => {
     if (!ruleDraft?.matchPattern || busy) return
     setBusy('rule')
-    try { await createTransactionRule(ruleDraft); setRuleDraft(null); setRules(await getTransactionRules(true)); notify(toast, 'Rule saved to the workbook.', 'success') }
+    try {
+      const existing = rules.some((rule) => rule.id === ruleDraft.id)
+      const result = existing
+        ? await updateTransactionRule(ruleDraft.id, ruleDraft)
+        : await createTransactionRule(ruleDraft)
+      setRules((current) => existing
+        ? current.map((rule) => rule.id === result.rule.id ? result.rule : rule)
+        : [...current, result.rule].sort((left, right) => right.priority - left.priority || left.matchPattern.localeCompare(right.matchPattern)))
+      setRuleDraft(null)
+      notify(toast, existing ? 'Rule updated.' : 'Rule saved to the workbook.', 'success')
+    }
     catch (ruleError) { setError(ruleError.message) }
+    finally { setBusy('') }
+  }
+
+  const removeRule = async (rule) => {
+    if (busy || !window.confirm(`Delete the categorization rule “${rule.matchPattern}”?`)) return
+    setBusy('rule-delete')
+    try {
+      await deleteTransactionRule(rule.id)
+      setRules((current) => current.filter((item) => item.id !== rule.id))
+      if (ruleDraft?.id === rule.id) setRuleDraft(null)
+      notify(toast, 'Rule deleted.', 'success')
+    } catch (ruleError) { setError(ruleError.message) }
     finally { setBusy('') }
   }
 
@@ -235,12 +260,12 @@ export default function TransactionCoding({ toast }) {
 
         {tab === 'history' && <section className={styles.panel}><div className={styles.panelHeader}><div><h2>Export history</h2><p>Exports and transaction data are retained for 60 days.</p></div></div><div className={styles.tableWrap}><table><thead><tr><th>File</th><th>Created</th><th>Rows</th><th>Total</th><th>Archive</th><th>Actions</th></tr></thead><tbody>{exports.map((item) => <tr key={item.id}><td><strong>{item.fileName}</strong></td><td>{when(item.createdAt)}</td><td>{item.rowCount}</td><td>{amount(item.totalCents)}</td><td>{item.archived ? 'Saved to SharePoint' : 'Not saved'}</td><td className={styles.rowActions}><button onClick={() => openExport(item)}>Preview</button><button onClick={() => openExport(item, true)}>Download</button>{item.sharePointUrl && <a href={item.sharePointUrl} target="_blank" rel="noreferrer">Open</a>}</td></tr>)}</tbody></table>{!exports.length && <div className={styles.empty}>No exports yet.</div>}</div></section>}
 
-        {tab === 'rules' && <section className={styles.panel}><div className={styles.panelHeader}><div><h2>Categorization rules</h2><p>The SharePoint workbook is the editable source; refresh after direct workbook changes.</p></div><div><button className="btn btn-secondary" onClick={async () => setRules(await getTransactionRules(true))}>Refresh workbook</button> <button className="btn btn-primary" onClick={() => setRuleDraft({ ...emptyRule, id: crypto.randomUUID() })}>Add rule</button></div></div><div className={styles.tableWrap}><table><thead><tr><th>Pattern</th><th>Match</th><th>Vendor</th><th>Vendor ID</th><th>Project</th><th>Account</th><th>Organization</th><th>Priority</th></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td><strong>{rule.matchPattern}</strong></td><td>{rule.matchType}</td><td>{rule.vendor || '—'}</td><td>{rule.vendorId || '—'}</td><td>{rule.project || '—'}</td><td>{rule.account || '—'}</td><td>{rule.organization || '—'}</td><td>{rule.priority}</td></tr>)}</tbody></table>{!rules.length && <div className={styles.empty}>No saved rules. Review a transaction and select Remember this mapping, or add a rule here.</div>}</div></section>}
+        {tab === 'rules' && <section className={styles.panel}><div className={styles.panelHeader}><div><h2>Categorization rules</h2><p>The SharePoint workbook is the editable source; refresh after direct workbook changes.</p></div><div><button className="btn btn-secondary" onClick={async () => setRules(await getTransactionRules(true))}>Refresh workbook</button> <button className="btn btn-primary" onClick={() => setRuleDraft({ ...emptyRule, id: crypto.randomUUID() })}>Add rule</button></div></div><div className={styles.tableWrap}><table><thead><tr><th>Pattern</th><th>Match</th><th>Vendor</th><th>Vendor ID</th><th>Project</th><th>Account</th><th>Organization</th><th>Priority</th><th>Status</th><th aria-label="Actions" /></tr></thead><tbody>{rules.map((rule) => <tr key={rule.id}><td><strong>{rule.matchPattern}</strong></td><td>{rule.matchType.replace(/_/g, ' ')}</td><td>{rule.vendor || '—'}</td><td>{rule.vendorId || '—'}</td><td>{rule.project || '—'}</td><td>{rule.account || '—'}</td><td>{rule.organization || '—'}</td><td>{rule.priority}</td><td><span className={`${styles.status} ${rule.active ? styles.ready : ''}`}>{rule.active ? 'Active' : 'Inactive'}</span></td><td className={styles.rowActions}><button className="btn btn-ghost btn-icon" aria-label={`Edit ${rule.matchPattern}`} title="Edit rule" onClick={() => setRuleDraft({ ...rule })}><ActionIcon name="edit" /></button><button className="btn btn-ghost btn-icon" aria-label={`Delete ${rule.matchPattern}`} title="Delete rule" onClick={() => removeRule(rule)} disabled={Boolean(busy)} style={{ color: 'var(--red-600)' }}><ActionIcon name="delete" /></button></td></tr>)}</tbody></table>{!rules.length && <div className={styles.empty}>No saved rules. Review a transaction and select Remember this mapping, or add a rule here.</div>}</div></section>}
       </main>
 
       {editing && <div className={styles.drawerBackdrop} onMouseDown={(event) => event.target === event.currentTarget && setEditing(null)}><aside className={styles.drawer}><div className={styles.drawerHeader}><div><span>Review transaction</span><strong>{amount(editing.amountCents)}</strong></div><button onClick={() => setEditing(null)} aria-label="Close">×</button></div><p className={styles.raw}>{editing.rawDescription}</p><div className={styles.formGrid}>{['vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={editing[field] || ''} onChange={(event) => setEditing({ ...editing, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={editing.rememberRule} onChange={(event) => setEditing({ ...editing, rememberRule: event.target.checked })} /> Remember this coding for future transactions</label>{editing.rememberRule && <div className={styles.ruleInline}><label><span>Match pattern</span><input value={editing.rulePattern} onChange={(event) => setEditing({ ...editing, rulePattern: event.target.value })} /></label><select value={editing.ruleMatchType} onChange={(event) => setEditing({ ...editing, ruleMatchType: event.target.value })}><option value="contains">Contains</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></div>}<div className={styles.drawerFooter}><button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={saveEdit} disabled={Boolean(busy)}>{busy === 'save' ? 'Saving…' : 'Save transaction'}</button></div></aside></div>}
 
-      {ruleDraft && <Modal title="Add categorization rule" onClose={() => setRuleDraft(null)} footer={<><button className="btn btn-secondary" onClick={() => setRuleDraft(null)}>Cancel</button><button className="btn btn-primary" onClick={saveRule} disabled={!ruleDraft.matchPattern || Boolean(busy)}>Save rule</button></>}><div className={styles.formGrid}>{['matchPattern','vendor','vendorId','project','account','organization'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}</div></Modal>}
+      {ruleDraft && <Modal title={rules.some((rule) => rule.id === ruleDraft.id) ? 'Edit categorization rule' : 'Add categorization rule'} onClose={() => setRuleDraft(null)} footer={<>{rules.some((rule) => rule.id === ruleDraft.id) && <button className="btn btn-danger" onClick={() => removeRule(ruleDraft)} disabled={Boolean(busy)}>Delete</button>}<button className="btn btn-secondary" onClick={() => setRuleDraft(null)}>Cancel</button><button className="btn btn-primary" onClick={saveRule} disabled={!ruleDraft.matchPattern || Boolean(busy)}>{busy === 'rule' ? 'Saving…' : 'Save rule'}</button></>}><div className={styles.formGrid}><label><span>Match type</span><select value={ruleDraft.matchType || 'contains'} onChange={(event) => setRuleDraft({ ...ruleDraft, matchType: event.target.value })}><option value="contains">Contains</option><option value="starts_with">Starts with</option><option value="exact">Exact</option><option value="regex">Regular expression</option></select></label><label><span>Priority</span><input type="number" value={ruleDraft.priority ?? 100} onChange={(event) => setRuleDraft({ ...ruleDraft, priority: Number(event.target.value) })} /></label>{['matchPattern','vendor','vendorId','project','account','organization','context','notes'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}</div><label className={styles.remember}><input type="checkbox" checked={ruleDraft.active !== false} onChange={(event) => setRuleDraft({ ...ruleDraft, active: event.target.checked })} /> Active rule</label></Modal>}
       {csvPreview && <Modal title={csvPreview.fileName} onClose={() => setCsvPreview(null)} footer={<button className="btn btn-primary" onClick={() => downloadCsv(csvPreview.csv, csvPreview.fileName)}>Download CSV</button>}><pre className={styles.csvPreview}>{csvPreview.csv.split('\n').slice(0, 12).join('\n')}</pre><p className={styles.previewNote}>Showing the first 11 transaction rows.</p></Modal>}
     </div>
   )
