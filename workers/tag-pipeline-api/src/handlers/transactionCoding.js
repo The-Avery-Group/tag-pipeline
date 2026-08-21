@@ -47,7 +47,13 @@ async function provision(env, graphToken = '') {
 async function syncRules(env, identity, graphToken = '', { recategorize = true } = {}) {
   const workspace = await provision(env, graphToken)
   const workbookRules = await readTransactionRules(workspace)
-  const rules = await replaceTransactionCodingRules(env.EBUY_DB, workbookRules, identity?.name || '')
+  await replaceTransactionCodingRules(env.EBUY_DB, workbookRules, identity?.name || '')
+  const pendingRules = (await listTransactionCodingRules(env.EBUY_DB)).filter((rule) => rule.source === 'crm_pending')
+  for (const pendingRule of pendingRules) {
+    await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(pendingRule, identity?.name || ''))
+    await upsertTransactionCodingRule(env.EBUY_DB, { ...pendingRule, source: 'workbook' }, identity?.name || '')
+  }
+  const rules = await listTransactionCodingRules(env.EBUY_DB)
   if (recategorize) await recategorizeOpenTransactions(env.EBUY_DB)
   return { workspace, rules }
 }
@@ -139,25 +145,28 @@ export async function handleTransactionCoding(req, env, identity) {
     let rule = null
     let ruleWarning = ''
     if (body.rememberRule) {
+      const ruleInput = {
+        id: body.ruleId || transaction.ruleId || `rule-${transaction.id}`,
+        active: true,
+        priority: body.rulePriority || 100,
+        matchType: body.ruleMatchType || 'contains',
+        matchPattern: body.rulePattern || transaction.rawDescription,
+        vendor: transaction.vendor,
+        vendorId: transaction.vendorId,
+        project: transaction.project,
+        account: transaction.account,
+        organization: transaction.organization,
+        notes: `Learned from transaction ${transaction.id}`,
+      }
       try {
+        rule = await upsertTransactionCodingRule(env.EBUY_DB, { ...ruleInput, source: 'crm_pending' }, actor)
         const workspace = await provision(env, graphToken)
-        const ruleInput = {
-          id: body.ruleId || transaction.ruleId || `rule-${transaction.id}`,
-          active: true,
-          priority: body.rulePriority || 100,
-          matchType: body.ruleMatchType || 'contains',
-          matchPattern: body.rulePattern || transaction.rawDescription,
-          vendor: transaction.vendor,
-          vendorId: transaction.vendorId,
-          project: transaction.project,
-          account: transaction.account,
-          organization: transaction.organization,
-          notes: `Learned from transaction ${transaction.id}`,
-        }
         await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
-        rule = await upsertTransactionCodingRule(env.EBUY_DB, ruleInput, actor)
+        rule = await upsertTransactionCodingRule(env.EBUY_DB, { ...ruleInput, source: 'workbook' }, actor)
       } catch (error) {
-        ruleWarning = `Transaction saved, but the rule could not be synchronized: ${error.message}`
+        ruleWarning = rule
+          ? `Transaction and rule saved in the CRM, but SharePoint synchronization is pending: ${error.message}`
+          : `Transaction saved, but the rule could not be saved: ${error.message}`
       }
     }
     return json({ ok: true, transaction, rule, warning: ruleWarning })
@@ -170,15 +179,22 @@ export async function handleTransactionCoding(req, env, identity) {
 
   if (path === '/transaction-coding/rules' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
+    const ruleInput = { ...body, id: cleanText(body.id) || crypto.randomUUID() }
     try {
-      const workspace = await provision(env, graphToken)
-      const ruleInput = { ...body, id: cleanText(body.id) || crypto.randomUUID() }
-      await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
-      const rule = await upsertTransactionCodingRule(env.EBUY_DB, ruleInput, actor)
+      let rule = await upsertTransactionCodingRule(env.EBUY_DB, { ...ruleInput, source: 'crm_pending' }, actor)
+      let warning = ''
+      try {
+        const workspace = await provision(env, graphToken)
+        await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
+        rule = await upsertTransactionCodingRule(env.EBUY_DB, { ...ruleInput, source: 'workbook' }, actor)
+      } catch (syncError) {
+        warning = `Rule saved in the CRM, but SharePoint synchronization is pending: ${syncError.message}`
+        console.warn(JSON.stringify({ event: 'transaction_coding_rule_workbook_sync_pending', ruleId: ruleInput.id, message: syncError.message }))
+      }
       await recategorizeOpenTransactions(env.EBUY_DB)
-      return json({ ok: true, rule }, 201)
+      return json({ ok: true, rule, warning }, 201)
     } catch (error) {
-      console.error(JSON.stringify({ event: 'transaction_coding_rule_save_failed', message: error.message }))
+      console.error(JSON.stringify({ event: 'transaction_coding_rule_save_failed', ruleId: ruleInput.id, message: error.message }))
       return json({
         error: `The categorization rule could not be saved: ${error.message}`,
         code: 'transaction_rule_save_failed',
@@ -192,12 +208,19 @@ export async function handleTransactionCoding(req, env, identity) {
     const ruleId = decodeURIComponent(ruleMatch[1])
     const body = await req.json().catch(() => ({}))
     try {
-      const workspace = await provision(env, graphToken)
       const ruleInput = { ...body, id: ruleId }
-      await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
-      const rule = await upsertTransactionCodingRule(env.EBUY_DB, ruleInput, actor)
+      let rule = await upsertTransactionCodingRule(env.EBUY_DB, { ...ruleInput, source: 'crm_pending' }, actor)
+      let warning = ''
+      try {
+        const workspace = await provision(env, graphToken)
+        await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
+        rule = await upsertTransactionCodingRule(env.EBUY_DB, { ...ruleInput, source: 'workbook' }, actor)
+      } catch (syncError) {
+        warning = `Rule updated in the CRM, but SharePoint synchronization is pending: ${syncError.message}`
+        console.warn(JSON.stringify({ event: 'transaction_coding_rule_workbook_sync_pending', ruleId, message: syncError.message }))
+      }
       await recategorizeOpenTransactions(env.EBUY_DB)
-      return json({ ok: true, rule })
+      return json({ ok: true, rule, warning })
     } catch (error) {
       console.error(JSON.stringify({ event: 'transaction_coding_rule_update_failed', ruleId, message: error.message }))
       return json({
@@ -210,11 +233,17 @@ export async function handleTransactionCoding(req, env, identity) {
   if (ruleMatch && req.method === 'DELETE') {
     const ruleId = decodeURIComponent(ruleMatch[1])
     try {
-      const workspace = await provision(env, graphToken)
-      await deleteTransactionRuleFromWorkbook(workspace, ruleId)
       const deleted = await deleteTransactionCodingRule(env.EBUY_DB, ruleId)
+      let warning = ''
+      try {
+        const workspace = await provision(env, graphToken)
+        await deleteTransactionRuleFromWorkbook(workspace, ruleId)
+      } catch (syncError) {
+        warning = `Rule deleted from the CRM, but SharePoint cleanup is pending: ${syncError.message}`
+        console.warn(JSON.stringify({ event: 'transaction_coding_rule_workbook_delete_pending', ruleId, message: syncError.message }))
+      }
       await recategorizeOpenTransactions(env.EBUY_DB)
-      return json({ ok: true, deleted })
+      return json({ ok: true, deleted, warning })
     } catch (error) {
       console.error(JSON.stringify({ event: 'transaction_coding_rule_delete_failed', ruleId, message: error.message }))
       return json({
