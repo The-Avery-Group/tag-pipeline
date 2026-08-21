@@ -123,6 +123,22 @@
   padding: 10px 8px 4px;
 }
 
+.financeSection {
+  border-top: 0.5px solid var(--gray-200);
+  margin-top: 10px;
+  padding-top: 7px;
+}
+
+.financeLabel {
+  color: var(--gray-400);
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  padding: 3px 10px 5px;
+  text-transform: uppercase;
+}
+
 .navItem {
   display: flex;
   align-items: center;
@@ -366,6 +382,7 @@
 .collapsed .searchLabel,
 .collapsed .kbd,
 .collapsed .navLabel,
+.collapsed .financeLabel,
 .collapsed .userText,
 .collapsed .actionLabel {
   display: none;
