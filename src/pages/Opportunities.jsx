@@ -30,6 +30,7 @@ import styles from './Opportunities.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import { updateSAMOpportunityArchiveReview } from '@/services/samOpportunityService'
+import { OPPORTUNITY_PRIMARY_TABS, resolveOpportunityListView } from '@/utils/opportunityArchiveView'
 import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
 import { deleteOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 import {
@@ -84,7 +85,6 @@ const C = {
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
-const TABS = ['All', 'Responses', 'Expiring', 'Tracked', 'New', 'Archive']
 const HIDDEN_RESPONSE_PHASES = new Set(['Cancelled', 'Contract Awarded'])
 const SAM_DISCOVERY_SCROLL_KEY = 'tag_crm_sam_discovery_scroll'
 
@@ -121,8 +121,6 @@ function getTabRows(pipeline, tab) {
       return pipeline.filter((o) => o[C.outlook] === 'Expiring')
     case 'Tracked':
       return pipeline.filter((o) => o[C.outlook] === 'Tracking')
-    case 'Archive':
-      return pipeline
     default:
       return []
   }
@@ -236,8 +234,7 @@ export default function Opportunities({ toast }) {
   // page can link directly into a pre-filtered, visibly-active view (e.g. a
   // Dashboard chart segment linking to /opportunities?tab=All&phase=Proposal
   // shows real, dismissible filter chips exactly as if applied manually).
-  const requestedTab = searchParams.get('tab') === 'RFIs' ? 'Responses' : searchParams.get('tab')
-  const activeTab = TABS.includes(requestedTab) ? requestedTab : 'All'
+  const { activeTab, showArchived } = resolveOpportunityListView(searchParams)
   const discoverySource = searchParams.get('source') === 'ebuy' ? 'ebuy' : 'sam'
   const search    = searchParams.get('search') || ''
   const [ebuyCount, setEbuyCount] = useState(0)
@@ -302,14 +299,15 @@ export default function Opportunities({ toast }) {
   //    the right default rather than sharing a single sort state
   const [tabSort, setTabSort] = useState(TAB_DEFAULT_SORT)
 
-  const sortKey = tabSort[activeTab]?.key  ?? C.lastMod
-  const sortDir = tabSort[activeTab]?.dir  ?? 'desc'
+  const sortScope = showArchived ? 'Archive' : activeTab
+  const sortKey = tabSort[sortScope]?.key  ?? C.lastMod
+  const sortDir = tabSort[sortScope]?.dir  ?? 'desc'
 
   const handleSort = (key) => {
     setTabSort((prev) => {
-      const cur = prev[activeTab]
+      const cur = prev[sortScope]
       const newDir = cur.key === key ? (cur.dir === 'asc' ? 'desc' : 'asc') : 'asc'
-      return { ...prev, [activeTab]: { key, dir: newDir } }
+      return { ...prev, [sortScope]: { key, dir: newDir } }
     })
   }
 
@@ -380,7 +378,6 @@ export default function Opportunities({ toast }) {
     Expiring: getTabRows(pipeline, 'Expiring').length,
     Tracked:  getTabRows(pipeline, 'Tracked').length,
     New:      0,
-    Archive:  archivedPipeline.length,
   }), [pipeline])
 
   const hiddenResponseCount = useMemo(() => getTabRows(pipeline, 'Responses')
@@ -389,12 +386,13 @@ export default function Opportunities({ toast }) {
   // ── Distinct agencies present in the active tab (for the agency filter) ──
   const tabAgencies = useMemo(() => {
     const ags = new Set()
-    getVisibleTabRows(activeTab === 'Archive' ? archivedPipeline : pipeline, activeTab, showHiddenResponses).forEach((o) => {
+    const source = showArchived ? archivedPipeline : getVisibleTabRows(pipeline, activeTab, showHiddenResponses)
+    source.forEach((o) => {
       const a = String(o[C.agency] || '').trim()
       if (a) ags.add(a)
     })
     return [...ags].sort()
-  }, [pipeline, archivedPipeline, activeTab, showHiddenResponses])
+  }, [pipeline, archivedPipeline, activeTab, showHiddenResponses, showArchived])
 
   const setAsideFilterOptions = useMemo(() => {
     const values = new Set()
@@ -443,7 +441,7 @@ export default function Opportunities({ toast }) {
   const filtered = useMemo(() => {
     if (activeTab === 'New') return []
 
-    let rows = getVisibleTabRows(activeTab === 'Archive' ? archivedPipeline : pipeline, activeTab, showHiddenResponses)
+    let rows = showArchived ? archivedPipeline : getVisibleTabRows(pipeline, activeTab, showHiddenResponses)
 
     if (rfiFollowUpIds.size > 0) {
       rows = rows.filter((o) => rfiFollowUpIds.has(String(o[C.contractNum] || '').trim()))
@@ -485,13 +483,24 @@ export default function Opportunities({ toast }) {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [pipeline, archivedPipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, showHiddenResponses, sortKey, sortDir])
+  }, [pipeline, archivedPipeline, activeTab, search, filters, rfiFollowUpIds, noteContractsMatchingSearch, pipelineRowsMatchingSearch, showHiddenResponses, showArchived, sortKey, sortDir])
 
   // ── Tab switch — filters are scoped to the tab that applied them. Search
   // remains because it is a separate, deliberate cross-tab lookup.
   const handleTabChange = (tab) => {
     updateParams({
       tab,
+      archived: '',
+      outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
+      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
+    })
+    setShowFilter(false)
+    setAgencyFilterOpen(false)
+  }
+
+  const toggleArchivedView = () => {
+    updateParams({
+      tab: 'All', archived: showArchived ? '' : '1',
       outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
       phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
     })
@@ -1368,6 +1377,8 @@ export default function Opportunities({ toast }) {
     ? `No opportunities match "${search}".`
     : activeFilterCount > 0
       ? 'No opportunities match the current filters.'
+      : showArchived
+        ? 'No archived opportunities.'
       : {
           All:      'No opportunities in the pipeline yet.',
           Responses:hiddenResponseCount > 0 && !showHiddenResponses
@@ -1375,7 +1386,6 @@ export default function Opportunities({ toast }) {
             : 'No response opportunities yet. Set Notice Type to RFI, MRAS, RFP, or RFQ to include an opportunity here.',
           Expiring: 'No expiring contracts yet. Set an opportunity\'s Outlook to Expiring to track it here.',
           Tracked:  'Nothing tracked yet. Use the Track button on new opportunities, or set an opportunity\'s Outlook to Tracking.',
-          Archive:  'No archived opportunities.',
           New:      '',
         }[activeTab]
 
@@ -1606,7 +1616,7 @@ export default function Opportunities({ toast }) {
 
         {/* ── Tabs ── */}
         <div className={styles.tabRow}>
-          {TABS.map((tab) => (
+          {OPPORTUNITY_PRIMARY_TABS.map((tab) => (
             <button
               key={tab}
               className={`${styles.tab} ${activeTab === tab ? styles.tabActive : ''}`}
@@ -1664,6 +1674,18 @@ export default function Opportunities({ toast }) {
               >
                 <span className={styles.visibilityIcon} aria-hidden="true">◉</span>
                 <span className={styles.visibilityLabel}>{showHiddenResponses ? 'Hide hidden' : `Show hidden (${hiddenResponseCount})`}</span>
+              </button>
+            )}
+            {activeTab !== 'New' && archivedPipeline.length > 0 && (
+              <button
+                type="button"
+                className={`${styles.searchVisibilityButton} ${showArchived ? styles.searchVisibilityActive : ''}`}
+                onClick={toggleArchivedView}
+                aria-pressed={showArchived}
+                title={showArchived ? 'Return to active opportunities' : 'Show archived opportunities'}
+              >
+                <span className={styles.visibilityIcon} aria-hidden="true">◉</span>
+                <span className={styles.visibilityLabel}>{showArchived ? 'Hide archived' : `Show archived (${archivedPipeline.length})`}</span>
               </button>
             )}
         </div>
@@ -1855,7 +1877,7 @@ export default function Opportunities({ toast }) {
         )}
 
         {/* ── Pipeline tabs: Responses / Expiring / Tracked ── */}
-        {activeTab === 'Expiring' && (
+        {activeTab === 'Expiring' && !showArchived && (
           <ExpiringContractDiscovery
             pipeline={pipeline}
             contacts={contacts}
@@ -1875,7 +1897,7 @@ export default function Opportunities({ toast }) {
           />
         )}
 
-        {activeTab !== 'New' && activeTab !== 'Expiring' && (
+        {activeTab !== 'New' && (activeTab !== 'Expiring' || showArchived) && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {loading
               ? <div style={{ padding: 20 }}><div className="skeleton" style={{ height: 200 }} /></div>
@@ -1883,10 +1905,10 @@ export default function Opportunities({ toast }) {
                 ? <div className={styles.empty}>{emptyMsg}</div>
                 : (
                   <div style={{ overflowX: 'auto' }}>
-                    {activeTab === 'All'      && <AllTable />}
-                    {activeTab === 'Responses'&& <ResponsesTable />}
-                    {activeTab === 'Tracked'  && <TrackedTable />}
-                    {activeTab === 'Archive'  && <ArchiveTable />}
+                    {showArchived && <ArchiveTable />}
+                    {!showArchived && activeTab === 'All'      && <AllTable />}
+                    {!showArchived && activeTab === 'Responses'&& <ResponsesTable />}
+                    {!showArchived && activeTab === 'Tracked'  && <TrackedTable />}
                   </div>
                 )
             }
@@ -2074,7 +2096,7 @@ export default function Opportunities({ toast }) {
         >
           <p className="text-sm">
             Archive <strong>{confirmDelete[C.title]}</strong> ({confirmDelete[C.contractNum]})?
-            Notes, tasks, drafts, and SharePoint files will be retained. You can restore it from the Archive tab.
+            Notes, tasks, drafts, and SharePoint files will be retained. Use Show archived beside search to restore it later.
           </p>
         </Modal>
       )}
