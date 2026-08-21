@@ -1,5 +1,6 @@
 import {
   createTransactionCodingExport,
+  deleteTransactionCodingRule,
   getTransactionCodingExport,
   importTransactionBatch,
   listTransactionCodingBatches,
@@ -17,6 +18,7 @@ import {
 import { buildNeutralExportCsv, cleanText, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
 import {
   appendTransactionExportHistory,
+  deleteTransactionRuleFromWorkbook,
   ensureTransactionCodingWorkspace,
   readTransactionRules,
   saveExportToSharePoint,
@@ -31,14 +33,19 @@ function safeFilePart(value) {
   return String(value || 'transactions').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72) || 'transactions'
 }
 
-async function provision(env) {
-  const workspace = await ensureTransactionCodingWorkspace(env)
+function delegatedGraphToken(req) {
+  const authorization = req.headers.get('Authorization') || ''
+  return authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || ''
+}
+
+async function provision(env, graphToken = '') {
+  const workspace = await ensureTransactionCodingWorkspace(env, graphToken)
   await saveTransactionCodingWorkspace(env.EBUY_DB, workspace)
   return workspace
 }
 
-async function syncRules(env, identity, { recategorize = true } = {}) {
-  const workspace = await provision(env)
+async function syncRules(env, identity, graphToken = '', { recategorize = true } = {}) {
+  const workspace = await provision(env, graphToken)
   const workbookRules = await readTransactionRules(workspace)
   const rules = await replaceTransactionCodingRules(env.EBUY_DB, workbookRules, identity?.name || '')
   if (recategorize) await recategorizeOpenTransactions(env.EBUY_DB)
@@ -59,8 +66,8 @@ export async function attemptTransactionRuleSync(operation) {
   }
 }
 
-async function syncRulesBeforeImport(env, identity) {
-  return attemptTransactionRuleSync(() => syncRules(env, identity, { recategorize: false }))
+async function syncRulesBeforeImport(env, identity, graphToken) {
+  return attemptTransactionRuleSync(() => syncRules(env, identity, graphToken, { recategorize: false }))
 }
 
 export async function handleTransactionCoding(req, env, identity) {
@@ -70,10 +77,11 @@ export async function handleTransactionCoding(req, env, identity) {
   const url = new URL(req.url)
   const path = url.pathname
   const actor = identity?.name || identity?.userId || ''
+  const graphToken = delegatedGraphToken(req)
 
   if (path === '/transaction-coding/status' && req.method === 'GET') {
     try {
-      const workspace = await provision(env)
+      const workspace = await provision(env, graphToken)
       return json({ ready: true, retentionDays: 60, workspace: {
         folderUrl: workspace.folderUrl,
         workbookUrl: workspace.workbookUrl,
@@ -84,7 +92,7 @@ export async function handleTransactionCoding(req, env, identity) {
   }
 
   if (path === '/transaction-coding/provision' && req.method === 'POST') {
-    const workspace = await provision(env)
+    const workspace = await provision(env, graphToken)
     return json({ ok: true, workspace: { folderUrl: workspace.folderUrl, workbookUrl: workspace.workbookUrl } })
   }
 
@@ -95,7 +103,7 @@ export async function handleTransactionCoding(req, env, identity) {
   if (path === '/transaction-coding/imports' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     if (!Array.isArray(body.rows) || !body.rows.length) return json({ error: 'The statement contains no importable transaction rows.' }, 400)
-    const warning = await syncRulesBeforeImport(env, identity)
+    const warning = await syncRulesBeforeImport(env, identity, graphToken)
     try {
       const result = await importTransactionBatch(env.EBUY_DB, body, actor)
       return json({ ok: true, ...result, warning }, result.duplicate ? 200 : 201)
@@ -132,7 +140,7 @@ export async function handleTransactionCoding(req, env, identity) {
     let ruleWarning = ''
     if (body.rememberRule) {
       try {
-        const workspace = await provision(env)
+        const workspace = await provision(env, graphToken)
         const ruleInput = {
           id: body.ruleId || transaction.ruleId || `rule-${transaction.id}`,
           active: true,
@@ -156,23 +164,62 @@ export async function handleTransactionCoding(req, env, identity) {
   }
 
   if (path === '/transaction-coding/rules' && req.method === 'GET') {
-    if (url.searchParams.get('refresh') === '1') await syncRules(env, identity)
+    if (url.searchParams.get('refresh') === '1') await syncRules(env, identity, graphToken)
     return json({ rules: await listTransactionCodingRules(env.EBUY_DB) })
   }
 
   if (path === '/transaction-coding/rules' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     try {
-      const workspace = await provision(env)
+      const workspace = await provision(env, graphToken)
       const ruleInput = { ...body, id: cleanText(body.id) || crypto.randomUUID() }
       await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
       const rule = await upsertTransactionCodingRule(env.EBUY_DB, ruleInput, actor)
+      await recategorizeOpenTransactions(env.EBUY_DB)
       return json({ ok: true, rule }, 201)
     } catch (error) {
       console.error(JSON.stringify({ event: 'transaction_coding_rule_save_failed', message: error.message }))
       return json({
         error: `The categorization rule could not be saved: ${error.message}`,
         code: 'transaction_rule_save_failed',
+      }, 502)
+    }
+  }
+
+
+  const ruleMatch = path.match(/^\/transaction-coding\/rules\/([^/]+)$/)
+  if (ruleMatch && req.method === 'PATCH') {
+    const ruleId = decodeURIComponent(ruleMatch[1])
+    const body = await req.json().catch(() => ({}))
+    try {
+      const workspace = await provision(env, graphToken)
+      const ruleInput = { ...body, id: ruleId }
+      await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
+      const rule = await upsertTransactionCodingRule(env.EBUY_DB, ruleInput, actor)
+      await recategorizeOpenTransactions(env.EBUY_DB)
+      return json({ ok: true, rule })
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'transaction_coding_rule_update_failed', ruleId, message: error.message }))
+      return json({
+        error: `The categorization rule could not be updated: ${error.message}`,
+        code: 'transaction_rule_update_failed',
+      }, 502)
+    }
+  }
+
+  if (ruleMatch && req.method === 'DELETE') {
+    const ruleId = decodeURIComponent(ruleMatch[1])
+    try {
+      const workspace = await provision(env, graphToken)
+      await deleteTransactionRuleFromWorkbook(workspace, ruleId)
+      const deleted = await deleteTransactionCodingRule(env.EBUY_DB, ruleId)
+      await recategorizeOpenTransactions(env.EBUY_DB)
+      return json({ ok: true, deleted })
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'transaction_coding_rule_delete_failed', ruleId, message: error.message }))
+      return json({
+        error: `The categorization rule could not be deleted: ${error.message}`,
+        code: 'transaction_rule_delete_failed',
       }, 502)
     }
   }
@@ -195,7 +242,7 @@ export async function handleTransactionCoding(req, env, identity) {
     let warning = ''
     if (body.archive !== false) {
       try {
-        workspace = await provision(env)
+        workspace = await provision(env, graphToken)
         const item = await saveExportToSharePoint(workspace, fileName, csv)
         archivedItem = { ...item, driveId: workspace.driveId }
       } catch (error) {
