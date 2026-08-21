@@ -14,7 +14,7 @@ import {
   updateTransactionCodingTransaction,
   upsertTransactionCodingRule,
 } from '../lib/transactionCodingRepository.js'
-import { buildNeutralExportCsv, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
+import { buildNeutralExportCsv, cleanText, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
 import {
   appendTransactionExportHistory,
   ensureTransactionCodingWorkspace,
@@ -138,8 +138,7 @@ export async function handleTransactionCoding(req, env, identity) {
           active: true,
           priority: body.rulePriority || 100,
           matchType: body.ruleMatchType || 'contains',
-          matchPattern: body.rulePattern || transaction.normalizedMerchant || transaction.rawDescription,
-          merchant: transaction.normalizedMerchant,
+          matchPattern: body.rulePattern || transaction.rawDescription,
           vendor: transaction.vendor,
           vendorId: transaction.vendorId,
           project: transaction.project,
@@ -163,10 +162,19 @@ export async function handleTransactionCoding(req, env, identity) {
 
   if (path === '/transaction-coding/rules' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
-    const workspace = await provision(env)
-    const rule = await upsertTransactionCodingRule(env.EBUY_DB, body, actor)
-    await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(rule, actor))
-    return json({ ok: true, rule }, 201)
+    try {
+      const workspace = await provision(env)
+      const ruleInput = { ...body, id: cleanText(body.id) || crypto.randomUUID() }
+      await saveTransactionRuleToWorkbook(workspace, ruleWorkbookRow(ruleInput, actor))
+      const rule = await upsertTransactionCodingRule(env.EBUY_DB, ruleInput, actor)
+      return json({ ok: true, rule }, 201)
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'transaction_coding_rule_save_failed', message: error.message }))
+      return json({
+        error: `The categorization rule could not be saved: ${error.message}`,
+        code: 'transaction_rule_save_failed',
+      }, 502)
+    }
   }
 
   if (path === '/transaction-coding/exports' && req.method === 'GET') {
