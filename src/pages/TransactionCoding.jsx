@@ -151,6 +151,23 @@ export default function TransactionCoding({ toast }) {
     finally { setBusy('') }
   }
 
+  const refreshTransactions = async () => {
+    if (!selectedBatch || busy) return
+    setBusy('refresh-transactions'); setError('')
+    try {
+      const nextRules = await getTransactionRules(true)
+      const [nextTransactions, nextBatches] = await Promise.all([
+        getTransactions(selectedBatch, filter, search),
+        getTransactionBatches(),
+      ])
+      setRules(nextRules)
+      setTransactions(nextTransactions)
+      setBatches(nextBatches)
+      notify(toast, 'Rules and transactions refreshed.', 'success')
+    } catch (refreshError) { setError(refreshError.message) }
+    finally { setBusy('') }
+  }
+
   const runExport = async () => {
     if (!selectedBatch || busy) return
     setBusy('export')
@@ -243,7 +260,15 @@ export default function TransactionCoding({ toast }) {
                 <option value="">Select a statement</option>{batches.map((item) => <option key={item.id} value={item.id}>{item.fileName} · {when(item.createdAt)}</option>)}
               </select>
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search transactions…" aria-label="Search transactions" />
-              <select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Coding status"><option value="">All statuses</option><option value="uncategorized">Uncategorized</option><option value="review">Needs review</option><option value="ready">Ready</option></select>
+              <select className={styles.statusFilter} value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Coding status"><option value="">All statuses</option><option value="uncategorized">Uncategorized</option><option value="review">Needs review</option><option value="ready">Ready</option></select>
+              <button
+                type="button"
+                className={styles.refreshTransactions}
+                onClick={refreshTransactions}
+                disabled={!selectedBatch || Boolean(busy)}
+                aria-label="Refresh rules and transactions"
+                title="Refresh rules and transactions"
+              >{busy === 'refresh-transactions' ? '…' : '↻'}</button>
             </div>
             {batch && <div className={styles.summary}>
               <div><strong>{batch.rowCount}</strong><span>Transactions</span></div><div><strong>{batch.uncategorizedCount}</strong><span>Uncategorized</span></div><div><strong>{batch.reviewCount}</strong><span>Needs review</span></div><div><strong>{batch.readyCount}</strong><span>Ready</span></div><div><strong>{amount(batch.totalCents)}</strong><span>Statement total</span></div>
