@@ -2,7 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { strFromU8, unzipSync } from 'fflate'
 import { buildNeutralExportCsv, categorizeTransaction } from '../src/lib/transactionCodingDomain.js'
-import { alignTransactionRuleValues, buildTransactionCodingWorkbook, RULE_HEADERS } from '../src/lib/transactionCodingSharePoint.js'
+import {
+  alignTransactionRuleValues,
+  buildTransactionCodingWorkbook,
+  deleteTransactionRuleFromWorkbook,
+  ensureTransactionCodingWorkspace,
+  RULE_HEADERS,
+} from '../src/lib/transactionCodingSharePoint.js'
 import { attemptTransactionRuleSync } from '../src/handlers/transactionCoding.js'
 import { transactionCodingStorageReady } from '../src/lib/transactionCodingRepository.js'
 
@@ -39,6 +45,49 @@ test('rule writes follow the workbook columns after a column is removed', () => 
   assert.equal(aligned.length, reducedHeaders.length)
   assert.equal(aligned[reducedHeaders.indexOf('Vendor')], 'Scribd')
   assert.equal(aligned[reducedHeaders.indexOf('Updated By')], 'Ayo')
+})
+
+test('user-initiated workbook access uses the delegated Graph token', async (t) => {
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    requests.push({ url: String(url), authorization: new Headers(options.headers).get('Authorization') })
+    if (String(url).includes('items/crm-workbook?')) {
+      return Response.json({ id: 'crm-workbook', parentReference: { id: 'root-folder' } })
+    }
+    if (String(url).endsWith('root-folder:/Transaction%20Coding')) {
+      return Response.json({ id: 'coding-folder', webUrl: 'https://example.test/coding' })
+    }
+    if (String(url).endsWith('coding-folder:/Exports')) {
+      return Response.json({ id: 'exports-folder', webUrl: 'https://example.test/exports' })
+    }
+    if (String(url).endsWith('coding-folder:/Transaction%20Coding.xlsx')) {
+      return Response.json({ id: 'coding-workbook', webUrl: 'https://example.test/workbook' })
+    }
+    return Response.json({ error: { message: 'Unexpected request' } }, { status: 500 })
+  })
+  const workspace = await ensureTransactionCodingWorkspace({ WORKBOOK_ID: 'crm-workbook', DRIVE_ID: 'drive-1' }, 'delegated-token')
+  assert.equal(workspace.workbookItemId, 'coding-workbook')
+  assert.ok(requests.length >= 4)
+  assert.ok(requests.every((request) => request.authorization === 'Bearer delegated-token'))
+})
+
+test('deleting a workbook rule targets its stable rule ID', async (t) => {
+  const deleted = []
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const path = String(url)
+    if (path.endsWith('/columns')) return Response.json({ value: RULE_HEADERS.map((name) => ({ name })) })
+    if (path.includes('/rows?$top=1000')) {
+      return Response.json({ value: [{ index: 3, values: [['rule-1', 'Yes', 100, 'contains', 'SCRIBD']] }] })
+    }
+    if (options.method === 'DELETE') {
+      deleted.push(path)
+      return new Response(null, { status: 204 })
+    }
+    return Response.json({ error: { message: 'Unexpected request' } }, { status: 500 })
+  })
+  const removed = await deleteTransactionRuleFromWorkbook({ driveId: 'drive-1', workbookItemId: 'workbook-1', token: 'delegated-token' }, 'rule-1')
+  assert.equal(removed, true)
+  assert.match(deleted[0], /rows\/itemAt\(index=3\)$/)
 })
 
 test('a temporary SharePoint rule-sync failure does not block statement import', async () => {
