@@ -33,7 +33,6 @@ function publicTransaction(row) {
     sourceRow: Number(row.source_row || 0),
     transactionDate: row.transaction_date,
     rawDescription: row.raw_description,
-    normalizedMerchant: row.normalized_merchant,
     location: row.location,
     city: row.city,
     amountCents: Number(row.amount_cents || 0),
@@ -105,15 +104,15 @@ export async function replaceTransactionCodingRules(db, workbookRules, actor = '
   const rules = workbookRules.map(publicRule).filter((rule) => rule.id && rule.matchPattern)
   const statements = [db.prepare("DELETE FROM transaction_coding_rules WHERE source = 'workbook'")]
   rules.forEach((rule) => statements.push(db.prepare(`INSERT INTO transaction_coding_rules (
-      id, active, priority, match_type, match_pattern, merchant, vendor, vendor_id, project, account,
+      id, active, priority, match_type, match_pattern, vendor, vendor_id, project, account,
       organization, context, notes, source, updated_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'workbook', ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'workbook', ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET active=excluded.active, priority=excluded.priority, match_type=excluded.match_type,
-      match_pattern=excluded.match_pattern, merchant=excluded.merchant, vendor=excluded.vendor,
-      vendor_id=excluded.vendor_id, project=excluded.project, account=excluded.account,
+      match_pattern=excluded.match_pattern, vendor=excluded.vendor, vendor_id=excluded.vendor_id,
+      project=excluded.project, account=excluded.account,
       organization=excluded.organization, context=excluded.context, notes=excluded.notes,
       source='workbook', updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
-    .bind(rule.id, rule.active ? 1 : 0, rule.priority, rule.matchType, rule.matchPattern, rule.merchant, rule.vendor,
+    .bind(rule.id, rule.active ? 1 : 0, rule.priority, rule.matchType, rule.matchPattern, rule.vendor,
       rule.vendorId, rule.project, rule.account, rule.organization, rule.context, rule.notes,
       rule.updatedBy || actor, rule.updatedAt || now, rule.updatedAt || now)))
   statements.push(db.prepare('UPDATE transaction_coding_settings SET rules_synced_at = ?, updated_at = ? WHERE id = 1').bind(now, now))
@@ -136,8 +135,8 @@ export async function recategorizeOpenTransactions(db) {
       batchIds.add(row.batch_id)
       const categorized = categorizeTransaction(publicTransaction(row), rules)
       if (!categorized.ruleId) categorized.status = transactionStatus(categorized)
-      return db.prepare(`UPDATE transaction_coding_transactions SET normalized_merchant=?, vendor=?, vendor_id=?, project=?, account=?, organization=?, status=?, rule_id=?, confidence=?, updated_at=? WHERE id=?`)
-        .bind(categorized.normalizedMerchant || '', categorized.vendor || '', categorized.vendorId || '', categorized.project || '', categorized.account || '', categorized.organization || '', categorized.status, categorized.ruleId, categorized.confidence, new Date().toISOString(), row.id)
+      return db.prepare(`UPDATE transaction_coding_transactions SET vendor=?, vendor_id=?, project=?, account=?, organization=?, status=?, rule_id=?, confidence=?, updated_at=? WHERE id=?`)
+        .bind(categorized.vendor || '', categorized.vendorId || '', categorized.project || '', categorized.account || '', categorized.organization || '', categorized.status, categorized.ruleId, categorized.confidence, new Date().toISOString(), row.id)
     })
     if (statements.length) await db.batch(statements)
   }
@@ -150,15 +149,15 @@ export async function upsertTransactionCodingRule(db, input, actor = '') {
   const rule = publicRule({ ...input, id: cleanText(input.id) || crypto.randomUUID(), updatedAt: now, updatedBy: actor })
   if (!rule.matchPattern) throw new Error('A match pattern is required')
   await db.prepare(`INSERT INTO transaction_coding_rules (
-      id, active, priority, match_type, match_pattern, merchant, vendor, vendor_id, project, account,
+      id, active, priority, match_type, match_pattern, vendor, vendor_id, project, account,
       organization, context, notes, source, updated_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'workbook', ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'workbook', ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET active=excluded.active, priority=excluded.priority, match_type=excluded.match_type,
-      match_pattern=excluded.match_pattern, merchant=excluded.merchant, vendor=excluded.vendor,
-      vendor_id=excluded.vendor_id, project=excluded.project, account=excluded.account,
+      match_pattern=excluded.match_pattern, vendor=excluded.vendor, vendor_id=excluded.vendor_id,
+      project=excluded.project, account=excluded.account,
       organization=excluded.organization, context=excluded.context, notes=excluded.notes,
       updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
-    .bind(rule.id, rule.active ? 1 : 0, rule.priority, rule.matchType, rule.matchPattern, rule.merchant, rule.vendor,
+    .bind(rule.id, rule.active ? 1 : 0, rule.priority, rule.matchType, rule.matchPattern, rule.vendor,
       rule.vendorId, rule.project, rule.account, rule.organization, rule.context, rule.notes, actor, now, now).run()
   return rule
 }
@@ -208,7 +207,6 @@ export async function importTransactionBatch(db, input, actor = '') {
       sourceHash,
       transactionDate: cleanText(source.transactionDate),
       rawDescription: cleanText(source.rawDescription),
-      normalizedMerchant: cleanText(source.normalizedMerchant),
       location: cleanText(source.location),
       city: cleanText(source.city),
       amountCents: Math.round(Number(source.amountCents || 0)),
@@ -222,10 +220,10 @@ export async function importTransactionBatch(db, input, actor = '') {
       VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(id, cleanText(input.fileName) || 'Statement', fileHash, actor, expiresAt(), now, now).run()
     for (let offset = 0; offset < rows.length; offset += 100) {
       await db.batch(rows.slice(offset, offset + 100).map((row) => db.prepare(`INSERT OR IGNORE INTO transaction_coding_transactions (
-        id, batch_id, source_row, source_hash, transaction_date, raw_description, normalized_merchant, location, city,
+        id, batch_id, source_row, source_hash, transaction_date, raw_description, location, city,
         amount_cents, direction, vendor, vendor_id, project, account, organization, status, rule_id, confidence, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(row.id, id, row.sourceRow, row.sourceHash, row.transactionDate, row.rawDescription, row.normalizedMerchant,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(row.id, id, row.sourceRow, row.sourceHash, row.transactionDate, row.rawDescription,
           row.location, row.city, row.amountCents, row.direction, row.vendor || '', row.vendorId || '', row.project || '',
           row.account || '', row.organization || '', row.status, row.ruleId, row.confidence, now, now)))
     }
@@ -252,9 +250,9 @@ export async function listTransactionCodingTransactions(db, { batchId = '', stat
   if (batchId) { conditions.push('batch_id = ?'); bindings.push(batchId) }
   if (status) { conditions.push('status = ?'); bindings.push(status) }
   if (search) {
-    conditions.push('(raw_description LIKE ? OR normalized_merchant LIKE ? OR vendor LIKE ? OR project LIKE ? OR account LIKE ? OR organization LIKE ?)')
+    conditions.push('(raw_description LIKE ? OR vendor LIKE ? OR project LIKE ? OR account LIKE ? OR organization LIKE ?)')
     const term = `%${search}%`
-    bindings.push(term, term, term, term, term, term)
+    bindings.push(term, term, term, term, term)
   }
   const result = await db.prepare(`SELECT * FROM transaction_coding_transactions ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY transaction_date DESC, source_row DESC LIMIT 5000`).bind(...bindings).all()
   return (result.results || []).map(publicTransaction)
@@ -264,7 +262,6 @@ export async function updateTransactionCodingTransaction(db, id, patch) {
   const current = await db.prepare('SELECT * FROM transaction_coding_transactions WHERE id = ?').bind(id).first()
   if (!current) return null
   const next = {
-    normalizedMerchant: cleanText(patch.normalizedMerchant ?? current.normalized_merchant),
     vendor: cleanText(patch.vendor ?? current.vendor),
     vendorId: cleanText(patch.vendorId ?? current.vendor_id),
     project: cleanText(patch.project ?? current.project),
@@ -273,8 +270,8 @@ export async function updateTransactionCodingTransaction(db, id, patch) {
   }
   const status = transactionStatus(next)
   const now = new Date().toISOString()
-  await db.prepare(`UPDATE transaction_coding_transactions SET normalized_merchant=?, vendor=?, vendor_id=?, project=?, account=?, organization=?, status=?, confidence=?, updated_at=? WHERE id=?`)
-    .bind(next.normalizedMerchant, next.vendor, next.vendorId, next.project, next.account, next.organization, status, 'reviewed', now, id).run()
+  await db.prepare(`UPDATE transaction_coding_transactions SET vendor=?, vendor_id=?, project=?, account=?, organization=?, status=?, confidence=?, updated_at=? WHERE id=?`)
+    .bind(next.vendor, next.vendorId, next.project, next.account, next.organization, status, 'reviewed', now, id).run()
   await refreshBatchCounts(db, current.batch_id)
   return publicTransaction(await db.prepare('SELECT * FROM transaction_coding_transactions WHERE id = ?').bind(id).first())
 }
