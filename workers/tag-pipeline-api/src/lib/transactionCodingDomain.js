@@ -20,7 +20,6 @@ export function publicRule(row = {}) {
     priority: Number(row.priority ?? row.Priority ?? 100) || 100,
     matchType: cleanText(row.match_type || row.matchType || row['Match Type'] || 'contains').toLowerCase().replace(/\s+/g, '_'),
     matchPattern: cleanText(row.match_pattern || row.matchPattern || row['Match Pattern']),
-    merchant: cleanText(row.merchant || row.Merchant),
     vendor: cleanText(row.vendor || row.Vendor),
     vendorId: cleanText(row.vendor_id || row.vendorId || row['Vendor ID']),
     project: cleanText(row.project || row.Project),
