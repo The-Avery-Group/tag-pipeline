@@ -27,6 +27,7 @@ export function publicRule(row = {}) {
     organization: cleanText(row.organization || row.Organization),
     context: cleanText(row.context || row.Context),
     notes: cleanText(row.notes || row.Notes),
+    source: cleanText(row.source) || 'workbook',
     updatedBy: cleanText(row.updated_by || row.updatedBy || row['Updated By']),
     updatedAt: cleanText(row.updated_at || row.updatedAt || row['Last Updated']),
   }
