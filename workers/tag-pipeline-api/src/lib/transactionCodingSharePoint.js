@@ -85,7 +85,12 @@ export function buildTransactionCodingWorkbook() {
 async function graphJson(url, token, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${token}`, ...(options.headers || {}) } })
   const body = response.status === 204 ? null : await response.json().catch(() => null)
-  if (!response.ok) throw new Error(body?.error?.message || `SharePoint request failed (${response.status})`)
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `SharePoint request failed (${response.status})`)
+    error.status = response.status
+    error.retryAfter = response.headers.get('Retry-After')
+    throw error
+  }
   return body
 }
 
@@ -137,10 +142,20 @@ export async function ensureTransactionCodingWorkspace(env) {
 }
 
 async function workbookJson(workspace, path, options = {}) {
-  return graphJson(`https://graph.microsoft.com/v1.0/drives/${workspace.driveId}/items/${workspace.workbookItemId}/workbook${path}`, workspace.token, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  })
+  const retryableStatuses = new Set([404, 409, 423, 429, 500, 502, 503, 504])
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await graphJson(`https://graph.microsoft.com/v1.0/drives/${workspace.driveId}/items/${workspace.workbookItemId}/workbook${path}`, workspace.token, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      })
+    } catch (error) {
+      if (attempt === 2 || !retryableStatuses.has(error.status)) throw error
+      const retryAfterMs = Math.min(2000, Math.max(250, Number(error.retryAfter || 0) * 1000 || (attempt + 1) * 350))
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs))
+    }
+  }
+  throw new Error('SharePoint workbook request did not complete')
 }
 
 export async function readTransactionRules(workspace) {
