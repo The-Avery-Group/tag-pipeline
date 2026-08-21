@@ -293,17 +293,16 @@ export async function updateTransactionCodingTransaction(db, id, patch) {
   return publicTransaction(await db.prepare('SELECT * FROM transaction_coding_transactions WHERE id = ?').bind(id).first())
 }
 
-export async function createTransactionCodingExport(db, { batchId, csvText, fileName, archivedItem = null }, actor = '') {
-  const rows = await db.prepare("SELECT id, amount_cents FROM transaction_coding_transactions WHERE batch_id = ? AND status = 'ready' AND exported_at IS NULL ORDER BY transaction_date, source_row").bind(batchId).all()
-  const selected = rows.results || []
-  if (!selected.length) throw new Error('There are no unexported ready transactions in this batch')
+export async function createTransactionCodingExport(db, { batchId, transactionIds, csvText, fileName, archivedItem = null }, actor = '') {
+  const selected = await transactionsForExport(db, batchId, transactionIds)
+  if (!selected.length) throw new Error('There are no selected transactions available to export')
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
   const expiry = expiresAt()
   const total = selected.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0)
-  // Export state is independent from coding state. A completed transaction
-  // remains "ready" so batch totals continue to reconcile; exported_at keeps
-  // it out of later exports from the same batch.
+  // Export state is independent from coding state. Ready and deliberately
+  // selected incomplete rows keep their coding status; exported_at keeps each
+  // row out of later exports from the same batch.
   const statements = selected.map((row) => db.prepare('UPDATE transaction_coding_transactions SET exported_at=?, updated_at=? WHERE id=?').bind(now, now, row.id))
   statements.push(db.prepare(`INSERT INTO transaction_coding_exports (
       id, batch_id, file_name, row_count, total_cents, csv_text, archived, sharepoint_drive_id,
@@ -316,9 +315,16 @@ export async function createTransactionCodingExport(db, { batchId, csvText, file
   return publicExport(await db.prepare('SELECT * FROM transaction_coding_exports WHERE id=?').bind(id).first())
 }
 
-export async function readyTransactionsForExport(db, batchId) {
-  const result = await db.prepare("SELECT * FROM transaction_coding_transactions WHERE batch_id = ? AND status = 'ready' AND exported_at IS NULL ORDER BY transaction_date, source_row").bind(batchId).all()
-  return result.results || []
+export async function transactionsForExport(db, batchId, transactionIds = null) {
+  const result = await db.prepare('SELECT * FROM transaction_coding_transactions WHERE batch_id = ? AND exported_at IS NULL ORDER BY transaction_date, source_row').bind(batchId).all()
+  const available = result.results || []
+  if (!Array.isArray(transactionIds)) return available.filter((row) => row.status === 'ready')
+  const requested = [...new Set(transactionIds.map(cleanText).filter(Boolean))]
+  if (!requested.length) return []
+  const requestedIds = new Set(requested)
+  const selected = available.filter((row) => requestedIds.has(row.id))
+  if (selected.length !== requested.length) throw new Error('One or more selected transactions changed or were already exported. Refresh the transactions and try again.')
+  return selected
 }
 
 export async function listTransactionCodingExports(db) {
