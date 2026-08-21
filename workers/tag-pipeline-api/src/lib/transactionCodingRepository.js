@@ -157,18 +157,19 @@ export async function upsertTransactionCodingRule(db, input, actor = '') {
   const now = new Date().toISOString()
   const rule = publicRule({ ...input, id: cleanText(input.id) || crypto.randomUUID(), updatedAt: now, updatedBy: actor })
   if (!rule.matchPattern) throw new Error('A match pattern is required')
+  const source = rule.source === 'crm_pending' ? 'crm_pending' : 'workbook'
   await db.prepare(`INSERT INTO transaction_coding_rules (
       id, active, priority, match_type, match_pattern, vendor, vendor_id, project, account,
       organization, context, notes, source, updated_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'workbook', ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET active=excluded.active, priority=excluded.priority, match_type=excluded.match_type,
       match_pattern=excluded.match_pattern, vendor=excluded.vendor, vendor_id=excluded.vendor_id,
       project=excluded.project, account=excluded.account,
       organization=excluded.organization, context=excluded.context, notes=excluded.notes,
-      updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
+      source=excluded.source, updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
     .bind(rule.id, rule.active ? 1 : 0, rule.priority, rule.matchType, rule.matchPattern, rule.vendor,
-      rule.vendorId, rule.project, rule.account, rule.organization, rule.context, rule.notes, actor, now, now).run()
-  return rule
+      rule.vendorId, rule.project, rule.account, rule.organization, rule.context, rule.notes, source, actor, now, now).run()
+  return { ...rule, source }
 }
 
 export async function deleteTransactionCodingRule(db, id) {
