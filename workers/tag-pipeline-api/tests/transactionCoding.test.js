@@ -8,7 +8,7 @@ import {
   RULE_HEADERS,
   saveTransactionRuleToWorkbook,
 } from '../src/lib/transactionCodingSharePoint.js'
-import { attemptTransactionRuleSync } from '../src/handlers/transactionCoding.js'
+import { attemptTransactionRuleSync, TRANSACTION_CODING_HTTP_METHODS } from '../src/handlers/transactionCoding.js'
 import { transactionCodingStorageReady } from '../src/lib/transactionCodingRepository.js'
 
 test('categorizes a statement row with the highest-priority matching rule', () => {
@@ -18,6 +18,10 @@ test('categorizes a statement row with the highest-priority matching rule', () =
   ])
   assert.equal(row.ruleId, 'specific')
   assert.equal(row.status, 'ready')
+})
+
+test('transaction coding routes allow rule deletion', () => {
+  assert.equal(TRANSACTION_CODING_HTTP_METHODS.includes('DELETE'), true)
 })
 
 test('neutral export contains coding fields without a Costpoint-specific schema', () => {
