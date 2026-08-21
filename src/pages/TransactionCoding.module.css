@@ -30,7 +30,7 @@
 .previewActions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 12px; }
 .workspace { min-height: 430px; display: flex; flex-direction: column; overflow: hidden; }
 .controls { padding: 10px 12px; border-bottom: .5px solid var(--gray-200); display: grid; grid-template-columns: minmax(210px, 1fr) minmax(220px, 1.5fr) 150px; gap: 8px; }
-.controls input, .controls select, .formGrid input, .ruleInline input, .ruleInline select { width: 100%; min-height: 32px; border: .5px solid var(--gray-200); border-radius: 7px; background: var(--surface-raised); color: var(--gray-900); padding: 6px 9px; font: 12px var(--font); }
+.controls input, .controls select, .formGrid input, .formGrid select, .ruleInline input, .ruleInline select { width: 100%; min-height: 32px; border: .5px solid var(--gray-200); border-radius: 7px; background: var(--surface-raised); color: var(--gray-900); padding: 6px 9px; font: 12px var(--font); }
 .summary { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); border-bottom: .5px solid var(--gray-200); }
 .summary div { padding: 9px 12px; border-right: .5px solid var(--gray-200); }
 .summary div:last-child { border-right: 0; }
