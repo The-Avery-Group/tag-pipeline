@@ -107,7 +107,10 @@ export default function TransactionCoding({ toast }) {
       const result = await importTransactionStatement(preview)
       await loadBase()
       setSelectedBatch(result.batch.id); setPreview(null); setInspection(null); setTab('review')
-      toast?.(result.duplicate ? 'This statement was already imported. Its existing review is open.' : `${result.batch.rowCount} transactions imported.`, result.duplicate ? 'info' : 'success')
+      const message = result.duplicate
+        ? 'This statement was already imported. Its existing review is open.'
+        : `${result.batch.rowCount} transactions imported.`
+      toast?.(result.warning ? `${message} ${result.warning}` : message, result.warning ? 'warning' : result.duplicate ? 'info' : 'success')
     } catch (importError) { setError(importError.message) }
     finally { setBusy('') }
   }
