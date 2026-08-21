@@ -70,8 +70,17 @@ function publicExport(row) {
 
 export async function transactionCodingStorageReady(db) {
   if (!db) return false
-  const row = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='transaction_coding_batches'").first()
-  return Boolean(row)
+  const required = [
+    'transaction_coding_batches',
+    'transaction_coding_transactions',
+    'transaction_coding_rules',
+    'transaction_coding_exports',
+    'transaction_coding_settings',
+  ]
+  const result = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${required.map(() => '?').join(',')})`)
+    .bind(...required).all()
+  const available = new Set((result.results || []).map((row) => row.name))
+  return required.every((name) => available.has(name))
 }
 
 export async function saveTransactionCodingWorkspace(db, workspace) {
@@ -173,13 +182,20 @@ export async function getTransactionCodingBatch(db, batchId) {
 export async function importTransactionBatch(db, input, actor = '') {
   const fileHash = cleanText(input.fileHash)
   if (!fileHash) throw new Error('The statement fingerprint is missing')
-  const existing = await db.prepare('SELECT * FROM transaction_coding_batches WHERE file_hash = ?').bind(fileHash).first()
-  if (existing) return { duplicate: true, batch: publicBatch(existing) }
+  const existing = await db.prepare(`SELECT batch.*, COUNT(txn.id) AS persisted_rows
+      FROM transaction_coding_batches batch
+      LEFT JOIN transaction_coding_transactions txn ON txn.batch_id = batch.id
+      WHERE batch.file_hash = ?
+      GROUP BY batch.id`).bind(fileHash).first()
+  if (existing && Number(existing.persisted_rows || 0) > 0) return { duplicate: true, batch: publicBatch(existing) }
+  if (existing) {
+    // A previous interrupted import may have created the batch before any rows
+    // were committed. Remove that shell so a retry can complete normally.
+    await db.prepare('DELETE FROM transaction_coding_batches WHERE id = ?').bind(existing.id).run()
+  }
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
   const rules = await listTransactionCodingRules(db)
-  await db.prepare(`INSERT INTO transaction_coding_batches (id, file_name, file_hash, imported_by, expires_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(id, cleanText(input.fileName) || 'Statement', fileHash, actor, expiresAt(), now, now).run()
   const sourceHashes = new Set()
   const rows = (Array.isArray(input.rows) ? input.rows : []).slice(0, 5000).map((source, index) => {
     const sourceHash = cleanText(source.sourceHash)
@@ -199,16 +215,30 @@ export async function importTransactionBatch(db, input, actor = '') {
       direction: source.direction === 'credit' ? 'credit' : 'charge',
     }, rules)
   }).filter((row) => row && row.rawDescription && row.amountCents !== 0)
-  for (let offset = 0; offset < rows.length; offset += 50) {
-    await db.batch(rows.slice(offset, offset + 50).map((row) => db.prepare(`INSERT OR IGNORE INTO transaction_coding_transactions (
+  if (!rows.length) throw new Error('The statement contains no non-zero transaction rows after normalization')
+
+  try {
+    await db.prepare(`INSERT INTO transaction_coding_batches (id, file_name, file_hash, imported_by, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(id, cleanText(input.fileName) || 'Statement', fileHash, actor, expiresAt(), now, now).run()
+    for (let offset = 0; offset < rows.length; offset += 100) {
+      await db.batch(rows.slice(offset, offset + 100).map((row) => db.prepare(`INSERT OR IGNORE INTO transaction_coding_transactions (
         id, batch_id, source_row, source_hash, transaction_date, raw_description, normalized_merchant, location, city,
         amount_cents, direction, vendor, vendor_id, project, account, organization, status, rule_id, confidence, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(row.id, id, row.sourceRow, row.sourceHash, row.transactionDate, row.rawDescription, row.normalizedMerchant,
-        row.location, row.city, row.amountCents, row.direction, row.vendor || '', row.vendorId || '', row.project || '',
-        row.account || '', row.organization || '', row.status, row.ruleId, row.confidence, now, now)))
+        .bind(row.id, id, row.sourceRow, row.sourceHash, row.transactionDate, row.rawDescription, row.normalizedMerchant,
+          row.location, row.city, row.amountCents, row.direction, row.vendor || '', row.vendorId || '', row.project || '',
+          row.account || '', row.organization || '', row.status, row.ruleId, row.confidence, now, now)))
+    }
+    return { duplicate: false, batch: await refreshBatchCounts(db, id) }
+  } catch (error) {
+    try {
+      await db.prepare('DELETE FROM transaction_coding_transactions WHERE batch_id = ?').bind(id).run()
+      await db.prepare('DELETE FROM transaction_coding_batches WHERE id = ?').bind(id).run()
+    } catch (cleanupError) {
+      console.error(JSON.stringify({ event: 'transaction_coding_import_cleanup_failed', batchId: id, message: cleanupError.message }))
+    }
+    throw error
   }
-  return { duplicate: false, batch: await refreshBatchCounts(db, id) }
 }
 
 export async function listTransactionCodingBatches(db) {
