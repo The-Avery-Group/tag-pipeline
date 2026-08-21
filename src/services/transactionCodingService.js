@@ -12,6 +12,8 @@ export const getTransactions = (batchId, status = '', search = '') => {
 export const updateTransaction = (id, payload) => workerJson(`/transaction-coding/transactions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 export const getTransactionRules = (refresh = false) => workerJson(`/transaction-coding/rules${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' }).then((data) => data.rules || [])
 export const createTransactionRule = (payload) => workerJson('/transaction-coding/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+export const updateTransactionRule = (id, payload) => workerJson(`/transaction-coding/rules/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+export const deleteTransactionRule = (id) => workerJson(`/transaction-coding/rules/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const getTransactionExports = () => workerJson('/transaction-coding/exports', { cache: 'no-store' }).then((data) => data.exports || [])
 export const getTransactionExport = (id) => workerJson(`/transaction-coding/exports/${encodeURIComponent(id)}`, { cache: 'no-store' }).then((data) => data.export)
 export const createTransactionExport = (payload) => workerJson('/transaction-coding/exports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
