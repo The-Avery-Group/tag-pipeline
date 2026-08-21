@@ -7,7 +7,7 @@ const WORKBOOK_NAME = 'Transaction Coding.xlsx'
 const EXPORTS_NAME = 'Exports'
 
 export const RULE_HEADERS = [
-  'Rule ID', 'Active', 'Priority', 'Match Type', 'Match Pattern', 'Merchant', 'Vendor', 'Vendor ID',
+  'Rule ID', 'Active', 'Priority', 'Match Type', 'Match Pattern', 'Vendor', 'Vendor ID',
   'Project', 'Account', 'Organization', 'Context', 'Notes', 'Last Updated', 'Updated By',
 ]
 
@@ -63,7 +63,7 @@ function tableXml(id, name, headers, rowCount) {
 
 export function buildTransactionCodingWorkbook() {
   const sheets = [
-    { name: 'Rules', table: 'TransactionMappingsTable', headers: RULE_HEADERS, rows: [RULE_HEADERS, ['', 'Yes', 100, 'contains', '', '', '', '', '', '', '', '', '', '', '']] },
+    { name: 'Rules', table: 'TransactionMappingsTable', headers: RULE_HEADERS, rows: [RULE_HEADERS, ['', 'Yes', 100, 'contains', '', ...Array(RULE_HEADERS.length - 5).fill('')]] },
     { name: 'Exports', table: 'TransactionCodingExportsTable', headers: EXPORT_HEADERS, rows: [EXPORT_HEADERS, ['', '', '', 0, 0, '', '', '', '']] },
     { name: 'Settings', table: 'TransactionCodingSettingsTable', headers: SETTINGS_HEADERS, rows: [SETTINGS_HEADERS, ['Retention Days', 60, 'Transaction rows and in-app export history are retained for 60 days'], ['Archive Exports', 'Yes', 'Save generated CSV files to SharePoint by default']] },
   ]
@@ -158,28 +158,39 @@ async function workbookJson(workspace, path, options = {}) {
   throw new Error('SharePoint workbook request did not complete')
 }
 
-export async function readTransactionRules(workspace) {
+async function readTransactionRuleTable(workspace) {
   const [columns, rows] = await Promise.all([
     workbookJson(workspace, '/tables/TransactionMappingsTable/columns'),
     workbookJson(workspace, '/tables/TransactionMappingsTable/rows?$top=1000'),
   ])
   const headers = (columns?.value || []).map((column) => column.name)
-  return (rows?.value || []).map((row) => ({
-    _rowIndex: row.index,
-    ...Object.fromEntries(headers.map((header, index) => [header, row.values?.[0]?.[index] ?? ''])),
-  }))
+  return {
+    headers,
+    rows: (rows?.value || []).map((row) => ({
+      _rowIndex: row.index,
+      ...Object.fromEntries(headers.map((header, index) => [header, row.values?.[0]?.[index] ?? ''])),
+    })),
+  }
+}
+
+export async function readTransactionRules(workspace) {
+  return (await readTransactionRuleTable(workspace)).rows
 }
 
 export async function saveTransactionRuleToWorkbook(workspace, values) {
-  const rows = await readTransactionRules(workspace)
+  const { headers, rows } = await readTransactionRuleTable(workspace)
+  const valuesByHeader = Object.fromEntries(RULE_HEADERS.map((header, index) => [header, values[index] ?? '']))
+  // Older workbooks may still contain the retired Merchant column. Keep the
+  // write shape compatible while leaving that legacy field blank.
+  const compatibleValues = headers.map((header) => valuesByHeader[header] ?? '')
   const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(values[0] || '').trim())
   if (existing) {
     await workbookJson(workspace, `/tables/TransactionMappingsTable/rows/itemAt(index=${existing._rowIndex})/range`, {
-      method: 'PATCH', body: JSON.stringify({ values: [values] }),
+      method: 'PATCH', body: JSON.stringify({ values: [compatibleValues] }),
     })
   } else {
     await workbookJson(workspace, '/tables/TransactionMappingsTable/rows/add', {
-      method: 'POST', body: JSON.stringify({ index: null, values: [values] }),
+      method: 'POST', body: JSON.stringify({ index: null, values: [compatibleValues] }),
     })
   }
 }
