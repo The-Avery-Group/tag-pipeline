@@ -133,7 +133,16 @@ export async function recategorizeOpenTransactions(db) {
   for (let offset = 0; offset < rows.length; offset += 50) {
     const statements = rows.slice(offset, offset + 50).map((row) => {
       batchIds.add(row.batch_id)
-      const categorized = categorizeTransaction(publicTransaction(row), rules)
+      const categorized = categorizeTransaction({
+        ...publicTransaction(row),
+        vendor: '',
+        vendorId: '',
+        project: '',
+        account: '',
+        organization: '',
+        ruleId: null,
+        confidence: 'none',
+      }, rules)
       if (!categorized.ruleId) categorized.status = transactionStatus(categorized)
       return db.prepare(`UPDATE transaction_coding_transactions SET vendor=?, vendor_id=?, project=?, account=?, organization=?, status=?, rule_id=?, confidence=?, updated_at=? WHERE id=?`)
         .bind(categorized.vendor || '', categorized.vendorId || '', categorized.project || '', categorized.account || '', categorized.organization || '', categorized.status, categorized.ruleId, categorized.confidence, new Date().toISOString(), row.id)
@@ -160,6 +169,13 @@ export async function upsertTransactionCodingRule(db, input, actor = '') {
     .bind(rule.id, rule.active ? 1 : 0, rule.priority, rule.matchType, rule.matchPattern, rule.vendor,
       rule.vendorId, rule.project, rule.account, rule.organization, rule.context, rule.notes, actor, now, now).run()
   return rule
+}
+
+export async function deleteTransactionCodingRule(db, id) {
+  const ruleId = cleanText(id)
+  if (!ruleId) return false
+  const result = await db.prepare('DELETE FROM transaction_coding_rules WHERE id = ?').bind(ruleId).run()
+  return Number(result?.meta?.changes || 0) > 0
 }
 
 async function refreshBatchCounts(db, batchId) {
