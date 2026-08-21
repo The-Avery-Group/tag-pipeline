@@ -39,6 +39,9 @@ function matches(rule, description) {
   if (!haystack || !needle) return false
   if (rule.matchType === 'exact') return haystack === needle
   if (rule.matchType === 'starts_with' || rule.matchType === 'starts with') return haystack.startsWith(needle)
+  if (rule.matchType === 'whole_word' || rule.matchType === 'whole word') {
+    return haystack === needle || haystack.startsWith(`${needle} `) || haystack.endsWith(` ${needle}`) || haystack.includes(` ${needle} `)
+  }
   if (rule.matchType === 'regex') {
     try { return new RegExp(rule.matchPattern, 'i').test(cleanText(description)) } catch { return false }
   }
