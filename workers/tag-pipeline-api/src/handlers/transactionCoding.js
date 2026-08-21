@@ -7,7 +7,7 @@ import {
   listTransactionCodingExports,
   listTransactionCodingRules,
   listTransactionCodingTransactions,
-  readyTransactionsForExport,
+  transactionsForExport,
   recategorizeOpenTransactions,
   replaceTransactionCodingRules,
   saveTransactionCodingWorkspace,
@@ -263,8 +263,17 @@ export async function handleTransactionCoding(req, env, identity) {
     const body = await req.json().catch(() => ({}))
     const batchId = String(body.batchId || '').trim()
     if (!batchId) return json({ error: 'Select an import batch first.' }, 400)
-    const rows = await readyTransactionsForExport(env.EBUY_DB, batchId)
-    if (!rows.length) return json({ error: 'There are no unexported ready transactions in this batch.' }, 409)
+    const transactionIds = Array.isArray(body.transactionIds)
+      ? [...new Set(body.transactionIds.map(cleanText).filter(Boolean))].slice(0, 5000)
+      : null
+    if (Array.isArray(transactionIds) && !transactionIds.length) return json({ error: 'Select at least one transaction to export.' }, 400)
+    let rows
+    try {
+      rows = await transactionsForExport(env.EBUY_DB, batchId, transactionIds)
+    } catch (error) {
+      return json({ error: error.message, code: 'transaction_selection_changed' }, 409)
+    }
+    if (!rows.length) return json({ error: 'There are no selected transactions available to export.' }, 409)
     const csv = buildNeutralExportCsv(rows)
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const fileName = `${safeFilePart(body.fileName || 'Transaction-Coding')}-${timestamp}.csv`
@@ -280,7 +289,7 @@ export async function handleTransactionCoding(req, env, identity) {
         warning = `CSV generated, but SharePoint archiving failed: ${error.message}`
       }
     }
-    const exported = await createTransactionCodingExport(env.EBUY_DB, { batchId, csvText: csv, fileName, archivedItem }, actor)
+    const exported = await createTransactionCodingExport(env.EBUY_DB, { batchId, transactionIds: rows.map((row) => row.id), csvText: csv, fileName, archivedItem }, actor)
     if (workspace) {
       try {
         await appendTransactionExportHistory(workspace, [
