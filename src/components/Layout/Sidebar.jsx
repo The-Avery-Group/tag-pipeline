@@ -25,6 +25,7 @@ function NavIcon({ name }) {
     contacts: <><circle cx="9" cy="8" r="3"/><path d="M3 20c.5-3.5 2.5-5 6-5s5.5 1.5 6 5M17 7h4M19 5v4"/></>,
     partners: <><path d="M8 12 5.5 9.5a2.2 2.2 0 0 0-3 3L7 17l4-4M16 12l2.5-2.5a2.2 2.2 0 0 1 3 3L17 17l-4-4"/><path d="m9 14 2-2 2 2"/></>,
     advisor: <><path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6ZM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></>,
+    transactions: <><path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21Z"/><path d="M8 7h8M8 11h8M8 15h5"/></>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1-2.1 2.1-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.1h-3v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1-2.1-2.1.1-.1A1.6 1.6 0 0 0 7.2 15a1.6 1.6 0 0 0-1.5-1H5.6v-3h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1L8.9 6l.1.1a1.6 1.6 0 0 0 1.8.3 1.6 1.6 0 0 0 1-1.5v-.1h3v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1 2.1 2.1-.1.1a1.6 1.6 0 0 0-.3 1.8 1.6 1.6 0 0 0 1.5 1h.1v3h-.1a1.6 1.6 0 0 0-1.5 1Z"/></>,
     sun: <><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></>,
     moon: <path d="M20.5 15.2A8.4 8.4 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"/>,
@@ -93,6 +94,18 @@ export default function Sidebar({ collapsed = false, onCollapsedChange, onSearch
             <span className={styles.navLabel}>{item.label}</span>
           </NavLink>
         ))}
+        <div className={styles.financeSection}>
+          <span className={styles.financeLabel}>Finance</span>
+          <NavLink
+            to="/transaction-coding"
+            className={({ isActive }) => `${styles.navItem} ${isActive ? styles.active : ''}`}
+            title={collapsed ? 'Transaction Coding' : undefined}
+            aria-label={collapsed ? 'Transaction Coding' : undefined}
+          >
+            <NavIcon name="transactions" />
+            <span className={styles.navLabel}>Transaction Coding</span>
+          </NavLink>
+        </div>
       </nav>
 
       <div className={styles.footer}>
