@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { strFromU8, unzipSync } from 'fflate'
 import { buildNeutralExportCsv, categorizeTransaction } from '../src/lib/transactionCodingDomain.js'
-import { buildTransactionCodingWorkbook } from '../src/lib/transactionCodingSharePoint.js'
+import { alignTransactionRuleValues, buildTransactionCodingWorkbook, RULE_HEADERS } from '../src/lib/transactionCodingSharePoint.js'
 import { attemptTransactionRuleSync } from '../src/handlers/transactionCoding.js'
 import { transactionCodingStorageReady } from '../src/lib/transactionCodingRepository.js'
 
@@ -30,6 +30,15 @@ test('generated workbook contains the rules, exports, and settings tables', () =
   assert.ok(files.includes('xl/tables/table2.xml'))
   assert.ok(files.includes('xl/tables/table3.xml'))
   assert.doesNotMatch(strFromU8(archive['xl/tables/table1.xml']), /name="Merchant"/)
+})
+
+test('rule writes follow the workbook columns after a column is removed', () => {
+  const values = ['rule-1', 'Yes', 100, 'contains', 'SCRIBD', 'Scribd', 'V-1', 'P1', 'A1', 'O1', '', '', '2026-08-21', 'Ayo']
+  const reducedHeaders = RULE_HEADERS.filter((header) => header !== 'Context')
+  const aligned = alignTransactionRuleValues(reducedHeaders, values)
+  assert.equal(aligned.length, reducedHeaders.length)
+  assert.equal(aligned[reducedHeaders.indexOf('Vendor')], 'Scribd')
+  assert.equal(aligned[reducedHeaders.indexOf('Updated By')], 'Ayo')
 })
 
 test('a temporary SharePoint rule-sync failure does not block statement import', async () => {
