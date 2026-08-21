@@ -177,12 +177,14 @@ export async function readTransactionRules(workspace) {
   return (await readTransactionRuleTable(workspace)).rows
 }
 
+export function alignTransactionRuleValues(headers, values) {
+  const valuesByHeader = Object.fromEntries(RULE_HEADERS.map((header, index) => [header, values[index] ?? '']))
+  return headers.map((header) => valuesByHeader[header] ?? '')
+}
+
 export async function saveTransactionRuleToWorkbook(workspace, values) {
   const { headers, rows } = await readTransactionRuleTable(workspace)
-  const valuesByHeader = Object.fromEntries(RULE_HEADERS.map((header, index) => [header, values[index] ?? '']))
-  // Older workbooks may still contain the retired Merchant column. Keep the
-  // write shape compatible while leaving that legacy field blank.
-  const compatibleValues = headers.map((header) => valuesByHeader[header] ?? '')
+  const compatibleValues = alignTransactionRuleValues(headers, values)
   const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(values[0] || '').trim())
   if (existing) {
     await workbookJson(workspace, `/tables/TransactionMappingsTable/rows/itemAt(index=${existing._rowIndex})/range`, {
