@@ -5,6 +5,8 @@ const DEFAULT_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_U
 const WORKSPACE_NAME = 'Transaction Coding'
 const WORKBOOK_NAME = 'Transaction Coding.xlsx'
 const EXPORTS_NAME = 'Exports'
+const RULE_SHEET_NAME = 'Rules'
+const RULE_TABLE_NAME = 'TransactionMappingsTable'
 
 export const RULE_HEADERS = [
   'Rule ID', 'Active', 'Priority', 'Match Type', 'Match Pattern', 'Vendor', 'Vendor ID',
@@ -88,6 +90,7 @@ async function graphJson(url, token, options = {}) {
   if (!response.ok) {
     const error = new Error(body?.error?.message || `SharePoint request failed (${response.status})`)
     error.status = response.status
+    error.code = body?.error?.code || ''
     error.retryAfter = response.headers.get('Retry-After')
     throw error
   }
@@ -142,15 +145,16 @@ export async function ensureTransactionCodingWorkspace(env, delegatedToken = '')
 }
 
 async function workbookJson(workspace, path, options = {}) {
+  const { retryNotFound = true, ...requestOptions } = options
   const retryableStatuses = new Set([404, 409, 423, 429, 500, 502, 503, 504])
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await graphJson(`https://graph.microsoft.com/v1.0/drives/${workspace.driveId}/items/${workspace.workbookItemId}/workbook${path}`, workspace.token, {
-        ...options,
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...requestOptions,
+        headers: { 'Content-Type': 'application/json', ...(requestOptions.headers || {}) },
       })
     } catch (error) {
-      if (attempt === 2 || !retryableStatuses.has(error.status)) throw error
+      if (attempt === 2 || !retryableStatuses.has(error.status) || (error.status === 404 && !retryNotFound)) throw error
       const retryAfterMs = Math.min(2000, Math.max(250, Number(error.retryAfter || 0) * 1000 || (attempt + 1) * 350))
       await new Promise((resolve) => setTimeout(resolve, retryAfterMs))
     }
@@ -158,13 +162,95 @@ async function workbookJson(workspace, path, options = {}) {
   throw new Error('SharePoint workbook request did not complete')
 }
 
+function workbookTablePath(tableKey, suffix = '') {
+  return `/tables/${encodeURIComponent(tableKey)}${suffix}`
+}
+
+async function tableHeaders(workspace, tableKey) {
+  const columns = await workbookJson(workspace, workbookTablePath(tableKey, '/columns'), { retryNotFound: false })
+  return (columns?.value || []).map((column) => column.name)
+}
+
+async function resolveTransactionRuleTable(workspace) {
+  try {
+    const table = await workbookJson(workspace, workbookTablePath(RULE_TABLE_NAME), { retryNotFound: false })
+    return table?.id || table?.name || RULE_TABLE_NAME
+  } catch (error) {
+    if (error.status !== 404) throw error
+  }
+
+  let worksheets = await workbookJson(workspace, '/worksheets')
+  let sheet = (worksheets?.value || []).find((item) => String(item.name || '').trim().toLowerCase() === RULE_SHEET_NAME.toLowerCase())
+  if (!sheet) {
+    sheet = await workbookJson(workspace, '/worksheets/add', {
+      method: 'POST',
+      body: JSON.stringify({ name: RULE_SHEET_NAME }),
+    })
+    worksheets = { value: [...(worksheets?.value || []), sheet] }
+  }
+  const sheetKey = sheet?.id || sheet?.name || RULE_SHEET_NAME
+  const sheetPath = `/worksheets/${encodeURIComponent(sheetKey)}`
+  const tables = await workbookJson(workspace, `${sheetPath}/tables`)
+  for (const table of tables?.value || []) {
+    const tableKey = table.id || table.name
+    const headers = await tableHeaders(workspace, tableKey).catch(() => [])
+    if (headers.includes('Rule ID') && headers.includes('Match Pattern')) {
+      if (table.name !== RULE_TABLE_NAME) {
+        await workbookJson(workspace, workbookTablePath(tableKey), {
+          method: 'PATCH',
+          body: JSON.stringify({ name: RULE_TABLE_NAME }),
+        })
+      }
+      return tableKey
+    }
+  }
+
+  let values = []
+  try {
+    const usedRange = await workbookJson(workspace, `${sheetPath}/usedRange(valuesOnly=true)`, { retryNotFound: false })
+    values = Array.isArray(usedRange?.values) ? usedRange.values : []
+  } catch (error) {
+    if (error.status !== 404) throw error
+  }
+  const existingHeaders = Array.isArray(values[0]) ? values[0].map((value) => String(value || '').trim()) : []
+  if (existingHeaders.some(Boolean) && !(existingHeaders.includes('Rule ID') && existingHeaders.includes('Match Pattern'))) {
+    throw new Error('The Rules worksheet exists but does not contain the categorization rule columns')
+  }
+  const headers = existingHeaders.some(Boolean) ? existingHeaders : RULE_HEADERS
+  if (!values.length) {
+    values = [headers, Array(headers.length).fill('')]
+    const address = `A1:${columnName(headers.length - 1)}2`
+    await workbookJson(workspace, `${sheetPath}/range(address='${address}')`, {
+      method: 'PATCH',
+      body: JSON.stringify({ values }),
+    })
+  }
+  const rowCount = Math.max(2, values.length)
+  const address = `A1:${columnName(headers.length - 1)}${rowCount}`
+  const table = await workbookJson(workspace, `${sheetPath}/tables/add`, {
+    method: 'POST',
+    body: JSON.stringify({ address, hasHeaders: true }),
+  })
+  const tableKey = table?.id || table?.name
+  if (!tableKey) throw new Error('The categorization rules table could not be repaired')
+  if (table.name !== RULE_TABLE_NAME) {
+    await workbookJson(workspace, workbookTablePath(tableKey), {
+      method: 'PATCH',
+      body: JSON.stringify({ name: RULE_TABLE_NAME }),
+    })
+  }
+  return tableKey
+}
+
 async function readTransactionRuleTable(workspace) {
+  const tableKey = await resolveTransactionRuleTable(workspace)
   const [columns, rows] = await Promise.all([
-    workbookJson(workspace, '/tables/TransactionMappingsTable/columns'),
-    workbookJson(workspace, '/tables/TransactionMappingsTable/rows?$top=1000'),
+    workbookJson(workspace, workbookTablePath(tableKey, '/columns')),
+    workbookJson(workspace, workbookTablePath(tableKey, '/rows?$top=1000')),
   ])
   const headers = (columns?.value || []).map((column) => column.name)
   return {
+    tableKey,
     headers,
     rows: (rows?.value || []).map((row) => ({
       _rowIndex: row.index,
@@ -183,25 +269,25 @@ export function alignTransactionRuleValues(headers, values) {
 }
 
 export async function saveTransactionRuleToWorkbook(workspace, values) {
-  const { headers, rows } = await readTransactionRuleTable(workspace)
+  const { tableKey, headers, rows } = await readTransactionRuleTable(workspace)
   const compatibleValues = alignTransactionRuleValues(headers, values)
   const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(values[0] || '').trim())
   if (existing) {
-    await workbookJson(workspace, `/tables/TransactionMappingsTable/rows/itemAt(index=${existing._rowIndex})/range`, {
+    await workbookJson(workspace, workbookTablePath(tableKey, `/rows/itemAt(index=${existing._rowIndex})/range`), {
       method: 'PATCH', body: JSON.stringify({ values: [compatibleValues] }),
     })
   } else {
-    await workbookJson(workspace, '/tables/TransactionMappingsTable/rows/add', {
+    await workbookJson(workspace, workbookTablePath(tableKey, '/rows/add'), {
       method: 'POST', body: JSON.stringify({ index: null, values: [compatibleValues] }),
     })
   }
 }
 
 export async function deleteTransactionRuleFromWorkbook(workspace, ruleId) {
-  const { rows } = await readTransactionRuleTable(workspace)
+  const { tableKey, rows } = await readTransactionRuleTable(workspace)
   const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(ruleId || '').trim())
   if (!existing) return false
-  await workbookJson(workspace, `/tables/TransactionMappingsTable/rows/itemAt(index=${existing._rowIndex})`, {
+  await workbookJson(workspace, workbookTablePath(tableKey, `/rows/itemAt(index=${existing._rowIndex})`), {
     method: 'DELETE',
   })
   return true
