@@ -33,7 +33,7 @@ import { handlePartnerWorkspaces } from './handlers/partnerWorkspaces.js'
 import { handleOpportunityAlerts } from './handlers/opportunityAlerts.js'
 import { purgeOldOpportunityAlertEvents } from './lib/opportunityAlerts.js'
 import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
-import { handleTransactionCoding } from './handlers/transactionCoding.js'
+import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './handlers/transactionCoding.js'
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ export default {
       } else if (path.startsWith('/partner-workspaces') && ['GET', 'POST'].includes(req.method)) {
         response = await handlePartnerWorkspaces(req, env)
 
-      } else if (path.startsWith('/transaction-coding') && ['GET', 'POST', 'PATCH'].includes(req.method)) {
+      } else if (path.startsWith('/transaction-coding') && TRANSACTION_CODING_HTTP_METHODS.includes(req.method)) {
         response = await handleTransactionCoding(req, env, identity)
 
       } else {
