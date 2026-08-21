@@ -1,0 +1,64 @@
+.page { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--gray-50); }
+.content { min-height: 0; flex: 1; overflow: auto; padding: 18px 22px 28px; }
+.error { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; padding: 10px 12px; border: .5px solid var(--error-border); border-radius: 8px; background: var(--red-50); color: var(--red-600); font-size: 12px; }
+.error button, .rowActions button, .rowActions a, .reviewBtn { border: 0; background: none; color: var(--blue-600); font: inherit; cursor: pointer; text-decoration: none; }
+.tabRow { display: flex; align-items: center; gap: 4px; border-bottom: .5px solid var(--gray-200); margin-bottom: 14px; }
+.tabRow button { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--gray-500); padding: 9px 12px; font: 500 12px var(--font); cursor: pointer; }
+.tabRow button span { margin-left: 4px; color: var(--gray-400); }
+.tabRow .activeTab { color: var(--blue-800); border-bottom-color: var(--blue-600); }
+.importCard, .previewCard, .panel, .workspace { background: var(--surface); border: .5px solid var(--gray-200); border-radius: 10px; }
+.importCard { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 16px; margin-bottom: 12px; }
+.importCard h2, .panelHeader h2 { margin: 0 0 3px; font-size: 14px; }
+.importCard p, .panelHeader p { color: var(--gray-500); font-size: 11px; margin: 0; }
+.previewCard { padding: 14px 16px; margin-bottom: 12px; }
+.previewTitle { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.previewTitle > div { display: grid; gap: 3px; }
+.previewCard span { color: var(--gray-500); font-size: 11px; }
+.headerSelector { align-items: center; display: grid; gap: 8px; grid-template-columns: 110px minmax(0, 1fr); margin-top: 14px; }
+.headerSelector > span, .mappingGrid label > span { color: var(--gray-500); font-size: 10px; font-weight: 600; }
+.headerSelector select, .mappingGrid select { width: 100%; min-height: 32px; border: .5px solid var(--gray-200); border-radius: 7px; background: var(--surface-raised); color: var(--gray-900); padding: 5px 8px; font: 11px var(--font); }
+.mappingGrid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 9px; margin-top: 12px; }
+.mappingGrid label { display: grid; gap: 4px; }
+.mappingHint { color: var(--gray-500); font-size: 10px; margin: 9px 0 0; }
+.mappingError { background: var(--amber-50); border: .5px solid var(--amber-600); border-radius: 7px; color: var(--amber-600); font-size: 11px; margin-top: 10px; padding: 8px 10px; }
+.normalizedPreview { border-top: .5px solid var(--gray-200); margin-top: 12px; padding-top: 12px; }
+.normalizedPreview h3 { font-size: 11px; margin: 0 0 7px; }
+.normalizedPreview > div { border: .5px solid var(--gray-200); border-radius: 7px; max-height: 190px; overflow: auto; }
+.normalizedPreview table { border-collapse: collapse; font-size: 10px; width: 100%; }
+.normalizedPreview th, .normalizedPreview td { border-bottom: .5px solid var(--gray-200); padding: 6px 8px; text-align: left; }
+.normalizedPreview th { background: var(--gray-50); color: var(--gray-500); position: sticky; top: 0; }
+.previewActions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 12px; }
+.workspace { min-height: 430px; display: flex; flex-direction: column; overflow: hidden; }
+.controls { padding: 10px 12px; border-bottom: .5px solid var(--gray-200); display: grid; grid-template-columns: minmax(210px, 1fr) minmax(220px, 1.5fr) 150px; gap: 8px; }
+.controls input, .controls select, .formGrid input, .ruleInline input, .ruleInline select { width: 100%; min-height: 32px; border: .5px solid var(--gray-200); border-radius: 7px; background: var(--surface-raised); color: var(--gray-900); padding: 6px 9px; font: 12px var(--font); }
+.summary { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); border-bottom: .5px solid var(--gray-200); }
+.summary div { padding: 9px 12px; border-right: .5px solid var(--gray-200); }
+.summary div:last-child { border-right: 0; }
+.summary strong { display: block; font-size: 14px; }
+.summary span { display: block; margin-top: 2px; color: var(--gray-500); font-size: 10px; }
+.tableWrap { overflow: auto; min-height: 0; flex: 1; }
+.tableWrap table { width: 100%; border-collapse: collapse; font-size: 11px; white-space: nowrap; }
+.tableWrap th { position: sticky; top: 0; z-index: 1; background: var(--gray-50); color: var(--gray-500); font-weight: 600; text-align: left; }
+.tableWrap th, .tableWrap td { padding: 8px 10px; border-bottom: .5px solid var(--gray-200); vertical-align: top; }
+.tableWrap td:nth-child(2) { min-width: 240px; max-width: 340px; white-space: normal; }
+.secondary { display: block; color: var(--gray-500); margin-top: 2px; font-size: 10px; }
+.credit { color: var(--green-600); }
+.status { display: inline-flex; padding: 3px 6px; border-radius: 999px; font-size: 10px; background: var(--gray-100); color: var(--gray-600); }
+.ready { background: var(--green-50); color: var(--green-600); }.review { background: var(--amber-50); color: var(--amber-600); }.uncategorized { background: var(--red-50); color: var(--red-600); }.exported { background: var(--blue-50); color: var(--blue-800); }
+.reviewBtn { border: .5px solid var(--gray-200); border-radius: 6px; padding: 4px 7px; color: var(--gray-700); }
+.exportBar { display: flex; align-items: center; gap: 14px; justify-content: flex-end; padding: 10px 12px; border-top: .5px solid var(--gray-200); font-size: 11px; color: var(--gray-500); }
+.exportBar label { margin-right: auto; display: flex; gap: 6px; align-items: center; color: var(--gray-600); }
+.panel { min-height: 420px; display: flex; flex-direction: column; overflow: hidden; }
+.panelHeader { padding: 13px 15px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: .5px solid var(--gray-200); }
+.rowActions { display: flex; gap: 9px; }.empty { color: var(--gray-500); padding: 36px; text-align: center; font-size: 12px; }
+.drawerBackdrop { position: fixed; inset: 0; z-index: 90; background: var(--overlay); display: flex; justify-content: flex-end; }
+.drawer { width: min(430px, 92vw); height: 100%; background: var(--surface); box-shadow: -8px 0 25px var(--shadow-color); display: flex; flex-direction: column; padding: 18px; overflow: auto; }
+.drawerHeader { display: flex; justify-content: space-between; align-items: flex-start; }
+.drawerHeader div { display: grid; gap: 4px; }.drawerHeader span { color: var(--gray-500); font-size: 11px; }.drawerHeader strong { font-size: 20px; }.drawerHeader button { border: 0; background: none; color: var(--gray-500); font-size: 24px; cursor: pointer; }
+.raw { margin: 14px 0; padding: 10px; background: var(--gray-50); border-radius: 7px; color: var(--gray-600); font-size: 11px; line-height: 1.5; }
+.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.formGrid label, .ruleInline label { display: grid; gap: 4px; }.formGrid label span, .ruleInline label span { color: var(--gray-500); font-size: 10px; text-transform: capitalize; }
+.remember { display: flex; gap: 7px; align-items: center; margin-top: 14px; font-size: 11px; color: var(--gray-600); }
+.ruleInline { display: grid; grid-template-columns: 1fr 130px; gap: 7px; align-items: end; margin-top: 9px; }.drawerFooter { margin-top: auto; display: flex; justify-content: flex-end; gap: 7px; padding-top: 20px; }
+.csvPreview { overflow: auto; max-height: 360px; padding: 10px; background: var(--gray-900); color: var(--gray-50); border-radius: 7px; font-size: 10px; line-height: 1.6; }.previewNote { margin-top: 8px; color: var(--gray-500); font-size: 10px; }
+@media (max-width: 900px) { .controls { grid-template-columns: 1fr 1fr; }.controls select:last-child { grid-column: 1 / -1; }.summary { grid-template-columns: repeat(3, 1fr); }.summary div { border-bottom: .5px solid var(--gray-200); }.formGrid { grid-template-columns: 1fr; }.mappingGrid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .content { padding: 12px; }.importCard, .previewTitle, .panelHeader, .exportBar { align-items: stretch; flex-direction: column; }.controls { grid-template-columns: 1fr; }.controls select:last-child { grid-column: auto; }.summary { grid-template-columns: repeat(2, 1fr); }.exportBar label { margin-right: 0; }.tabRow { overflow-x: auto; }.tabRow button { white-space: nowrap; }.mappingGrid { grid-template-columns: 1fr; }.headerSelector { grid-template-columns: 1fr; } }
