@@ -8,6 +8,7 @@ import {
   deleteTransactionRuleFromWorkbook,
   ensureTransactionCodingWorkspace,
   RULE_HEADERS,
+  saveTransactionRuleToWorkbook,
 } from '../src/lib/transactionCodingSharePoint.js'
 import { attemptTransactionRuleSync } from '../src/handlers/transactionCoding.js'
 import { transactionCodingStorageReady } from '../src/lib/transactionCodingRepository.js'
@@ -75,6 +76,7 @@ test('deleting a workbook rule targets its stable rule ID', async (t) => {
   const deleted = []
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
     const path = String(url)
+    if (path.endsWith('/tables/TransactionMappingsTable')) return Response.json({ id: 'rules-table', name: 'TransactionMappingsTable' })
     if (path.endsWith('/columns')) return Response.json({ value: RULE_HEADERS.map((name) => ({ name })) })
     if (path.includes('/rows?$top=1000')) {
       return Response.json({ value: [{ index: 3, values: [['rule-1', 'Yes', 100, 'contains', 'SCRIBD']] }] })
@@ -88,6 +90,34 @@ test('deleting a workbook rule targets its stable rule ID', async (t) => {
   const removed = await deleteTransactionRuleFromWorkbook({ driveId: 'drive-1', workbookItemId: 'workbook-1', token: 'delegated-token' }, 'rule-1')
   assert.equal(removed, true)
   assert.match(deleted[0], /rows\/itemAt\(index=3\)$/)
+})
+
+test('a missing categorization table is repaired on the existing Rules worksheet', async (t) => {
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const path = String(url)
+    requests.push({ path, method: options.method || 'GET' })
+    if (path.endsWith('/tables/TransactionMappingsTable')) {
+      return Response.json({ error: { code: 'ItemNotFound', message: "The requested resource doesn't exist." } }, { status: 404 })
+    }
+    if (path.endsWith('/worksheets')) return Response.json({ value: [{ id: 'rules-sheet', name: 'Rules' }] })
+    if (path.endsWith('/worksheets/rules-sheet/tables')) return Response.json({ value: [] })
+    if (path.endsWith('/worksheets/rules-sheet/usedRange(valuesOnly=true)')) {
+      return Response.json({ values: [RULE_HEADERS, Array(RULE_HEADERS.length).fill('')] })
+    }
+    if (path.endsWith('/worksheets/rules-sheet/tables/add')) return Response.json({ id: 'repaired-table', name: 'Table1' })
+    if (path.endsWith('/tables/repaired-table') && options.method === 'PATCH') return Response.json({ id: 'repaired-table', name: 'TransactionMappingsTable' })
+    if (path.endsWith('/tables/repaired-table/columns')) return Response.json({ value: RULE_HEADERS.map((name) => ({ name })) })
+    if (path.includes('/tables/repaired-table/rows?$top=1000')) return Response.json({ value: [] })
+    if (path.endsWith('/tables/repaired-table/rows/add')) return Response.json({ index: 1 })
+    return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 500 })
+  })
+  await saveTransactionRuleToWorkbook(
+    { driveId: 'drive-1', workbookItemId: 'workbook-1', token: 'delegated-token' },
+    ['rule-1', 'Yes', 100, 'contains', 'SCRIBD', 'Scribd'],
+  )
+  assert.ok(requests.some((request) => request.path.endsWith('/worksheets/rules-sheet/tables/add')))
+  assert.ok(requests.some((request) => request.path.endsWith('/tables/repaired-table/rows/add')))
 })
 
 test('a temporary SharePoint rule-sync failure does not block statement import', async () => {
