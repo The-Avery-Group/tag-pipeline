@@ -37,12 +37,30 @@ async function provision(env) {
   return workspace
 }
 
-async function syncRules(env, identity) {
+async function syncRules(env, identity, { recategorize = true } = {}) {
   const workspace = await provision(env)
   const workbookRules = await readTransactionRules(workspace)
   const rules = await replaceTransactionCodingRules(env.EBUY_DB, workbookRules, identity?.name || '')
-  await recategorizeOpenTransactions(env.EBUY_DB)
+  if (recategorize) await recategorizeOpenTransactions(env.EBUY_DB)
   return { workspace, rules }
+}
+
+export async function attemptTransactionRuleSync(operation) {
+  try {
+    await operation()
+    return ''
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'transaction_coding_rule_sync_failed',
+      stage: 'before_import',
+      message: error.message,
+    }))
+    return 'The statement was imported using the last saved categorization rules because the SharePoint rules could not refresh.'
+  }
+}
+
+async function syncRulesBeforeImport(env, identity) {
+  return attemptTransactionRuleSync(() => syncRules(env, identity, { recategorize: false }))
 }
 
 export async function handleTransactionCoding(req, env, identity) {
@@ -77,9 +95,23 @@ export async function handleTransactionCoding(req, env, identity) {
   if (path === '/transaction-coding/imports' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     if (!Array.isArray(body.rows) || !body.rows.length) return json({ error: 'The statement contains no importable transaction rows.' }, 400)
-    await syncRules(env, identity)
-    const result = await importTransactionBatch(env.EBUY_DB, body, actor)
-    return json({ ok: true, ...result }, result.duplicate ? 200 : 201)
+    const warning = await syncRulesBeforeImport(env, identity)
+    try {
+      const result = await importTransactionBatch(env.EBUY_DB, body, actor)
+      return json({ ok: true, ...result, warning }, result.duplicate ? 200 : 201)
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'transaction_coding_import_failed',
+        fileName: String(body.fileName || '').slice(0, 160),
+        rowCount: body.rows.length,
+        message: error.message,
+      }))
+      return json({
+        error: 'The statement could not be imported. No partial import was kept.',
+        detail: error.message,
+        code: 'transaction_import_failed',
+      }, 500)
+    }
   }
 
   if (path === '/transaction-coding/transactions' && req.method === 'GET') {
