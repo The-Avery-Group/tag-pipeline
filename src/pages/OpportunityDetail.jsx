@@ -886,7 +886,7 @@ export default function OpportunityDetail({ toast }) {
     try {
       await archiveOpp(opp._rowIndex)
       toast?.success('Opportunity archived')
-      navigate('/opportunities?tab=Archive')
+      navigate('/opportunities?tab=All&archived=1')
     } catch (err) {
       toast?.error(`Failed to delete: ${err.message}`)
       setDeleting(false)
