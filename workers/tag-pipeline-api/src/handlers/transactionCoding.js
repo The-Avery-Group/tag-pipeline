@@ -25,6 +25,8 @@ import {
   saveTransactionRuleToWorkbook,
 } from '../lib/transactionCodingSharePoint.js'
 
+export const TRANSACTION_CODING_HTTP_METHODS = Object.freeze(['GET', 'POST', 'PATCH', 'DELETE'])
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
 }
