@@ -1,10 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { strFromU8, unzipSync } from 'fflate'
 import { buildNeutralExportCsv, categorizeTransaction } from '../src/lib/transactionCodingDomain.js'
 import {
   alignTransactionRuleValues,
-  buildTransactionCodingWorkbook,
   deleteTransactionRuleFromWorkbook,
   ensureTransactionCodingWorkspace,
   RULE_HEADERS,
@@ -28,15 +26,6 @@ test('neutral export contains coding fields without a Costpoint-specific schema'
   assert.match(csv, /txn-1,2026-08-01,SCRIBD/)
   assert.doesNotMatch(csv.split('\r\n')[0], /Merchant/)
   assert.doesNotMatch(csv, /Costpoint/i)
-})
-
-test('generated workbook contains the rules, exports, and settings tables', () => {
-  const archive = unzipSync(buildTransactionCodingWorkbook())
-  const files = Object.keys(archive)
-  assert.ok(files.includes('xl/tables/table1.xml'))
-  assert.ok(files.includes('xl/tables/table2.xml'))
-  assert.ok(files.includes('xl/tables/table3.xml'))
-  assert.doesNotMatch(strFromU8(archive['xl/tables/table1.xml']), /name="Merchant"/)
 })
 
 test('rule writes follow the workbook columns after a column is removed', () => {
@@ -72,6 +61,24 @@ test('user-initiated workbook access uses the delegated Graph token', async (t) 
   assert.ok(requests.every((request) => request.authorization === 'Bearer delegated-token'))
 })
 
+test('a missing manual workbook returns setup guidance without uploading a generated file', async (t) => {
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const path = String(url)
+    requests.push({ path, method: options.method || 'GET' })
+    if (path.includes('items/crm-workbook?')) return Response.json({ id: 'crm-workbook', parentReference: { id: 'root-folder' } })
+    if (path.endsWith('root-folder:/Transaction%20Coding')) return Response.json({ id: 'coding-folder' })
+    if (path.endsWith('coding-folder:/Exports')) return Response.json({ id: 'exports-folder' })
+    if (path.endsWith('coding-folder:/Transaction%20Coding.xlsx')) return Response.json({}, { status: 404 })
+    return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 500 })
+  })
+  await assert.rejects(
+    ensureTransactionCodingWorkspace({ WORKBOOK_ID: 'crm-workbook', DRIVE_ID: 'drive-1' }, 'delegated-token'),
+    /Create the workbook and its required Excel tables/,
+  )
+  assert.equal(requests.some((request) => request.method === 'PUT'), false)
+})
+
 test('deleting a workbook rule targets its stable rule ID', async (t) => {
   const deleted = []
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
@@ -92,7 +99,7 @@ test('deleting a workbook rule targets its stable rule ID', async (t) => {
   assert.match(deleted[0], /rows\/itemAt\(index=3\)$/)
 })
 
-test('a missing categorization table is repaired on the existing Rules worksheet', async (t) => {
+test('a missing categorization table returns manual setup guidance without changing the workbook', async (t) => {
   const requests = []
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
     const path = String(url)
@@ -100,24 +107,16 @@ test('a missing categorization table is repaired on the existing Rules worksheet
     if (path.endsWith('/tables/TransactionMappingsTable')) {
       return Response.json({ error: { code: 'ItemNotFound', message: "The requested resource doesn't exist." } }, { status: 404 })
     }
-    if (path.endsWith('/worksheets')) return Response.json({ value: [{ id: 'rules-sheet', name: 'Rules' }] })
-    if (path.endsWith('/worksheets/rules-sheet/tables')) return Response.json({ value: [] })
-    if (path.endsWith('/worksheets/rules-sheet/usedRange(valuesOnly=true)')) {
-      return Response.json({ values: [RULE_HEADERS, Array(RULE_HEADERS.length).fill('')] })
-    }
-    if (path.endsWith('/worksheets/rules-sheet/tables/add')) return Response.json({ id: 'repaired-table', name: 'Table1' })
-    if (path.endsWith('/tables/repaired-table') && options.method === 'PATCH') return Response.json({ id: 'repaired-table', name: 'TransactionMappingsTable' })
-    if (path.endsWith('/tables/repaired-table/columns')) return Response.json({ value: RULE_HEADERS.map((name) => ({ name })) })
-    if (path.includes('/tables/repaired-table/rows?$top=1000')) return Response.json({ value: [] })
-    if (path.endsWith('/tables/repaired-table/rows/add')) return Response.json({ index: 1 })
     return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 500 })
   })
-  await saveTransactionRuleToWorkbook(
-    { driveId: 'drive-1', workbookItemId: 'workbook-1', token: 'delegated-token' },
-    ['rule-1', 'Yes', 100, 'contains', 'SCRIBD', 'Scribd'],
+  await assert.rejects(
+    saveTransactionRuleToWorkbook(
+      { driveId: 'drive-1', workbookItemId: 'workbook-1', token: 'delegated-token' },
+      ['rule-1', 'Yes', 100, 'contains', 'SCRIBD', 'Scribd'],
+    ),
+    /Create the Rules table with the required columns/,
   )
-  assert.ok(requests.some((request) => request.path.endsWith('/worksheets/rules-sheet/tables/add')))
-  assert.ok(requests.some((request) => request.path.endsWith('/tables/repaired-table/rows/add')))
+  assert.equal(requests.some((request) => ['POST', 'PATCH', 'DELETE'].includes(request.method)), false)
 })
 
 test('a temporary SharePoint rule-sync failure does not block statement import', async () => {
