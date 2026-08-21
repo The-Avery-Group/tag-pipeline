@@ -33,6 +33,8 @@ import { handlePartnerWorkspaces } from './handlers/partnerWorkspaces.js'
 import { handleOpportunityAlerts } from './handlers/opportunityAlerts.js'
 import { purgeOldOpportunityAlertEvents } from './lib/opportunityAlerts.js'
 import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
+import { handleTransactionCoding } from './handlers/transactionCoding.js'
+import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -177,6 +179,9 @@ export default {
       } else if (path.startsWith('/partner-workspaces') && ['GET', 'POST'].includes(req.method)) {
         response = await handlePartnerWorkspaces(req, env)
 
+      } else if (path.startsWith('/transaction-coding') && ['GET', 'POST', 'PATCH'].includes(req.method)) {
+        response = await handleTransactionCoding(req, env, identity)
+
       } else {
         response = json({ error: 'Not found' }, 404)
       }
@@ -254,6 +259,9 @@ export default {
           deleteFolder: (driveId, opportunityKey) => deleteEmptySAMArchiveFolder(env, driveId, opportunityKey),
         }).catch((error) => {
           console.error(JSON.stringify({ event: 'sam_archive_retention_failed', message: error.message }))
+        }))
+        ctx.waitUntil(purgeExpiredTransactionCodingData(env.EBUY_DB).catch((error) => {
+          console.error(JSON.stringify({ event: 'transaction_coding_retention_failed', message: error.message }))
         }))
       }
     }
