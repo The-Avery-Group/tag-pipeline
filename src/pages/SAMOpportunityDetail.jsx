@@ -295,7 +295,7 @@ export default function SAMOpportunityDetail({ toast }) {
         <div className={styles.contactList}>
           {(detail.contacts || []).map((contact, index) => <article key={`${contact.email || contact.name}-${index}`}>
             <div><strong>{contact.name || 'Unnamed contact'}</strong>{contact.type && <span>{contact.type}</span>}{contact.title && <span>{contact.title}</span>}</div>
-            <div className={styles.contactMethods}>{contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}{contact.phone && <a href={`tel:${contact.phone}`}>{contact.phone}</a>}{contact.fax && <span>Fax {contact.fax}</span>}</div>
+            <div className={styles.contactMethods}>{contact.email && <CopyValue value={contact.email} label="email address"><a href={`mailto:${contact.email}`}>{contact.email}</a></CopyValue>}{contact.phone && <CopyValue value={contact.phone} label="phone number"><a href={`tel:${contact.phone}`}>{contact.phone}</a></CopyValue>}{contact.fax && <CopyValue value={contact.fax} label="fax number"><span>Fax {contact.fax}</span></CopyValue>}</div>
           </article>)}
           {!detail.contacts?.length && <p className={styles.empty}>No points of contact were provided.</p>}
         </div>
