@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useEbuyOpportunities } from '@/hooks/useEbuyOpportunities'
 import { ebuyToPipelineRecord, reconcileEbuyPipeline } from '@/services/ebuyService'
 import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
+import CopyValue from '@/components/Common/CopyValue'
 import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
 import { formatEbuyDateTime, normalizeEbuyNoticeType } from '@/utils/ebuyHelpers'
 import { samTypeMatches } from '@/utils/samOpportunityHelpers'
@@ -225,7 +226,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                     </div>
                   </td>
                   <td className={styles.typeCell}><DiscoveryTypeBadge type={normalizeEbuyNoticeType(opportunity)} /></td>
-                  <td className={styles.mono}>{opportunity.requestId}</td><td className={styles.agencyCell}><span className={styles.agency}>{opportunity.buyerAgency || 'Not provided'}</span>{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency && <small>{opportunity.buyerDepartment}</small>}</td>
+                  <td className={styles.mono}><CopyValue value={opportunity.requestId} label="request ID">{opportunity.requestId}</CopyValue></td><td className={styles.agencyCell}><span className={styles.agency}>{opportunity.buyerAgency || 'Not provided'}</span>{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency && <small>{opportunity.buyerDepartment}</small>}</td>
                   <td className={styles.setAsideCell}>{opportunity.setAsideType || 'Not provided'}</td><td>{opportunity.vehiclePairs?.join(', ') || opportunity.vehicleSources?.join(', ') || 'Not provided'}</td>
                   <td>{Number(opportunity.amendmentCount || opportunity.amendments?.length || 0) > 0 ? <span className={styles.amendment}>Yes · {Number(opportunity.amendmentCount || opportunity.amendments?.length)}</span> : <span className={styles.noAmendment}>No</span>}</td>
                   <td className={styles.dateCell}>{formatEbuyDateTime(opportunity.closesAt)}</td>
