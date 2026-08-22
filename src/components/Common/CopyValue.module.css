@@ -1,4 +1,6 @@
 .wrap { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; }
 .value { min-width: 0; overflow-wrap: anywhere; }
-.button { flex: 0 0 auto; border: 0; border-radius: 4px; background: transparent; color: var(--gray-400); cursor: pointer; font: inherit; padding: 1px 3px; }
+.button { flex: 0 0 auto; border: 0; border-radius: 4px; background: transparent; color: var(--gray-400); cursor: pointer; font-family: inherit; font-size: 11px; line-height: 1; opacity: 0; padding: 2px 3px; pointer-events: none; transform: translateX(-2px); transition: background .12s ease, color .12s ease, opacity .12s ease, transform .12s ease; }
+.wrap:hover .button, .wrap:focus-within .button { opacity: 1; pointer-events: auto; transform: translateX(0); }
 .button:hover, .button:focus-visible { background: var(--blue-50); color: var(--blue-700); outline: none; }
+@media (prefers-reduced-motion: reduce) { .button { transition: none; } }
