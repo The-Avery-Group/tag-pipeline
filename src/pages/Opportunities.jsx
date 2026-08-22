@@ -11,6 +11,7 @@ import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
+import CopyValue from '@/components/Common/CopyValue'
 import ExpiringContractDiscovery from '@/components/Opportunity/ExpiringContractDiscovery'
 import EbuyDiscovery from '@/components/Opportunity/EbuyDiscovery'
 import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
@@ -1413,7 +1414,7 @@ export default function Opportunities({ toast }) {
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 240 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
-              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
+              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
               <td>
                 <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>
                   {opp[C.phase] || '—'}
@@ -1465,7 +1466,7 @@ export default function Opportunities({ toast }) {
                   <OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle>{rfiFollowUpBadge(opp)}
                 </div>
               </td>
-              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
+              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
               <td><span className="badge badge-tracking">{normalizeNoticeType(opp[C.noticeType]) || 'Legacy'}</span></td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
               <td className={`text-sm ${opp[C.submDate] ? '' : 'text-muted'}`}>
@@ -1498,7 +1499,7 @@ export default function Opportunities({ toast }) {
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
-              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
+              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
               <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
               <td className="text-sm">{fmtValue(opp[C.value])}</td>
               <td className={`text-sm ${opp[C.endDate] ? '' : 'text-muted'}`}>
@@ -1540,7 +1541,7 @@ export default function Opportunities({ toast }) {
             <tr key={`${cn}-${opp._rowIndex}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
-              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}>{cn}</td>
+              <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
               <td>
                 <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>
                   {opp[C.phase]}
@@ -1570,7 +1571,7 @@ export default function Opportunities({ toast }) {
       <tbody>{filtered.map((opp) => (
         <tr key={opp['Opportunity ID'] || opp._rowIndex} onClick={() => openOpportunity(opp)}>
           <td style={{ fontWeight: 500, maxWidth: 300 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
-          <td className="text-xs text-muted">{opp[C.contractNum]}</td>
+          <td className="text-xs text-muted"><CopyValue value={opp[C.contractNum]} label="contract or notice ID">{opp[C.contractNum]}</CopyValue></td>
           <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
           <td className="text-sm text-muted">{formatDateTime(opp['Archived At'])}</td>
           <td className="text-sm text-muted">{opp['Archived By'] || '—'}</td>
