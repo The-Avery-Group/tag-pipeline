@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useEntityAwardHistory } from '@/hooks/useEntityAwardHistory'
+import CopyValue from '@/components/Common/CopyValue'
 import { formatCurrency } from '@/utils/kpiHelpers'
 import styles from './EntityAwardHistory.module.css'
 
@@ -80,7 +81,7 @@ export default function EntityAwardHistory() {
               <div className={styles.entityIdentity}>
                 <span>Entity</span>
                 <strong>{data.incumbentName || 'Name unavailable from USAspending'}</strong>
-                <small>UEI {data.uei}</small>
+                <small>UEI <CopyValue value={data.uei} label="UEI">{data.uei}</CopyValue></small>
               </div>
               <div className={styles.metrics}>
                 <Metric label="Prime contracts" value={data.contractCount} detail="Last five years" />
