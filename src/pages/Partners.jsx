@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
+import CopyValue from '@/components/Common/CopyValue'
 import RichText from '@/components/Common/RichText'
 import PartnerFilesPanel from '@/components/Partner/PartnerFilesPanel'
 import PartnerNotesPanel from '@/components/Partner/PartnerNotesPanel'
@@ -75,7 +76,10 @@ function partnerFieldIncludes(value, name) {
 
 function DetailField({ label, value, link, rich = false }) {
   if (!value) return null
-  return <div className={styles.detailField}><span>{label}</span>{link ? <a href={safeUrl(value)} target="_blank" rel="noreferrer">{link}</a> : <div>{rich ? <RichText value={value} /> : value}</div>}</div>
+  const content = link
+    ? <a href={safeUrl(value)} target="_blank" rel="noreferrer">{link}</a>
+    : rich ? <RichText value={value} /> : value
+  return <div className={styles.detailField}><span>{label}</span><div><CopyValue value={value} label={label}>{content}</CopyValue></div></div>
 }
 
 export default function Partners({ toast }) {
@@ -196,7 +200,7 @@ export default function Partners({ toast }) {
             {SECTIONS.map(([id]) => formSection(id))}
             <div className={styles.profileActions}><button className="btn" disabled={saveAction.isLoading} onClick={() => { setEditing(false); if (!selected) setForm(EMPTY()) }}>Cancel</button><button className="btn btn-primary" disabled={saveAction.isLoading} onClick={save}>{saveAction.isLoading ? 'Saving…' : selected ? 'Save changes' : 'Add partner'}</button></div>
           </div> : selected ? <div className={styles.profile}>
-            <div className={styles.profileHeader}><div><div className={styles.eyebrow}>Partner profile</div><h2>{partnerName(selected)}</h2><p>UEI: {selected['UEI Number']}</p></div><div className={styles.headerActions}><button className="btn text-sm" onClick={startEdit}><ActionIcon name="edit" /> Edit</button><button className="btn btn-ghost text-sm" style={{ color: 'var(--red-600)' }} onClick={() => setDeleteTarget(selected)}>Delete</button></div></div>
+            <div className={styles.profileHeader}><div><div className={styles.eyebrow}>Partner profile</div><h2>{partnerName(selected)}</h2><p>UEI: <CopyValue value={selected['UEI Number']} label="UEI">{selected['UEI Number']}</CopyValue></p></div><div className={styles.headerActions}><button className="btn text-sm" onClick={startEdit}><ActionIcon name="edit" /> Edit</button><button className="btn btn-ghost text-sm" style={{ color: 'var(--red-600)' }} onClick={() => setDeleteTarget(selected)}>Delete</button></div></div>
             <div className={styles.profileSection}><h3>Contact and links</h3><DetailField label="Contact details" value={selected['Contact Information']} /><DetailField label="Website" value={selected['Link to website']} link="Open website" /><DetailField label="Partner SharePoint folder" value={selected['Link to Partner Folder']} link="Open folder" /></div>
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
