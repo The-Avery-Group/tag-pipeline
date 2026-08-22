@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useExpiringContracts } from '@/hooks/useExpiringContracts'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
+import CopyValue from '@/components/Common/CopyValue'
 import { formatDate } from '@/utils/kpiHelpers'
 import { resolveModifierWithCrmContacts } from '@/utils/modifierIdentity'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
@@ -59,12 +60,13 @@ function formatRefreshTime(value) {
 }
 
 function DetailField({ label, value, link }) {
+  const displayValue = value || 'Not available'
   return (
     <div className={styles.detailField}>
       <span>{label}</span>
       {link && value
-        ? <a href={link} target="_blank" rel="noreferrer">{value}</a>
-        : <strong>{value || 'Not available'}</strong>}
+        ? <CopyValue value={value} label={label}><a href={link} target="_blank" rel="noreferrer">{value}</a></CopyValue>
+        : value ? <CopyValue value={value} label={label}><strong>{displayValue}</strong></CopyValue> : <strong>{displayValue}</strong>}
     </div>
   )
 }
@@ -517,9 +519,9 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                       const detail = details[contract.familyKey] || contract
                       return [
                         <tr key={contract.familyKey} className={contract.hidden ? styles.hiddenRow : ''}>
-                          <td><strong>{contract.title || contract.piid}</strong><small>{contract.piid}</small>{contract.hidden && <small className={styles.hiddenLabel}>Hidden from normal results</small>}</td>
+                          <td><strong>{contract.title || contract.piid}</strong><small><CopyValue value={contract.piid} label="PIID">{contract.piid}</CopyValue></small>{contract.hidden && <small className={styles.hiddenLabel}>Hidden from normal results</small>}</td>
                           <td><span>{contract.agency || 'Not available'}</span><small>{contract.office || contract.department || ''}</small></td>
-                          <td><span>{contract.incumbentName || 'Not available'}</span><small>{contract.incumbentUEI || ''}</small></td>
+                          <td><span>{contract.incumbentName || 'Not available'}</span><small>{contract.incumbentUEI && <CopyValue value={contract.incumbentUEI} label="UEI">{contract.incumbentUEI}</CopyValue>}</small></td>
                           <td>{contract.naicsCode || 'Not available'}</td>
                           <td>{contract.ultimateCompletionDate ? formatDate(contract.ultimateCompletionDate) : 'Not available'}</td>
                           <td title={fullMoney(contract.totalContractValue)}>{compactMoney(contract.totalContractValue)}</td>
