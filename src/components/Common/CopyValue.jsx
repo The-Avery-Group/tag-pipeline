@@ -8,7 +8,19 @@ export default function CopyValue({ value, children, label = 'value', className 
   const copy = async (event) => {
     event.preventDefault()
     event.stopPropagation()
-    await navigator.clipboard.writeText(text)
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const input = document.createElement('textarea')
+      input.value = text
+      input.setAttribute('readonly', '')
+      input.style.position = 'fixed'
+      input.style.opacity = '0'
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      input.remove()
+    }
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1400)
   }
