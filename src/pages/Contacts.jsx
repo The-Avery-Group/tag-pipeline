@@ -7,6 +7,7 @@ import { useAsyncAction, useAsyncActionKeyed } from '@/hooks/useAsyncAction'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
+import CopyValue from '@/components/Common/CopyValue'
 import RichText from '@/components/Common/RichText'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
@@ -389,11 +390,13 @@ export default function Contacts({ toast }) {
                         <td>{c.Type && <span className="badge badge-tracking">{c.Type}</span>}</td>
                         <td className="text-sm">{c.Organization}</td>
                         <td>
-                          <a href={`mailto:${c.Email}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-sm">{c.Email}</a>
+                          {c.Email && <CopyValue value={c.Email} label="email address">
+                            <a href={`mailto:${c.Email}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-sm">{c.Email}</a>
+                          </CopyValue>}
                         </td>
-                        <td className="text-sm text-muted">{c.Phone}</td>
+                        <td className="text-sm text-muted">{c.Phone && <CopyValue value={c.Phone} label="phone number">{c.Phone}</CopyValue>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -440,10 +443,10 @@ export default function Contacts({ toast }) {
                           <span className={styles.panelLabel}>{label}</span>
                           <span className={styles.panelValue}>
                             {label === 'Email'
-                              ? <a href={`mailto:${value}`} className="text-sm">{value}</a>
+                              ? <CopyValue value={value} label="email address"><a href={`mailto:${value}`} className="text-sm">{value}</a></CopyValue>
                               : label === 'Notes'
                                 ? <RichText value={value} />
-                                : value}
+                                : <CopyValue value={value} label={label}>{value}</CopyValue>}
                           </span>
                         </div>
                       ))}
