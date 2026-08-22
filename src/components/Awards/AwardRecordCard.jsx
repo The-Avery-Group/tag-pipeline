@@ -1,4 +1,5 @@
 import styles from './AwardRecordCard.module.css'
+import CopyValue from '@/components/Common/CopyValue'
 
 const SECTION_ORDER = [
   'Contract identity', 'Contract status', 'Contract snapshot', 'Agency and scope',
@@ -67,7 +68,7 @@ export default function AwardRecordCard({
       <header className={styles.cardHeader}>
         <div>
           <div className={styles.eyebrow}>Contract award record</div>
-          <h3 className={styles.piid}>{piid || 'Unknown PIID'}</h3>
+          <h3 className={styles.piid}>{piid ? <CopyValue value={piid} label="PIID">{piid}</CopyValue> : 'Unknown PIID'}</h3>
           <p className={styles.recordType}>
             {isIDV ? 'Contract vehicle (IDV)' : 'Definitive contract or order'}
             {originalSignedDate && ` · originally signed ${formatFieldValue({ format: 'date' }, originalSignedDate)}`}
@@ -99,7 +100,7 @@ export default function AwardRecordCard({
                   <div className={styles.fieldValueRow}>
                     {item.format === 'link'
                       ? <a href={item.value} target="_blank" rel="noreferrer" className={styles.inlineLink}>Open award notice ↗</a>
-                      : <span className={`${styles.fieldValue} ${lifecycleReason ? styles.lifecycleValue : ''}`} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span>}
+                      : <CopyValue value={formatFieldValue(item, item.value)} label={item.label || key}><span className={`${styles.fieldValue} ${lifecycleReason ? styles.lifecycleValue : ''}`} title={formatFieldValue(item, item.value)}>{formatFieldValue(item, item.value)}</span></CopyValue>}
                     {renderFieldAction?.(key, item)}
                   </div>
                   {item.provenance?.lastModifiedDate && (
