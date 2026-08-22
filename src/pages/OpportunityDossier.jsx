@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
+import CopyValue from '@/components/Common/CopyValue'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useNotes } from '@/hooks/useNotes'
 import { useTasks } from '@/hooks/useTasks'
@@ -46,9 +47,10 @@ function SummaryGrid({ opportunity }) {
     ['Response or submission date', C.responseDate], ['NAICS', C.naics],
     ['Set-aside', C.setAside], ['Classification', C.classification], ['Assigned to', C.assignedTo],
   ]
-  return <div className={styles.summaryGrid}>{fields.filter(([, key]) => opportunity[key]).map(([label, key]) => (
-    <div key={key} className={styles.summaryItem}><span>{label}</span><strong>{key === C.responseDate ? formatDate(opportunity[key]) : opportunity[key]}</strong></div>
-  ))}</div>
+  return <div className={styles.summaryGrid}>{fields.filter(([, key]) => opportunity[key]).map(([label, key]) => {
+    const displayValue = key === C.responseDate ? formatDate(opportunity[key]) : opportunity[key]
+    return <div key={key} className={styles.summaryItem}><span>{label}</span><CopyValue value={displayValue} label={label}><strong>{displayValue}</strong></CopyValue></div>
+  })}</div>
 }
 
 export default function OpportunityDossier() {
@@ -159,8 +161,8 @@ export default function OpportunityDossier() {
 
       <Section title="People and relationships">
         <div className={styles.relationshipGrid}>
-          <div><h3>Contacts</h3>{linkedContacts.length ? linkedContacts.map((contact) => <div key={contact.ContactID || contact.Email || contact.Name} className={styles.relationship}><strong>{contact.Name}</strong><span>{[contact.Title, contact.Agency, contact.Email].filter(Boolean).join(' · ')}</span></div>) : <p className="text-muted text-sm">No linked contacts.</p>}</div>
-          <div><h3>Partners</h3>{linkedPartners.length ? linkedPartners.map((partner) => <div key={partner['UEI Number'] || partner['Partner Name']} className={styles.relationship}><strong>{partner['Partner Name']}</strong><span>{partner['UEI Number'] || 'UEI unavailable'}</span></div>) : <p className="text-muted text-sm">No linked partners.</p>}</div>
+          <div><h3>Contacts</h3>{linkedContacts.length ? linkedContacts.map((contact) => <div key={contact.ContactID || contact.Email || contact.Name} className={styles.relationship}><strong>{contact.Name}</strong><span>{[contact.Title, contact.Agency].filter(Boolean).join(' · ')}{contact.Email && <>{contact.Title || contact.Agency ? ' · ' : ''}<CopyValue value={contact.Email} label="email address">{contact.Email}</CopyValue></>}</span></div>) : <p className="text-muted text-sm">No linked contacts.</p>}</div>
+          <div><h3>Partners</h3>{linkedPartners.length ? linkedPartners.map((partner) => <div key={partner['UEI Number'] || partner['Partner Name']} className={styles.relationship}><strong>{partner['Partner Name']}</strong><span>{partner['UEI Number'] ? <CopyValue value={partner['UEI Number']} label="UEI">{partner['UEI Number']}</CopyValue> : 'UEI unavailable'}</span></div>) : <p className="text-muted text-sm">No linked partners.</p>}</div>
         </div>
       </Section>
 
