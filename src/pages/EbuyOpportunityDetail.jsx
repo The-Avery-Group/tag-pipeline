@@ -130,7 +130,7 @@ export default function EbuyOpportunityDetail({ toast }) {
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Buyer</span><h2>Contact</h2></div></header>
-        <div className={styles.grid}><Field label="Name">{opportunity.buyerName}</Field><Field label="Phone">{opportunity.buyerPhone}</Field><Field label="Email" wide>{opportunity.buyerEmail ? <a href={`mailto:${opportunity.buyerEmail}`}>{opportunity.buyerEmail}</a> : null}</Field></div>
+        <div className={styles.grid}><Field label="Name">{opportunity.buyerName}</Field><Field label="Phone">{opportunity.buyerPhone}</Field><Field label="Email" wide>{opportunity.buyerEmail ? <CopyValue value={opportunity.buyerEmail} label="email address"><a href={`mailto:${opportunity.buyerEmail}`}>{opportunity.buyerEmail}</a></CopyValue> : null}</Field></div>
       </section>
 
       <section className={styles.card}>
