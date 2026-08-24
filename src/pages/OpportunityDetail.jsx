@@ -27,6 +27,7 @@ import OpportunityFilesPanel from '@/components/Opportunity/OpportunityFilesPane
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
+import CopyValue from '@/components/Common/CopyValue'
 import { formatDate } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
@@ -1497,9 +1498,13 @@ export default function OpportunityDetail({ toast }) {
                     </span>
                     <span className={styles.contactInfo}>
                       <span className={styles.contactName}>{c.Name}</span>
-                      <span className={styles.contactSub}>{c.Email || c.Title || '—'}</span>
+                      <span className={styles.contactSub}>{[c.Title, c.Agency].filter(Boolean).join(' · ') || '—'}</span>
                     </span>
                   </button>
+                  {(c.Email || c.Phone) && <span className={styles.contactMethods}>
+                    {c.Email && <CopyValue value={c.Email} label="email address"><span>{c.Email}</span></CopyValue>}
+                    {c.Phone && <CopyValue value={c.Phone} label="phone number"><span>{c.Phone}</span></CopyValue>}
+                  </span>}
                   <button
                     type="button"
                     className="btn btn-ghost btn-icon"
