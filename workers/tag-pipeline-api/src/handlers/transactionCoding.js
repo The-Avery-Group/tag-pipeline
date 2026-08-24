@@ -40,6 +40,24 @@ function delegatedGraphToken(req) {
   return authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || ''
 }
 
+function accessEntries(env) {
+  return new Set(String(env.TRANSACTION_CODING_ALLOWED_USERS || '')
+    .split(/[\n,;]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean))
+}
+
+export function transactionCodingAccess(identity, env) {
+  const allowedUsers = accessEntries(env)
+  const candidates = [identity?.userId, identity?.email]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+  return {
+    configured: allowedUsers.size > 0,
+    allowed: candidates.some((candidate) => allowedUsers.has(candidate)),
+  }
+}
+
 async function provision(env, graphToken = '') {
   const workspace = await ensureTransactionCodingWorkspace(env, graphToken)
   await saveTransactionCodingWorkspace(env.EBUY_DB, workspace)
@@ -79,11 +97,23 @@ async function syncRulesBeforeImport(env, identity, graphToken) {
 }
 
 export async function handleTransactionCoding(req, env, identity) {
+  const url = new URL(req.url)
+  const path = url.pathname
+  const access = transactionCodingAccess(identity, env)
+  if (path === '/transaction-coding/access' && req.method === 'GET') {
+    return json(access)
+  }
+  if (!access.allowed) {
+    return json({
+      error: access.configured
+        ? 'You do not have access to Transaction Coding.'
+        : 'Transaction Coding access has not been configured.',
+      code: access.configured ? 'transaction_coding_forbidden' : 'transaction_coding_access_not_configured',
+    }, 403)
+  }
   if (!env.EBUY_DB || !(await transactionCodingStorageReady(env.EBUY_DB))) {
     return json({ error: 'Apply the latest D1 migration to enable Transaction Coding.', code: 'migration_required' }, 503)
   }
-  const url = new URL(req.url)
-  const path = url.pathname
   const actor = identity?.name || identity?.userId || ''
   const graphToken = delegatedGraphToken(req)
 
