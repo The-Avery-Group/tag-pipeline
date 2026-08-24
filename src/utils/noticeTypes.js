@@ -14,6 +14,11 @@ export function isRfiWorkflowNoticeType(value) {
   return ['RFI', 'MRAS'].includes(normalizeNoticeType(value))
 }
 
+export function isTrackedOpportunity(opportunity, columns = {}) {
+  const outlookColumn = columns.outlook || 'Opportunity Outlook'
+  return ['tracked', 'tracking'].includes(String(opportunity?.[outlookColumn] || '').trim().toLowerCase())
+}
+
 export function submittedActivityNoticeType(value) {
   const normalized = String(value || '').trim().replace(/\s+/g, ' ').toUpperCase()
   if (!normalized) return ''
@@ -28,6 +33,7 @@ export function submittedActivityNoticeType(value) {
 
 /** All currently supported response notice types, plus legacy submitted rows. */
 export function isResponseOpportunity(opportunity, columns = {}) {
+  if (isTrackedOpportunity(opportunity, columns)) return false
   const noticeTypeColumn = columns.noticeType || 'Notice Type'
   const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
   return Boolean(
@@ -56,6 +62,7 @@ export function submittedOpportunityNoticeType(opportunity, columns = {}) {
  * a fallback only for older workbook rows created before Notice Type existed.
  */
 export function isRfiWorkflowOpportunity(opportunity, columns = {}) {
+  if (isTrackedOpportunity(opportunity, columns)) return false
   const noticeTypeColumn = columns.noticeType || 'Notice Type'
   const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
   const noticeType = normalizeNoticeType(opportunity?.[noticeTypeColumn])
@@ -69,6 +76,7 @@ export function isRfiWorkflowOpportunity(opportunity, columns = {}) {
  * RFP for the same requirement.
  */
 export function isFollowOnSourceOpportunity(opportunity, columns = {}) {
+  if (isTrackedOpportunity(opportunity, columns)) return false
   const noticeTypeColumn = columns.noticeType || 'Notice Type'
   const activityPhaseColumn = columns.activityPhase || columns.actPhase || 'TAG Pipeline Activity Phase'
   const noticeType = normalizeNoticeType(opportunity?.[noticeTypeColumn])
