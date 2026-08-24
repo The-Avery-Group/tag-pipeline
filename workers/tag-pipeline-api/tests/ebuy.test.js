@@ -237,6 +237,25 @@ test('live eBuy normalization preserves the MRAS classification over an RFI requ
   assert.equal(record.requestType, 'MRAS')
 })
 
+test('live eBuy normalization discovers amendment and description-linked files and reports missing references', () => {
+  const record = normalizeLiveEbuyOpportunity({ rfqId: 'RFI900' }, {
+    rfqInfo: {
+      rfqId: 'RFI900',
+      title: 'Attachment coverage',
+      description: 'See attached Pricing Template.xlsx and <a href="/ebuy_upload/202608/RFI900/Scope.pdf">Scope</a>.',
+    },
+    rfqModifications: [{
+      versionNumber: 2,
+      attachments: [{ fileName: 'Amendment 2.docx', url: '/ebuy_upload/202608/RFI900/Amendment-2.docx' }],
+    }],
+  }, 'MAS-1')
+
+  assert.deepEqual(record.attachments.map((attachment) => attachment.fileName).sort(), ['Amendment 2.docx', 'Scope.pdf'])
+  assert.equal(record.attachments.find((attachment) => attachment.fileName === 'Amendment 2.docx').amendmentId, '2')
+  assert.equal(record.attachmentReferences.mentioned, true)
+  assert.deepEqual(record.attachmentReferences.missing, ['Pricing Template.xlsx'])
+})
+
 test('an eBuy discovery summary remains usable when its detail request is temporarily unavailable', () => {
   const summary = {
     rfqId: 'RFQ1830432',
