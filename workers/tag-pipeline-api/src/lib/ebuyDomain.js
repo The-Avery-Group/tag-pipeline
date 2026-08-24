@@ -41,6 +41,9 @@ export function normalizeEbuyOpportunity(record, now = new Date().toISOString())
     isFollowOn: Boolean(record.isFollowOn),
     amendments: Array.isArray(record.amendments) ? record.amendments : [],
     attachments: Array.isArray(record.attachments) ? record.attachments : [],
+    attachmentReferences: record.attachmentReferences && typeof record.attachmentReferences === 'object'
+      ? record.attachmentReferences
+      : { mentioned: false, missing: [] },
     sourceDetails: record.sourceDetails && typeof record.sourceDetails === 'object' ? record.sourceDetails : {},
   }
   for (const field of ARRAY_FIELDS) normalized[field] = cleanArray(record[field])
