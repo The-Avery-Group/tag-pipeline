@@ -33,6 +33,7 @@ test('SAM detail separates external links, attachments, contacts, and formatted 
     resourceLinks: [
       'https://sam.gov/api/prod/opps/v3/opportunities/resources/files/SOW.docx/download',
       'https://sam.gov/api/prod/opps/v3/opportunities/resources/files/SOW.docx/download',
+      'https://piee.eb.mil/sol/xhtml/unauth/another-link.xhtml',
     ],
     pointOfContact: [
       { type: 'secondary', fullName: 'Second POC', email: 'second@example.mil' },
@@ -43,7 +44,7 @@ test('SAM detail separates external links, attachments, contacts, and formatted 
 
   assert.equal(detail.title, 'Example opportunity')
   assert.equal(detail.noticeType, 'RFI')
-  assert.equal(detail.links.length, 1)
+  assert.equal(detail.links.length, 2)
   assert.equal(detail.attachments.length, 1)
   assert.equal(detail.attachments[0].fileName, 'SOW.docx')
   assert.deepEqual(detail.contacts.map((contact) => contact.name), ['Primary POC', 'Second POC'])
