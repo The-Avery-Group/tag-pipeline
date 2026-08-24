@@ -4,6 +4,7 @@ import { InteractionStatus } from '@azure/msal-browser'
 import { appUrl, loginRequest, graphConfig, silentTokenOptions } from './msalConfig'
 import { stopPolling } from '@/services/dataCache'
 import { requestSessionRefresh } from '@/services/graphService'
+import { getTransactionCodingAccess } from '@/services/transactionCodingService'
 
 const AuthContext = createContext(null)
 
@@ -11,16 +12,19 @@ export function AuthProvider({ children }) {
   const { instance, accounts, inProgress } = useMsal()
   const [user, setUser]     = useState(null)
   const [authState, setAuthState] = useState('initializing')
+  const [transactionCodingAccess, setTransactionCodingAccess] = useState({ allowed: false, loaded: false })
   const signingOutRef = useRef(false)
 
   useEffect(() => {
     if (signingOutRef.current) {
       setUser(null)
+      setTransactionCodingAccess({ allowed: false, loaded: false })
       setAuthState('idle')
       return
     }
 
     if (accounts.length === 0) {
+      setTransactionCodingAccess({ allowed: false, loaded: false })
       setAuthState('idle')
       return
     }
@@ -64,6 +68,21 @@ export function AuthProvider({ children }) {
       .finally(() => setAuthState('idle'))
   }, [accounts, instance])
 
+  useEffect(() => {
+    let active = true
+    if (!user) return undefined
+    setTransactionCodingAccess({ allowed: false, loaded: false })
+    getTransactionCodingAccess()
+      .then((access) => {
+        if (active) setTransactionCodingAccess({ allowed: access.allowed === true, loaded: true })
+      })
+      .catch((error) => {
+        console.warn('Could not determine Transaction Coding access:', error.message)
+        if (active) setTransactionCodingAccess({ allowed: false, loaded: true })
+      })
+    return () => { active = false }
+  }, [user?.id])
+
   const login = () => {
     signingOutRef.current = false
     return instance.loginRedirect(loginRequest)
@@ -76,6 +95,7 @@ export function AuthProvider({ children }) {
     // on Microsoft's sign-out page.
     signingOutRef.current = true
     setUser(null)
+    setTransactionCodingAccess({ allowed: false, loaded: false })
     setAuthState('idle')
     stopPolling()
 
@@ -106,6 +126,8 @@ export function AuthProvider({ children }) {
       login,
       logout,
       isAuthenticated: !!user,
+      canAccessTransactionCoding: transactionCodingAccess.allowed,
+      transactionCodingAccessLoading: Boolean(user) && !transactionCodingAccess.loaded,
     }}>
       {children}
     </AuthContext.Provider>
