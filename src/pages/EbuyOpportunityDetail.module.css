@@ -349,6 +349,20 @@
   overflow-wrap: anywhere;
 }
 
+.referenceWarning {
+  background: var(--amber-50);
+  border: .5px solid var(--amber-600);
+  border-radius: var(--radius-md);
+  color: var(--amber-700);
+  display: grid;
+  gap: 3px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+}
+
+.referenceWarning strong { font-size: 11px; }
+.referenceWarning span { font-size: 10px; line-height: 1.5; }
+
 .pending {
   white-space: nowrap;
 }
