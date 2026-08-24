@@ -1,5 +1,6 @@
 import { workerJson } from '@/services/workerClient'
 
+export const getTransactionCodingAccess = () => workerJson('/transaction-coding/access', { cache: 'no-store' })
 export const getTransactionCodingStatus = () => workerJson('/transaction-coding/status', { cache: 'no-store' })
 export const getTransactionBatches = () => workerJson('/transaction-coding/batches', { cache: 'no-store' }).then((data) => data.batches || [])
 export const importTransactionStatement = (payload) => workerJson('/transaction-coding/imports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
