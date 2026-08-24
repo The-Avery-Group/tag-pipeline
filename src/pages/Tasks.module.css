@@ -85,6 +85,11 @@
 }
 
 .groupHeader {
+  background: transparent;
+  border: 0;
+  border-bottom: 0.5px solid var(--gray-200);
+  color: var(--gray-400);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -93,10 +98,15 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--gray-400);
-  border-bottom: 0.5px solid var(--gray-200);
+  font-family: var(--font);
   margin-bottom: 4px;
+  text-align: left;
+  width: 100%;
 }
+.groupHeader:hover { color: var(--blue-700); }
+.groupHeader:focus-visible { border-radius: var(--radius-sm); outline: 2px solid var(--blue-200); outline-offset: 1px; }
+.groupName { align-items: center; display: inline-flex; gap: 6px; min-width: 0; }
+.groupChevron { display: inline-flex; font-size: 14px; justify-content: center; line-height: 1; width: 12px; }
 
 .groupCount {
   background: var(--gray-100);
@@ -154,9 +164,8 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--gray-900);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  white-space: normal;
   margin-bottom: 3px;
 }
 
