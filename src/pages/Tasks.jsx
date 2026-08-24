@@ -336,7 +336,8 @@ export default function Tasks({ toast }) {
   const [priorityFilter, setPriorityFilter] = useState('All')
   const [hideDone, setHideDone]             = useState(true)
   const [search, setSearch]                 = useState('')
-  const [groupBy, setGroupBy]           = useState('None')
+  const [groupBy, setGroupBy]           = useState('Assignee')
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set())
   const [sortBy, setSortBy]             = useState(() => localStorage.getItem('tasks_sort_by') || 'Due Date')
   const [sortDir, setSortDir]           = useState(() => localStorage.getItem('tasks_sort_dir') || 'asc')
   const [showAdd, setShowAdd]           = useState(false)
@@ -416,6 +417,20 @@ export default function Tasks({ toast }) {
       return acc
     }, {})
   }, [filtered, groupBy])
+
+  const changeGrouping = (value) => {
+    setGroupBy(value)
+    setExpandedGroups(new Set())
+  }
+
+  const toggleGroup = (groupName) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current)
+      if (next.has(groupName)) next.delete(groupName)
+      else next.add(groupName)
+      return next
+    })
+  }
 
   const handleStatusCycle = async (task) => {
     try {
@@ -512,7 +527,7 @@ export default function Tasks({ toast }) {
               </div>
               <div className={styles.controlGroup}>
                 <span className={styles.controlLabel}>Group</span>
-                <select className={styles.controlSelect} value={groupBy} onChange={(e) => setGroupBy(e.target.value)} aria-label="Group tasks by">
+                <select className={styles.controlSelect} value={groupBy} onChange={(e) => changeGrouping(e.target.value)} aria-label="Group tasks by">
                   {GROUPS.map((group) => <option key={group} value={group}>{groupLabel(group)}</option>)}
                 </select>
               </div>
@@ -562,12 +577,17 @@ export default function Tasks({ toast }) {
             Object.entries(grouped).map(([groupName, groupTasks]) => (
               <div key={groupName} className={styles.group}>
                 {groupBy !== 'None' && groupName && (
-                  <div className={styles.groupHeader}>
-                    <span>{groupName}</span>
+                  <button
+                    type="button"
+                    className={styles.groupHeader}
+                    onClick={() => toggleGroup(groupName)}
+                    aria-expanded={Boolean(search.trim()) || expandedGroups.has(groupName)}
+                  >
+                    <span className={styles.groupName}><span className={styles.groupChevron} aria-hidden="true">{Boolean(search.trim()) || expandedGroups.has(groupName) ? '⌄' : '›'}</span>{groupName}</span>
                     <span className={styles.groupCount}>{groupTasks.length}</span>
-                  </div>
+                  </button>
                 )}
-                {groupTasks.map((task) => {
+                {(groupBy === 'None' || Boolean(search.trim()) || expandedGroups.has(groupName)) && groupTasks.map((task) => {
                   const over     = isOverdue(task.DueDate) && task.Status !== 'Done'
                   const isActive = selected?.TaskID === task.TaskID
                   return (
