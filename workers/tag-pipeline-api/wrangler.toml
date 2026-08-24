@@ -19,6 +19,9 @@ compatibility_flags = ["nodejs_compat"]
 #   EBUY_CREDENTIAL_ENCRYPTION_KEY — 32 random bytes encoded as base64. Encrypts
 #                          the company eBuy username, password, authenticator
 #                          setup key, and short-lived session before D1 storage.
+#   TRANSACTION_CODING_ALLOWED_USERS — Comma-separated approved Entra object IDs
+#                          or user principal names. Transaction Coding fails
+#                          closed when this setting is absent.
 
 # KV namespace for caching (AI conversation history + SAM key status)
 [[kv_namespaces]]
