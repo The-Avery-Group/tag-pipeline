@@ -161,6 +161,12 @@ export default function EbuyOpportunityDetail({ toast }) {
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Files</span><h2>Attachments</h2></div><span className={styles.count}>{opportunity.attachments?.length || 0}</span></header>
+        {(opportunity.attachmentReferences?.missing?.length > 0 || (opportunity.attachmentReferences?.mentioned && !opportunity.attachments?.length)) && <div className={styles.referenceWarning}>
+          <strong>Referenced attachment unavailable</strong>
+          <span>{opportunity.attachmentReferences?.missing?.length
+            ? `The description mentions ${opportunity.attachmentReferences.missing.join(', ')}, but GSA eBuy did not provide ${opportunity.attachmentReferences.missing.length === 1 ? 'that file' : 'those files'}.`
+            : 'The description mentions an attachment, but GSA eBuy did not provide a file record.'} It will be checked again during the next synchronization.</span>
+        </div>}
         <div className={styles.list}>{opportunity.attachments?.map((attachment) => {
           const failed = attachment.archiveStatus === 'error'
           return <article key={attachment.id} className={styles.file}>
@@ -173,7 +179,7 @@ export default function EbuyOpportunityDetail({ toast }) {
               ? <a className="btn" href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived file</a>
               : <span className={styles.pending}>{failed ? 'Retries on next sync' : 'Awaiting archive'}</span>}
           </article>
-        })}{!opportunity.attachments?.length && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
+        })}{!opportunity.attachments?.length && !opportunity.attachmentReferences?.mentioned && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
       </section>
     </div>
     {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
