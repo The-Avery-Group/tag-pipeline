@@ -37,7 +37,7 @@ function NavIcon({ name }) {
 }
 
 export default function Sidebar({ collapsed = false, onCollapsedChange, onSearchOpen }) {
-  const { user, logout } = useAuth()
+  const { user, logout, canAccessTransactionCoding } = useAuth()
   const { resolvedTheme, setThemePreference } = useTheme()
   const quickTheme = resolvedTheme === 'dark' ? 'light' : 'dark'
   const assetBase = import.meta.env.BASE_URL
@@ -94,7 +94,7 @@ export default function Sidebar({ collapsed = false, onCollapsedChange, onSearch
             <span className={styles.navLabel}>{item.label}</span>
           </NavLink>
         ))}
-        <div className={styles.financeSection}>
+        {canAccessTransactionCoding && <div className={styles.financeSection}>
           <span className={styles.financeLabel}>Finance</span>
           <NavLink
             to="/transaction-coding"
@@ -105,7 +105,7 @@ export default function Sidebar({ collapsed = false, onCollapsedChange, onSearch
             <NavIcon name="transactions" />
             <span className={styles.navLabel}>Transaction Coding</span>
           </NavLink>
-        </div>
+        </div>}
       </nav>
 
       <div className={styles.footer}>
