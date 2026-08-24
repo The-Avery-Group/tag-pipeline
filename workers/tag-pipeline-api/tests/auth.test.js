@@ -10,7 +10,7 @@ test('accepts a Graph token only after Microsoft Graph validates it', async () =
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url) => {
     assert.equal(url, 'https://graph.microsoft.com/v1.0/me?$select=id,displayName,userPrincipalName')
-    return new Response(JSON.stringify({ id: 'user-1', displayName: 'Test User' }), { status: 200 })
+    return new Response(JSON.stringify({ id: 'user-1', displayName: 'Test User', userPrincipalName: 'test@example.com' }), { status: 200 })
   }
   try {
     const accessToken = token({
@@ -22,6 +22,7 @@ test('accepts a Graph token only after Microsoft Graph validates it', async () =
     }), env)
     assert.equal(result.userId, 'user-1')
     assert.equal(result.name, 'Test User')
+    assert.equal(result.email, 'test@example.com')
   } finally {
     globalThis.fetch = originalFetch
   }
