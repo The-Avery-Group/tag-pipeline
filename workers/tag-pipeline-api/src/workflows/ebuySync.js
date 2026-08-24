@@ -207,8 +207,29 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
   }
 
   try {
-    const record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
-    if (candidateWarning) record.sourceDetails.detailStatus = 'summary_fallback'
+    let record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
+    const attachmentEvidenceIncomplete = record.attachmentReferences?.mentioned && !record.attachments.length
+      || record.attachmentReferences?.missing?.length > 0
+    if (!candidateWarning && attachmentEvidenceIncomplete) {
+      try {
+        const verifiedDetail = await getEbuyOpportunityDetail(candidate.request_id, candidate.contract_number, jwt)
+        record = normalizeLiveEbuyOpportunity(summary, verifiedDetail, candidate.contract_number)
+      } catch (error) {
+        candidateWarning = {
+          requestId: candidate.request_id,
+          code: error.code || 'ebuy_attachment_verification_failed',
+          message: `${error.message}; attachment references will be checked again on the next sync`,
+        }
+      }
+    }
+    if (!candidateWarning && (record.attachmentReferences?.mentioned && !record.attachments.length || record.attachmentReferences?.missing?.length > 0)) {
+      candidateWarning = {
+        requestId: candidate.request_id,
+        code: 'ebuy_attachment_reference_unresolved',
+        message: 'The description references files that GSA eBuy did not include in its attachment data; they will be checked again on the next sync',
+      }
+    }
+    if (candidateWarning) record.sourceDetails.detailStatus = candidateWarning.code || 'detail_warning'
     const sync = await syncEbuyOpportunities(env.EBUY_DB, [record], { source: 'live', completeSnapshot: false })
     await finishEbuySyncCandidate(env.EBUY_DB, runId, candidate.request_id)
     return { requestId: candidate.request_id, ...sync, candidateWarning }
