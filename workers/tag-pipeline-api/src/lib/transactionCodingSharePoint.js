@@ -1,5 +1,3 @@
-import { getAppOnlyGraphToken } from './graph.js'
-
 const DEFAULT_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const WORKSPACE_NAME = 'Transaction Coding'
 const WORKBOOK_NAME = 'Transaction Coding.xlsx'
@@ -44,7 +42,13 @@ async function ensureFolder(driveId, parentId, name, token) {
 
 export async function ensureTransactionCodingWorkspace(env, delegatedToken = '') {
   const driveId = env.TRANSACTION_CODING_DRIVE_ID || env.DRIVE_ID || env.OPPORTUNITY_WORKSPACE_DRIVE_ID || DEFAULT_DRIVE_ID
-  const token = delegatedToken || await getAppOnlyGraphToken(env)
+  const token = String(delegatedToken || '').trim()
+  if (!token) {
+    const error = new Error('Your signed-in Microsoft session is required for Transaction Coding files')
+    error.status = 401
+    error.code = 'delegated_token_required'
+    throw error
+  }
   const workbook = await graphJson(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${env.WORKBOOK_ID}?$select=id,name,parentReference`, token)
   const parentId = workbook?.parentReference?.id
   if (!parentId) throw new Error('Could not determine the CRM workbook SharePoint location')
