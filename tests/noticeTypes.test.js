@@ -6,6 +6,7 @@ import {
   isRfiWorkflowOpportunity,
   isResponseOpportunity,
   isSubmittedOpportunity,
+  isTrackedOpportunity,
   normalizeNoticeType,
   submittedOpportunityNoticeType,
 } from '../src/utils/noticeTypes.js'
@@ -45,6 +46,15 @@ test('Responses includes every supported notice type and legacy submitted phases
   assert.equal(isResponseOpportunity({ 'TAG Pipeline Activity Phase': 'Submitted RFP' }), true)
   assert.equal(isResponseOpportunity({ 'TAG Pipeline Activity Phase': 'Submitted RFQ' }), true)
   assert.equal(isResponseOpportunity({ 'TAG Opportunity Phase': 'Identified' }), false)
+  assert.equal(isResponseOpportunity({ 'Notice Type': 'RFI', 'Opportunity Outlook': 'Tracking' }), false)
+  assert.equal(isResponseOpportunity({ 'Notice Type': 'RFP', 'Opportunity Outlook': 'Tracked' }), false)
+})
+
+test('tracked discovery records stay outside response-specific workflows', () => {
+  const tracked = { 'Notice Type': 'RFI', 'Opportunity Outlook': 'Tracking' }
+  assert.equal(isTrackedOpportunity(tracked), true)
+  assert.equal(isRfiWorkflowOpportunity(tracked), false)
+  assert.equal(isFollowOnSourceOpportunity(tracked), false)
 })
 
 test('submission state comes from activity phase and notice type labels the submission', () => {
