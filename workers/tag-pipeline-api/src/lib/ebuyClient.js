@@ -279,27 +279,111 @@ function locationText(address) {
     .map((item) => String(item || '').trim()).filter(Boolean).join(', ')
 }
 
+const DOCUMENT_EXTENSION = 'pdf|docx?|xlsx?|pptx?|txt|rtf|csv|zip|7z|xml|json|jpg|jpeg|png|gif|tiff?'
+const DOCUMENT_URL_RE = new RegExp(`(?:https?:\\/\\/[^\\s<>"']+|\\/ebuy_upload\\/[^\\s<>"']+|\\/[^\\s<>"']+)\\.(?:${DOCUMENT_EXTENSION})(?:[?#][^\\s<>"']*)?`, 'gi')
+const DOCUMENT_NAME_RE = new RegExp(`(?:^|[\\s("'])(([\\w][\\w .,&'()+-]{0,100})\\.(?:${DOCUMENT_EXTENSION}))(?=$|[\\s)"',;:])`, 'gi')
+
+function attachmentFileName(attachment, fallback = 'Attachment') {
+  const explicit = String(attachment?.docName || attachment?.fileName || attachment?.name || attachment?.title || '').trim()
+  if (explicit) return explicit
+  const path = String(attachment?.docPath || attachment?.downloadUrl || attachment?.url || attachment?.href || attachment?.path || '').trim()
+  try {
+    return decodeURIComponent(new URL(path, EBUY_ORIGIN).pathname.split('/').filter(Boolean).at(-1) || fallback)
+  } catch {
+    return fallback
+  }
+}
+
+function attachmentPath(attachment) {
+  return String(attachment?.docPath || attachment?.downloadUrl || attachment?.url || attachment?.href || attachment?.path || '').trim()
+}
+
+function collectAttachmentDtos(detail) {
+  const found = []
+  const add = (attachment, amendmentId = '') => {
+    if (!attachment || typeof attachment !== 'object') return
+    const docPath = attachmentPath(attachment)
+    const fileName = attachmentFileName(attachment)
+    if (!docPath && fileName === 'Attachment') return
+    found.push({ ...attachment, docPath, docName: fileName, amendmentId: String(amendmentId || attachment.amendmentId || '').trim() })
+  }
+  ;(Array.isArray(detail?.rfqAttachments) ? detail.rfqAttachments : []).forEach((attachment) => add(attachment))
+  const amendments = [
+    ...(Array.isArray(detail?.rfqModifications) ? detail.rfqModifications : []),
+    ...(Array.isArray(detail?.rfqAmendments) ? detail.rfqAmendments : []),
+    ...(Array.isArray(detail?.amendments) ? detail.amendments : []),
+  ]
+  amendments.forEach((amendment) => {
+    const amendmentId = amendment?.amendIdentifier || amendment?.versionNumber || amendment?.id || ''
+    for (const key of ['rfqAttachments', 'attachments', 'documents', 'files']) {
+      ;(Array.isArray(amendment?.[key]) ? amendment[key] : []).forEach((attachment) => add(attachment, amendmentId))
+    }
+  })
+  for (const key of ['rfqModificationAttachments', 'amendmentAttachments', 'documents', 'files']) {
+    ;(Array.isArray(detail?.[key]) ? detail[key] : []).forEach((attachment) => add(attachment, attachment?.amendmentId))
+  }
+  return found
+}
+
+function descriptionAttachmentEvidence(description, attachments) {
+  const text = String(description || '')
+  const mentioned = /\battach(?:ed|ment|ments)?\b/i.test(text)
+  const linked = [...text.matchAll(DOCUMENT_URL_RE)].map((match) => match[0].replace(/[.,;)]+$/, ''))
+  const linkedAttachments = linked.map((docPath) => ({ docPath, docName: attachmentFileName({ docPath }) }))
+  const knownNames = new Set([...attachments, ...linkedAttachments].map((attachment) => attachmentFileName(attachment).toLowerCase()))
+  const missing = [...text.matchAll(DOCUMENT_NAME_RE)]
+    .map((match) => String(match[1] || '').trim()
+      .replace(/^(?:please\s+)?(?:see|review|open)\s+(?:the\s+)?(?:attached\s+)?/i, '')
+      .replace(/^(?:the\s+)?attached\s+/i, '')
+      .trim())
+    .filter((name, index, values) => name && !knownNames.has(name.toLowerCase()) && values.findIndex((value) => value.toLowerCase() === name.toLowerCase()) === index)
+  return { mentioned, linkedAttachments, missing }
+}
+
+function normalizeAttachments(detail, requestId, description) {
+  const source = collectAttachmentDtos(detail)
+  const evidence = descriptionAttachmentEvidence(description, source)
+  const deduped = new Map()
+  for (const attachment of [...source, ...evidence.linkedAttachments]) {
+    const fileName = attachmentFileName(attachment)
+    const docPath = attachmentPath(attachment)
+    const amendmentId = String(attachment.amendmentId || '').trim()
+    const identity = String(attachment.docSeqNum ?? attachment.seqNum ?? '').trim()
+      || docPath.toLowerCase()
+      || `${amendmentId}:${fileName}`.toLowerCase()
+    if (!identity || deduped.has(identity)) continue
+    deduped.set(identity, {
+      id: `${requestId}:${identity}`,
+      fileName,
+      contentType: 'application/octet-stream',
+      docPath,
+      sourceUrl: docPath,
+      amendmentId,
+      docSeqNum: attachment.docSeqNum ?? attachment.seqNum ?? null,
+      docType: attachment.docType ?? null,
+      docSessionId: attachment.docSessionId ?? null,
+      docSessionDate: attachment.docSessionDate ?? null,
+      seqNum: attachment.seqNum ?? null,
+      postedAt: isoDate(attachment.docSessionDate),
+    })
+  }
+  return {
+    attachments: [...deduped.values()],
+    references: {
+      mentioned: evidence.mentioned,
+      missing: evidence.missing,
+    },
+  }
+}
+
 export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
   const info = detail?.rfqInfo || summary?.rfq?.rfqInfo || {}
   const props = detail?.rfqProps || summary?.rfq?.rfqProps || {}
   const additional = detail?.rfqAdditionalInfo || summary?.rfq?.rfqAdditionalInfo || {}
   const categories = Array.isArray(detail?.rfqCategories) ? detail.rfqCategories : []
   const addresses = Array.isArray(detail?.rfqAddresses) ? detail.rfqAddresses : []
-  const attachments = (Array.isArray(detail?.rfqAttachments) ? detail.rfqAttachments : []).map((attachment) => ({
-    id: `${info.rfqId || summary.rfqId}:${attachment.docSeqNum ?? attachment.seqNum ?? attachment.docName}`,
-    fileName: String(attachment.docName || 'Attachment'),
-    contentType: 'application/octet-stream',
-    docPath: String(attachment.docPath || ''),
-    sourceUrl: String(attachment.docPath || ''),
-    docSeqNum: attachment.docSeqNum ?? attachment.seqNum ?? null,
-    // The attachment download endpoint expects the original eBuy attachment
-    // DTO. Retain its non-sensitive source fields for the archive step.
-    docType: attachment.docType ?? null,
-    docSessionId: attachment.docSessionId ?? null,
-    docSessionDate: attachment.docSessionDate ?? null,
-    seqNum: attachment.seqNum ?? null,
-    postedAt: isoDate(attachment.docSessionDate),
-  }))
+  const description = String(info.description || '')
+  const normalizedAttachmentData = normalizeAttachments(detail, info.rfqId || summary.rfqId || '', description)
   const amendments = (Array.isArray(detail?.rfqModifications) ? detail.rfqModifications : []).map((modification) => ({
     id: `${info.rfqId || summary.rfqId}:mod:${modification.versionNumber ?? modification.modificationTime}`,
     label: modification.amendIdentifier || `Modification ${modification.versionNumber ?? ''}`.trim(),
@@ -320,7 +404,7 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     requestId: String(info.rfqId || summary.rfqId || ''),
     requestType: requestType(info, summary),
     title: String(info.title || summary.title || ''),
-    description: String(info.description || ''),
+    description,
     referenceNumber: String(info.referenceNum || ''),
     // eBuy calls the top-level department `userAgency` and the subordinate
     // buying organization `userBureau`. Keep the CRM's Department/Agency
@@ -345,7 +429,8 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     lastScrapedAt: new Date().toISOString(),
     isFollowOn: String(additional.followOnRequirement || '').toLowerCase() === 'yes',
     amendments,
-    attachments,
+    attachments: normalizedAttachmentData.attachments,
+    attachmentReferences: normalizedAttachmentData.references,
     sourceDetails: { contractNumber, rfqInfo: safeInfo, rfqAdditionalInfo: additional, rfqProps: props, rfqCategories: safeCategories, rfqLineItems: detail?.rfqLineItems || [], rfqAddresses: addresses },
   }
 }
