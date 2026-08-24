@@ -121,6 +121,7 @@ export async function verifyEntraRequest(req, env) {
   return {
     userId: identity.id || claims.oid || claims.sub || '',
     name: identity.displayName || claims.name || '',
+    email: identity.userPrincipalName || claims.preferred_username || claims.upn || '',
     scopes: String(claims.scp || '').split(' ').filter(Boolean),
   }
 }
