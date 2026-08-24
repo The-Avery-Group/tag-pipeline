@@ -18,6 +18,9 @@ import styles from './SAMOpportunityDetail.module.css'
 
 function clean(value) { return String(value || '').trim() }
 function same(left, right) { return clean(left).toLowerCase() === clean(right).toLowerCase() }
+function linkHost(value) {
+  try { return new URL(value).hostname.replace(/^www\./, '') } catch { return value }
+}
 
 function Field({ label, children, wide = false }) {
   if (children === null || children === undefined || children === '') return null
@@ -303,13 +306,13 @@ export default function SAMOpportunityDetail({ toast }) {
       </Card>
 
       {(detail.links?.length > 0 || detail.attachments?.length > 0) && <Card eyebrow="Resources" title="Attachments and links" count={(detail.links?.length || 0) + (detail.attachments?.length || 0)}>
-        {detail.links?.length > 0 && <div className={styles.resourceGroup}><h3>Links</h3><div className={styles.resourceList}>{detail.links.map((link) => <article key={link.url}><div><strong>{link.label}</strong><span>{link.url}</span></div><a className="btn" href={link.url} target="_blank" rel="noreferrer">Open link</a></article>)}</div></div>}
         {detail.attachments?.length > 0 && <div className={styles.resourceGroup}>
           <div className={styles.resourceHeading}><div><h3>Attachments</h3><span>{filesReady} of {detail.attachments.length} preserved in SharePoint</span></div>{detail.archive?.webUrl && <a href={detail.archive.webUrl} target="_blank" rel="noreferrer">Open archive folder</a>}</div>
           {(archiveRunning || archiving) && <div className={styles.archiveProgress}><div><span>{detail.archive?.progressPhase || 'Preparing SAM.gov archive'}</span><strong>{filesReady}/{detail.attachments.length}</strong></div><div><span style={{ width: `${Math.round((filesReady / Math.max(1, detail.attachments.length)) * 100)}%` }} /></div></div>}
           {['partial', 'error'].includes(detail.archive?.archiveStatus) && <div className={styles.archiveIssue}><span>{detail.archive.errorMessage || 'Some files need attention.'}</span><button className="btn" onClick={() => startArchive({ force: true })} disabled={archiving}>Retry archive</button></div>}
           <div className={styles.resourceList}>{detail.attachments.map((file, index) => <article key={file.sourceUrl || index}><div><strong>{file.fileName}</strong><span>{file.byteSize ? `${Math.ceil(file.byteSize / 1024)} KB · ` : ''}{file.archiveStatus === 'archived' ? 'Preserved in SAM.gov Archive' : file.archiveStatus === 'moved' ? 'Moved into opportunity workspace' : file.archiveStatus === 'failed' ? 'Archive failed' : 'Awaiting archive'}</span>{file.errorMessage && <span className={styles.fileError}>{file.errorMessage}</span>}</div>{file.webUrl ? <a className="btn" href={file.webUrl} target="_blank" rel="noreferrer">Open file</a> : <span className={styles.pending}>Processing</span>}</article>)}</div>
         </div>}
+        {detail.links?.length > 0 && <div className={styles.resourceGroup}><h3>External links</h3><div className={styles.resourceList}>{detail.links.map((link) => <article key={link.url}><div><strong>{link.label}</strong><CopyValue value={link.url} label="link"><span>{linkHost(link.url)}</span></CopyValue></div><a className="btn" href={link.url} target="_blank" rel="noreferrer">Open link</a></article>)}</div></div>}
       </Card>}
 
       {!detail.links?.length && !detail.attachments?.length && <Card eyebrow="Resources" title="Attachments and links"><p className={styles.empty}>No attachments or external links were included with this notice.</p></Card>}
