@@ -8,7 +8,7 @@ import {
   RULE_HEADERS,
   saveTransactionRuleToWorkbook,
 } from '../src/lib/transactionCodingSharePoint.js'
-import { attemptTransactionRuleSync, TRANSACTION_CODING_HTTP_METHODS } from '../src/handlers/transactionCoding.js'
+import { attemptTransactionRuleSync, transactionCodingAccess, TRANSACTION_CODING_HTTP_METHODS } from '../src/handlers/transactionCoding.js'
 import { transactionCodingStorageReady, transactionsForExport } from '../src/lib/transactionCodingRepository.js'
 
 test('categorizes a statement row with the highest-priority matching rule', () => {
@@ -29,6 +29,14 @@ test('whole-word rules match standalone phrases without matching embedded text',
 
 test('transaction coding routes allow rule deletion', () => {
   assert.equal(TRANSACTION_CODING_HTTP_METHODS.includes('DELETE'), true)
+})
+
+test('transaction coding access is fail-closed and accepts approved Entra IDs or user principal names', () => {
+  assert.deepEqual(transactionCodingAccess({ userId: 'user-1', email: 'person@example.com' }, {}), { configured: false, allowed: false })
+  const env = { TRANSACTION_CODING_ALLOWED_USERS: 'approved-id, finance@example.com' }
+  assert.equal(transactionCodingAccess({ userId: 'APPROVED-ID', email: 'other@example.com' }, env).allowed, true)
+  assert.equal(transactionCodingAccess({ userId: 'other-id', email: 'Finance@Example.com' }, env).allowed, true)
+  assert.equal(transactionCodingAccess({ userId: 'other-id', email: 'other@example.com' }, env).allowed, false)
 })
 
 test('neutral export contains coding fields without CRM status or a Costpoint-specific schema', () => {
@@ -87,6 +95,13 @@ test('user-initiated workbook access uses the delegated Graph token', async (t) 
   assert.equal(workspace.workbookItemId, 'coding-workbook')
   assert.ok(requests.length >= 4)
   assert.ok(requests.every((request) => request.authorization === 'Bearer delegated-token'))
+})
+
+test('transaction coding SharePoint access never falls back to the application identity', async () => {
+  await assert.rejects(
+    ensureTransactionCodingWorkspace({ WORKBOOK_ID: 'crm-workbook', DRIVE_ID: 'drive-1' }),
+    (error) => error.code === 'delegated_token_required',
+  )
 })
 
 test('a missing manual workbook returns setup guidance without uploading a generated file', async (t) => {
