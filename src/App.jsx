@@ -160,6 +160,14 @@ function AuthInitScreen() {
   )
 }
 
+function TransactionCodingRoute({ toast }) {
+  const { canAccessTransactionCoding, transactionCodingAccessLoading } = useAuth()
+  if (transactionCodingAccessLoading) return <PageFallback />
+  return canAccessTransactionCoding
+    ? <TransactionCoding toast={toast} />
+    : <Navigate to="/" replace />
+}
+
 function AppShell() {
   const { isAuthenticated, loading } = useAuth()
   const location = useLocation()
@@ -270,7 +278,7 @@ function AppShell() {
               <Route path="/partners"                      element={<Partners toast={toast} />} />
               <Route path="/settings"                      element={<Settings toast={toast} />} />
               <Route path="/lookup"                         element={<Lookup toast={toast} />} />
-              <Route path="/transaction-coding"             element={<TransactionCoding toast={toast} />} />
+              <Route path="/transaction-coding"             element={<TransactionCodingRoute toast={toast} />} />
               <Route path="*"                              element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
