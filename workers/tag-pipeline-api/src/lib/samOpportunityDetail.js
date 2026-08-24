@@ -25,6 +25,16 @@ export function isSAMApiUrl(value) {
   }
 }
 
+export function isSAMResourceDownloadUrl(value) {
+  try {
+    const url = new URL(clean(value))
+    const isSamHost = /(^|\.)(?:api(?:-alpha)?\.)?sam\.gov$/i.test(url.hostname)
+    return isSamHost && /\/opportunities\/resources\/files\//i.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
 function decodeEntities(value) {
   const named = {
     amp: '&', apos: "'", bull: '•', copy: '©', deg: '°', gt: '>', hellip: '…',
@@ -158,9 +168,10 @@ function normalizeLinks(raw) {
   }
   add(raw?.additionalInfoLink, 'Additional opportunity information')
   add(raw?.links)
+  add(raw?.resourceLinks)
   const seen = new Set()
   return values.filter((item) => {
-    if (!/^https?:\/\//i.test(item.url) || isSAMApiUrl(item.url) || seen.has(item.url)) return false
+    if (!/^https?:\/\//i.test(item.url) || isSAMApiUrl(item.url) || isSAMResourceDownloadUrl(item.url) || seen.has(item.url)) return false
     seen.add(item.url)
     return true
   })
@@ -168,7 +179,8 @@ function normalizeLinks(raw) {
 
 export function normalizeSAMOpportunityDetail(raw = {}) {
   const organization = samOrganizationHierarchy(raw.fullParentPathName)
-  const resourceLinks = unique(Array.isArray(raw.resourceLinks) ? raw.resourceLinks : [])
+  const resourceLinks = unique((Array.isArray(raw.resourceLinks) ? raw.resourceLinks : [])
+    .map((value) => typeof value === 'object' ? value?.url || value?.href || value?.link : value))
   return {
     noticeId: clean(raw.noticeId),
     solicitationNumber: clean(raw.solicitationNumber),
@@ -196,7 +208,7 @@ export function normalizeSAMOpportunityDetail(raw = {}) {
     contacts: normalizeContacts(raw.pointOfContact),
     contractingOfficeAddress: addressText(raw.officeAddress),
     links: normalizeLinks(raw),
-    attachments: resourceLinks.map((url, index) => ({
+    attachments: resourceLinks.filter(isSAMResourceDownloadUrl).map((url, index) => ({
       sourceUrl: url,
       fileName: fileNameFromUrl(url, index),
       archiveStatus: 'pending',
