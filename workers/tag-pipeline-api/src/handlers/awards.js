@@ -360,7 +360,7 @@ export async function searchAwardNotices(env, solicitationNumber, window) {
   return data.opportunitiesData || data.data || []
 }
 
-async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDate, awardeeName }) {
+export async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDate, awardeeName }) {
   const window = dateWindow(originalSignedDate)
   if (!solicitationNumber || !window) {
     return { status: 'No Award Notice search available because this award has no solicitation number or signed date.' }
@@ -408,6 +408,7 @@ async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDa
     awardDate: notice?.award?.date || null,
     awardAmount: notice?.award?.amount || null,
     awardeeName: notice?.award?.awardee?.name || null,
+    awardeeUEI: notice?.award?.awardee?.ueiSAM || notice?.award?.awardee?.uei || null,
     primaryPoc: primaryPoc(notice?.pointOfContact),
     pointOfContact: Array.isArray(notice?.pointOfContact) ? notice.pointOfContact : [],
     link: noticeLink(notice),
