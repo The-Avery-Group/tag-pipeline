@@ -319,7 +319,12 @@ export default function Opportunities({ toast }) {
   const [showFilter, setShowFilter] = useState(false)
   const [showHiddenResponses, setShowHiddenResponses] = useState(false)
   const activeFilterCount = Object.entries(filters)
-    .filter(([k, v]) => k === 'agency' ? v.size > 0 : Boolean(v)).length + (rfiFollowUpIds.size ? 1 : 0)
+    .filter(([k, v]) => {
+      if (k === 'agency') return v.size > 0
+      if (k === 'yearBasis') return false
+      if (k === 'endQuarter') return Boolean(filters.endYear && v)
+      return Boolean(v)
+    }).length + (rfiFollowUpIds.size ? 1 : 0)
   const [agencyFilterOpen, setAgencyFilterOpen] = useState(false)
   const agencyFilterRef = useRef(null)
 
@@ -1837,7 +1842,7 @@ export default function Opportunities({ toast }) {
                 style={{ marginTop: 8, color: 'var(--red-600)' }}
                 onClick={() => updateParams({
                   outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-                  phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '',
+                  phase: '', primeOrSub: '', endBand: '', endYear: '', endQuarter: '', yearBasis: '', rfiMonth: '', classification: '', vehicle: '', flagged: '',
                 })}>
                 Clear all filters ({activeFilterCount})
               </button>
@@ -1853,10 +1858,16 @@ export default function Opportunities({ toast }) {
                 RFI follow-ons ✕
               </button>
             )}
-            {Object.entries(filters).filter(([k, v]) => k === 'agency' ? false : v).map(([key, val]) => (
+            {Object.entries(filters).filter(([key, val]) => {
+              if (key === 'agency' || key === 'yearBasis') return false
+              if (key === 'endQuarter') return Boolean(filters.endYear && val)
+              return Boolean(val)
+            }).map(([key, val]) => (
               <button key={key}
                 className="filter-chip active"
-                onClick={() => setFilters((f) => ({ ...f, [key]: '' }))}>
+                onClick={() => key === 'endYear'
+                  ? updateParams({ endYear: '', endQuarter: '', yearBasis: '' })
+                  : setFilters((f) => ({ ...f, [key]: '' }))}>
                 {filterChipLabel(key, val)} ✕
               </button>
             ))}
