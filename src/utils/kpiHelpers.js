@@ -80,7 +80,7 @@ export function getGreeting(firstName) {
 export function getPhaseOrder() {
   return [
     'Identified', 'Research', 'Qualified', 'Proposal',
-    'Pending Award', 'Contract Awarded', 'Cancelled',
+    'Pending Award', 'Contract Awarded', 'Closed Lost', 'Cancelled',
   ]
 }
 
@@ -237,6 +237,38 @@ export function computeContractByYear(pipeline = []) {
   return years
 }
 
+export function computeContractTimeline(pipeline = [], { grouping = 'year', basis = 'fiscal' } = {}) {
+  const now = new Date()
+  const startYear = basis === 'fiscal' ? getFiscalYear(now) : now.getFullYear()
+  const buckets = []
+  for (let year = startYear; year <= startYear + 5; year += 1) {
+    if (grouping === 'quarter') {
+      for (let quarter = 1; quarter <= 4; quarter += 1) {
+        buckets.push({ key: `${year}-Q${quarter}`, year, quarter, label: `${basis === 'fiscal' ? 'FY' : ''}${year} Q${quarter}`, count: 0, value: 0 })
+      }
+    } else {
+      buckets.push({ key: String(year), year, label: `${basis === 'fiscal' ? 'FY' : ''}${year}`, count: 0, value: 0 })
+    }
+  }
+  pipeline.forEach((opportunity) => {
+    if (['Cancelled', 'Closed Lost'].includes(opportunity[C_PHASE])) return
+    const date = parseLocalDate(opportunity[C_ENDDATE])
+    if (Number.isNaN(date.getTime())) return
+    const calendarMonth = date.getMonth()
+    const year = basis === 'fiscal' ? getFiscalYear(date) : date.getFullYear()
+    const quarter = basis === 'fiscal'
+      ? Math.floor(((calendarMonth + 3) % 12) / 3) + 1
+      : Math.floor(calendarMonth / 3) + 1
+    const key = grouping === 'quarter' ? `${year}-Q${quarter}` : String(year)
+    const bucket = buckets.find((item) => item.key === key)
+    if (!bucket) return
+    bucket.count += 1
+    const amount = parseFloat(String(opportunity[C_VALUE] || '0').replace(/[^0-9.]/g, ''))
+    bucket.value += Number.isNaN(amount) ? 0 : amount
+  })
+  return buckets
+}
+
 // ── Sub/Prime breakdown ──────────────────────────────────────────────────
 
 /** Counts of Prime vs Sub opportunities. Blank/unset values are excluded. */
@@ -346,6 +378,21 @@ export function computeKPIs(pipeline = [], tasks = []) {
   const topOwner = Object.entries(ownerCount)
     .sort((a, b) => b[1] - a[1])[0]?.[0] || '—'
 
+  const submittedRfps = pipeline.filter((opportunity) => {
+    const noticeType = String(opportunity['Notice Type'] || '').trim().toUpperCase()
+    const activity = String(opportunity['TAG Pipeline Activity Phase'] || '').trim()
+    return noticeType === 'RFP' && (
+      activity === 'Proposal Submitted' || activity === 'Submitted RFP' ||
+      ['Pending Award', 'Contract Awarded', 'Closed Lost'].includes(opportunity[C_PHASE]) ||
+      ['Won', 'Lost', 'Withdrawn', 'Cancelled'].includes(String(opportunity.Outcome || '').trim())
+    )
+  })
+  const won = submittedRfps.filter((opportunity) => opportunity.Outcome === 'Won' || opportunity[C_PHASE] === 'Contract Awarded').length
+  const lost = submittedRfps.filter((opportunity) => opportunity.Outcome === 'Lost' || opportunity[C_PHASE] === 'Closed Lost').length
+  const pendingAward = submittedRfps.filter((opportunity) => opportunity[C_PHASE] === 'Pending Award').length
+  const companyPwin = submittedRfps.length ? (won / submittedRfps.length) * 100 : 0
+  const decidedPwin = won + lost ? (won / (won + lost)) * 100 : 0
+
   return {
     total, open, closed,
     totalValueRaw, totalValueFormatted,
@@ -354,6 +401,7 @@ export function computeKPIs(pipeline = [], tasks = []) {
     trackedOpps,
     agencyCounts,
     overdueCount, topOwner,
+    submittedRfpCount: submittedRfps.length, pendingAward, won, lost, companyPwin, decidedPwin,
   }
 }
 
