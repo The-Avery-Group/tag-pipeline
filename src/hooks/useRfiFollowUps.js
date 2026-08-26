@@ -3,9 +3,9 @@ import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
 
 /**
- * Looks for RFP/RFQ notices that follow a specific RFI/Sources-Sought record.
- * The Worker applies the strict organization, POC-email, and title-overlap
- * checks; this hook only owns request state and automatic initial lookup.
+ * Looks for RFP or RFQ notices that may follow an RFI, MRAS, or RFQ record. The
+ * Worker ranks organization, POC, NAICS, office, and title evidence; this
+ * hook only owns request state and automatic initial lookup.
  */
 export function useRfiFollowUps(criteria, { enabled = true } = {}) {
   const [matches, setMatches] = useState([])
@@ -15,15 +15,16 @@ export function useRfiFollowUps(criteria, { enabled = true } = {}) {
   const lastKey = useRef(null)
 
   const lookup = useCallback(async ({ force = false } = {}) => {
-    const { department, agency, pocEmail, title, noticeId, submissionDate } = criteria || {}
-    if (!enabled || !department || !agency || !pocEmail || !title) return
+    const { department, agency, office, naicsCode, pocEmail, title, noticeId, solicitationNumber, submissionDate } = criteria || {}
+    if (!enabled || !title) return
     if (!WORKER_URL) {
       setError('VITE_API_BASE_URL not set')
       return
     }
 
     const params = new URLSearchParams({
-      department, agency, pocEmail, title, noticeId: noticeId || '', submissionDate: submissionDate || '',
+      department: department || '', agency: agency || '', office: office || '', naicsCode: naicsCode || '',
+      pocEmail: pocEmail || '', title, noticeId: noticeId || '', solicitationNumber: solicitationNumber || '', submissionDate: submissionDate || '',
     })
     const key = params.toString()
     if (!force && lastKey.current === key) return

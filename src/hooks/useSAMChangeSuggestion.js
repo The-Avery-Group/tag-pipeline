@@ -7,7 +7,7 @@ function normalized(value) {
   return String(value || '').trim().toUpperCase()
 }
 
-export function useSAMChangeSuggestion(opportunity, columns) {
+export function useSAMChangeSuggestion(opportunity, columns, { enabled = true } = {}) {
   const [suggestion, setSuggestion] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -18,7 +18,7 @@ export function useSAMChangeSuggestion(opportunity, columns) {
   ].filter(Boolean), [columns.contractNum, columns.solNum, opportunity])
 
   const load = useCallback(async () => {
-    if (!WORKER_URL || !opportunity || !identity.length) {
+    if (!enabled || !WORKER_URL || !opportunity || !identity.length) {
       setSuggestion(null)
       return null
     }
@@ -55,7 +55,7 @@ export function useSAMChangeSuggestion(opportunity, columns) {
     } finally {
       setLoading(false)
     }
-  }, [columns, identity, opportunity])
+  }, [columns, identity, opportunity, enabled])
 
   useEffect(() => { load() }, [load])
 

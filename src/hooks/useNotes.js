@@ -55,7 +55,7 @@ function noteMatchesRelationship(note, relationship) {
     String(note?.ContractNumber || '').trim().toLowerCase() === relationship.contractNumber.toLowerCase()
 }
 
-export function useNotes(relationshipValue) {
+export function useNotes(relationshipValue, { enabled = true } = {}) {
   const relationship = normalizeRelationship(relationshipValue)
   const relationshipKey = `${relationship.type}:${relationship.id}:${relationship.contractNumber}`
   const [notes, setNotes]     = useState([])
@@ -73,6 +73,7 @@ export function useNotes(relationshipValue) {
   useEffect(() => { notesRef.current = notes }, [notes])
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    if (!enabled) { setLoading(false); return }
     if (!silent) {
       setLoading(true)
       setError(null)
@@ -95,7 +96,7 @@ export function useNotes(relationshipValue) {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [relationshipKey, relationship.type, relationship.id, relationship.contractNumber])
+  }, [relationshipKey, relationship.type, relationship.id, relationship.contractNumber, enabled])
 
   useEffect(() => {
     setNotes([])

@@ -10,7 +10,7 @@ import {
 } from '@/services/dataCache'
 import { createStableId, retryIdempotent } from '@/services/workbookMutations'
 
-export function useTasks(contractNumber = null) {
+export function useTasks(contractNumber = null, { enabled = true } = {}) {
   const [tasks, setTasks]   = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState(null)
@@ -25,6 +25,7 @@ export function useTasks(contractNumber = null) {
   const pendingPatches = useRef(new Map())
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    if (!enabled) { setLoading(false); return }
     if (!silent) {
       setLoading(true)
       setError(null)
@@ -51,7 +52,7 @@ export function useTasks(contractNumber = null) {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [contractNumber])
+  }, [contractNumber, enabled])
 
   useEffect(() => { load() }, [load])
 

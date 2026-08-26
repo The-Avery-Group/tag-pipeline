@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import { getValidationLists, updateValidationColumn } from '@/services/graphService'
 import { forceRefreshCache, invalidateCache, onCacheRefresh } from '@/services/dataCache'
 
-export function useValidationLists() {
+export function useValidationLists({ enabled = true } = {}) {
   const [lists, setLists]   = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState(null)
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    if (!enabled) { setLoading(false); return }
     if (!silent) {
       setLoading(true)
       setError(null)
@@ -20,7 +21,7 @@ export function useValidationLists() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => { load() }, [load])
 

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
 
-export function useEntityEightA(uei) {
+export function useEntityEightA(uei, { enabled = true } = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     const normalizedUEI = String(uei || '').trim().toUpperCase()
-    if (!/^[A-Z0-9]{12}$/.test(normalizedUEI) || !WORKER_URL) {
+    if (!enabled || !/^[A-Z0-9]{12}$/.test(normalizedUEI) || !WORKER_URL) {
       setData(null)
       setLoading(false)
       setError(null)
@@ -38,7 +38,7 @@ export function useEntityEightA(uei) {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [uei])
+  }, [uei, enabled])
 
   return { data, loading, error }
 }

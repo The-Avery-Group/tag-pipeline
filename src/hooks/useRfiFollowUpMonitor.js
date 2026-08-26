@@ -66,7 +66,7 @@ export function effectiveRfiFollowUpCriteria(opportunity, contacts, globalRules 
   }
 }
 
-export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = false } = {}) {
+export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = false, enabled = true } = {}) {
   const [globalRules, setGlobalRules] = useState(DEFAULT_RULES)
   const [overrides, setOverrides] = useState([])
   const [decisions, setDecisions] = useState([])
@@ -162,26 +162,27 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
   }, [])
 
   useEffect(() => {
+    if (!enabled) { setLoading(false); return undefined }
     let live = true
     ;(async () => {
       try { await refreshConfiguration(); await loadStatus() } catch (err) { if (live) setError(err.message) } finally { if (live) setLoading(false) }
     })()
     return () => { live = false }
-  }, [loadStatus, refreshConfiguration])
+  }, [loadStatus, refreshConfiguration, enabled])
 
   useEffect(() => {
-    if (!WORKER_URL) return undefined
+    if (!enabled || !WORKER_URL) return undefined
     const timer = window.setInterval(() => { loadStatus().catch(() => {}) }, 5 * 60 * 1000)
     return () => window.clearInterval(timer)
-  }, [loadStatus])
+  }, [loadStatus, enabled])
 
   useEffect(() => {
-    if (!WORKER_URL || loading) return
+    if (!enabled || !WORKER_URL || loading) return
     const snapshot = buildWatches().map((watch) => `${watch.opportunityId}:${JSON.stringify(watch.rules)}:${watch.pocEmail}:${watch.submissionDate}:${watch.decisions.map((d) => `${d.Decision}:${d['Follow-up Notice ID']}:${d['Follow-up Solicitation Number']}`).join(',')}`).join('|')
     if (snapshot === fingerprint.current) return
     fingerprint.current = snapshot
     synchronize().then(loadStatus).catch((err) => setError(err.message))
-  }, [buildWatches, loadStatus, loading, synchronize])
+  }, [buildWatches, loadStatus, loading, synchronize, enabled])
 
   return { globalRules, overrides, decisions, statusByOpportunity, loading, checking, error, refreshConfiguration, synchronize, loadStatus, checkOne, markSeen, applyDecision }
 }

@@ -8,13 +8,14 @@ import {
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
 
-export function usePartners() {
+export function usePartners({ enabled = true } = {}) {
   const [partners, setPartners] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const pendingPatches = useRef(new Map())
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    if (!enabled) { setLoading(false); return }
     if (!silent) {
       setLoading(true)
       setError(null)
@@ -34,7 +35,7 @@ export function usePartners() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => { load() }, [load])
   // The workbook's shared poll is still respected, but it must never turn a

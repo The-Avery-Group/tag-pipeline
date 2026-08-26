@@ -8,7 +8,7 @@ import {
 } from '@/services/dataCache'
 import { createStableId, retryIdempotent } from '@/services/workbookMutations'
 
-export function useContacts() {
+export function useContacts({ enabled = true } = {}) {
   const [contacts, setContacts] = useState([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
@@ -25,6 +25,7 @@ export function useContacts() {
   }, [contacts])
 
   const load = useCallback(async ({ silent = false } = {}) => {
+    if (!enabled) { setLoading(false); return }
     if (!silent) {
       setLoading(true)
       setError(null)
@@ -48,7 +49,7 @@ export function useContacts() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => { load() }, [load])
 
