@@ -121,3 +121,16 @@ test('task summaries share one daily dedupe key per reminder category', () => {
   assert.equal(taskSummaryDedupeKey('task_created', { summaryDate: date }), '')
   assert.equal(taskSummaryDedupeKey('due_soon_summary', {}), '')
 })
+
+test('award notice cards expose review evidence without declaring a win', () => {
+  const card = cardForType('award_notice', {
+    title: 'Example RFP', contractNumber: 'RFP-100', solicitationNumber: 'SOL-100',
+    awardeeName: 'Example Awardee', awardNumber: 'AWD-100', awardDate: '2026-08-26',
+    awardAmount: 100000, matchEvidence: 'Located by solicitation number.', samLink: 'https://sam.gov/example',
+  }, { ALLOWED_ORIGIN: 'https://example.com' })
+  const serialized = JSON.stringify(card)
+  assert.match(serialized, /Possible award notice found/)
+  assert.match(serialized, /Example Awardee/)
+  assert.match(serialized, /Match evidence/)
+  assert.doesNotMatch(serialized, /TAG won/)
+})
