@@ -26,6 +26,7 @@ const PHASE_COLORS = {
   'Proposal':         'var(--chart-phase-proposal)',
   'Pending Award':    'var(--chart-phase-pending)',
   'Contract Awarded': 'var(--chart-phase-awarded)',
+  'Closed Lost':      'var(--chart-phase-cancelled)',
   'Cancelled':        'var(--chart-phase-cancelled)',
 }
 
@@ -39,7 +40,7 @@ export default function PipelineBoard({ toast }) {
   useScrollRestoration()   // restores page scroll position on back-navigation from a detail page
   const { pipeline, loading, update } = usePipeline()
   const { lists } = useValidationLists()
-  const phases = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const phases = [...new Set([...pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES), 'Closed Lost'])]
   const activityPhases = pickList(lists, 'TAG Pipeline Activity Phase', [
     'Pre-RFP', 'Submitted RFI', 'RFP Released', 'Proposal Submitted',
     'BAFO', 'Award Pending',
