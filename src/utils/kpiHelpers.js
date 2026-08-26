@@ -242,12 +242,14 @@ export function computeContractTimeline(pipeline = [], { grouping = 'year', basi
   const startYear = basis === 'fiscal' ? getFiscalYear(now) : now.getFullYear()
   const buckets = []
   for (let year = startYear; year <= startYear + 5; year += 1) {
+    const displayYear = basis === 'fiscal' ? `FY${String(year).slice(-2)}` : String(year)
+    const fullYear = basis === 'fiscal' ? `FY${year}` : String(year)
     if (grouping === 'quarter') {
       for (let quarter = 1; quarter <= 4; quarter += 1) {
-        buckets.push({ key: `${year}-Q${quarter}`, year, quarter, label: `${basis === 'fiscal' ? 'FY' : ''}${year} Q${quarter}`, count: 0, value: 0 })
+        buckets.push({ key: `${year}-Q${quarter}`, year, quarter, label: `${displayYear} Q${quarter}`, fullLabel: `${fullYear} Q${quarter}`, count: 0, value: 0 })
       }
     } else {
-      buckets.push({ key: String(year), year, label: `${basis === 'fiscal' ? 'FY' : ''}${year}`, count: 0, value: 0 })
+      buckets.push({ key: String(year), year, label: displayYear, fullLabel: fullYear, count: 0, value: 0 })
     }
   }
   pipeline.forEach((opportunity) => {
