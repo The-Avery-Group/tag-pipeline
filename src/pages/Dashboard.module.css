@@ -1,8 +1,8 @@
 /* ── KPI strip ── */
 .kpiGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
   margin-bottom: 12px;
 }
 
@@ -10,14 +10,15 @@
   background: var(--surface);
   border: 0.5px solid var(--gray-200);
   border-radius: var(--radius-lg);
-  padding: 14px 16px;
+  min-width: 0;
+  padding: 13px 14px;
   transition: box-shadow 0.18s;
 }
 .kpiCard:hover { box-shadow: 0 2px 8px var(--shadow-color); }
 
-.kpiLabel  { font-size: 11px; color: var(--gray-400); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
-.kpiValue  { font-size: 26px; font-weight: 700; color: var(--gray-900); margin: 4px 0 2px; line-height: 1.1; }
-.kpiDelta  { font-size: 11px; color: var(--gray-400); }
+.kpiLabel  { font-size: 10px; color: var(--gray-400); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpiValue  { font-size: 24px; font-weight: 700; color: var(--gray-900); margin: 4px 0 2px; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpiDelta  { font-size: 10px; color: var(--gray-400); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpiDanger      { color: var(--red-600) !important; }
 .kpiDeltaDanger { color: var(--red-600) !important; }
 
@@ -348,4 +349,16 @@
   gap: 6px;
   flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+@media (max-width: 1200px) {
+  .kpiGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 440px) {
+  .kpiGrid { grid-template-columns: minmax(0, 1fr); }
 }
