@@ -12,6 +12,7 @@ import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
 import { useSAMChangeSuggestion } from '@/hooks/useSAMChangeSuggestion'
 import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
+import { useOpportunityRelationships } from '@/hooks/useOpportunityRelationships'
 import IncumbentAwardHistoryPanel from '@/components/Opportunity/IncumbentAwardHistory'
 import AwardLookupPanel from '@/components/Opportunity/AwardLookupPanel'
 import PeopleSearch from '@/components/PeopleSearch/PeopleSearch'
@@ -46,7 +47,7 @@ import {
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import {
   OPPORTUNITY_PHASES, OPPORTUNITY_OUTLOOK, ACTIVITY_PHASES, SET_ASIDE_VALUES, PRIORITY_VALUES, ASSIGNEE_VALUES,
-  parsePOCNames, parseRelatedOpportunityNote, linkRelatedOpportunities,
+  parsePOCNames, linkRelatedOpportunities,
   previewOpportunityRename, renameOpportunityWithReferences,
   saveRFIFollowUpDecision, saveRFIFollowUpOverride,
 } from '@/services/graphService'
@@ -98,6 +99,7 @@ const C = {
   classification: 'Contract Classification*',
   noticeType:     'Notice Type',
   flagged:        'Flagged',
+  outcome:        'Outcome',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -330,6 +332,7 @@ const PHASE_BADGE = {
   'Proposal':         'badge-proposal',
   'Pending Award':    'badge-negotiation',
   'Contract Awarded': 'badge-award',
+  'Closed Lost':      'badge-closed-lost',
   'Cancelled':        'badge-closed-lost',
 }
 
@@ -353,6 +356,20 @@ function SummaryGroup({ title, items }) {
   )
 }
 
+function LazyMount({ children, minHeight = 120 }) {
+  const ref = useRef(null)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    if (visible || !ref.current) return undefined
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.disconnect() }
+    }, { rootMargin: '300px 0px' })
+    observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [visible])
+  return <div ref={ref} style={!visible ? { minHeight } : undefined}>{visible ? children : <div className="skeleton" style={{ height: Math.min(minHeight, 72) }} />}</div>
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 export default function OpportunityDetail({ toast }) {
   const { contractNumber } = useParams()
@@ -363,16 +380,17 @@ export default function OpportunityDetail({ toast }) {
   const returnTo = opportunityReturnPath(searchParams.get('returnTo'))
   const navigate  = useNavigate()
   const { user }  = useAuth()
+  const [secondaryReady, setSecondaryReady] = useState(false)
 
   const { allPipeline, loading: pipelineLoading, add: addPipelineOpp, update: updateOpp, remove: archiveOpp, restore: restoreOpp } = usePipeline()
-  const { notes, loading: notesLoading, add: addNote, update: updateNote, remove: removeNote } = useNotes(decodedCN)
-  const { tasks, add: addTask, update: updateTask, remove: removeTask, refreshContext } = useTasks(decodedCN)
-  const { contacts, add: addContactRecord }  = useContacts()
-  const { partners } = usePartners()
-  const { lists }     = useValidationLists()
+  const { notes, loading: notesLoading, add: addNote, update: updateNote, remove: removeNote } = useNotes(decodedCN, { enabled: secondaryReady })
+  const { tasks, add: addTask, update: updateTask, remove: removeTask, refreshContext } = useTasks(decodedCN, { enabled: secondaryReady })
+  const { contacts, add: addContactRecord }  = useContacts({ enabled: secondaryReady })
+  const { partners } = usePartners({ enabled: secondaryReady })
+  const { lists }     = useValidationLists({ enabled: secondaryReady })
   const awards = useAwardsLookup()
 
-  const phaseOptions      = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const phaseOptions      = [...new Set([...pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES), 'Closed Lost'])]
   const activityPhaseOptions = pickList(lists, 'TAG Pipeline Activity Phase', ACTIVITY_PHASES)
   const outlookOptions    = pickList(lists, 'Opportunity Outlook',   OPPORTUNITY_OUTLOOK)
   const priorityOptions   = pickList(lists, 'Priority',              PRIORITY_VALUES)
@@ -426,6 +444,8 @@ export default function OpportunityDetail({ toast }) {
   const [savingLinks, setSavingLinks] = useState(false)
   const [linkDraft, setLinkDraft] = useState(null)
   const [outlineCollapsed, setOutlineCollapsed] = useState(true)
+  const [relationshipSearch, setRelationshipSearch] = useState('')
+  const [linkingOpportunity, setLinkingOpportunity] = useState(false)
   const opportunityEditRef = useRef(null)
   const linksEditRef = useRef(null)
   const taskEditRef = useRef(null)
@@ -448,13 +468,33 @@ export default function OpportunityDetail({ toast }) {
     [allPipeline, decodedCN, routeRowIndex]
   )
   const archived = /^(yes|true|1)$/i.test(String(opp?.Archived || '').trim())
+  const opportunityRelationships = useOpportunityRelationships(
+    String(opp?.['Opportunity ID'] || '').trim(), allPipeline, secondaryReady && Boolean(opp),
+  )
 
-  const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI])
-  const rfiFollowUpMonitor = useRfiFollowUpMonitor(opp ? [opp] : [], contacts)
-  const samChangeSuggestion = useSAMChangeSuggestion(opp, C)
-  const opportunityAlerts = useOpportunityAlerts(decodedCN)
+  useEffect(() => {
+    setSecondaryReady(false)
+    if (!opp) return undefined
+    const start = () => setSecondaryReady(true)
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(start, { timeout: 350 })
+      return () => window.cancelIdleCallback(id)
+    }
+    const id = window.setTimeout(start, 60)
+    return () => window.clearTimeout(id)
+  }, [opp?.['Opportunity ID']])
+
+  const incumbentEightA = useEntityEightA(opp?.[C.incumbentUEI], { enabled: secondaryReady })
+  const rfiFollowUpMonitor = useRfiFollowUpMonitor(opp ? [opp] : [], contacts, { enabled: secondaryReady })
+  const samChangeSuggestion = useSAMChangeSuggestion(opp, C, { enabled: secondaryReady })
+  const opportunityAlerts = useOpportunityAlerts(decodedCN, { enabled: secondaryReady })
   const followUpPanelRef = useRef(null)
   const focusFollowUps = searchParams.get('focus') === 'follow-ups'
+
+  useEffect(() => {
+    if (!secondaryReady || searchParams.get('focus') !== 'awards') return
+    window.setTimeout(() => document.getElementById('research-awards')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }, [secondaryReady, searchParams])
 
   useEffect(() => {
     setEightANoteAdded(false)
@@ -545,14 +585,8 @@ export default function OpportunityDetail({ toast }) {
     }).slice(0, 20)
   }, [contacts, linkedContacts, contactSearch])
 
-  const relatedOpportunities = useMemo(
-    () => notes.map((n) => parseRelatedOpportunityNote(n.NoteText)).filter(Boolean),
-    [notes]
-  )
-  const visibleNotes = useMemo(
-    () => notes.filter((n) => !parseRelatedOpportunityNote(n.NoteText)),
-    [notes]
-  )
+  const relatedOpportunities = opportunityRelationships.relationships
+  const visibleNotes = notes
   const peopleSearchContext = useMemo(() => {
     if (!opp) return {}
     return {
@@ -720,7 +754,7 @@ export default function OpportunityDetail({ toast }) {
     ]],
   ]
   const hasSubmissionDate = !Number.isNaN(localDate(f(C.submDate)).getTime())
-  const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.contractNumber))
+  const linkedContractNumbers = new Set(relatedOpportunities.map((related) => related.opportunity?.[C.contractNum]).filter(Boolean))
   const followUpStatus = rfiFollowUpMonitor.statusByOpportunity[normalizeOpportunityKey(opp[C.contractNum])]
 
   const handleEdit   = () => { setForm({ ...opp }); setEditing(true) }
@@ -906,6 +940,68 @@ export default function OpportunityDetail({ toast }) {
       toast?.error(`Could not update flag: ${err.message}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleMarkProposalSubmitted = async () => {
+    if (noticeType !== 'RFP' || saving) return
+    const submittedDate = window.prompt('Confirm TAG proposal submission date (YYYY-MM-DD)', dateOnly(opp[C.submDate]) || new Date().toISOString().split('T')[0])
+    if (submittedDate === null) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(submittedDate.trim())) {
+      toast?.error('Enter the submission date as YYYY-MM-DD')
+      return
+    }
+    setSaving(true)
+    try {
+      await updateOpp(opp._rowIndex, {
+        [C.submDate]: submittedDate.trim(),
+        [C.phase]: 'Pending Award',
+        [C.actPhase]: 'Proposal Submitted',
+        [C.outcome]: '',
+      }, opp)
+      toast?.success('Proposal marked submitted and moved to Pending Award')
+    } catch (error) {
+      toast?.error(`Could not mark proposal submitted: ${error.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleOutcome = async (outcome) => {
+    const phaseByOutcome = {
+      Won: 'Contract Awarded', Lost: 'Closed Lost', Withdrawn: 'Cancelled', Cancelled: 'Cancelled',
+    }
+    if (!phaseByOutcome[outcome] || saving) return
+    setSaving(true)
+    try {
+      await updateOpp(opp._rowIndex, { [C.outcome]: outcome, [C.phase]: phaseByOutcome[outcome] }, opp)
+      toast?.success(`Outcome recorded as ${outcome}`)
+    } catch (error) {
+      toast?.error(`Could not record outcome: ${error.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const relationshipCandidates = allPipeline.filter((candidate) => {
+    if (!opp || candidate['Opportunity ID'] === opp['Opportunity ID']) return false
+    if (relatedOpportunities.some((relationship) => relationship.relatedId === candidate['Opportunity ID'])) return false
+    const query = relationshipSearch.trim().toLowerCase()
+    if (!query) return false
+    return [candidate[C.title], candidate[C.contractNum], candidate[C.solNum], candidate[C.agency]]
+      .some((value) => String(value || '').toLowerCase().includes(query))
+  }).slice(0, 12)
+
+  const handleLinkOpportunity = async (candidate) => {
+    setLinkingOpportunity(true)
+    try {
+      await opportunityRelationships.link(candidate, user.displayName)
+      setRelationshipSearch('')
+      toast?.success('Opportunity linked')
+    } catch (error) {
+      toast?.error(`Could not link opportunity: ${error.message}`)
+    } finally {
+      setLinkingOpportunity(false)
     }
   }
 
@@ -1095,10 +1191,10 @@ export default function OpportunityDetail({ toast }) {
     const contractNumber = candidate.solicitationNumber || candidate.noticeId
     if (!contractNumber) throw new Error('The follow-on notice has no solicitation or notice ID')
 
-    const source = { contractNumber: opp[C.contractNum], title: opp[C.title] }
+    const source = { opportunityId: opp['Opportunity ID'], createdBy: user.displayName }
     const existing = allPipeline.find((item) => item[C.contractNum] === contractNumber)
     if (existing) {
-      await linkRelatedOpportunities(source, { contractNumber, title: existing[C.title] })
+      await linkRelatedOpportunities(source, { opportunityId: existing['Opportunity ID'], createdBy: user.displayName })
       await invalidateCache(['PipelineTable', 'ContactsTable'])
       toast?.success(`Existing follow-on linked to this ${noticeType || 'opportunity'}`)
       return
@@ -1122,7 +1218,7 @@ export default function OpportunityDetail({ toast }) {
       })
     }
 
-    await addPipelineOpp({
+    const createdOpportunity = await addPipelineOpp({
       [C.phase]: 'Identified',
       [C.outlook]: 'New',
       [C.contractNum]: contractNumber,
@@ -1138,7 +1234,7 @@ export default function OpportunityDetail({ toast }) {
       [C.submDate]: candidate.responseDate || '',
       [C.otherLinks]: candidate.samLink || '',
     })
-    await linkRelatedOpportunities(source, { contractNumber, title: candidate.title || '' })
+    await linkRelatedOpportunities(source, { opportunityId: createdOpportunity['Opportunity ID'], createdBy: user.displayName })
     await invalidateCache(['PipelineTable', 'ContactsTable'])
     toast?.success(`Follow-on added and linked to this ${noticeType || 'opportunity'}`)
   }
@@ -1230,6 +1326,12 @@ export default function OpportunityDetail({ toast }) {
   const fileAlertLabel = fileAlertChanges.length && fileAlertChanges.every((file) => file.change === 'added')
     ? 'New files'
     : 'Files updated'
+  const contractDateAlert = opportunityAlerts.byType.contract_end_date?.badgeVisible
+    ? opportunityAlerts.byType.contract_end_date
+    : opportunityAlerts.byType.contract_end_date_review?.badgeVisible
+      ? opportunityAlerts.byType.contract_end_date_review
+      : null
+  const awardNoticeAlert = opportunityAlerts.byType.award_notice?.badgeVisible ? opportunityAlerts.byType.award_notice : null
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
@@ -1245,6 +1347,20 @@ export default function OpportunityDetail({ toast }) {
         showFilter={false}
         showNew={false}
         rightContent={<div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {noticeType === 'RFP' && opp[C.phase] !== 'Pending Award' && opp[C.phase] !== 'Contract Awarded' && opp[C.phase] !== 'Closed Lost' && (
+            <button type="button" className="btn btn-primary text-sm" onClick={handleMarkProposalSubmitted} disabled={saving}>
+              Mark proposal submitted
+            </button>
+          )}
+          {opp[C.phase] === 'Pending Award' && (
+            <select className="form-input" aria-label="Record opportunity outcome" defaultValue="" onChange={(event) => { if (event.target.value) handleOutcome(event.target.value) }} disabled={saving} style={{ width: 'auto' }}>
+              <option value="">Record outcome…</option>
+              <option value="Won">Won</option>
+              <option value="Lost">Lost</option>
+              <option value="Withdrawn">Withdrawn</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          )}
           {followUpStatus?.badgeVisible && <button className="badge" style={{ background: followUpStatus.badgeState === 'seen' ? 'var(--gray-100)' : 'var(--blue-50)', border: `0.5px solid ${followUpStatus.badgeState === 'seen' ? 'var(--gray-300)' : 'var(--blue-200)'}`, color: followUpStatus.badgeState === 'seen' ? 'var(--gray-600)' : 'var(--blue-800)', cursor: 'pointer' }} onClick={() => { rfiFollowUpMonitor.markSeen(opp[C.contractNum]).catch(() => {}); const next = new URLSearchParams(searchParams); next.set('focus', 'follow-ups'); navigate({ search: `?${next.toString()}` }, { replace: true }) }} title={`${followUpStatus.pendingCount} possible follow-on${followUpStatus.pendingCount === 1 ? '' : 's'}`}>
             {followUpStatus.badgeState === 'seen' ? 'Follow-ons reviewed' : `${followUpStatus.pendingCount} possible follow-on${followUpStatus.pendingCount === 1 ? '' : 's'}`}
           </button>}
@@ -1258,6 +1374,12 @@ export default function OpportunityDetail({ toast }) {
             }}
             title={fileAlert.summary}
           >{fileAlertLabel}</button>}
+          {contractDateAlert && <button className="badge badge-qualify" style={{ cursor: 'pointer' }} title={contractDateAlert.summary} onClick={() => opportunityAlerts.acknowledge(contractDateAlert.type, contractDateAlert.fingerprint).catch(() => {})}>
+            {contractDateAlert.type === 'contract_end_date_review' ? 'End date needs review' : 'End date updated'}
+          </button>}
+          {awardNoticeAlert && <button className="badge badge-negotiation" style={{ cursor: 'pointer' }} title={awardNoticeAlert.summary} onClick={() => { opportunityAlerts.acknowledge(awardNoticeAlert.type, awardNoticeAlert.fingerprint).catch(() => {}); document.getElementById('research-awards')?.scrollIntoView({ behavior: 'smooth' }) }}>
+            Award notice found
+          </button>}
           {contractLifecycleAlert && <span className={`badge ${contractLifecycleBadgeClass}`} title={contractLifecycleTooltip}>{contractLifecycleAlert.reason}</span>}
           {incumbentPartnerMatch && <span className={styles.partnerBadge} title={`Exact UEI match to TAG partner ${incumbentPartnerMatch.partner['Partner Name']}`}>Incumbent is a TAG partner</span>}
         </div>}
@@ -1679,28 +1801,41 @@ export default function OpportunityDetail({ toast }) {
           })()}
         </Section>
 
-        <OpportunityFilesPanel opportunity={opp} toast={toast} />
+        <LazyMount minHeight={140}><OpportunityFilesPanel opportunity={opp} toast={toast} /></LazyMount>
 
         <div className={`${styles.categoryHeading} ${styles.categoryActivity}`}>Activity</div>
         {/* ── Section 7: Notes ── */}
-        {relatedOpportunities.length > 0 && (
-          <Section title="Related opportunities">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {relatedOpportunities.map((related) => (
-                <button
-                  key={related.contractNumber}
-                  type="button"
-                  className="btn"
-                  style={{ justifyContent: 'space-between', textAlign: 'left' }}
-                  onClick={() => navigate(`/opportunities/${encodeURIComponent(related.contractNumber)}`)}
-                >
-                  <span>{related.title || related.contractNumber}</span>
-                  <span className="text-xs text-muted">{related.contractNumber} ↗</span>
+        <Section title="Related opportunities">
+          {opportunityRelationships.error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>{opportunityRelationships.error}</p>}
+          {opportunityRelationships.loading ? <div className="skeleton" style={{ height: 42 }} /> : relatedOpportunities.length === 0
+            ? <p className="text-sm text-muted">No related opportunities linked.</p>
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {relatedOpportunities.map((relationship) => {
+                const related = relationship.opportunity
+                return <div key={relationship['Relationship ID']} className="card" style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button type="button" className="btn btn-ghost" style={{ flex: 1, justifyContent: 'space-between', textAlign: 'left' }} onClick={() => related && navigate(`/opportunities/${encodeURIComponent(related[C.contractNum])}`)} disabled={!related}>
+                    <span><strong>{related?.[C.title] || 'Unavailable opportunity'}</strong><small className="text-muted" style={{ display: 'block' }}>{related?.[C.contractNum] || relationship.relatedId}</small></span>
+                    <span className="text-xs text-muted">{relationship['Relationship Type'] || 'Related'} ↗</span>
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-icon" aria-label="Unlink opportunity" title="Unlink opportunity" onClick={async () => {
+                    try { await opportunityRelationships.unlink(relationship); toast?.success('Opportunity unlinked') }
+                    catch (error) { toast?.error(`Could not unlink opportunity: ${error.message}`) }
+                  }}><ActionIcon name="unlink" /></button>
+                </div>
+              })}
+            </div>}
+          <div style={{ marginTop: 10, position: 'relative' }}>
+            <input className="form-input" value={relationshipSearch} onChange={(event) => setRelationshipSearch(event.target.value)} placeholder="Search opportunities to link…" />
+            {relationshipSearch.trim() && <div className={styles.contactDropdown}>
+              {relationshipCandidates.length === 0 ? <div className={styles.contactDropdownEmpty}>No available opportunities found.</div> : relationshipCandidates.map((candidate) => (
+                <button type="button" key={candidate['Opportunity ID']} className={styles.contactDropdownRow} onClick={() => handleLinkOpportunity(candidate)} disabled={linkingOpportunity} style={{ width: '100%', textAlign: 'left', border: 0 }}>
+                  <div className={styles.contactDropdownName}>{candidate[C.title] || candidate[C.contractNum]}</div>
+                  <div className={styles.contactDropdownSub}>{candidate[C.contractNum]}{candidate[C.agency] ? ` · ${candidate[C.agency]}` : ''}</div>
                 </button>
               ))}
-            </div>
-          </Section>
-        )}
+            </div>}
+          </div>
+        </Section>
 
         <OpportunityNotesSection
           id="activity-notes"
@@ -1738,8 +1873,8 @@ export default function OpportunityDetail({ toast }) {
         />
 
         <div className={`${styles.categoryHeading} ${styles.categoryResearch}`}>Research</div>
-        {hasIncumbentHistory && <div id="research-incumbent" className={styles.sectionAnchor}><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} incumbentName={f(C.incumbent)} /></div>}
-        <div id="research-awards" className={styles.sectionAnchor}><AwardLookupPanel
+        {hasIncumbentHistory && <div id="research-incumbent" className={styles.sectionAnchor}><LazyMount><IncumbentAwardHistoryPanel incumbentUEI={f(C.incumbentUEI)} incumbentName={f(C.incumbent)} /></LazyMount></div>}
+        <div id="research-awards" className={styles.sectionAnchor}><LazyMount minHeight={180}><AwardLookupPanel
           opp={opp}
           contractNumber={decodedCN}
           updateOpp={updateOpp}
@@ -1749,9 +1884,9 @@ export default function OpportunityDetail({ toast }) {
           dateOnly={dateOnly}
           cleanLinks={cleanLinks}
           joinLinks={joinLinks}
-        /></div>
+        /></LazyMount></div>
 
-        <div id="research-contacts" className={styles.sectionAnchor}><PeopleSearch
+        <div id="research-contacts" className={styles.sectionAnchor}><LazyMount minHeight={180}><PeopleSearch
           variant="opportunity"
           sourceMode="opportunity-notes"
           scopeId={`opportunity:${opp[C.contractNum] || decodedCN}`}
@@ -1767,7 +1902,7 @@ export default function OpportunityDetail({ toast }) {
           onAddAndLinkContact={(contactData) => createAndLinkContact(contactData, { quiet: true })}
           onContinue={continuePeopleSearch}
           toast={toast}
-        /></div>
+        /></LazyMount></div>
 
         <div className={`${styles.categoryHeading} ${styles.categoryFollowUp}`}>Follow-up</div>
         <div id="followup-email" className={styles.sectionAnchor}><FollowUpEmailComposer
