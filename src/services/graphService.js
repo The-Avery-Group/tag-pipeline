@@ -593,6 +593,7 @@ export const PIPELINE_HEADERS = [
   'Qualification PWIN',               // [39] col AN
   'RFI Notified',                     // [40] col AO — date notification was sent, blank = not yet sent
   'Notice Type',                      // RFI / MRAS / RFP / RFQ
+  'Outcome',                          // Won / Lost / Withdrawn / Cancelled
   'Opportunity ID',                   // immutable internal identity used for safe updates
   'Archived',                         // Yes when removed from the active CRM
   'Archived At',
@@ -602,7 +603,7 @@ export const PIPELINE_HEADERS = [
 ]
 
 const PIPELINE_LIFECYCLE_COLUMNS = [
-  'Opportunity ID', 'Archived', 'Archived At', 'Archived By', 'Archive Reason', 'Flagged',
+  'Opportunity ID', 'Outcome', 'Archived', 'Archived At', 'Archived By', 'Archive Reason', 'Flagged',
 ]
 let pipelineSchemaPromise = null
 
@@ -666,6 +667,73 @@ export const LEGACY_PARTNER_FOLDER_HEADER = 'Link to onedrive folder'
 export const NOTES_HEADERS = [
   'NoteID', 'ContractNumber', 'Date', 'Author', 'NoteText', 'Related Type', 'Related ID',
 ]
+
+export const OPPORTUNITY_RELATIONSHIP_HEADERS = [
+  'Relationship ID', 'Opportunity ID', 'Related Opportunity ID',
+  'Relationship Type', 'Created By', 'Created At',
+]
+const OPPORTUNITY_RELATIONSHIPS_TABLE = 'OpportunityRelationshipsTable'
+const OPPORTUNITY_RELATIONSHIPS_SHEET = 'Opportunity Relationships'
+let opportunityRelationshipsSchemaPromise = null
+
+async function ensureOpportunityRelationshipsSchema() {
+  if (opportunityRelationshipsSchemaPromise) return opportunityRelationshipsSchemaPromise
+  opportunityRelationshipsSchemaPromise = (async () => {
+    try {
+      return { headers: await getTableHeaders(OPPORTUNITY_RELATIONSHIPS_TABLE, { force: true }), created: false }
+    } catch (error) {
+      if (![400, 404].includes(Number(error?.status))) throw error
+    }
+
+    let worksheet
+    try {
+      worksheet = await graphFetch(`/worksheets/${encodeURIComponent(OPPORTUNITY_RELATIONSHIPS_SHEET)}`)
+    } catch (error) {
+      if (![400, 404].includes(Number(error?.status))) throw error
+      try {
+        worksheet = await graphFetch('/worksheets/add', {
+          method: 'POST',
+          body: JSON.stringify({ name: OPPORTUNITY_RELATIONSHIPS_SHEET }),
+        })
+      } catch (createError) {
+        // Another browser can win the worksheet-creation race. Re-read it
+        // before surfacing an error so first use remains safe for the team.
+        worksheet = await graphFetch(`/worksheets/${encodeURIComponent(OPPORTUNITY_RELATIONSHIPS_SHEET)}`).catch(() => { throw createError })
+      }
+    }
+
+    const worksheetKey = encodeURIComponent(worksheet?.id || OPPORTUNITY_RELATIONSHIPS_SHEET)
+    const rangeAddress = `A1:${colIndexToLetter(OPPORTUNITY_RELATIONSHIP_HEADERS.length - 1)}2`
+    await graphFetch(`/worksheets/${worksheetKey}/range(address='${rangeAddress}')`, {
+      method: 'PATCH',
+      body: JSON.stringify({ values: [OPPORTUNITY_RELATIONSHIP_HEADERS, OPPORTUNITY_RELATIONSHIP_HEADERS.map(() => '')] }),
+    })
+
+    let createdTable
+    try {
+      createdTable = await graphFetch(`/worksheets/${worksheetKey}/tables/add`, {
+        method: 'POST',
+        body: JSON.stringify({ address: rangeAddress, hasHeaders: true }),
+      })
+      await graphFetch(`/tables/${encodeURIComponent(createdTable.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: OPPORTUNITY_RELATIONSHIPS_TABLE }),
+      })
+      await graphFetch(`/tables/${OPPORTUNITY_RELATIONSHIPS_TABLE}/rows/itemAt(index=0)`, { method: 'DELETE' }).catch(() => {})
+    } catch (error) {
+      // Treat a duplicate-name/range race as success only when the canonical
+      // table can now be read.
+      await getTableHeaders(OPPORTUNITY_RELATIONSHIPS_TABLE, { force: true }).catch(() => { throw error })
+    }
+    headerCache.delete(OPPORTUNITY_RELATIONSHIPS_TABLE)
+    invalidate(OPPORTUNITY_RELATIONSHIPS_TABLE)
+    return { headers: await getTableHeaders(OPPORTUNITY_RELATIONSHIPS_TABLE, { force: true }), created: true }
+  })().catch((error) => {
+    opportunityRelationshipsSchemaPromise = null
+    throw error
+  })
+  return opportunityRelationshipsSchemaPromise
+}
 let notesRelationshipSchemaPromise = null
 
 function ensureNotesRelationshipSchema() {
@@ -762,6 +830,7 @@ export const COL = {
   qualPWIN:       'Qualification PWIN',
   rfiNotified:    'RFI Notified',
   noticeType:     'Notice Type',
+  outcome:        'Outcome',
 }
 
 // ── Phase / enum constants from real data ─────────────────────────────────
@@ -774,6 +843,7 @@ export const OPPORTUNITY_PHASES = [
   'Proposal',
   'Pending Award',
   'Contract Awarded',
+  'Closed Lost',
   'Cancelled',
 ]
 export const OPPORTUNITY_OUTLOOK = ['Expiring', 'Forecasted', 'New', 'Tracking']
@@ -969,10 +1039,62 @@ function relatedOpportunityNote({ contractNumber, title }) {
 }
 
 export async function linkRelatedOpportunities(first, second) {
-  await Promise.all([
-    addNote(first.contractNumber, 'System', relatedOpportunityNote(second)),
-    addNote(second.contractNumber, 'System', relatedOpportunityNote(first)),
-  ])
+  await ensureOpportunityRelationshipsSchema()
+  const firstId = String(first.opportunityId || '').trim()
+  const secondId = String(second.opportunityId || '').trim()
+  if (!firstId || !secondId) throw new Error('Both opportunities need an Opportunity ID before they can be linked')
+  if (firstId === secondId) throw new Error('An opportunity cannot be linked to itself')
+  const rows = await getOpportunityRelationships()
+  const exists = rows.some((row) => {
+    const left = String(row['Opportunity ID'] || '').trim()
+    const right = String(row['Related Opportunity ID'] || '').trim()
+    return (left === firstId && right === secondId) || (left === secondId && right === firstId)
+  })
+  if (exists) return rows.find((row) => {
+    const pair = new Set([String(row['Opportunity ID'] || '').trim(), String(row['Related Opportunity ID'] || '').trim()])
+    return pair.has(firstId) && pair.has(secondId)
+  })
+  const record = {
+    'Relationship ID': createStableId('OR'),
+    'Opportunity ID': firstId,
+    'Related Opportunity ID': secondId,
+    'Relationship Type': String(first.relationshipType || second.relationshipType || 'Related').trim(),
+    'Created By': String(first.createdBy || second.createdBy || '').trim(),
+    'Created At': new Date().toISOString().split('T')[0],
+  }
+  await appendRow(OPPORTUNITY_RELATIONSHIPS_TABLE, record, OPPORTUNITY_RELATIONSHIP_HEADERS)
+  invalidate(OPPORTUNITY_RELATIONSHIPS_TABLE)
+  return record
+}
+
+export async function getOpportunityRelationships() {
+  await ensureOpportunityRelationshipsSchema()
+  return getSheetRows(OPPORTUNITY_RELATIONSHIPS_TABLE)
+}
+
+export async function deleteOpportunityRelationship(rowIndex, original) {
+  return deleteRow('OpportunityRelationshipsTable', rowIndex, {
+    original,
+    identity: String(original?.['Relationship ID'] || '').trim(),
+  })
+}
+
+export async function migrateLegacyOpportunityRelationships(pipeline = [], createdBy = 'System migration') {
+  const notes = await getNotes()
+  const legacy = notes.map((note) => ({ note, related: parseRelatedOpportunityNote(note.NoteText) })).filter((item) => item.related)
+  let migrated = 0
+  for (const item of legacy) {
+    const source = pipeline.find((opportunity) => normalizedValue(opportunity['Contract Number / Notice ID']) === normalizedValue(item.note.ContractNumber))
+    const target = pipeline.find((opportunity) => normalizedValue(opportunity['Contract Number / Notice ID']) === normalizedValue(item.related.contractNumber))
+    if (!source?.['Opportunity ID'] || !target?.['Opportunity ID']) continue
+    await linkRelatedOpportunities(
+      { opportunityId: source['Opportunity ID'], createdBy },
+      { opportunityId: target['Opportunity ID'], createdBy },
+    )
+    await deleteNote(item.note._rowIndex, item.note)
+    migrated += 1
+  }
+  return migrated
 }
 
 export async function getPipeline() {
@@ -1197,11 +1319,11 @@ export async function addOpportunity(data) {
 }
 
 export async function updateOpportunity(rowIndex, patch, original) {
-  await ensurePipelineSchema()
+  const schema = await ensurePipelineSchema()
   return updateRowWithReconciliation('PipelineTable', rowIndex, {
     ...patch,
     'Last Modified*': new Date().toISOString().split('T')[0],
-  }, PIPELINE_HEADERS, { original })
+  }, schema.headers, { original })
 }
 
 export async function deleteOpportunity(rowIndex, original) {
