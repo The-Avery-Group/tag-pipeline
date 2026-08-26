@@ -22,6 +22,8 @@ compatibility_flags = ["nodejs_compat"]
 #   TRANSACTION_CODING_ALLOWED_USERS — Comma-separated approved Entra object IDs
 #                          or user principal names. Transaction Coding fails
 #                          closed when this setting is absent.
+#   TAG_UEI              — TAG's 12-character UEI, used to identify whether a
+#                          matched SAM award notice names TAG as the awardee.
 
 # KV namespace for caching (AI conversation history + SAM key status)
 [[kv_namespaces]]
