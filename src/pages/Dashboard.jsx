@@ -258,7 +258,7 @@ function ContractTimelineChart({ data, onPeriodClick }) {
         <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <YAxis hide allowDecimals={false} />
         <Tooltip cursor={{ fill: 'var(--gray-50)' }}
-          content={<ChartTooltip formatValue={(d) => `${d.count} contract${d.count === 1 ? '' : 's'}${d.value ? ` · ${formatCurrency(d.value)}` : ''}`} />} />
+          content={<ChartTooltip formatLabel={(d) => d.fullLabel || d.label} formatValue={(d) => `${d.count} contract${d.count === 1 ? '' : 's'}${d.value ? ` · ${formatCurrency(d.value)}` : ''}`} />} />
         <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer" fill="var(--blue-600)" maxBarSize={44}
           onClick={(d) => onPeriodClick?.(d?.payload ?? d)}
         >
