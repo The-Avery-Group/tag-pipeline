@@ -253,7 +253,7 @@ function ContractTimelineChart({ data, onPeriodClick }) {
   if (!data || data.every((d) => d.count === 0)) return <p className="text-sm text-muted">No data</p>
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
+    <ResponsiveContainer width="100%" height={260}>
       <BarChart data={data} margin={{ top: 20, right: 12, bottom: 4, left: 0 }}>
         <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <YAxis hide allowDecimals={false} />
@@ -281,7 +281,7 @@ function AgencyChart({ sortedAgencies, onSegmentClick }) {
     <ResponsiveContainer width="100%" height={Math.max(160, data.length * 32)}>
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 36, bottom: 4, left: 4 }}>
         <XAxis type="number" hide allowDecimals={false} />
-        <YAxis type="category" dataKey="label" width={210} tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="label" width={280} tick={{ fontSize: 11, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} />
         <Tooltip cursor={{ fill: 'var(--gray-50)' }} content={<ChartTooltip />} />
         <Bar dataKey="count" radius={[0, 4, 4, 0]} cursor="pointer" fill="var(--blue-600)" maxBarSize={16}
           onClick={(d) => onSegmentClick?.(d?.payload?.label ?? d?.label)}
