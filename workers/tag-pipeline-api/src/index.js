@@ -35,6 +35,7 @@ import { purgeOldOpportunityAlertEvents } from './lib/opportunityAlerts.js'
 import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
 import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './handlers/transactionCoding.js'
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
+import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -233,6 +234,12 @@ export default {
 
       if (scheduledHour === 12 && isWeekday) {
         ctx.waitUntil(runRFIFollowUpMonitor(env))
+        ctx.waitUntil(runPendingAwardMonitor(env).catch((error) => {
+          console.error(JSON.stringify({ event: 'pending_award_monitor_failed', message: error.message }))
+        }))
+        ctx.waitUntil(runQuarterlyExpirationReconciliation(env, controller.scheduledTime).catch((error) => {
+          console.error(JSON.stringify({ event: 'pipeline_expiration_reconciliation_failed', message: error.message }))
+        }))
       }
     }
     // One minute after the workload-heavy SAM pull, compare the capabilities
