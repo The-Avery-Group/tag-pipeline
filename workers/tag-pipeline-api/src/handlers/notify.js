@@ -313,6 +313,27 @@ export function cardForType(type, payload, env) {
         actions: [action('View opportunity', opportunityUrl(base, payload.contractNumber))],
       })
 
+    case 'award_notice':
+      return buildCard({
+        title: 'Possible award notice found',
+        subtitle: 'Pending Award review',
+        icon: '◆',
+        color: 'warning',
+        body: [
+          textBlock(cardText(payload.title)),
+          detail('Solicitation', payload.solicitationNumber),
+          detail('Awardee', payload.awardeeName),
+          detail('Award number', payload.awardNumber),
+          detail('Award date', formatDate(payload.awardDate)),
+          detail('Award amount', payload.awardAmount),
+          detail('Match evidence', payload.matchEvidence),
+        ],
+        actions: [
+          action('Review opportunity', opportunityUrl(base, payload.contractNumber)),
+          ...(payload.samLink ? [action('Open SAM notice', payload.samLink)] : []),
+        ],
+      })
+
     case 'task_created': {
       const opportunity = [text(payload.contractTitle), text(payload.contractNumber)].filter(Boolean).join(' · ')
       return buildCard({
