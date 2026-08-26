@@ -26,5 +26,9 @@ test('federal fiscal quarter timeline starts Q1 in October', () => {
     'Total Contract Value ($)*': '1000',
   }], { grouping: 'quarter', basis: 'fiscal' })
   const bucket = data.find((item) => item.key === `${year}-Q1`)
-  if (bucket) assert.equal(bucket.count, 1)
+  if (bucket) {
+    assert.equal(bucket.count, 1)
+    assert.equal(bucket.label, `FY${String(year).slice(-2)} Q1`)
+    assert.equal(bucket.fullLabel, `FY${year} Q1`)
+  }
 })
