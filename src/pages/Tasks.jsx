@@ -418,6 +418,10 @@ export default function Tasks({ toast }) {
     }, {})
   }, [filtered, groupBy])
 
+  const opportunityTitleFor = useCallback((task) => task.ContractTitle ||
+    pipeline.find((opportunity) => opportunity['Contract Number / Notice ID'] === task.ContractNumber)?.['Project Title / Description*'] || '',
+  [pipeline])
+
   const changeGrouping = (value) => {
     setGroupBy(value)
     setExpandedGroups(new Set())
@@ -583,7 +587,7 @@ export default function Tasks({ toast }) {
                     onClick={() => toggleGroup(groupName)}
                     aria-expanded={Boolean(search.trim()) || expandedGroups.has(groupName)}
                   >
-                    <span className={styles.groupName}><span className={styles.groupChevron} aria-hidden="true">{Boolean(search.trim()) || expandedGroups.has(groupName) ? '⌄' : '›'}</span>{groupName}</span>
+                    <span className={styles.groupName}><span className={styles.groupChevron} aria-hidden="true">{Boolean(search.trim()) || expandedGroups.has(groupName) ? '⌄' : '›'}</span>{groupBy === 'Contract' ? `${opportunityTitleFor(groupTasks[0]) || groupName} · ${groupName}` : groupName}</span>
                     <span className={styles.groupCount}>{groupTasks.length}</span>
                   </button>
                 )}
@@ -605,6 +609,7 @@ export default function Tasks({ toast }) {
                           {task.Title}
                         </div>
                         <div className={styles.taskMeta}>
+                          {opportunityTitleFor(task) && <span className={styles.metaText}>{opportunityTitleFor(task)}</span>}
                           {task.ContractNumber && (
                             <span className={styles.metaChip}>{task.ContractNumber}</span>
                           )}
