@@ -11,7 +11,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import Topbar from '@/components/Layout/Topbar'
 import AIPanel from '@/components/AI/AIPanel'
 import {
-  computeKPIs, computeSubmissionsByMonth, computeExpiringBands, computeContractByYear,
+  computeKPIs, computeSubmissionsByMonth, computeExpiringBands, computeContractTimeline,
   computeAwardTypeBreakdown, computeVehicleBreakdown, computeSubPrimeBreakdown,
   getGreeting, formatDate, isOverdue, formatCurrency, getEndDateBand, EXPIRING_BANDS,
 } from '@/utils/kpiHelpers'
@@ -42,6 +42,7 @@ const PHASE_COLORS = {
   'Proposal':         'var(--chart-phase-proposal)',
   'Pending Award':    'var(--chart-phase-pending)',
   'Contract Awarded': 'var(--chart-phase-awarded)',
+  'Closed Lost':      'var(--chart-phase-cancelled)',
   'Cancelled':        'var(--chart-phase-cancelled)',
 }
 
@@ -52,6 +53,7 @@ const PHASE_BADGE = {
   'Proposal':         'badge-proposal',
   'Pending Award':    'badge-negotiation',
   'Contract Awarded': 'badge-award',
+  'Closed Lost':      'badge-closed-lost',
   'Cancelled':        'badge-closed-lost',
 }
 
@@ -247,7 +249,7 @@ function SubPrimeChart({ counts, onSegmentClick }) {
 
 // Recompete timeline grouped by calendar year using
 // Contract End Date. Click a bar to navigate filtered to that year.
-function ContractByYearChart({ data, onYearClick }) {
+function ContractTimelineChart({ data, onPeriodClick }) {
   if (!data || data.every((d) => d.count === 0)) return <p className="text-sm text-muted">No data</p>
 
   return (
@@ -258,7 +260,7 @@ function ContractByYearChart({ data, onYearClick }) {
         <Tooltip cursor={{ fill: 'var(--gray-50)' }}
           content={<ChartTooltip formatValue={(d) => `${d.count} contract${d.count === 1 ? '' : 's'}${d.value ? ` · ${formatCurrency(d.value)}` : ''}`} />} />
         <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer" fill="var(--blue-600)" maxBarSize={44}
-          onClick={(d) => onYearClick?.(d?.payload?.calYear ?? d?.calYear)}
+          onClick={(d) => onPeriodClick?.(d?.payload ?? d)}
         >
           <LabelList dataKey="count" position="top" style={{ fontSize: 11, fontWeight: 600, fill: 'var(--gray-900)' }}
             formatter={(v) => v > 0 ? v : ''} />
@@ -409,6 +411,8 @@ export default function Dashboard({ toast }) {
   const [expiringFrom, setExpiringFrom] = useState('')
   const [expiringTo, setExpiringTo] = useState('')
   const [expiringCustom, setExpiringCustom] = useState(false)
+  const [timelineGrouping, setTimelineGrouping] = useState('year')
+  const [timelineBasis, setTimelineBasis] = useState('fiscal')
   const initialPLoad = pLoading && pipeline.length === 0
   const initialTLoad = tLoading && tasks.length === 0
 
@@ -422,7 +426,7 @@ export default function Dashboard({ toast }) {
   }, [navigate])
 
   const submissionData     = useMemo(() => computeSubmissionsByMonth(pipeline, 10), [pipeline])
-  const contractByYearData = useMemo(() => computeContractByYear(pipeline), [pipeline])
+  const contractTimelineData = useMemo(() => computeContractTimeline(pipeline, { grouping: timelineGrouping, basis: timelineBasis }), [pipeline, timelineGrouping, timelineBasis])
   const awardTypeCounts    = useMemo(() => computeAwardTypeBreakdown(pipeline), [pipeline])
   const vehicleCounts      = useMemo(() => computeVehicleBreakdown(pipeline), [pipeline])
   const subPrimeCounts     = useMemo(() => computeSubPrimeBreakdown(pipeline), [pipeline])
@@ -531,10 +535,12 @@ export default function Dashboard({ toast }) {
                     const row = matchedOpportunity?._rowIndex != null ? `&row=${matchedOpportunity._rowIndex}` : ''
                     navigate(alert.type?.includes('file')
                       ? `/opportunities/${key}/dossier?focus=files&alert=${encodeURIComponent(alert.type)}${row}`
-                      : `/opportunities/${key}?focus=follow-ups${row}`)
+                      : alert.type === 'award_notice'
+                        ? `/opportunities/${key}?focus=awards${row}`
+                        : `/opportunities/${key}${row ? `?${row.slice(1)}` : ''}`)
                   }}>
                     <strong>{alert.summary || alert.opportunityKey}</strong>
-                    <small>{alert.details || alert.opportunityKey}</small>
+                    <small>{alert.details?.currentDate || alert.details?.awardeeName || alert.details?.piid || alert.opportunityKey}</small>
                   </button>
                   <button className="btn btn-sm" onClick={async () => {
                     try {
@@ -575,6 +581,17 @@ export default function Dashboard({ toast }) {
             danger={kpis.overdueCount > 0}
             onClick={() => navigate('/tasks?status=overdue')}
           />
+          <KpiCard
+            label="Pending Award"
+            value={initialPLoad ? '—' : kpis.pendingAward}
+            sub="Submitted RFPs awaiting a decision"
+            onClick={() => goToOpportunities({ tab: 'All', phase: 'Pending Award' })}
+          />
+          <KpiCard
+            label="Company PWIN"
+            value={initialPLoad ? '—' : `${kpis.companyPwin.toFixed(1)}%`}
+            sub={`${kpis.won} won · ${kpis.submittedRfpCount} submitted · ${kpis.decidedPwin.toFixed(1)}% decided`}
+          />
         </div>
 
         {/* ── Row 2: Pipeline by phase (full width) ── */}
@@ -601,7 +618,7 @@ export default function Dashboard({ toast }) {
           }
         </div>
 
-        {/* Row 4: Contract classification, vehicle, prime or sub, and recompete timeline */}
+        {/* Row 4: Contract classification, vehicle, and prime or sub */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div className="card">
             <div className={styles.cardTitleRow}>
@@ -633,16 +650,17 @@ export default function Dashboard({ toast }) {
                   onSegmentClick={(primeOrSub) => goToOpportunities({ tab: 'All', primeOrSub })} />
             }
           </div>
-          <div className="card">
-            <div className={styles.cardTitleRow}>
-              <div className={styles.cardTitle}>Recompete timeline</div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className={styles.cardTitleRow}>
+            <div className={styles.cardTitle}>Recompete timeline</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select className="form-input" aria-label="Timeline grouping" value={timelineGrouping} onChange={(event) => setTimelineGrouping(event.target.value)} style={{ width: 'auto' }}><option value="year">Years</option><option value="quarter">Quarters</option></select>
+              <select className="form-input" aria-label="Timeline calendar basis" value={timelineBasis} onChange={(event) => setTimelineBasis(event.target.value)} style={{ width: 'auto' }}><option value="fiscal">Federal fiscal</option><option value="calendar">Calendar</option></select>
             </div>
-            {initialPLoad
-              ? <div className={`skeleton ${styles.chartSkeleton}`} />
-              : <ContractByYearChart data={contractByYearData}
-                  onYearClick={(y) => goToOpportunities({ tab: 'All', endYear: y })} />
-            }
           </div>
+          {initialPLoad ? <div className={`skeleton ${styles.chartSkeleton}`} /> : <ContractTimelineChart data={contractTimelineData} onPeriodClick={(period) => goToOpportunities({ tab: 'All', endYear: period.year, endQuarter: timelineGrouping === 'quarter' ? period.quarter : undefined, yearBasis: timelineBasis })} />}
         </div>
 
         {/* ── Row 5: Opportunities by agency (plain card, not collapsible) ── */}
