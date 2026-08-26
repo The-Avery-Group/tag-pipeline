@@ -86,7 +86,7 @@ const C = {
 }
 
 // ── Tab definitions ───────────────────────────────────────────────────────
-const HIDDEN_RESPONSE_PHASES = new Set(['Cancelled', 'Contract Awarded'])
+const HIDDEN_RESPONSE_PHASES = new Set(['Cancelled', 'Contract Awarded', 'Closed Lost'])
 const SAM_DISCOVERY_SCROLL_KEY = 'tag_crm_sam_discovery_scroll'
 
 function savedSAMDiscoveryScroll() {
@@ -101,6 +101,7 @@ const PHASE_BADGE = {
   'Proposal':         'badge-proposal',
   'Pending Award':    'badge-negotiation',
   'Contract Awarded': 'badge-award',
+  'Closed Lost':      'badge-closed-lost',
   'Cancelled':        'badge-closed-lost',
 }
 
@@ -209,7 +210,7 @@ export default function Opportunities({ toast }) {
   const priorityOptions       = pickList(lists, 'Priority', PRIORITY_VALUES)
   const setAsideOptions       = pickList(lists, 'Set-Aside', SET_ASIDE_VALUES)
   const bidNoBidOptions       = pickList(lists, 'Bid / No Bid?', ['Bid', 'No Bid', 'TBD'])
-  const phaseOptions          = pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES)
+  const phaseOptions          = [...new Set([...pickList(lists, 'TAG Opportunity Phase', OPPORTUNITY_PHASES), 'Closed Lost'])]
   const activityPhaseOptions  = pickList(lists, 'TAG Pipeline Activity Phase', ACTIVITY_PHASES)
   const primeOrSubOptions     = pickList(lists, 'Prime or Sub?', ['Prime', 'Sub'])
   const assigneeOptions       = pickList(lists, 'Assignee', ASSIGNEE_VALUES)
@@ -259,6 +260,8 @@ export default function Opportunities({ toast }) {
     primeOrSub:     searchParams.get('primeOrSub') || '',
     endBand:        searchParams.get('endBand') || '',
     endYear:        searchParams.get('endYear') || '',
+    endQuarter:     searchParams.get('endQuarter') || '',
+    yearBasis:      searchParams.get('yearBasis') || 'calendar',
     rfiMonth:       searchParams.get('rfiMonth') || '',
     classification: searchParams.get('classification') || '',
     vehicle:        searchParams.get('vehicle') || '',
@@ -466,7 +469,14 @@ export default function Opportunities({ toast }) {
     if (filters.endBand)        rows = rows.filter((o) => getEndDateBand(o[C.endDate]) === filters.endBand)
     if (filters.endYear)         rows = rows.filter((o) => {
       const d = new Date((o[C.endDate] || '') + 'T00:00:00')
-      return !isNaN(d) && String(d.getFullYear()) === filters.endYear
+      if (isNaN(d)) return false
+      const month = d.getMonth()
+      const fiscalYear = month >= 9 ? d.getFullYear() + 1 : d.getFullYear()
+      const year = filters.yearBasis === 'fiscal' ? fiscalYear : d.getFullYear()
+      if (String(year) !== filters.endYear) return false
+      if (!filters.endQuarter) return true
+      const quarter = filters.yearBasis === 'fiscal' ? Math.floor(((month + 3) % 12) / 3) + 1 : Math.floor(month / 3) + 1
+      return String(quarter) === filters.endQuarter
     })
     // Dates are stored as 'YYYY-MM-DD' ISO strings, so a prefix match against
     // a 'YYYY-MM' filter value is exact and doesn't need Date parsing.
@@ -493,7 +503,7 @@ export default function Opportunities({ toast }) {
       tab,
       archived: '',
       outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
+      phase: '', primeOrSub: '', endBand: '', endYear: '', endQuarter: '', yearBasis: 'calendar', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
     })
     setShowFilter(false)
     setAgencyFilterOpen(false)
@@ -503,7 +513,7 @@ export default function Opportunities({ toast }) {
     updateParams({
       tab: 'All', archived: showArchived ? '' : '1',
       outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',
-      phase: '', primeOrSub: '', endBand: '', endYear: '', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
+      phase: '', primeOrSub: '', endBand: '', endYear: '', endQuarter: '', yearBasis: 'calendar', rfiMonth: '', classification: '', vehicle: '', flagged: '', rfiFollowUps: '',
     })
     setShowFilter(false)
     setAgencyFilterOpen(false)
