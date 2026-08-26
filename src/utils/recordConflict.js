@@ -10,6 +10,7 @@ const TABLE_IDENTITY_COLUMNS = {
   EmailFollowUpDraftsTable: 'Draft ID',
   SAMSettingsTable: 'Setting',
   RFIFollowUpOverridesTable: 'Opportunity ID',
+  OpportunityRelationshipsTable: 'Relationship ID',
 }
 
 export function recordIdentity(tableName, row) {
