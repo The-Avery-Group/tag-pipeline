@@ -1,4 +1,16 @@
 import { putAutomationRun } from '../lib/automationHealth.js'
+import {
+  acknowledgeOpportunityAlert,
+  alertFingerprint,
+  alertStorageReady,
+  listOpportunityAlerts,
+  upsertOpportunityAlert,
+} from '../lib/opportunityAlerts.js'
+import {
+  claimWorkspaceRun,
+  findWorkspaceBySource,
+  updateWorkspace,
+} from '../lib/opportunityWorkspaceRepository.js'
 
 /**
  * Lightweight, checkpointed monitor for opportunities already saved in
@@ -23,6 +35,12 @@ function json(data, status = 200) {
 
 function normalized(value) { return String(value || '').trim().toUpperCase() }
 function clean(value) { return String(value || '').trim() }
+function normalizedRevision(value) {
+  const text = clean(value)
+  if (!text) return ''
+  const timestamp = new Date(text).getTime()
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : text
+}
 
 // `_001` and `-AMEND-01` are common amendment suffixes. Do not strip ordinary
 // trailing digits: they can be a meaningful part of a solicitation number.
@@ -88,19 +106,43 @@ function watchKey(item) {
 }
 
 function toWatch(item, existing = null) {
+  const incomingNoticeId = clean(item.noticeId ?? item['Notice ID'])
+  const incomingSolicitationNumber = clean(item.solicitationNumber ?? item['Solicitation Number'])
   return {
     ...(existing || {}),
     // Keep the original KV key when an amendment is associated with an
     // existing watch. This prevents the old watch from becoming an orphan.
     key: existing?.key || watchKey(item),
+    opportunityKey: existing?.opportunityKey || existing?.noticeId || incomingNoticeId || incomingSolicitationNumber,
     rowIndex: Number(item.rowIndex ?? item._rowIndex),
-    noticeId: clean(item.noticeId ?? item['Notice ID']),
-    solicitationNumber: clean(item.solicitationNumber ?? item['Solicitation Number']),
+    noticeId: existing?.noticeId || incomingNoticeId,
+    solicitationNumber: existing?.solicitationNumber || incomingSolicitationNumber,
     title: clean(item.title ?? item.Title),
     department: clean(item.department ?? item.Department),
     agency: clean(item.agency ?? item.Agency),
     status: clean(item.status ?? item.Status).toLowerCase(),
     dateAdded: clean(item.dateAdded ?? item['Date Added']),
+  }
+}
+
+export function preserveSAMChangeReview(previous, candidate, nextSnapshot) {
+  if (!candidate) return candidate
+  const fingerprint = alertFingerprint({
+    sourceModifiedAt: normalizedRevision(candidate.sourceModifiedAt),
+    fields: candidate.fields,
+    snapshot: nextSnapshot,
+  })
+  const sameFields = JSON.stringify([...(previous?.fields || [])].sort()) === JSON.stringify([...(candidate.fields || [])].sort())
+  const sameRevision = previous?.fingerprint === fingerprint ||
+    previous?.reviewedFingerprint === fingerprint ||
+    (normalizedRevision(previous?.sourceModifiedAt) === normalizedRevision(candidate.sourceModifiedAt) && sameFields)
+  return {
+    ...candidate,
+    fingerprint,
+    reviewedAt: sameRevision ? previous?.reviewedAt || null : null,
+    reviewedFingerprint: sameRevision
+      ? previous?.reviewedFingerprint || (previous?.reviewedAt ? fingerprint : null)
+      : null,
   }
 }
 
@@ -227,6 +269,7 @@ function publicWatch(watch) {
     changeDay <= addedDay
   const visibleChange = invalidInitialBadge ? null : watch.change
   return {
+    opportunityKey: watch.opportunityKey || watch.noticeId || watch.solicitationNumber,
     rowIndex: watch.rowIndex,
     noticeId: watch.noticeId,
     solicitationNumber: watch.solicitationNumber,
@@ -236,10 +279,86 @@ function publicWatch(watch) {
       summary: visibleChange.summary || '',
       changedAt: visibleChange.changedAt,
       reviewedAt: visibleChange.reviewedAt || null,
+      fingerprint: visibleChange.fingerprint || '',
       uiLink: visibleChange.uiLink || watch.snapshot?.uiLink || '',
     } : null,
     lastCheckedAt: watch.lastCheckedAt || null,
     latest: watch.snapshot || null,
+  }
+}
+
+async function overlayDurableReview(env, watches) {
+  if (!env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return watches
+  const alerts = await listOpportunityAlerts(env.EBUY_DB)
+  const byKey = new Map(alerts.filter((alert) => alert.type === 'sam_change').map((alert) => [normalized(alert.opportunityKey), alert]))
+  return watches.map((watch) => {
+    const alert = byKey.get(normalized(watch.opportunityKey)) || byKey.get(normalized(watch.noticeId)) || byKey.get(normalized(watch.solicitationNumber))
+    if (!alert || !watch.change) return watch
+    return {
+      ...watch,
+      changed: alert.badgeVisible,
+      change: { ...watch.change, reviewedAt: alert.acknowledgedAt || watch.change.reviewedAt || null },
+    }
+  })
+}
+
+async function recordDurableSAMChange(env, watch) {
+  if (!watch.change || !env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return null
+  const fingerprint = watch.change.fingerprint || alertFingerprint({
+    sourceModifiedAt: normalizedRevision(watch.change.sourceModifiedAt),
+    fields: watch.change.fields,
+    snapshot: watch.snapshot,
+  })
+  watch.change.fingerprint = fingerprint
+  const opportunityKey = watch.opportunityKey || watch.noticeId || watch.solicitationNumber
+  await upsertOpportunityAlert(env.EBUY_DB, {
+    opportunityKey,
+    type: 'sam_change',
+    fingerprint,
+    summary: watch.change.summary,
+    details: { fields: watch.change.fields, sourceModifiedAt: watch.change.sourceModifiedAt, uiLink: watch.change.uiLink },
+  })
+  if (watch.change.fields?.includes('resourceLinks')) {
+    await upsertOpportunityAlert(env.EBUY_DB, {
+      opportunityKey,
+      type: 'sam_files',
+      fingerprint: alertFingerprint({ sourceRevision: watch.change.sourceModifiedAt, current: watch.snapshot?.resourceLinks || [] }),
+      summary: 'SAM.gov attachment list changed',
+      details: { sourceRevision: watch.change.sourceModifiedAt, resourceLinks: watch.snapshot?.resourceLinks || [] },
+    })
+  }
+  return fingerprint
+}
+
+async function startAttachmentRefresh(env, watch, revision) {
+  if (!env.EBUY_DB || !env.OPPORTUNITY_WORKSPACE_WORKFLOW?.createBatch || !revision || watch.attachmentSyncRevision === revision) return false
+  const workspace = await findWorkspaceBySource(env.EBUY_DB, {
+    noticeId: watch.noticeId,
+    solicitationNumber: watch.solicitationNumber,
+  })
+  if (!workspace?.rootFolderId) return false
+  const instanceId = `opportunity-workspace-sync-${crypto.randomUUID()}`
+  const claimed = await claimWorkspaceRun(env.EBUY_DB, workspace.opportunityKey, instanceId, { force: true })
+  if (!claimed) return false
+  try {
+    await env.OPPORTUNITY_WORKSPACE_WORKFLOW.createBatch([{
+      id: instanceId,
+      params: {
+        opportunityKey: workspace.opportunityKey,
+        syncAttachments: true,
+        sourceRevision: revision,
+      },
+      retention: { successRetention: '7 days', errorRetention: '14 days' },
+    }])
+    watch.attachmentSyncRevision = revision
+    return true
+  } catch (error) {
+    await updateWorkspace(env.EBUY_DB, workspace.opportunityKey, {
+      status: 'ready',
+      progressPhase: 'Workspace ready; attachment refresh could not start',
+      errorMessage: error.message,
+    }).catch(() => {})
+    throw error
   }
 }
 
@@ -274,20 +393,22 @@ async function sync(req, env) {
         titleOverlap(watch.title, item.Title ?? item.title) >= 0.6
       )
     }
-    const next = toWatch(item, existing)
-    if (existing && normalized(existing.noticeId) !== notice && notice) {
+    const relatedNotice = Boolean(existing && normalized(existing.noticeId) !== notice && notice)
+    const next = relatedNotice ? { ...existing } : toWatch(item, existing)
+    if (relatedNotice) {
       const fields = ['noticeId', 'solicitationNumber']
-      next.change = {
+      next.change = preserveSAMChangeReview(existing.change, {
         fields,
         summary: 'SAM published a related amendment or reissued notice.',
-        changedAt: new Date().toISOString(),
+        changedAt: clean(item['Posted Date'] ?? item.postedDate) || new Date().toISOString(),
+        sourceModifiedAt: clean(item['Modified Date'] ?? item.modifiedDate ?? item['Posted Date'] ?? item.postedDate) || notice,
         uiLink: clean(item['SAM.gov URL'] ?? item.samLink),
-      }
+      }, existing.snapshot)
     }
     // A page refresh or the app-only workbook sync must not consume a KV
     // write for every unchanged watch. Preserve the existing snapshot and
     // check state unless the source record actually changed.
-    if (!existing || !sameWatchSource(existing, next)) {
+    if (relatedNotice || !existing || !sameWatchSource(existing, next)) {
       next.updatedAt = new Date().toISOString()
       await writeWatch(env, next)
       const existingIndex = activeWatches.findIndex((watch) => watch.key === next.key)
@@ -341,7 +462,7 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
         if (watch.snapshot) {
           const fields = differences(watch.snapshot, nextSnapshot)
           if (fields.length) {
-            watch.change = {
+            watch.change = preserveSAMChangeReview(watch.change, {
               fields,
               summary: `SAM.gov updated ${fields.map((field) => LABELS[field]).join(', ')}.`,
               changedAt: watch.lastCheckedAt,
@@ -352,36 +473,42 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
               // unreviewed generic badge.
               sourceModifiedAt: sourceDate,
               uiLink: nextSnapshot.uiLink,
-            }
+            }, nextSnapshot)
           } else if (watch.change?.reviewedAt && !watch.change.sourceModifiedAt) {
             // Upgrade older reviewed records in place. Treat the current SAM
             // revision as the revision the user reviewed instead of raising
             // the same update once more after deployment.
             watch.change.sourceModifiedAt = sourceDate
           } else if (changedAfterAdded && (!watch.change || watch.change.sourceModifiedAt !== sourceDate)) {
-            watch.change = {
+            watch.change = preserveSAMChangeReview(watch.change, {
               fields: ['samUpdate'],
               summary: 'SAM reports this notice was updated after it was added to the pipeline.',
               changedAt: sourceDate,
               sourceModifiedAt: sourceDate,
               uiLink: nextSnapshot.uiLink,
-            }
+            }, nextSnapshot)
           }
         } else {
           // Older watches created before snapshots existed can still be
           // flagged once when SAM reports that the notice itself was posted
           // or modified after it entered this pipeline.
           if (changedAfterAdded) {
-            watch.change = {
+            watch.change = preserveSAMChangeReview(watch.change, {
               fields: ['samUpdate'],
               summary: 'SAM reports this notice was updated after it was added to the pipeline.',
               changedAt: sourceDate,
               sourceModifiedAt: sourceDate,
               uiLink: nextSnapshot.uiLink,
-            }
+            }, nextSnapshot)
           }
         }
         watch.snapshot = nextSnapshot
+        if (watch.change) await recordDurableSAMChange(env, watch)
+        if (watch.change?.sourceModifiedAt && watch.attachmentSyncRevision !== watch.change.sourceModifiedAt) {
+          await startAttachmentRefresh(env, watch, watch.change.sourceModifiedAt).catch((error) => {
+            console.warn(JSON.stringify({ event: 'sam_attachment_refresh_start_failed', noticeId: watch.noticeId, message: error.message }))
+          })
+        }
       }
       await writeWatch(env, watch)
       checked++
@@ -421,17 +548,17 @@ export async function handleSAMMonitor(req, env) {
     if (noticeId || solicitationNumber) {
       const watch = await readWatch(env, watchKey({ noticeId, solicitationNumber }))
       const run = await readRunStatus(env)
-      return json({ watches: watch ? [publicWatch(watch)] : [], run: run || null })
+      return json({ watches: watch ? await overlayDurableReview(env, [publicWatch(watch)]) : [], run: run || null })
     }
     const [snapshot, run] = await Promise.all([
       readStatusSnapshot(env),
       readRunStatus(env),
     ])
-    if (snapshot) return json({ watches: snapshot.watches, run: run || null })
+    if (snapshot) return json({ watches: await overlayDurableReview(env, snapshot.watches), run: run || null })
     try {
       const watches = await listWatches(env)
       await writeStatusSnapshot(env, watches)
-      return json({ watches: watches.map(publicWatch), run: run || null })
+      return json({ watches: await overlayDurableReview(env, watches.map(publicWatch)), run: run || null })
     } catch (error) {
       console.warn(JSON.stringify({
         event: 'sam_monitor_status_fallback_failed',
@@ -454,7 +581,21 @@ export async function handleSAMMonitor(req, env) {
       )
     }
     if (!watch) return json({ error: 'Monitor record not found' }, 404)
-    if (watch.change) watch.change.reviewedAt = new Date().toISOString()
+    if (watch.change) {
+      const fingerprint = watch.change.fingerprint || alertFingerprint({
+        sourceModifiedAt: normalizedRevision(watch.change.sourceModifiedAt),
+        fields: watch.change.fields,
+        snapshot: watch.snapshot,
+      })
+      watch.change.fingerprint = fingerprint
+      watch.change.reviewedFingerprint = fingerprint
+      watch.change.reviewedAt = new Date().toISOString()
+    }
+    if (watch.change && env.EBUY_DB && await alertStorageReady(env.EBUY_DB)) {
+      const opportunityKey = watch.opportunityKey || watch.noticeId || watch.solicitationNumber
+      await acknowledgeOpportunityAlert(env.EBUY_DB, opportunityKey, 'sam_change', watch.change.fingerprint || '')
+      await acknowledgeOpportunityAlert(env.EBUY_DB, opportunityKey, 'sam_files')
+    }
     await writeWatch(env, watch)
     await updateStatusSnapshotEntry(env, watch)
     return json({ ok: true, watch: publicWatch(watch) })
