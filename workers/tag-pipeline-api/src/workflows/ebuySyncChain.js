@@ -1,4 +1,5 @@
 export const EBUY_ARCHIVE_FILES_PER_CHECKPOINT = 4
+export const EBUY_OPPORTUNITIES_PER_CHECKPOINT = 12
 const MAX_ARCHIVE_CHECKPOINTS = 1000
 
 export function ebuyArchiveContinuationId(runId, checkpoint) {
