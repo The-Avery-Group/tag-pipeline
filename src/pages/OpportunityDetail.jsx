@@ -25,6 +25,7 @@ import OpportunityNotesSection from '@/components/Opportunity/OpportunityNotesSe
 import OpportunityTasksSection from '@/components/Opportunity/OpportunityTasksSection'
 import FollowUpEmailComposer from '@/components/Opportunity/FollowUpEmailComposer'
 import OpportunityFilesPanel from '@/components/Opportunity/OpportunityFilesPanel'
+import { connectOpportunityWorkspaceFolder } from '@/services/opportunityWorkspaceService'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
@@ -782,10 +783,19 @@ export default function OpportunityDetail({ toast }) {
         [C.otherLinks]: joinLinks(linkDraft.other.map(({ label, url }) => namedLinkLine(label, url)).filter(Boolean)),
       }
       await updateOpp(opp._rowIndex, patch, opp)
+      let folderConnectionError = ''
+      if (patch[C.folder] && patch[C.folder].trim() !== String(opp[C.folder] || '').trim()) {
+        try {
+          await connectOpportunityWorkspaceFolder({ ...opp, ...patch })
+        } catch (error) {
+          folderConnectionError = error.message
+        }
+      }
       setForm((current) => current ? { ...current, ...patch } : current)
       setEditingLinks(false)
       setLinkDraft(null)
-      toast?.success('Links updated')
+      if (folderConnectionError) toast?.error(`Links saved, but the opportunity folder could not be connected: ${folderConnectionError}`)
+      else toast?.success(patch[C.folder] && patch[C.folder].trim() !== String(opp[C.folder] || '').trim() ? 'Links updated and opportunity folder connected' : 'Links updated')
     } catch (error) {
       toast?.error(`Could not update links: ${error.message}`)
     } finally {
@@ -1814,16 +1824,16 @@ export default function OpportunityDetail({ toast }) {
             : <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {relatedOpportunities.map((relationship) => {
                 const related = relationship.opportunity
-                return <div key={relationship['Relationship ID']} className="card" style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button type="button" className="btn btn-ghost" style={{ flex: 1, justifyContent: 'space-between', textAlign: 'left' }} onClick={() => related && navigate(`/opportunities/${encodeURIComponent(related[C.contractNum])}`)} disabled={!related}>
+                return <div key={relationship['Relationship ID']} className={styles.relationshipRow}>
+                  <button type="button" className={styles.relationshipOpportunity} onClick={() => related && navigate(`/opportunities/${encodeURIComponent(related[C.contractNum])}`)} disabled={!related}>
                     <span><strong>{related?.[C.title] || 'Unavailable opportunity'}</strong><small className="text-muted" style={{ display: 'block' }}>{related?.[C.contractNum] || relationship.relatedId}</small></span>
-                    <select className="form-select text-xs" aria-label="Relationship type" value={relationship['Relationship Type'] || 'Related only'} onClick={(event) => event.stopPropagation()} onChange={async (event) => {
-                      try { await opportunityRelationships.updateType(relationship, event.target.value); toast?.success('Relationship type updated') }
-                      catch (error) { toast?.error(`Could not update relationship: ${error.message}`) }
-                    }}>
-                      <option>Related only</option><option>Follow-on</option><option>Expiring to new</option><option>Recompete</option>
-                    </select>
                   </button>
+                  <label className={styles.relationshipTypeControl}><span>Relationship</span><select className="form-select text-xs" aria-label={`Relationship type for ${related?.[C.title] || 'opportunity'}`} value={relationship['Relationship Type'] || 'Related only'} onChange={async (event) => {
+                    try { await opportunityRelationships.updateType(relationship, event.target.value); toast?.success('Relationship type updated') }
+                    catch (error) { toast?.error(`Could not update relationship: ${error.message}`) }
+                  }}>
+                    <option>Related only</option><option>Follow-on</option><option>Expiring to new</option><option>Recompete</option>
+                  </select></label>
                   {relationship['Relationship Type'] === 'Follow-on' && related && <button type="button" className="btn btn-ghost" onClick={async () => {
                     try { await opportunityRelationships.organizeWorkspace(related); toast?.success('Follow-on folders organized') }
                     catch (error) { toast?.error(`Could not organize folders: ${error.message}`) }
@@ -1835,15 +1845,16 @@ export default function OpportunityDetail({ toast }) {
                 </div>
               })}
             </div>}
-          <div style={{ marginTop: 10, position: 'relative' }}>
-            <label className="form-label" htmlFor="relationship-type">Relationship type</label>
-            <select id="relationship-type" className="form-select" value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)} style={{ marginBottom: 8 }}>
-              <option>Related only</option>
-              <option>Follow-on</option>
-              <option>Expiring to new</option>
-              <option>Recompete</option>
-            </select>
-            <input className="form-input" value={relationshipSearch} onChange={(event) => setRelationshipSearch(event.target.value)} placeholder="Search opportunities to link…" />
+          <div className={styles.relationshipComposer}>
+            <div className={styles.relationshipComposerRow}>
+              <input className="form-input" value={relationshipSearch} onChange={(event) => setRelationshipSearch(event.target.value)} placeholder="Search opportunities to link…" aria-label="Search opportunities to link" />
+              <label className={styles.relationshipLinkAs}><span>Link as</span><select id="relationship-type" className="form-select text-xs" value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
+                <option>Related only</option>
+                <option>Follow-on</option>
+                <option>Expiring to new</option>
+                <option>Recompete</option>
+              </select></label>
+            </div>
             {relationshipSearch.trim() && <div className={styles.contactDropdown}>
               {relationshipCandidates.length === 0 ? <div className={styles.contactDropdownEmpty}>No available opportunities found.</div> : relationshipCandidates.map((candidate) => (
                 <button type="button" key={candidate['Opportunity ID']} className={styles.contactDropdownRow} onClick={() => handleLinkOpportunity(candidate)} disabled={linkingOpportunity} style={{ width: '100%', textAlign: 'left', border: 0 }}>
