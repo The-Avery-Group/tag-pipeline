@@ -535,7 +535,10 @@ export async function findEbuyPipelineSource(db, opportunityKey) {
 }
 
 export async function listEbuyFollowOnCandidates(db, { postedAfter = null, postedBefore = null } = {}) {
-  const where = ["request_type IN ('RFP', 'RFQ')", "review_state != 'dismissed'", "lifecycle_status != 'unavailable'"]
+  // Dismissal is a review preference, not evidence that an opportunity is an
+  // invalid follow-on. Compare every RFP/RFQ still retained in the New-tab
+  // source store, including dismissed records.
+  const where = ["request_type IN ('RFP', 'RFQ')", "lifecycle_status != 'unavailable'"]
   const bindings = []
   if (postedAfter) { where.push('posted_at > ?'); bindings.push(postedAfter) }
   if (postedBefore) { where.push('posted_at <= ?'); bindings.push(postedBefore) }
