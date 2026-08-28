@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { findLocalSAMFollowUps } from '../src/handlers/rfiFollowUpMonitor.js'
 import { listEbuyFollowOnCandidates } from '../src/lib/ebuyRepository.js'
+import { matchFollowOnTitles } from '../src/handlers/sam.js'
 
 test('follow-on matching uses RFP and RFQ records already present in the New tab', () => {
   const source = {
@@ -60,6 +61,38 @@ test('selected department and low title threshold qualify a New-tab follow-on wi
   assert.equal(matches.length, 1)
   assert.ok(matches[0].keywordOverlapPercent >= 10)
   assert.ok(matches[0].matchScore < 30)
+})
+
+test('title matching retains common procurement terms', () => {
+  const match = matchFollowOnTitles(
+    'Program support services requirement',
+    'Program support service requirements',
+  )
+  assert.equal(match.percent, 100)
+  assert.deepEqual(match.matchedTerms, ['program', 'support', 'service', 'requirement'])
+})
+
+test('title matching normalizes compounds and common abbreviations', () => {
+  const match = matchFollowOnTitles(
+    'Information Technology cyber security help desk services',
+    'IT cybersecurity helpdesk service',
+  )
+  assert.equal(match.percent, 100)
+})
+
+test('title matching recognizes conservative aliases and minor spelling differences', () => {
+  const aliases = matchFollowOnTitles('Cyber workforce consulting', 'Cybersecurity personnel advisory')
+  const typo = matchFollowOnTitles('Enterprise modernization platform', 'Enterprise moderniztion platform')
+  assert.equal(aliases.percent, 100)
+  assert.ok(typo.percent >= 80)
+  assert.ok(typo.matchedTerms.some((term) => term.includes('≈')))
+})
+
+test('unrelated candidate wording reduces the balanced title score', () => {
+  const focused = matchFollowOnTitles('Enterprise medical logistics platform', 'Enterprise medical logistics platform')
+  const padded = matchFollowOnTitles('Enterprise medical logistics platform', 'Enterprise medical logistics platform janitorial vehicle construction')
+  assert.equal(focused.percent, 100)
+  assert.ok(padded.percent < focused.percent)
 })
 
 test('eBuy follow-on evidence includes dismissed New-tab records', async () => {
