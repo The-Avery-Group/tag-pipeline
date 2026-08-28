@@ -260,6 +260,7 @@ export async function runEbuySyncWorkflow(env, event, step) {
   const mode = event.payload?.mode || 'live'
   const resumeRunId = String(event.payload?.resumeRunId || '').trim()
   const archiveCheckpoint = Math.max(1, Number(event.payload?.archiveCheckpoint) || 1)
+  const continuationKey = String(event.payload?.continuationKey || event.instanceId || resumeRunId || '').trim()
   const source = event.payload?.source || 'manual'
   const run = resumeRunId
     ? await step.do('Resume interrupted eBuy sync record', () => resumeEbuySyncRun(env.EBUY_DB, resumeRunId))
@@ -385,6 +386,7 @@ export async function runEbuySyncWorkflow(env, event, step) {
             env,
             step,
             runId: run.id,
+            continuationKey,
             checkpoint: archiveCheckpoint,
             source,
           })
@@ -460,7 +462,14 @@ export async function runEbuySyncWorkflow(env, event, step) {
       }
       await step.do('Record automatic eBuy recovery', () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, progress))
       await step.sleep(`Wait before eBuy recovery ${archiveCheckpoint}`, `${Math.min(120, 15 * archiveCheckpoint)} seconds`)
-      const continuation = await scheduleEbuyArchiveContinuation({ env, step, runId: run.id, checkpoint: archiveCheckpoint, source: 'automatic-recovery' })
+      const continuation = await scheduleEbuyArchiveContinuation({
+        env,
+        step,
+        runId: run.id,
+        continuationKey,
+        checkpoint: archiveCheckpoint,
+        source: 'automatic-recovery',
+      })
       return { ok: true, status: 'continuing', recovery: true, runId: run.id, ...continuation }
     }
     if (mode === 'live') {
