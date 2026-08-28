@@ -24,6 +24,14 @@ export function requestOpportunityWorkspace(opportunity, overrides = {}) {
   })
 }
 
+export function connectOpportunityWorkspaceFolder(opportunity) {
+  return workerJson('/opportunity-workspaces', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...opportunityPayload(opportunity), adoptFolderLink: true }),
+  })
+}
+
 export function getOpportunityWorkspace(opportunityKey) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`)
 }
