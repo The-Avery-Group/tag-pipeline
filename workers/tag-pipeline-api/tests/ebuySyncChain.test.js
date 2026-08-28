@@ -2,12 +2,17 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   EBUY_ARCHIVE_FILES_PER_CHECKPOINT,
+  EBUY_OPPORTUNITIES_PER_CHECKPOINT,
   ebuyArchiveContinuationId,
   scheduleEbuyArchiveContinuation,
 } from '../src/workflows/ebuySyncChain.js'
 
 test('eBuy file archiving uses a conservative per-instance batch', () => {
   assert.equal(EBUY_ARCHIVE_FILES_PER_CHECKPOINT, 4)
+})
+
+test('eBuy opportunity processing hands off before a Workflow instance grows too large', () => {
+  assert.equal(EBUY_OPPORTUNITIES_PER_CHECKPOINT, 12)
 })
 
 test('eBuy archive continuation preserves the run and advances the checkpoint', async () => {
