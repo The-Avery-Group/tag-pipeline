@@ -56,8 +56,23 @@ async function request(url, options = {}, timeoutMs = 25_000) {
   }
 }
 
-async function readJson(response, service) {
-  const payload = await response.json().catch(() => null)
+async function readJson(response, service, timeoutMs = 25_000) {
+  let timer
+  const timedOut = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      response.body?.cancel?.().catch?.(() => {})
+      reject(connectorError(`${service} did not finish returning its response`, 'ebuy_timeout', 504))
+    }, timeoutMs)
+  })
+  let payload
+  try {
+    payload = await Promise.race([
+      response.json().catch(() => null),
+      timedOut,
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
   if (!response.ok) {
     const message = payload?.errorSummary || payload?.error?.message || payload?.response?.message
       || `${service} returned ${response.status}`
@@ -326,7 +341,7 @@ function normalizeSetAside(value) {
   const label = sourceLabel(value)
   if (!label) return ''
   const compact = label.toUpperCase().replace(/[^A-Z0-9]+/g, '')
-  if (['Y', 'YES', 'TRUE', '1', 'SB', 'SBA', 'SMALLBUSINESS'].includes(compact)) return 'Small Business Set-Aside'
+  if (['Y', 'YES', 'TRUE', '1', 'S', 'SB', 'SBA', 'SMALL', 'SMALLBUSINESS', 'SMALLBUSINESSCONCERN'].includes(compact)) return 'Small Business Set-Aside'
   if (['N', 'NO', 'FALSE', '0', 'NONE', 'UNRESTRICTED', 'FULLANDOPEN'].includes(compact)) return 'Unrestricted'
   const known = [
     [/8\(?A\)?|EIGHTA/, '8(a) Set-Aside'],
@@ -345,13 +360,18 @@ function resolveSetAside(...sources) {
     if (!source || typeof source !== 'object') continue
     for (const key of [
       'setAsideTypeDescription', 'setAsideDescription', 'setAsideType', 'setAside',
-      'smallBusinessSetAside', 'setAsideBusinessIndicator',
+      'smallBusinessSetAside', 'setAsideBusinessIndicator', 'setAsideFlag',
+      'setAsideIndicator', 'smallBusinessIndicator', 'smallBusinessFlag',
+      'businessSize', 'businessType', 'socioEconomicType', 'socioeconomicType',
     ]) {
       const label = sourceLabel(source[key])
       if (label) preferred.push({ key, label })
     }
   }
-  const discovered = sources.flatMap((source) => valuesForSourceKeys(source, /set.?aside|small.?business.*indicator|business.*set.?aside/i))
+  const discovered = sources.flatMap((source) => valuesForSourceKeys(
+    source,
+    /set.?aside|small.?business|business.?size|socio.?economic/i,
+  ))
   const candidates = [...preferred, ...discovered]
   candidates.sort((left, right) => {
     const score = (candidate) => {
