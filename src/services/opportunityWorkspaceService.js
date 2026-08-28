@@ -28,6 +28,14 @@ export function getOpportunityWorkspace(opportunityKey) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`)
 }
 
+export function shareRelatedOpportunityWorkspace(leftOpportunityKey, rightOpportunityKey, relationshipType) {
+  return workerJson('/opportunity-workspaces/link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leftOpportunityKey, rightOpportunityKey, relationshipType }),
+  })
+}
+
 export function deleteOpportunityWorkspace(opportunityKey, { deleteSharePoint = false } = {}) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`, {
     method: 'DELETE',
@@ -137,4 +145,12 @@ export function removeOpportunityReferenceUploads(opportunityKey, itemIds) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ itemIds }),
   })
+}
+
+export function analyzeOpportunityDocuments(opportunityKey) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/analysis`, { method: 'POST' })
+}
+
+export function getOpportunityDocumentAnalysis(opportunityKey) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/analysis`)
 }
