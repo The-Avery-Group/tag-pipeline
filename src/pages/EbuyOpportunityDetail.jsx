@@ -6,7 +6,7 @@ import CopyValue from '@/components/Common/CopyValue'
 import Modal from '@/components/Common/Modal'
 import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
-import { ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
+import { analyzeEbuyOpportunityDocuments, ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
 import {
   formatEbuyChangedField,
   formatEbuyAttachmentMeta,
@@ -34,6 +34,8 @@ export default function EbuyOpportunityDetail({ toast }) {
   const [actioning, setActioning] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [dismissedPrompt, setDismissedPrompt] = useState(false)
+  const [documentAnalysis, setDocumentAnalysis] = useState({ requirements: [], documents: [], pastPerformance: [] })
+  const [analysisLoading, setAnalysisLoading] = useState(false)
   const actionRef = useRef(false)
   const inPipeline = useMemo(() => pipeline.some((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase()), [pipeline, requestId])
   const returnTo = searchParams.get('returnTo') || '/opportunities?tab=New&source=ebuy'
@@ -48,6 +50,27 @@ export default function EbuyOpportunityDetail({ toast }) {
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [requestId])
+
+  useEffect(() => {
+    if (!opportunity?.attachments?.some((attachment) => attachment.sharepointWebUrl)) return undefined
+    let active = true
+    setAnalysisLoading(true)
+    ;(async () => {
+      try {
+        let result = null
+        for (let batch = 0; batch < 5; batch += 1) {
+          result = await analyzeEbuyOpportunityDocuments(opportunity.requestId)
+          if (!result.run?.opportunity?.remaining && !result.run?.pastPerformance?.remaining) break
+        }
+        if (active) setDocumentAnalysis(result?.analysis || { requirements: [], documents: [], pastPerformance: [] })
+      } catch (analysisError) {
+        if (active) console.warn('[eBuy document analysis]', analysisError.message)
+      } finally {
+        if (active) setAnalysisLoading(false)
+      }
+    })()
+    return () => { active = false }
+  }, [opportunity?.attachments, opportunity?.requestId])
 
   const act = async (callback) => {
     if (actionRef.current) return
@@ -180,6 +203,11 @@ export default function EbuyOpportunityDetail({ toast }) {
               : <span className={styles.pending}>{failed ? 'Retries on next sync' : 'Awaiting archive'}</span>}
           </article>
         })}{!opportunity.attachments?.length && !opportunity.attachmentReferences?.mentioned && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
+      </section>
+
+      <section className={styles.card}>
+        <header><div><span className={styles.eyebrow}>Document analysis</span><h2>Requirements gathered from attachments</h2></div><span className={styles.count}>{documentAnalysis.requirements?.length || 0}</span></header>
+        {analysisLoading ? <div className="skeleton" style={{ height: 72 }} /> : <div className={styles.list}>{documentAnalysis.requirements?.map((requirement, index) => <article key={`${requirement.citation?.fileName}-${requirement.citation?.location}-${index}`}><div><strong>{requirement.text}</strong><span>{requirement.citation?.fileName} · {requirement.citation?.location}</span></div></article>)}{!documentAnalysis.requirements?.length && <p className={styles.empty}>{opportunity.attachments?.length ? 'No explicit requirement statements have been extracted from the archived documents.' : 'No source attachments are available to analyze.'}</p>}</div>}
       </section>
     </div>
     {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
