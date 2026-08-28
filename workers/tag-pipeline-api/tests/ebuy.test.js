@@ -7,12 +7,29 @@ import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/l
 import { generateTotp } from '../src/lib/ebuyTotp.js'
 import {
   deleteEbuyFixtureRecords,
+  isEbuySyncRunStale,
   reconcileEbuyPipelineRecords,
+  recoverStaleEbuySyncRuns,
   recordArchivedEbuyAttachment,
   stageEbuySyncCandidates,
   syncEbuyOpportunities,
   unlinkEbuyPipelineRecord,
 } from '../src/lib/ebuyRepository.js'
+
+class SyncRunStatement {
+  constructor(sql, db) { this.sql = sql; this.db = db; this.values = [] }
+  bind(...values) { this.values = values; return this }
+  async all() { return { results: this.db.rows } }
+  async run() {
+    this.db.updates.push({ sql: this.sql, values: this.values })
+    return { success: true, meta: { changes: 1 } }
+  }
+}
+
+class SyncRunD1 {
+  constructor(rows = []) { this.rows = rows; this.updates = [] }
+  prepare(sql) { return new SyncRunStatement(sql, this) }
+}
 
 class PlaceholderCheckingStatement {
   constructor(sql, db) { this.sql = sql; this.db = db; this.values = [] }
@@ -223,6 +240,49 @@ test('live eBuy details normalize into the archive field model', () => {
   assert.deepEqual(record.vehiclePairs, ['MAS:541611'])
   assert.equal(record.attachments[0].id, 'RFI123:4')
   assert.equal(record.amendments[0].label, 'Modification 2')
+})
+
+test('wrapped eBuy details retain descriptive set-asides and discover nested attachments', () => {
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFQ1842000',
+    title: 'Summary title',
+    setAsideType: 'SB',
+  }, {
+    rfq: {
+      rfqInfo: { rfqId: 'RFQ1842000', description: 'Use the attached statement of work.' },
+      rfqProps: { setAsideBusinessIndicator: true, userAgency: 'Department', userBureau: 'Agency' },
+      rfqAdditionalInfo: { setAsideDescription: '8(a) Competitive', ocoEmail: 'buyer@example.gov' },
+      responseDocuments: {
+        files: [{ originalFileName: 'Statement of Work.pdf', filePath: '/ebuy_upload/RFQ1842000/sow.pdf' }],
+      },
+    },
+  }, 'MAS')
+
+  assert.equal(record.title, 'Summary title')
+  assert.equal(record.setAsideType, '8(a) Set-Aside')
+  assert.equal(record.buyerEmail, 'buyer@example.gov')
+  assert.deepEqual(record.attachments.map((item) => item.fileName), ['Statement of Work.pdf'])
+})
+
+test('stale eBuy synchronization runs are detected and changed into resumable errors', async () => {
+  const now = new Date('2026-08-28T12:00:00.000Z')
+  const row = {
+    id: 'sync-stale',
+    status: 'running',
+    started_at: '2026-08-27T12:00:00.000Z',
+    details_json: JSON.stringify({
+      progress: { phase: 'archiving', percent: 57, updatedAt: '2026-08-27T12:10:00.000Z' },
+    }),
+  }
+  assert.equal(isEbuySyncRunStale(row, now.getTime()), true)
+
+  const db = new SyncRunD1([row])
+  const result = await recoverStaleEbuySyncRuns(db, { now })
+  assert.deepEqual(result, { recovered: 1 })
+  assert.equal(db.updates.length, 1)
+  assert.equal(db.updates[0].values[3], 'sync-stale')
+  assert.match(db.updates[0].values[1], /stopped reporting progress/i)
+  assert.equal(JSON.parse(db.updates[0].values[2]).progress.percent, 57)
 })
 
 test('live eBuy normalization preserves the MRAS classification over an RFI request ID', () => {
