@@ -78,7 +78,15 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
     try { await onAddToPipeline(candidate) } finally { setAdding(null) }
   }
 
-  const ruleSummary = `RFP or RFQ · weighted by organization, POC, NAICS, office, and title evidence`
+  const usesGlobalCriteria = !override || ['yes', 'true', 'enabled', '1'].includes(String(override['Use Global Criteria'] || 'Yes').trim().toLowerCase())
+  const ruleSummary = [
+    'RFP or RFQ',
+    usesGlobalCriteria ? 'global criteria' : 'per-opportunity criteria',
+    `title ≥${effective.rules.titleOverlapPercent}%`,
+    `department ${effective.rules.departmentRule.toLowerCase()}`,
+    `agency ${effective.rules.agencyRule.toLowerCase()}`,
+    `POC ${effective.rules.pocRule.toLowerCase()}`,
+  ].join(' · ')
   const canCheck = Boolean(effective.rules.monitoringEnabled && effective.title)
   return (
     <div ref={panelRef} className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12, scrollMarginTop: 16 }}>
