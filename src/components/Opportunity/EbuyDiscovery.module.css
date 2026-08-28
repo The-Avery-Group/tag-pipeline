@@ -1,6 +1,7 @@
 .workspace { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 10px; }
 .workspace > :first-child { margin-bottom: 0; }
 .error { background: var(--red-50); border: .5px solid var(--error-border); border-radius: var(--radius-md); color: var(--red-700); display: flex; flex-direction: column; font-size: 12px; gap: 3px; padding: 10px 12px; }
+.error button { align-self: flex-start; margin-top: 4px; }
 .loading { display: grid; gap: 7px; }.loading > div { height: 54px; }
 .tableWrap { background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-lg); flex: 1; min-height: 0; overflow: auto; }
 .table { border-collapse: separate; border-spacing: 0; min-width: 1380px; width: 100%; }
