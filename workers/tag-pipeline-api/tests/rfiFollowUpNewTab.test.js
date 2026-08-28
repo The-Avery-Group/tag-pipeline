@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { findLocalSAMFollowUps } from '../src/handlers/rfiFollowUpMonitor.js'
+import { listEbuyFollowOnCandidates } from '../src/lib/ebuyRepository.js'
 
 test('follow-on matching uses RFP and RFQ records already present in the New tab', () => {
   const source = {
@@ -40,4 +41,36 @@ test('follow-on matching ignores RFI rows in the New tab', () => {
     rules: { departmentRule: 'Exact', agencyRule: 'Exact', pocRule: 'Ignore', titleOverlapPercent: 40, submissionWindowDays: 364 },
   })
   assert.deepEqual(matches, [])
+})
+
+test('selected department and low title threshold qualify a New-tab follow-on without a hidden score floor', () => {
+  const matches = findLocalSAMFollowUps([{
+    'Notice ID': 'rfp-300', 'Solicitation Number': 'RFP-300',
+    Title: 'Enterprise replacement acquisition', Department: 'Department of Defense',
+    Agency: 'Different agency', 'Notice Type': 'RFP', 'Posted Date': '2026-03-01',
+  }], {
+    title: 'Enterprise logistics medical network security operations platform modernization',
+    department: 'Department of Defense', agency: 'Original agency', submissionDate: '2026-01-01',
+    rules: {
+      departmentRule: 'Exact', agencyRule: 'Ignore', pocRule: 'Ignore',
+      titleOverlapPercent: 10, submissionWindowDays: 364,
+    },
+  })
+
+  assert.equal(matches.length, 1)
+  assert.ok(matches[0].keywordOverlapPercent >= 10)
+  assert.ok(matches[0].matchScore < 30)
+})
+
+test('eBuy follow-on evidence includes dismissed New-tab records', async () => {
+  let query = ''
+  const db = {
+    prepare(sql) {
+      query = sql
+      return { bind() { return this }, async all() { return { results: [] } } }
+    },
+  }
+
+  await listEbuyFollowOnCandidates(db, {})
+  assert.doesNotMatch(query, /review_state\s*!=\s*'dismissed'/i)
 })
