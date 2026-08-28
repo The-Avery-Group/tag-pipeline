@@ -13,6 +13,7 @@ import {
   getSAMOpportunityDetail,
   startSAMOpportunityArchive,
   updateSAMOpportunityArchiveReview,
+  analyzeSAMOpportunityDocuments,
 } from '@/services/samOpportunityService'
 import styles from './SAMOpportunityDetail.module.css'
 
@@ -93,6 +94,8 @@ export default function SAMOpportunityDetail({ toast }) {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
   const [retryingDetail, setRetryingDetail] = useState(false)
   const [dismissedPrompt, setDismissedPrompt] = useState(false)
+  const [documentAnalysis, setDocumentAnalysis] = useState({ requirements: [], documents: [], pastPerformance: [] })
+  const [analysisLoading, setAnalysisLoading] = useState(false)
   const actionRef = useRef(false)
   const archiveStartedRef = useRef(false)
   const decodedNoticeId = decodeURIComponent(routeNoticeId)
@@ -115,6 +118,27 @@ export default function SAMOpportunityDetail({ toast }) {
     same(item['Contract Number / Notice ID'], detail?.noticeId || row?.['Notice ID']) ||
     same(item['Solicitation Number'], detail?.solicitationNumber || row?.['Solicitation Number'])
   )) || null, [detail, pipeline, row])
+
+  useEffect(() => {
+    if (!['ready', 'partial'].includes(detail?.archive?.archiveStatus) || !opportunityKey) return undefined
+    let active = true
+    setAnalysisLoading(true)
+    ;(async () => {
+      try {
+        let result = null
+        for (let batch = 0; batch < 5; batch += 1) {
+          result = await analyzeSAMOpportunityDocuments({ ...identifier, noticeType: detail.noticeType })
+          if (!result.run?.opportunity?.remaining && !result.run?.pastPerformance?.remaining) break
+        }
+        if (active) setDocumentAnalysis(result?.analysis || { requirements: [], documents: [], pastPerformance: [] })
+      } catch (error) {
+        if (active) console.warn('[SAM document analysis]', error.message)
+      } finally {
+        if (active) setAnalysisLoading(false)
+      }
+    })()
+    return () => { active = false }
+  }, [detail?.archive?.archiveStatus, detail?.noticeType, identifier, opportunityKey])
 
   const loadDetail = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true)
@@ -316,6 +340,10 @@ export default function SAMOpportunityDetail({ toast }) {
       </Card>}
 
       {!detail.links?.length && !detail.attachments?.length && <Card eyebrow="Resources" title="Attachments and links"><p className={styles.empty}>No attachments or external links were included with this notice.</p></Card>}
+
+      <Card eyebrow="Document analysis" title="Requirements gathered from attachments" count={documentAnalysis.requirements?.length || 0}>
+        {analysisLoading ? <div className="skeleton" style={{ height: 72 }} /> : documentAnalysis.requirements?.length ? <div className={styles.resourceList}>{documentAnalysis.requirements.map((requirement, index) => <article key={`${requirement.citation?.fileName}-${requirement.citation?.location}-${index}`}><div><strong>{requirement.text}</strong><span>{requirement.citation?.fileName} · {requirement.citation?.location}</span></div></article>)}</div> : <p className={styles.empty}>{detail.attachments?.length ? 'No explicit requirement statements have been extracted from the preserved documents.' : 'No source attachments are available to analyze.'}</p>}
+      </Card>
     </div>
     {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
       <button className="btn" onClick={() => setDismissedPrompt(false)}>Stay here</button>
