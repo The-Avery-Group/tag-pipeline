@@ -636,6 +636,18 @@ export const TASKS_HEADERS = [
   'Title', 'Description', 'AssignedTo', 'DueDate', 'Priority',
   'Status', 'CreatedBy', 'CreatedDate', 'UpdatedDate',
 ]
+const TASK_LIFECYCLE_COLUMNS = ['ContractTitle']
+let tasksSchemaPromise = null
+
+async function ensureTasksSchema() {
+  if (!tasksSchemaPromise) {
+    tasksSchemaPromise = ensureTableColumns('TasksTable', TASK_LIFECYCLE_COLUMNS).catch((error) => {
+      tasksSchemaPromise = null
+      throw error
+    })
+  }
+  return tasksSchemaPromise
+}
 
 export const CONTACTS_HEADERS = [
   'ContactID', 'Name', 'Title', 'Agency', 'Organization', 'Offices', 'Email', 'Phone', 'Notes', 'Type',
@@ -1058,7 +1070,7 @@ export async function linkRelatedOpportunities(first, second) {
     'Relationship ID': createStableId('OR'),
     'Opportunity ID': firstId,
     'Related Opportunity ID': secondId,
-    'Relationship Type': String(first.relationshipType || second.relationshipType || 'Related').trim(),
+    'Relationship Type': String(first.relationshipType || second.relationshipType || 'Related only').trim(),
     'Created By': String(first.createdBy || second.createdBy || '').trim(),
     'Created At': new Date().toISOString().split('T')[0],
   }
@@ -1077,6 +1089,12 @@ export async function deleteOpportunityRelationship(rowIndex, original) {
     original,
     identity: String(original?.['Relationship ID'] || '').trim(),
   })
+}
+
+export async function updateOpportunityRelationshipType(rowIndex, original, relationshipType) {
+  return updateRow('OpportunityRelationshipsTable', rowIndex, {
+    'Relationship Type': String(relationshipType || 'Related only').trim(),
+  }, original)
 }
 
 export async function migrateLegacyOpportunityRelationships(pipeline = [], createdBy = 'System migration') {
@@ -1103,6 +1121,7 @@ export async function getPipeline() {
 }
 
 export async function getTasks() {
+  await ensureTasksSchema()
   return getSheetRows('TasksTable')
 }
 
@@ -1367,6 +1386,7 @@ export async function deleteNote(rowIndex, original) {
 }
 
 export async function addTask(data, createdBy, taskId = createStableId('T')) {
+  await ensureTasksSchema()
   const record = {
     ...data,
     TaskID: taskId,
@@ -1390,6 +1410,7 @@ export async function addTask(data, createdBy, taskId = createStableId('T')) {
 }
 
 export async function updateTask(rowIndex, patch, original) {
+  await ensureTasksSchema()
   return updateRow('TasksTable', rowIndex, {
     ...patch,
     UpdatedDate: new Date().toISOString().split('T')[0],
