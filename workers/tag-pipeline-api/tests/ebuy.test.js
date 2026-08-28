@@ -264,6 +264,18 @@ test('wrapped eBuy details retain descriptive set-asides and discover nested att
   assert.deepEqual(record.attachments.map((item) => item.fileName), ['Statement of Work.pdf'])
 })
 
+test('eBuy business-size fields are normalized as a small-business set-aside', () => {
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFQ-SMALL-1',
+    title: 'Small business request',
+    businessSize: 'Small',
+  }, {
+    rfqInfo: { rfqId: 'RFQ-SMALL-1', title: 'Small business request' },
+  }, '47QTCA00TEST')
+
+  assert.equal(record.setAsideType, 'Small Business Set-Aside')
+})
+
 test('stale eBuy synchronization runs are detected and changed into resumable errors', async () => {
   const now = new Date('2026-08-28T12:00:00.000Z')
   const row = {
