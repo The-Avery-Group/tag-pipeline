@@ -37,6 +37,9 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
   const tableRef = useRef(null)
   const reconciliationRef = useRef(null)
   const archive = useEbuyOpportunities({ search, type: 'all', includeDismissed })
+  const syncError = archive.status?.lastSync?.status === 'error'
+    ? archive.status.lastSync.error_message || archive.status.lastSync.progress?.message || archive.status.message || 'The latest eBuy synchronization stopped.'
+    : ''
   const pipelineIds = useMemo(() => new Set(pipeline.map((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase())), [pipeline])
   const pipelineSnapshot = useMemo(() => pipeline.map((item) => ({
     id: String(item['Contract Number / Notice ID'] || '').trim(),
@@ -188,6 +191,12 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
       </DiscoveryToolbar>
 
       <EbuySyncProgress run={archive.status?.lastSync} />
+
+      {syncError && <div className={styles.error} role="alert">
+        <strong>eBuy synchronization needs attention</strong>
+        <span>{syncError}</span>
+        <button className="btn" type="button" onClick={() => archive.synchronize().catch((error) => toast?.error(error.message))} disabled={archive.syncing}>Resume synchronization</button>
+      </div>}
 
       {bulkProgress && <div className={styles.bulkProgress}>
         <div><span>{bulkProgress.kind === 'dismiss' ? 'Dismissing opportunities' : bulkProgress.kind === 'track' ? 'Adding to tracking' : 'Adding to pipeline'}</span><span>{bulkProgress.completed} of {bulkProgress.total}</span></div>
