@@ -341,6 +341,15 @@ function normalizeSetAside(value) {
   const label = sourceLabel(value)
   if (!label) return ''
   const compact = label.toUpperCase().replace(/[^A-Z0-9]+/g, '')
+  const eBuyProgramLabels = {
+    SASB: 'Small Business Set-Aside',
+    SAWOSB: 'Women-Owned Small Business Set-Aside',
+    SAHUB: 'HUBZone Set-Aside',
+    SADVOSB: 'Service-Disabled Veteran-Owned Small Business Set-Aside',
+    SAA8B: '8(a) Set-Aside',
+    SAEDWOSB: 'Economically Disadvantaged Women-Owned Small Business Set-Aside',
+  }
+  if (eBuyProgramLabels[compact]) return eBuyProgramLabels[compact]
   if (['Y', 'YES', 'TRUE', '1', 'S', 'SB', 'SBA', 'SMALL', 'SMALLBUSINESS', 'SMALLBUSINESSCONCERN'].includes(compact)) return 'Small Business Set-Aside'
   if (['N', 'NO', 'FALSE', '0', 'NONE', 'UNRESTRICTED', 'FULLANDOPEN'].includes(compact)) return 'Unrestricted'
   const known = [
@@ -354,7 +363,34 @@ function normalizeSetAside(value) {
   return known.find(([pattern]) => pattern.test(compact))?.[1] || label
 }
 
+function resolveEbuyProgramSetAside(...sources) {
+  const programFields = ['rfqProgramsList', 'program', '_program', 'programs']
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue
+    for (const key of programFields) {
+      const raw = source[key]
+      const programs = Array.isArray(raw)
+        ? raw
+        : typeof raw === 'string'
+          ? raw.split(/[;,|]/)
+          : raw == null
+            ? []
+            : [raw]
+      for (const program of programs) {
+        const normalized = normalizeSetAside(program)
+        if (/^SA-(?:SB|WOSB|HUB|DVOSB|A8B|EDWOSB)$/i.test(sourceLabel(program))) return normalized
+      }
+    }
+  }
+  return ''
+}
+
 function resolveSetAside(...sources) {
+  // eBuy stores the actual RFQ set-aside as a program code rather than in a
+  // conventional setAside field. Decode that authoritative value first.
+  const programSetAside = resolveEbuyProgramSetAside(...sources)
+  if (programSetAside) return programSetAside
+
   const preferred = []
   for (const source of sources) {
     if (!source || typeof source !== 'object') continue
