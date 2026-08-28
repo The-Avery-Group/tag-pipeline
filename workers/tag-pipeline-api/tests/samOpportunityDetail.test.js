@@ -84,6 +84,18 @@ test('SAM description decodes named bullets and common document punctuation', ()
   assert.equal(text, 'Requirements:\n\n• Program support\n• Reporting & analysis — monthly')
 })
 
+test('SAM detail exposes posting links that only appear inside the description', () => {
+  const detail = normalizeSAMOpportunityDetail({
+    description: `<p>Full instructions are available at <a href="https://piee.eb.mil/sol/notice/123">PIEE solicitation package</a>.</p>
+      <p>Questions: https://example.gov/acquisition/questions.</p>`,
+  })
+
+  assert.deepEqual(detail.links, [
+    { url: 'https://piee.eb.mil/sol/notice/123', label: 'PIEE solicitation package' },
+    { url: 'https://example.gov/acquisition/questions', label: 'Link from SAM.gov posting' },
+  ])
+})
+
 test('SAM detail omits API self links and an unresolved description endpoint', () => {
   const detail = normalizeSAMOpportunityDetail({
     noticeId: 'abc',
