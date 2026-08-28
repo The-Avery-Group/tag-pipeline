@@ -4,6 +4,12 @@ import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
 import { detectStatementMapping, inspectTransactionStatement, normalizeTransactionInspection } from '@/utils/transactionStatement'
 import {
+  availableTransactionFields,
+  COSTPOINT_INVOICE_REFERENCE_LIMIT,
+  defaultInputVoucherNumber,
+  invoiceReferenceForMode,
+} from '@/utils/costpointInvoiceReference'
+import {
   createTransactionExport,
   createTransactionRule,
   deleteTransactionRule,
@@ -55,6 +61,7 @@ export default function TransactionCoding({ toast }) {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [csvPreview, setCsvPreview] = useState(null)
+  const [exportDraft, setExportDraft] = useState(null)
 
   const loadBase = useCallback(async () => {
     try {
@@ -100,6 +107,20 @@ export default function TransactionCoding({ toast }) {
   const selectedTransactions = useMemo(() => transactions.filter((row) => selectedIdSet.has(row.id) && !row.exportedAt), [transactions, selectedIdSet])
   const incompleteSelectionCount = selectedTransactions.filter((row) => row.status !== 'ready').length
   const allShownSelected = selectableTransactions.length > 0 && selectableTransactions.every((row) => selectedIdSet.has(row.id))
+  const exportFields = useMemo(() => availableTransactionFields(selectedTransactions), [selectedTransactions])
+  const exportValidation = useMemo(() => {
+    if (!exportDraft) return ''
+    if (incompleteSelectionCount) return `Complete the coding for ${incompleteSelectionCount} selected transaction${incompleteSelectionCount === 1 ? '' : 's'} before exporting to Costpoint.`
+    const references = selectedTransactions.map((row) => String(exportDraft.invoiceReferences[row.id] || '').trim())
+    if (references.some((value) => !value)) return 'Every selected transaction needs an invoice reference.'
+    if (references.some((value) => value.length > COSTPOINT_INVOICE_REFERENCE_LIMIT)) return `Invoice references cannot exceed ${COSTPOINT_INVOICE_REFERENCE_LIMIT} characters.`
+    if (references.some((value) => /[,\r\n]/.test(value))) return 'Invoice references cannot contain commas or line breaks.'
+    if (new Set(references.map((value) => value.toLowerCase())).size !== references.length) return 'Invoice references must be unique within this export.'
+    const voucherNumbers = selectedTransactions.map((row) => String(exportDraft.inputVoucherNumbers[row.id] || '').trim())
+    if (voucherNumbers.some((value) => !/^\d{1,9}$/.test(value))) return 'Each Costpoint transaction ID must contain 1 to 9 digits.'
+    if (new Set(voucherNumbers).size !== voucherNumbers.length) return 'Costpoint transaction IDs must be unique within this export.'
+    return exportDraft.generationError || ''
+  }, [exportDraft, incompleteSelectionCount, selectedTransactions])
 
   const chooseFile = async (event) => {
     const file = event.target.files?.[0]
@@ -182,15 +203,42 @@ export default function TransactionCoding({ toast }) {
     finally { setBusy('') }
   }
 
-  const runExport = async () => {
+  const buildExportDraft = (mode = 'automatic', pattern = '', current = null) => {
+    const invoiceReferences = {}
+    const usedVoucherNumbers = new Set()
+    const inputVoucherNumbers = { ...(current?.inputVoucherNumbers || {}) }
+    let generationError = ''
+    selectedTransactions.forEach((row, index) => {
+      try { invoiceReferences[row.id] = invoiceReferenceForMode(row, index + 1, mode, pattern) }
+      catch (referenceError) { generationError ||= referenceError.message; invoiceReferences[row.id] = '' }
+      if (!inputVoucherNumbers[row.id]) inputVoucherNumbers[row.id] = defaultInputVoucherNumber(row, index + 1, usedVoucherNumbers)
+      else usedVoucherNumbers.add(inputVoucherNumbers[row.id])
+    })
+    setExportDraft({ mode, pattern, invoiceReferences, inputVoucherNumbers: { ...inputVoucherNumbers }, generationError })
+  }
+
+  const openExportReview = () => {
     if (!selectedBatch || !selectedTransactionIds.length || busy) return
-    if (incompleteSelectionCount > 0 && !window.confirm(`${incompleteSelectionCount} selected transaction${incompleteSelectionCount === 1 ? ' is' : 's are'} not fully coded. Export the selection anyway?`)) return
+    buildExportDraft('automatic', '')
+  }
+
+  const runExport = async () => {
+    if (!selectedBatch || !selectedTransactionIds.length || !exportDraft || exportValidation || busy) return
     setBusy('export')
     try {
-      const result = await createTransactionExport({ batchId: selectedBatch, transactionIds: selectedTransactionIds, archive })
+      const result = await createTransactionExport({
+        batchId: selectedBatch,
+        transactionIds: selectedTransactionIds,
+        archive,
+        invoiceReferenceMode: exportDraft.mode,
+        invoiceReferencePattern: exportDraft.pattern,
+        invoiceReferences: exportDraft.invoiceReferences,
+        inputVoucherNumbers: exportDraft.inputVoucherNumbers,
+      })
       downloadCsv(result.csv, result.export.fileName)
+      setExportDraft(null)
       await Promise.all([loadBase(), loadRows()])
-      notify(toast, result.warning || `${result.export.rowCount} selected transactions exported.`, result.warning ? 'warning' : 'success')
+      notify(toast, result.warning || `${result.export.rowCount} Costpoint vouchers exported.`, result.warning ? 'warning' : 'success')
     } catch (exportError) { setError(exportError.message) }
     finally { setBusy('') }
   }
@@ -294,7 +342,7 @@ export default function TransactionCoding({ toast }) {
               </table>
               {!transactions.length && <div className={styles.empty}>{selectedBatch ? 'No transactions match these filters.' : 'Choose a statement to begin reviewing transactions.'}</div>}
             </div>
-            {batch && <div className={styles.exportBar}><label><input type="checkbox" checked={archive} onChange={(event) => setArchive(event.target.checked)} /> Save a copy to SharePoint</label><button type="button" className={styles.readyOnly} onClick={() => setSelectedTransactionIds(transactions.filter((row) => row.status === 'ready' && !row.exportedAt).map((row) => row.id))}>Select ready</button><span>{selectedTransactionIds.length} selected · {transactions.length} shown · {amount(totals.amount)}{incompleteSelectionCount ? ` · ${incompleteSelectionCount} incomplete` : ''}</span><button className="btn btn-primary" onClick={runExport} disabled={!selectedTransactionIds.length || Boolean(busy)}>{busy === 'export' ? 'Exporting…' : 'Export selected CSV'}</button></div>}
+            {batch && <div className={styles.exportBar}><label><input type="checkbox" checked={archive} onChange={(event) => setArchive(event.target.checked)} /> Save a copy to SharePoint</label><button type="button" className={styles.readyOnly} onClick={() => setSelectedTransactionIds(transactions.filter((row) => row.status === 'ready' && !row.exportedAt).map((row) => row.id))}>Select ready</button><span>{selectedTransactionIds.length} selected · {transactions.length} shown · {amount(totals.amount)}{incompleteSelectionCount ? ` · ${incompleteSelectionCount} incomplete` : ''}</span><button className="btn btn-primary" onClick={openExportReview} disabled={!selectedTransactionIds.length || Boolean(busy)}>Review Costpoint export</button></div>}
           </section>
         </>}
 
@@ -321,6 +369,35 @@ export default function TransactionCoding({ toast }) {
             {['matchPattern','vendor','vendorId','project','account','organization','context','notes'].map((field) => <label key={field}><span>{field.replace(/([A-Z])/g, ' $1')}</span><input value={ruleDraft[field] || ''} onChange={(event) => setRuleDraft({ ...ruleDraft, [field]: event.target.value })} /></label>)}
           </div>
           <label className={styles.remember}><input type="checkbox" checked={ruleDraft.active !== false} onChange={(event) => setRuleDraft({ ...ruleDraft, active: event.target.checked })} /> Active rule</label>
+        </Modal>
+      )}
+      {exportDraft && (
+        <Modal
+          title="Review Costpoint AP voucher export"
+          onClose={() => setExportDraft(null)}
+          footer={<>
+            <button className="btn btn-secondary" onClick={() => setExportDraft(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={runExport} disabled={Boolean(exportValidation) || Boolean(busy)}>{busy === 'export' ? 'Generating…' : 'Generate and download'}</button>
+          </>}
+        >
+          <div className={styles.exportSummary}>
+            <div><strong>{selectedTransactions.length}</strong><span>Vouchers</span></div>
+            <div><strong>{amount(selectedTransactions.reduce((total, row) => total + row.amountCents, 0))}</strong><span>Total amount</span></div>
+            <div><strong>{archive ? 'Yes' : 'No'}</strong><span>Save to SharePoint</span></div>
+          </div>
+          <div className={styles.referenceBuilder}>
+            <label><span>Invoice reference method</span><select value={exportDraft.mode} onChange={(event) => buildExportDraft(event.target.value, exportDraft.pattern, exportDraft)}><option value="automatic">Automatic</option><option value="transaction_id">Use CRM transaction ID</option><option value="custom">Custom pattern</option><option value="manual">Enter each reference manually</option></select></label>
+            {exportDraft.mode === 'custom' && <label className={styles.patternField}><span>Custom pattern</span><input value={exportDraft.pattern} onChange={(event) => buildExportDraft('custom', event.target.value, exportDraft)} placeholder="Example: INV-{vendorId}-{sequence}" /><small>Use any text and any available transaction field inside braces. The finished value must fit Costpoint’s 15-character limit.</small></label>}
+            {exportDraft.mode === 'custom' && <div className={styles.fieldTokens} aria-label="Available transaction fields">{exportFields.map((field) => <button key={field} type="button" onClick={() => buildExportDraft('custom', `${exportDraft.pattern}{${field}}`, exportDraft)}>{`{${field}}`}</button>)}</div>}
+          </div>
+          {exportValidation && <div className={styles.exportValidation}>{exportValidation}</div>}
+          <div className={styles.exportReviewTable}>
+            <table>
+              <thead><tr><th>Transaction</th><th>Invoice reference</th><th>Costpoint transaction ID</th><th>Amount</th></tr></thead>
+              <tbody>{selectedTransactions.map((row) => <tr key={row.id}><td><strong>{row.rawDescription}</strong><span>{row.transactionDate || 'Date missing'} · {row.vendorId || 'Vendor ID missing'}</span></td><td><div className={styles.referenceInput}><input value={exportDraft.invoiceReferences[row.id] || ''} maxLength={COSTPOINT_INVOICE_REFERENCE_LIMIT} onChange={(event) => setExportDraft((current) => ({ ...current, generationError: '', invoiceReferences: { ...current.invoiceReferences, [row.id]: event.target.value } }))} /><small>{String(exportDraft.invoiceReferences[row.id] || '').length}/{COSTPOINT_INVOICE_REFERENCE_LIMIT}</small></div></td><td><input className={styles.voucherInput} value={exportDraft.inputVoucherNumbers[row.id] || ''} inputMode="numeric" maxLength={9} title="Costpoint input voucher number; this does not change the CRM record ID." onChange={(event) => setExportDraft((current) => ({ ...current, inputVoucherNumbers: { ...current.inputVoucherNumbers, [row.id]: event.target.value.replace(/\D/g, '').slice(0, 9) } }))} /></td><td>{amount(row.amountCents)}</td></tr>)}</tbody>
+            </table>
+          </div>
+          <p className={styles.exportNote}>Each transaction creates one Costpoint header record and one matching detail record. The downloaded CSV intentionally has no heading row.</p>
         </Modal>
       )}
       {csvPreview && <Modal title={csvPreview.fileName} onClose={() => setCsvPreview(null)} footer={<button className="btn btn-primary" onClick={() => downloadCsv(csvPreview.csv, csvPreview.fileName)}>Download CSV</button>}><pre className={styles.csvPreview}>{csvPreview.csv.split('\n').slice(0, 12).join('\n')}</pre><p className={styles.previewNote}>Showing the first 11 transaction rows.</p></Modal>}
