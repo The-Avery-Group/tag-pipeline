@@ -99,3 +99,11 @@ export function workspaceCalendarYear(value, fallbackDate = new Date()) {
   if (Number.isInteger(numeric) && numeric >= 2000 && numeric <= 2100) return numeric
   return fallbackDate.getFullYear()
 }
+
+export function workspaceType(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized.includes('MRAS')) return 'MRAS'
+  if (normalized.includes('RFQ') || normalized === 'K') return 'RFQ'
+  if (normalized.includes('RFP') || normalized === 'O' || normalized === 'P') return 'RFP'
+  return 'RFI'
+}
