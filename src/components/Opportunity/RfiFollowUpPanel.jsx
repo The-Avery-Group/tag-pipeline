@@ -129,7 +129,7 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
         {!effective.rules.monitoringEnabled && <p className="text-sm text-muted">Follow-on monitoring is disabled for this {workflowLabel}.</p>}
         {effective.rules.monitoringEnabled && !effective.pocEmail && <p className="text-sm text-muted">No linked POC email is available, so this check will rely on the remaining evidence.</p>}
         {monitor.error && <p className="text-sm" style={{ color: 'var(--red-600)' }}>Follow-on check failed: {monitor.error}</p>}
-        {!monitor.checking && status?.lastCheckedAt && candidates.length === 0 && <p className="text-sm text-muted">No possible RFP or RFQ follow-ons found.</p>}
+        {!monitor.checking && !monitor.error && !status?.lastError && status?.lastCheckedAt && candidates.length === 0 && <p className="text-sm text-muted">No possible RFP or RFQ follow-ons found.</p>}
         {pending.map((candidate) => {
           const key = candidate.solicitationNumber || candidate.noticeId
           const alreadyLinked = linkedContractNumbers.has(key)
