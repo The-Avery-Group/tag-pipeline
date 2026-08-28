@@ -312,7 +312,9 @@ async function findCrossSourceFollowUps(env, watch, samNewTabRows = []) {
     noticeId: eBuySource.requestId,
     solicitationNumber: eBuySource.referenceNumber || watch.source.solicitationNumber,
   } : watch.source
-  const candidates = eBuySource ? (await findLocalEbuyFollowUps(env, watch) || []) : []
+  // eBuy is part of the New tab candidate pool regardless of where the
+  // original pipeline opportunity came from.
+  const candidates = await findLocalEbuyFollowUps(env, watch) || []
   // SAM candidates come from NewOpportunitiesTable, which the normal pull has
   // already populated. Do not issue a separate SAM search for every watch.
   candidates.push(...findLocalSAMFollowUps(samNewTabRows, source))
@@ -329,15 +331,14 @@ async function findCrossSourceFollowUps(env, watch, samNewTabRows = []) {
 async function findLocalEbuyFollowUps(env, watch) {
   if (!env.EBUY_DB) return null
   const eBuySource = await findEbuyPipelineSource(env.EBUY_DB, watch.opportunityId)
-  if (!eBuySource) return null
   const source = {
     ...watch.source,
-    title: watch.source.title || eBuySource.title,
-    department: watch.source.department || eBuySource.buyerDepartment,
-    agency: watch.source.agency || eBuySource.buyerAgency,
-    pocEmail: watch.source.pocEmail || eBuySource.buyerEmail,
-    noticeId: eBuySource.requestId,
-    solicitationNumber: eBuySource.referenceNumber || watch.source.solicitationNumber,
+    title: watch.source.title || eBuySource?.title,
+    department: watch.source.department || eBuySource?.buyerDepartment,
+    agency: watch.source.agency || eBuySource?.buyerAgency,
+    pocEmail: watch.source.pocEmail || eBuySource?.buyerEmail,
+    noticeId: eBuySource?.requestId || watch.source.noticeId,
+    solicitationNumber: eBuySource?.referenceNumber || watch.source.solicitationNumber,
   }
   const archived = await listEbuyFollowOnCandidates(env.EBUY_DB, dateWindow(source))
   return archived.map((opportunity) => {
@@ -563,8 +564,11 @@ export async function handleRFIFollowUpMonitor(req, env) {
     const body = await req.json()
     const watch = await readWatch(env, watchKey(body.opportunityId))
     if (!watch) return json({ error: 'Follow-up watch not found. Synchronize this RFI first.' }, 404)
-    let samNewTabRows = []
-    try { samNewTabRows = (await syncFromWorkbook(env))?.newOpportunities || [] } catch (error) {
+    let samNewTabRows = Array.isArray(body.newTabRows) ? body.newTabRows.slice(0, 1000) : []
+    try {
+      const appOnlyRows = (await syncFromWorkbook(env))?.newOpportunities || []
+      if (appOnlyRows.length) samNewTabRows = appOnlyRows
+    } catch (error) {
       console.warn(JSON.stringify({ event: 'rfi_followup_new_tab_read_failed', message: error.message }))
     }
     await checkWatch(env, watch, samNewTabRows)
