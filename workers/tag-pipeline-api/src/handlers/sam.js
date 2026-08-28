@@ -714,6 +714,14 @@ export function followUpCandidate(raw, source) {
   const overlap = titleOverlapPercent(source.title, raw.title)
   if (normalized(raw.noticeId) === normalized(source.noticeId)) return null
 
+  // The criteria selected by the user determine eligibility. Additional
+  // organization and procurement signals rank the qualifying candidates;
+  // they must not impose an unrelated hidden score threshold.
+  if (rules.departmentRule === 'Exact' && source.department && !departmentMatches) return null
+  if (rules.agencyRule === 'Exact' && source.agency && !agencyMatches) return null
+  if (rules.pocRule === 'Exact' && source.pocEmail && !poc) return null
+  if (overlap < rules.titleOverlapPercent) return null
+
   const references = sourceReferences(raw, source)
   const candidateNaics = String(raw.naicsCode || raw.naics || '').trim()
   const naicsMatches = Boolean(candidateNaics && source.naicsCode && normalized(candidateNaics) === normalized(source.naicsCode))
@@ -728,14 +736,10 @@ export function followUpCandidate(raw, source) {
   const titlePoints = Math.min(25, Math.round(overlap / 4))
   if (titlePoints) { score += titlePoints; reasons.push(`${overlap}% title keyword overlap`) }
 
-  // Exact/Ignore settings now control whether a signal contributes rather
-  // than rejecting a candidate outright. This keeps older per-opportunity
-  // settings useful without repeating the hard-gate failure mode.
+  // Ignored criteria do not add weight to the ranking.
   if (rules.departmentRule === 'Ignore' && departmentMatches) score -= 10
   if (rules.agencyRule === 'Ignore' && agencyMatches) score -= 25
   if (rules.pocRule === 'Ignore' && poc) score -= 30
-  if (score < 30) return null
-
   return {
     noticeId:           String(raw.noticeId || '').trim(),
     solicitationNumber: String(raw.solicitationNumber || '').trim(),
