@@ -10,7 +10,7 @@ import { useContacts } from '@/hooks/useContacts'
 import { usePartners } from '@/hooks/usePartners'
 import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
 import { parsePOCNames } from '@/services/graphService'
-import { listOpportunityWorkspaceFlatFiles } from '@/services/opportunityWorkspaceService'
+import { analyzeOpportunityDocuments, listOpportunityWorkspaceFlatFiles } from '@/services/opportunityWorkspaceService'
 import { OPPORTUNITY_FILES_CHANGED_EVENT } from '@/services/opportunityReferenceUploadService'
 import { formatDate } from '@/utils/kpiHelpers'
 import styles from './OpportunityDossier.module.css'
@@ -69,6 +69,9 @@ export default function OpportunityDossier() {
   const [fileError, setFileError] = useState('')
   const [fileSearch, setFileSearch] = useState('')
   const [fileSource, setFileSource] = useState('All')
+  const [documentAnalysis, setDocumentAnalysis] = useState({ requirements: [], pastPerformance: [], documents: [] })
+  const [analysisLoading, setAnalysisLoading] = useState(true)
+  const [analysisError, setAnalysisError] = useState('')
   const filesRef = useRef(null)
 
   const opportunity = useMemo(() => pipeline.find((item) => normalized(item[C.id]) === normalized(opportunityKey)), [opportunityKey, pipeline])
@@ -95,6 +98,32 @@ export default function OpportunityDossier() {
     }
   }, [opportunityKey])
   useEffect(() => { loadFiles() }, [loadFiles])
+  useEffect(() => {
+    let cancelled = false
+    async function analyze() {
+      setAnalysisLoading(true)
+      try {
+        let result = null
+        // Process changed files in small Worker-safe batches. A normal folder
+        // finishes in one request; larger folders continue without one large
+        // Cloudflare invocation.
+        for (let batch = 0; batch < 5; batch += 1) {
+          result = await analyzeOpportunityDocuments(opportunityKey)
+          if (!result.run?.opportunity?.remaining && !result.run?.pastPerformance?.remaining) break
+        }
+        if (!cancelled) {
+          setDocumentAnalysis(result?.analysis || { requirements: [], pastPerformance: [], documents: [] })
+          setAnalysisError('')
+        }
+      } catch (error) {
+        if (!cancelled) setAnalysisError(error.message)
+      } finally {
+        if (!cancelled) setAnalysisLoading(false)
+      }
+    }
+    analyze()
+    return () => { cancelled = true }
+  }, [opportunityKey])
   useEffect(() => {
     const handleFilesChanged = (event) => {
       if (normalized(event.detail?.opportunityKey) === normalized(opportunityKey)) loadFiles()
@@ -189,10 +218,11 @@ export default function OpportunityDossier() {
       </Section></div>
 
       <Section title="Requirements and constraints">
-        <div className={styles.summaryGrid}><div className={styles.summaryItem}><span>Known requirement</span><strong>{opportunity[C.title]}</strong></div>{opportunity[C.classification] && <div className={styles.summaryItem}><span>Contract classification</span><strong>{opportunity[C.classification]}</strong></div>}{opportunity[C.setAside] && <div className={styles.summaryItem}><span>Set-aside</span><strong>{opportunity[C.setAside]}</strong></div>}</div>
+        {analysisLoading ? <div className="skeleton" style={{ height: 80 }} /> : documentAnalysis.requirements?.length ? <div className={styles.noteList}>{documentAnalysis.requirements.map((requirement, index) => <article className={styles.note} key={`${requirement.citation?.fileName}-${requirement.citation?.location}-${index}`}><div><strong>{requirement.citation?.fileName}</strong><span>{requirement.citation?.location}</span></div><p>{requirement.text}</p></article>)}</div> : <p className="text-muted text-sm">No explicit requirements were extracted from the supported opportunity documents.</p>}
+        {analysisError && <p className="text-muted text-xs">Automatic analysis needs attention: {analysisError}</p>}
       </Section>
 
-      <Section title="Past performance"><p className="text-muted text-sm">No structured past-performance references are currently available. This section will remain explicit rather than inferring evidence that has not been recorded.</p></Section>
+      <Section title="Past performance">{analysisLoading ? <div className="skeleton" style={{ height: 70 }} /> : documentAnalysis.pastPerformance?.length ? <div className={styles.relationshipGrid}>{documentAnalysis.pastPerformance.map((match) => <article className={styles.relationship} key={match.filePath || match.fileName}><strong>{match.fileName}</strong><span>{match.serviceCategory} · {match.score}% match</span>{match.metadata?.customer && <span>{match.metadata.customer}</span>}{match.evidence?.length > 0 && <small>Matched: {match.evidence.join(', ')}</small>}</article>)}</div> : <p className="text-muted text-sm">No matching past-performance documents were found in the Past Performance folder.</p>}</Section>
     </main>
   </>
 }
