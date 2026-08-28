@@ -31,6 +31,7 @@ function publicTransaction(row) {
     id: row.id,
     batchId: row.batch_id,
     sourceRow: Number(row.source_row || 0),
+    sourceHash: row.source_hash,
     transactionDate: row.transaction_date,
     rawDescription: row.raw_description,
     location: row.location,
