@@ -42,7 +42,8 @@ export async function runPendingAwardMonitor(env) {
   if (!env.SAM_API_KEY || !env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return { checked: 0, alerts: 0 }
   const { rows } = await workbookContext(env)
   const pending = rows.filter((row) => clean(row['TAG Opportunity Phase']) === 'Pending Award' && clean(row['Notice Type']).toUpperCase() === 'RFP')
-  const cursor = Number(await env.CACHE?.get('pending_award_monitor:cursor') || 0)
+  const storedCursor = await env.CACHE?.get('pending_award_monitor:cursor')
+  const cursor = Number(storedCursor || 0)
   const batch = pending.slice(cursor, cursor + AWARD_MONITOR_LIMIT)
   let alerts = 0
   for (const opportunity of batch) {
@@ -80,7 +81,12 @@ export async function runPendingAwardMonitor(env) {
     }
   }
   const nextCursor = cursor + batch.length >= pending.length ? 0 : cursor + batch.length
-  await env.CACHE?.put('pending_award_monitor:cursor', String(nextCursor))
+  // Cursor state is only a checkpoint. Avoid spending a daily KV write when
+  // the monitor completed at the same position (especially when there are no
+  // Pending Award opportunities).
+  if (String(nextCursor) !== String(storedCursor || 0)) {
+    await env.CACHE?.put('pending_award_monitor:cursor', String(nextCursor))
+  }
   return { checked: batch.length, alerts, remaining: Math.max(0, pending.length - nextCursor) }
 }
 
