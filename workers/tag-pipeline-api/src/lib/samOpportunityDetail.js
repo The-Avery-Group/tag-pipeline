@@ -169,6 +169,20 @@ function normalizeLinks(raw) {
   add(raw?.additionalInfoLink, 'Additional opportunity information')
   add(raw?.links)
   add(raw?.resourceLinks)
+
+  // Many SAM notices put the only external posting link inside the notice
+  // description instead of additionalInfoLink. Preserve HTML anchors,
+  // Markdown links, and visible plain URLs as first-class resources.
+  const description = descriptionCandidate(raw?.descriptionText || raw?.description)
+  for (const match of description.matchAll(/<a\b[^>]*href\s*=\s*(["'])(https?:\/\/.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)) {
+    add({ url: decodeEntities(match[2]), label: decodeEntities(match[3].replace(/<[^>]+>/g, ' ')) || 'Link from SAM.gov posting' })
+  }
+  for (const match of description.matchAll(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi)) {
+    add({ url: decodeEntities(match[2]), label: decodeEntities(match[1]) || 'Link from SAM.gov posting' })
+  }
+  for (const match of description.matchAll(/https?:\/\/[^\s<>"')\]]+/gi)) {
+    add(match[0].replace(/[.,;:!?]+$/, ''), 'Link from SAM.gov posting')
+  }
   const seen = new Set()
   return values.filter((item) => {
     if (!/^https?:\/\//i.test(item.url) || isSAMApiUrl(item.url) || isSAMResourceDownloadUrl(item.url) || seen.has(item.url)) return false
