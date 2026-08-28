@@ -22,6 +22,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
   const [startingSync, setStartingSync] = useState(false)
   const requestRef = useRef(0)
   const terminalRunRef = useRef(null)
+  const requestedSyncAtRef = useRef(0)
 
   const load = useCallback(async ({ silent = false } = {}) => {
     const request = ++requestRef.current
@@ -64,6 +65,20 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
       try {
         const nextStatus = await getEbuyStatus()
         if (disposed) return
+        const requestedAt = requestedSyncAtRef.current
+        const observedStartedAt = new Date(nextStatus?.lastSync?.started_at || 0).getTime()
+        // Workflow creation is asynchronous. The first status read can still
+        // contain the previous terminal run; keep the optimistic running state
+        // until D1 exposes the run that this button just started.
+        if (
+          requestedAt &&
+          nextStatus?.lastSync?.status !== 'running' &&
+          observedStartedAt < requestedAt &&
+          Date.now() - requestedAt < 30_000
+        ) return
+        if (nextStatus?.lastSync?.status === 'running' && observedStartedAt >= requestedAt) {
+          requestedSyncAtRef.current = 0
+        }
         setStatus(nextStatus)
         statusCache = nextStatus
         const run = nextStatus?.lastSync
@@ -83,6 +98,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     if (startingSync || status?.lastSync?.status === 'running') return { alreadyRunning: true }
     setStartingSync(true)
     setError(null)
+    requestedSyncAtRef.current = Date.now()
     try {
       const result = await startEbuyLiveSync()
       setStatus((current) => {
@@ -90,6 +106,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
           ...(current || {}),
           lastSync: {
             ...(current?.lastSync || {}),
+            id: result.instanceId || current?.lastSync?.id,
             status: 'running',
             started_at: new Date().toISOString(),
             progress: { phase: 'preparing', percent: 2, message: result.alreadyRunning ? 'Joining the active eBuy synchronization' : 'Preparing eBuy synchronization' },
@@ -99,6 +116,9 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
         return next
       })
       return result
+    } catch (error) {
+      requestedSyncAtRef.current = 0
+      throw error
     } finally {
       setStartingSync(false)
     }
