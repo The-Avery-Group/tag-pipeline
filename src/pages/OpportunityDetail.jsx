@@ -445,6 +445,7 @@ export default function OpportunityDetail({ toast }) {
   const [linkDraft, setLinkDraft] = useState(null)
   const [outlineCollapsed, setOutlineCollapsed] = useState(true)
   const [relationshipSearch, setRelationshipSearch] = useState('')
+  const [relationshipType, setRelationshipType] = useState('Related only')
   const [linkingOpportunity, setLinkingOpportunity] = useState(false)
   const opportunityEditRef = useRef(null)
   const linksEditRef = useRef(null)
@@ -995,9 +996,10 @@ export default function OpportunityDetail({ toast }) {
   const handleLinkOpportunity = async (candidate) => {
     setLinkingOpportunity(true)
     try {
-      await opportunityRelationships.link(candidate, user.displayName)
+      const result = await opportunityRelationships.link(candidate, user.displayName, relationshipType)
       setRelationshipSearch('')
-      toast?.success('Opportunity linked')
+      if (result?.workspaceWarning) toast?.success(`Opportunity linked. Folder organization is waiting: ${result.workspaceWarning}`)
+      else toast?.success('Opportunity linked')
     } catch (error) {
       toast?.error(`Could not link opportunity: ${error.message}`)
     } finally {
@@ -1815,8 +1817,17 @@ export default function OpportunityDetail({ toast }) {
                 return <div key={relationship['Relationship ID']} className="card" style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <button type="button" className="btn btn-ghost" style={{ flex: 1, justifyContent: 'space-between', textAlign: 'left' }} onClick={() => related && navigate(`/opportunities/${encodeURIComponent(related[C.contractNum])}`)} disabled={!related}>
                     <span><strong>{related?.[C.title] || 'Unavailable opportunity'}</strong><small className="text-muted" style={{ display: 'block' }}>{related?.[C.contractNum] || relationship.relatedId}</small></span>
-                    <span className="text-xs text-muted">{relationship['Relationship Type'] || 'Related'} ↗</span>
+                    <select className="form-select text-xs" aria-label="Relationship type" value={relationship['Relationship Type'] || 'Related only'} onClick={(event) => event.stopPropagation()} onChange={async (event) => {
+                      try { await opportunityRelationships.updateType(relationship, event.target.value); toast?.success('Relationship type updated') }
+                      catch (error) { toast?.error(`Could not update relationship: ${error.message}`) }
+                    }}>
+                      <option>Related only</option><option>Follow-on</option><option>Expiring to new</option><option>Recompete</option>
+                    </select>
                   </button>
+                  {relationship['Relationship Type'] === 'Follow-on' && related && <button type="button" className="btn btn-ghost" onClick={async () => {
+                    try { await opportunityRelationships.organizeWorkspace(related); toast?.success('Follow-on folders organized') }
+                    catch (error) { toast?.error(`Could not organize folders: ${error.message}`) }
+                  }}>Organize folder</button>}
                   <button type="button" className="btn btn-ghost btn-icon" aria-label="Unlink opportunity" title="Unlink opportunity" onClick={async () => {
                     try { await opportunityRelationships.unlink(relationship); toast?.success('Opportunity unlinked') }
                     catch (error) { toast?.error(`Could not unlink opportunity: ${error.message}`) }
@@ -1825,6 +1836,13 @@ export default function OpportunityDetail({ toast }) {
               })}
             </div>}
           <div style={{ marginTop: 10, position: 'relative' }}>
+            <label className="form-label" htmlFor="relationship-type">Relationship type</label>
+            <select id="relationship-type" className="form-select" value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)} style={{ marginBottom: 8 }}>
+              <option>Related only</option>
+              <option>Follow-on</option>
+              <option>Expiring to new</option>
+              <option>Recompete</option>
+            </select>
             <input className="form-input" value={relationshipSearch} onChange={(event) => setRelationshipSearch(event.target.value)} placeholder="Search opportunities to link…" />
             {relationshipSearch.trim() && <div className={styles.contactDropdown}>
               {relationshipCandidates.length === 0 ? <div className={styles.contactDropdownEmpty}>No available opportunities found.</div> : relationshipCandidates.map((candidate) => (
