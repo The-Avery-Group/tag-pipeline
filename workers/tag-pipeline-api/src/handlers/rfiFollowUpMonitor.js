@@ -17,6 +17,7 @@ const RUN_KEY = 'rfi_followup_monitor_run'
 const STATUS_SNAPSHOT_KEY = 'rfi_followup_status_snapshot_v1'
 const BATCH_SIZE = 3
 const DAILY_MS = 24 * 60 * 60 * 1000
+const TITLE_MATCHER_VERSION = 2
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
 function json(data, status = 200) {
@@ -95,7 +96,7 @@ function normalizeWatch(input, existing = null) {
     naicsCode: clean(input.naicsCode), pocEmail: clean(input.pocEmail),
     title: clean(input.title), noticeId: clean(input.noticeId || opportunityId),
     solicitationNumber: clean(input.solicitationNumber), submissionDate: clean(input.submissionDate),
-    rules: rules(input.rules),
+    rules: rules(input.rules), titleMatcherVersion: TITLE_MATCHER_VERSION,
   }
   const sourceFingerprint = hash(JSON.stringify(source))
   const changed = existing?.sourceFingerprint && existing.sourceFingerprint !== sourceFingerprint
