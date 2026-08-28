@@ -283,8 +283,90 @@ const DOCUMENT_EXTENSION = 'pdf|docx?|xlsx?|pptx?|txt|rtf|csv|zip|7z|xml|json|jp
 const DOCUMENT_URL_RE = new RegExp(`(?:https?:\\/\\/[^\\s<>"']+|\\/ebuy_upload\\/[^\\s<>"']+|\\/[^\\s<>"']+)\\.(?:${DOCUMENT_EXTENSION})(?:[?#][^\\s<>"']*)?`, 'gi')
 const DOCUMENT_NAME_RE = new RegExp(`(?:^|[\\s("'])(([\\w][\\w .,&'()+-]{0,100})\\.(?:${DOCUMENT_EXTENSION}))(?=$|[\\s)"',;:])`, 'gi')
 
+function sourceRecord(value) {
+  return value?.rfq && typeof value.rfq === 'object' ? value.rfq : value || {}
+}
+
+function sourceLabel(value) {
+  if (value == null) return ''
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim()
+  if (typeof value !== 'object') return ''
+  for (const key of ['description', 'name', 'label', 'text', 'value', 'code']) {
+    const label = sourceLabel(value[key])
+    if (label) return label
+  }
+  return ''
+}
+
+function valuesForSourceKeys(root, keyPattern, maxDepth = 5) {
+  const values = []
+  const visited = new WeakSet()
+  const visit = (value, depth = 0) => {
+    if (!value || typeof value !== 'object' || depth > maxDepth || visited.has(value)) return
+    visited.add(value)
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1))
+      return
+    }
+    for (const [key, entry] of Object.entries(value)) {
+      if (/password|token|session|vendor/i.test(key)) continue
+      if (keyPattern.test(key)) {
+        const label = sourceLabel(entry)
+        if (label) values.push({ key, label })
+      }
+      if (entry && typeof entry === 'object') visit(entry, depth + 1)
+    }
+  }
+  visit(root)
+  return values
+}
+
+function normalizeSetAside(value) {
+  const label = sourceLabel(value)
+  if (!label) return ''
+  const compact = label.toUpperCase().replace(/[^A-Z0-9]+/g, '')
+  if (['Y', 'YES', 'TRUE', '1', 'SB', 'SBA', 'SMALLBUSINESS'].includes(compact)) return 'Small Business Set-Aside'
+  if (['N', 'NO', 'FALSE', '0', 'NONE', 'UNRESTRICTED', 'FULLANDOPEN'].includes(compact)) return 'Unrestricted'
+  const known = [
+    [/8\(?A\)?|EIGHTA/, '8(a) Set-Aside'],
+    [/SDVOSB|SERVICEDISABLEDVETERAN/, 'Service-Disabled Veteran-Owned Small Business Set-Aside'],
+    [/EDWOSB/, 'Economically Disadvantaged Women-Owned Small Business Set-Aside'],
+    [/WOSB|WOMENOWNED/, 'Women-Owned Small Business Set-Aside'],
+    [/HUBZONE/, 'HUBZone Set-Aside'],
+    [/VOSB|VETERANOWNED/, 'Veteran-Owned Small Business Set-Aside'],
+  ]
+  return known.find(([pattern]) => pattern.test(compact))?.[1] || label
+}
+
+function resolveSetAside(...sources) {
+  const preferred = []
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue
+    for (const key of [
+      'setAsideTypeDescription', 'setAsideDescription', 'setAsideType', 'setAside',
+      'smallBusinessSetAside', 'setAsideBusinessIndicator',
+    ]) {
+      const label = sourceLabel(source[key])
+      if (label) preferred.push({ key, label })
+    }
+  }
+  const discovered = sources.flatMap((source) => valuesForSourceKeys(source, /set.?aside|small.?business.*indicator|business.*set.?aside/i))
+  const candidates = [...preferred, ...discovered]
+  candidates.sort((left, right) => {
+    const score = (candidate) => {
+      const descriptive = /description|type|name/i.test(candidate.key) ? 20 : 0
+      const meaningful = /[A-Za-z]{3}/.test(candidate.label) ? 10 : 0
+      return descriptive + meaningful + Math.min(candidate.label.length, 20)
+    }
+    return score(right) - score(left)
+  })
+  return normalizeSetAside(candidates[0]?.label)
+}
+
 function attachmentFileName(attachment, fallback = 'Attachment') {
-  const explicit = String(attachment?.docName || attachment?.fileName || attachment?.name || attachment?.title || '').trim()
+  const explicit = String(attachment?.docName || attachment?.fileName || attachment?.originalFileName
+    || attachment?.documentName || attachment?.name || attachment?.title || '').trim()
   if (explicit) return explicit
   const path = String(attachment?.docPath || attachment?.downloadUrl || attachment?.url || attachment?.href || attachment?.path || '').trim()
   try {
@@ -295,33 +377,48 @@ function attachmentFileName(attachment, fallback = 'Attachment') {
 }
 
 function attachmentPath(attachment) {
-  return String(attachment?.docPath || attachment?.downloadUrl || attachment?.url || attachment?.href || attachment?.path || '').trim()
+  return String(attachment?.docPath || attachment?.documentPath || attachment?.filePath
+    || attachment?.downloadUrl || attachment?.url || attachment?.href || attachment?.path || '').trim()
 }
 
-function collectAttachmentDtos(detail) {
+function collectAttachmentDtos(...roots) {
   const found = []
   const add = (attachment, amendmentId = '') => {
+    if (typeof attachment === 'string') attachment = { docPath: attachment }
     if (!attachment || typeof attachment !== 'object') return
     const docPath = attachmentPath(attachment)
     const fileName = attachmentFileName(attachment)
     if (!docPath && fileName === 'Attachment') return
     found.push({ ...attachment, docPath, docName: fileName, amendmentId: String(amendmentId || attachment.amendmentId || '').trim() })
   }
-  ;(Array.isArray(detail?.rfqAttachments) ? detail.rfqAttachments : []).forEach((attachment) => add(attachment))
-  const amendments = [
-    ...(Array.isArray(detail?.rfqModifications) ? detail.rfqModifications : []),
-    ...(Array.isArray(detail?.rfqAmendments) ? detail.rfqAmendments : []),
-    ...(Array.isArray(detail?.amendments) ? detail.amendments : []),
-  ]
-  amendments.forEach((amendment) => {
-    const amendmentId = amendment?.amendIdentifier || amendment?.versionNumber || amendment?.id || ''
-    for (const key of ['rfqAttachments', 'attachments', 'documents', 'files']) {
-      ;(Array.isArray(amendment?.[key]) ? amendment[key] : []).forEach((attachment) => add(attachment, amendmentId))
+  const visited = new WeakSet()
+  const visit = (value, context = '', amendmentId = '', depth = 0) => {
+    if (value == null || depth > 7) return
+    if (typeof value === 'string') {
+      // A filename property is metadata for its parent attachment, not a
+      // second downloadable file. Only collect standalone strings when they
+      // contain an actual source path or URL.
+      if (/attach|document|file/i.test(context) && (/^https?:\/\//i.test(value) || value.startsWith('/'))) add(value, amendmentId)
+      return
     }
-  })
-  for (const key of ['rfqModificationAttachments', 'amendmentAttachments', 'documents', 'files']) {
-    ;(Array.isArray(detail?.[key]) ? detail[key] : []).forEach((attachment) => add(attachment, attachment?.amendmentId))
+    if (typeof value !== 'object' || visited.has(value)) return
+    visited.add(value)
+    if (Array.isArray(value)) {
+      value.forEach((entry) => visit(entry, context, amendmentId, depth + 1))
+      return
+    }
+    const nextAmendmentId = String(value.amendIdentifier || value.versionNumber || value.amendmentId || amendmentId || '').trim()
+    const path = attachmentPath(value)
+    const name = attachmentFileName(value, '')
+    const attachmentContext = /attach|document|file/i.test(context)
+    const attachmentIdentity = value.docSeqNum != null || value.seqNum != null || value.documentId != null || value.attachmentId != null
+    if ((path || name) && (attachmentContext || attachmentIdentity || /\.(?:pdf|docx?|xlsx?|pptx?|txt|rtf|csv|zip|7z|xml|json|jpe?g|png|gif|tiff?)$/i.test(name))) add(value, nextAmendmentId)
+    for (const [key, entry] of Object.entries(value)) {
+      if (/password|token|session|rfqVendors/i.test(key)) continue
+      visit(entry, key, nextAmendmentId, depth + 1)
+    }
   }
+  roots.forEach((root) => visit(root))
   return found
 }
 
@@ -340,8 +437,8 @@ function descriptionAttachmentEvidence(description, attachments) {
   return { mentioned, linkedAttachments, missing }
 }
 
-function normalizeAttachments(detail, requestId, description) {
-  const source = collectAttachmentDtos(detail)
+function normalizeAttachments(roots, requestId, description) {
+  const source = collectAttachmentDtos(...roots)
   const evidence = descriptionAttachmentEvidence(description, source)
   const deduped = new Map()
   for (const attachment of [...source, ...evidence.linkedAttachments]) {
@@ -377,19 +474,33 @@ function normalizeAttachments(detail, requestId, description) {
 }
 
 export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
-  const info = detail?.rfqInfo || summary?.rfq?.rfqInfo || {}
-  const props = detail?.rfqProps || summary?.rfq?.rfqProps || {}
-  const additional = detail?.rfqAdditionalInfo || summary?.rfq?.rfqAdditionalInfo || {}
-  const categories = Array.isArray(detail?.rfqCategories) ? detail.rfqCategories : []
-  const addresses = Array.isArray(detail?.rfqAddresses) ? detail.rfqAddresses : []
-  const description = String(info.description || '')
-  const normalizedAttachmentData = normalizeAttachments(detail, info.rfqId || summary.rfqId || '', description)
-  const amendments = (Array.isArray(detail?.rfqModifications) ? detail.rfqModifications : []).map((modification) => ({
-    id: `${info.rfqId || summary.rfqId}:mod:${modification.versionNumber ?? modification.modificationTime}`,
+  const summaryDetail = sourceRecord(summary)
+  const detailRecord = sourceRecord(detail)
+  const info = { ...(summaryDetail.rfqInfo || {}), ...(detailRecord.rfqInfo || {}) }
+  const props = { ...(summaryDetail.rfqProps || {}), ...(detailRecord.rfqProps || {}) }
+  const additional = { ...(summaryDetail.rfqAdditionalInfo || {}), ...(detailRecord.rfqAdditionalInfo || {}) }
+  const categories = [...(Array.isArray(summaryDetail.rfqCategories) ? summaryDetail.rfqCategories : []), ...(Array.isArray(detailRecord.rfqCategories) ? detailRecord.rfqCategories : [])]
+  const addresses = [...(Array.isArray(summaryDetail.rfqAddresses) ? summaryDetail.rfqAddresses : []), ...(Array.isArray(detailRecord.rfqAddresses) ? detailRecord.rfqAddresses : [])]
+  const description = String(info.description || detailRecord.description || summaryDetail.description || summary.description || '')
+  const requestId = info.rfqId || summaryDetail.rfqId || summary.rfqId || summary.requestId || ''
+  const normalizedAttachmentData = normalizeAttachments([summary, summaryDetail, detail, detailRecord], requestId, description)
+  const modificationSources = [summaryDetail, detailRecord].flatMap((source) => [
+    ...(Array.isArray(source?.rfqModifications) ? source.rfqModifications : []),
+    ...(Array.isArray(source?.rfqAmendments) ? source.rfqAmendments : []),
+    ...(Array.isArray(source?.amendments) ? source.amendments : []),
+  ])
+  const seenAmendments = new Set()
+  const amendments = modificationSources.map((modification) => ({
+    id: `${requestId}:mod:${modification.versionNumber ?? modification.modificationTime}`,
     label: modification.amendIdentifier || `Modification ${modification.versionNumber ?? ''}`.trim(),
     description: String(modification.modificationNote || ''),
     postedAt: isoDate(modification.modificationTime),
-  }))
+  })).filter((amendment) => {
+    const key = `${amendment.id}|${amendment.label}|${amendment.postedAt || ''}`
+    if (seenAmendments.has(key)) return false
+    seenAmendments.add(key)
+    return true
+  })
   const schedules = [...new Set(categories.map((item) => item.schedule).filter(Boolean))]
   const sins = [...new Set(categories.map((item) => item.sin).filter(Boolean))]
   const safeInfo = { ...info }
@@ -400,12 +511,12 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     return category
   })
   return {
-    id: String(info.rfqId || summary.rfqId || ''),
-    requestId: String(info.rfqId || summary.rfqId || ''),
+    id: String(requestId),
+    requestId: String(requestId),
     requestType: requestType(info, summary),
-    title: String(info.title || summary.title || ''),
+    title: String(info.title || detailRecord.title || summaryDetail.title || summary.title || ''),
     description,
-    referenceNumber: String(info.referenceNum || ''),
+    referenceNumber: String(info.referenceNum || info.referenceNumber || additional.referenceNumber || detailRecord.referenceNumber || summaryDetail.referenceNumber || summary.referenceNumber || ''),
     // eBuy calls the top-level department `userAgency` and the subordinate
     // buying organization `userBureau`. Keep the CRM's Department/Agency
     // meaning consistent with SAM instead of exposing those source labels
@@ -414,12 +525,12 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     buyerAgency: String(props.userBureau || additional.ocoAgency || props.userAgency || summary.userAgency || ''),
     buyerDepartment: String(props.userAgency || summary.userAgency || additional.ocoAgency || ''),
     buyerName: String(props.userName || summary.userName || additional.ocoName || ''),
-    buyerEmail: String(props.userEmail || summary.userEmail || ''),
-    buyerPhone: String(props.userPhone || additional.ocoPhone || ''),
-    setAsideType: String(props.setAsideBusinessIndicator || ''),
-    contractType: String(additional.contractType || ''),
-    awardMethod: String(additional.awardMethod || ''),
-    placeOfPerformanceRaw: locationText(detail?.rfqDefaultAddress || addresses.find((item) => item.defaultAddress) || addresses[0]),
+    buyerEmail: String(props.userEmail || additional.ocoEmail || detailRecord.userEmail || summaryDetail.userEmail || summary.userEmail || ''),
+    buyerPhone: String(props.userPhone || additional.ocoPhone || detailRecord.userPhone || summaryDetail.userPhone || summary.userPhone || ''),
+    setAsideType: resolveSetAside(info, props, additional, detailRecord, summaryDetail, summary),
+    contractType: String(additional.contractType || props.contractType || info.contractType || ''),
+    awardMethod: String(additional.awardMethod || props.awardMethod || info.awardMethod || ''),
+    placeOfPerformanceRaw: locationText(detailRecord.rfqDefaultAddress || summaryDetail.rfqDefaultAddress || addresses.find((item) => item.defaultAddress) || addresses[0]),
     performanceStates: [...new Set(addresses.map((item) => item.state).filter(Boolean))],
     vehicleSources: [...new Set([contractNumber, ...schedules].filter(Boolean))],
     vehicleSins: sins,
@@ -431,7 +542,7 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     amendments,
     attachments: normalizedAttachmentData.attachments,
     attachmentReferences: normalizedAttachmentData.references,
-    sourceDetails: { contractNumber, rfqInfo: safeInfo, rfqAdditionalInfo: additional, rfqProps: props, rfqCategories: safeCategories, rfqLineItems: detail?.rfqLineItems || [], rfqAddresses: addresses },
+    sourceDetails: { contractNumber, rfqInfo: safeInfo, rfqAdditionalInfo: additional, rfqProps: props, rfqCategories: safeCategories, rfqLineItems: detailRecord.rfqLineItems || summaryDetail.rfqLineItems || [], rfqAddresses: addresses },
   }
 }
 
