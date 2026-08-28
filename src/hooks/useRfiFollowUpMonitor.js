@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getRFIFollowUpDecisions, getRFIFollowUpOverrides, getSAMSettings } from '@/services/graphService'
+import { getRFIFollowUpDecisions, getRFIFollowUpOverrides, getSAMOpportunities, getSAMSettings } from '@/services/graphService'
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import { isFollowOnSourceOpportunity } from '@/utils/noticeTypes'
 
@@ -121,8 +121,14 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     setChecking(true); setError(null)
     try {
       await synchronize({ forceReplace: false })
+      // Manual checks must use the same SAM rows the user can see on the New
+      // tab. Do not depend on the optional app-only background workbook flag.
+      const newTabRows = (await getSAMOpportunities()).filter((row) => {
+        const type = String(row['Notice Type'] || '').toUpperCase()
+        return type.includes('RFP') || type.includes('RFQ')
+      })
       const response = await workerFetch('/sam/follow-up-monitor/check-one', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId, newTabRows }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Could not check RFI follow-ons')
