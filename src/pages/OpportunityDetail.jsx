@@ -614,6 +614,11 @@ export default function OpportunityDetail({ toast }) {
 
   const saveFollowUpOverride = async (opportunityId, values) => {
     await saveRFIFollowUpOverride(opportunityId, values)
+    const monitoringEnabled = String(values?.['Monitoring Enabled'] || 'Enabled').trim().toLowerCase() !== 'disabled'
+    if (monitoringEnabled) {
+      await rfiFollowUpMonitor.checkOne(opportunityId)
+      return
+    }
     await rfiFollowUpMonitor.synchronize({ forceReplace: false })
     await rfiFollowUpMonitor.loadStatus()
   }
