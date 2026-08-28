@@ -276,6 +276,32 @@ test('eBuy business-size fields are normalized as a small-business set-aside', (
   assert.equal(record.setAsideType, 'Small Business Set-Aside')
 })
 
+test('eBuy RFQ program codes are decoded into their published set-asides', () => {
+  const cases = [
+    ['SA-SB', 'Small Business Set-Aside'],
+    ['SA-WOSB', 'Women-Owned Small Business Set-Aside'],
+    ['SA-HUB', 'HUBZone Set-Aside'],
+    ['SA-DVOSB', 'Service-Disabled Veteran-Owned Small Business Set-Aside'],
+    ['SA-A8B', '8(a) Set-Aside'],
+    ['SA-EDWOSB', 'Economically Disadvantaged Women-Owned Small Business Set-Aside'],
+  ]
+
+  for (const [program, expected] of cases) {
+    const record = normalizeLiveEbuyOpportunity({
+      rfqId: `RFQ-${program}`,
+      title: 'Program-coded set-aside',
+    }, {
+      rfqInfo: {
+        rfqId: `RFQ-${program}`,
+        rfqProgramsList: ['DR', program],
+      },
+      rfqProps: { businessSize: 'Large' },
+    }, '47QTCA00TEST')
+
+    assert.equal(record.setAsideType, expected)
+  }
+})
+
 test('stale eBuy synchronization runs are detected and changed into resumable errors', async () => {
   const now = new Date('2026-08-28T12:00:00.000Z')
   const row = {
