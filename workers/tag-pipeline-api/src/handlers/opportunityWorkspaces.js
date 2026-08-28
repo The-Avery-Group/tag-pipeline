@@ -59,30 +59,21 @@ async function startWorkflow(env, workspace, { force = false } = {}) {
 
 async function adoptExistingFolderIfAvailable(env, storage, workspace, folderLink) {
   if (!folderLink) return workspace
-  try {
-    const folder = await resolveWorkspaceFolderLink(env, folderLink)
-    await resetWorkspaceForRebuild(storage, workspace.opportunityKey)
-    return updateWorkspace(storage, workspace.opportunityKey, {
-      status: 'new',
-      progressPhase: 'Existing SharePoint workspace connected',
-      sharePointDriveId: folder.driveId,
-      rootFolderId: folder.rootFolderId,
-      samFolderId: folder.samFolderId,
-      webUrl: folder.webUrl,
-      attachmentTotal: 0,
-      archivedCount: 0,
-      failedCount: 0,
-      errorMessage: null,
-      completedAt: null,
-    })
-  } catch (error) {
-    console.warn(JSON.stringify({
-      event: 'opportunity_workspace_link_not_adopted',
-      opportunityKey: workspace.opportunityKey,
-      message: error.message,
-    }))
-    return workspace
-  }
+  const folder = await resolveWorkspaceFolderLink(env, folderLink)
+  await resetWorkspaceForRebuild(storage, workspace.opportunityKey)
+  return updateWorkspace(storage, workspace.opportunityKey, {
+    status: 'new',
+    progressPhase: 'Existing SharePoint workspace connected',
+    sharePointDriveId: folder.driveId,
+    rootFolderId: folder.rootFolderId,
+    samFolderId: folder.samFolderId,
+    webUrl: folder.webUrl,
+    attachmentTotal: 0,
+    archivedCount: 0,
+    failedCount: 0,
+    errorMessage: null,
+    completedAt: null,
+  })
 }
 
 export async function handleOpportunityWorkspaces(req, env) {
@@ -106,7 +97,7 @@ export async function handleOpportunityWorkspaces(req, env) {
     if (path === '/opportunity-workspaces' && req.method === 'POST') {
       const body = await req.json().catch(() => ({}))
       let workspace = await ensureWorkspaceRequest(storage, body)
-      if (!workspace.rootFolderId && body.folderLink) {
+      if (body.folderLink && (body.adoptFolderLink === true || !workspace.rootFolderId)) {
         workspace = await adoptExistingFolderIfAvailable(env, storage, workspace, body.folderLink)
       }
       const result = await startWorkflow(env, workspace)
