@@ -1,4 +1,4 @@
-import { findRFIFollowUps, followUpCandidate } from './sam.js'
+import { followUpCandidate } from './sam.js'
 import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 import { findEbuyPipelineSource, listEbuyFollowOnCandidates } from '../lib/ebuyRepository.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
@@ -259,6 +259,33 @@ function eBuyCandidateAsSAM(candidate) {
   }
 }
 
+function samNewTabRowAsRecord(row) {
+  const contacts = clean(row['Point of Contact'] || row.POC || row['Contracting Officer / Specialist (POC)*'])
+  return {
+    noticeId: clean(row['Notice ID']),
+    solicitationNumber: clean(row['Solicitation Number']),
+    title: clean(row.Title || row['Project Title / Description*']),
+    description: clean(row.Description),
+    fullParentPathName: [row.Department, row.Agency, row.Office].map(clean).filter(Boolean).join('.'),
+    pointOfContact: contacts ? [{ fullName: contacts, email: clean(row['POC Email'] || row.Email) }] : [],
+    postedDate: workbookDate(row['Posted Date'] || row['Date Added']),
+    responseDeadLine: workbookDate(row['Response Deadline'] || row['Response Date']),
+    type: clean(row['Notice Type']),
+    baseType: clean(row['Notice Type']),
+    typeOfSetAsideDescription: clean(row['Set Aside'] || row['Set-Aside']),
+    uiLink: clean(row['SAM.gov URL']),
+  }
+}
+
+export function findLocalSAMFollowUps(rows, source) {
+  return (rows || []).map((row) => {
+    const noticeType = clean(row['Notice Type']).toUpperCase()
+    if (!noticeType.includes('RFP') && !noticeType.includes('RFQ')) return null
+    const match = followUpCandidate(samNewTabRowAsRecord(row), source)
+    return match ? { ...match, source: 'SAM.gov', detailUrl: match.samLink || clean(row['SAM.gov URL']) } : null
+  }).filter(Boolean)
+}
+
 function dateWindow(source) {
   const submission = Date.parse(source.submissionDate || '')
   if (Number.isFinite(submission)) {
@@ -274,7 +301,7 @@ function dateWindow(source) {
   }
 }
 
-async function findCrossSourceFollowUps(env, watch) {
+async function findCrossSourceFollowUps(env, watch, samNewTabRows = []) {
   const eBuySource = env.EBUY_DB ? await findEbuyPipelineSource(env.EBUY_DB, watch.opportunityId) : null
   const source = eBuySource ? {
     ...watch.source,
@@ -286,13 +313,9 @@ async function findCrossSourceFollowUps(env, watch) {
     solicitationNumber: eBuySource.referenceNumber || watch.source.solicitationNumber,
   } : watch.source
   const candidates = eBuySource ? (await findLocalEbuyFollowUps(env, watch) || []) : []
-  // eBuy-origin records use the authenticated eBuy archive first. SAM.gov is
-  // the fallback only when that primary source has no credible match, which
-  // avoids duplicate evidence and unnecessary public API requests.
-  if (!eBuySource || candidates.length === 0) {
-    const samCandidates = await findRFIFollowUps(env, source)
-    candidates.push(...samCandidates.map((candidate) => ({ ...candidate, source: 'SAM.gov', detailUrl: candidate.samLink || '' })))
-  }
+  // SAM candidates come from NewOpportunitiesTable, which the normal pull has
+  // already populated. Do not issue a separate SAM search for every watch.
+  candidates.push(...findLocalSAMFollowUps(samNewTabRows, source))
   const unique = new Map()
   for (const candidate of candidates) {
     const family = normalized(candidate.solicitationNumber || candidate.noticeId).replace(/[^a-z0-9]/g, '')
@@ -354,10 +377,10 @@ export async function refreshEbuyFollowOnWatches(env) {
   return { checked, changed }
 }
 
-async function checkWatch(env, watch) {
+async function checkWatch(env, watch, samNewTabRows = []) {
   if (!watch.source?.rules?.monitoringEnabled) return watch
   try {
-    const candidates = await findCrossSourceFollowUps(env, watch)
+    const candidates = await findCrossSourceFollowUps(env, watch, samNewTabRows)
     const fingerprint = hash(candidates.map(candidateKey).sort().join('|'))
     watch.candidates = candidates
     watch.resultFingerprint = fingerprint
@@ -454,10 +477,11 @@ function effectiveRules(globalRules, override) {
 
 async function syncFromWorkbook(env) {
   const token = await appOnlyToken(env)
-  if (!token) return false
-  const [pipeline, contacts, settingsRows, overrides, decisions] = await Promise.all([
+  if (!token) return null
+  const [pipeline, contacts, settingsRows, overrides, decisions, newOpportunities] = await Promise.all([
     graphRows(env, token, 'PipelineTable'), graphRows(env, token, 'ContactsTable'), graphRows(env, token, 'SAMSettingsTable'),
     graphRows(env, token, 'RFIFollowUpOverridesTable'), graphRows(env, token, 'RFIFollowUpDecisionsTable'),
+    graphRows(env, token, 'NewOpportunitiesTable'),
   ])
   const globalRules = appSettings(settingsRows)
   const watches = pipeline.filter(isFollowOnSourceOpportunity).map((item) => {
@@ -477,19 +501,26 @@ async function syncFromWorkbook(env) {
     }
   })
   await syncWatches(env, watches, { replace: true })
-  return true
+  return { newOpportunities }
 }
 
 export async function runRFIFollowUpMonitor(env) {
-  if (!env.SAM_API_KEY || !env.CACHE) return { ok: false, skipped: true }
+  if (!env.CACHE) return { ok: false, skipped: true }
   let source = 'browser-sync'
-  try { if (await syncFromWorkbook(env)) source = 'app-only' } catch (error) { console.warn(JSON.stringify({ event: 'rfi_followup_app_only_fallback', message: error.message })) }
+  let samNewTabRows = []
+  try {
+    const synchronized = await syncFromWorkbook(env)
+    if (synchronized) {
+      source = 'new-tab'
+      samNewTabRows = synchronized.newOpportunities
+    }
+  } catch (error) { console.warn(JSON.stringify({ event: 'rfi_followup_app_only_fallback', message: error.message })) }
   const watches = (await listWatches(env)).filter((watch) => watch.source?.rules?.monitoringEnabled)
   const now = Date.now()
   const due = watches.filter((watch) => watch.needsCheck || !watch.lastCheckedAt || now - Date.parse(watch.lastCheckedAt) >= DAILY_MS)
   const batch = due.sort((a, b) => Date.parse(a.lastCheckedAt || 0) - Date.parse(b.lastCheckedAt || 0)).slice(0, BATCH_SIZE)
   if (!batch.length) return { ok: true, status: 'success', source, total: watches.length, due: 0, checked: 0, skipped: true }
-  await Promise.all(batch.map((watch) => checkWatch(env, watch)))
+  await Promise.all(batch.map((watch) => checkWatch(env, watch, samNewTabRows)))
   const run = { status: 'success', checkedAt: new Date().toISOString(), source, total: watches.length, due: Math.max(0, due.length - batch.length), checked: batch.length }
   // One result write only when a real batch ran. Previously this wrote a
   // running and success record every hour, including no-op hours.
@@ -532,7 +563,11 @@ export async function handleRFIFollowUpMonitor(req, env) {
     const body = await req.json()
     const watch = await readWatch(env, watchKey(body.opportunityId))
     if (!watch) return json({ error: 'Follow-up watch not found. Synchronize this RFI first.' }, 404)
-    await checkWatch(env, watch)
+    let samNewTabRows = []
+    try { samNewTabRows = (await syncFromWorkbook(env))?.newOpportunities || [] } catch (error) {
+      console.warn(JSON.stringify({ event: 'rfi_followup_new_tab_read_failed', message: error.message }))
+    }
+    await checkWatch(env, watch, samNewTabRows)
     await updateStatusSnapshotEntry(env, watch)
     return json({ ok: true, watch: await durablePublicWatch(env, watch) })
   }
