@@ -1,4 +1,4 @@
-import { normalizeWorkspaceKey, workspaceCalendarYear } from './opportunityWorkspaceDomain.js'
+import { normalizeWorkspaceKey, workspaceCalendarYear, workspaceType } from './opportunityWorkspaceDomain.js'
 
 function publicWorkspace(row) {
   if (!row) return null
@@ -18,6 +18,10 @@ function publicWorkspace(row) {
     sharePointDriveId: row.sharepoint_drive_id,
     rootFolderId: row.root_folder_id,
     samFolderId: row.sam_folder_id,
+    workspaceGroupId: row.workspace_group_id || null,
+    workspaceType: row.workspace_type || null,
+    typeFolderId: row.type_folder_id || null,
+    typeFolderWebUrl: row.type_folder_web_url || null,
     webUrl: row.sharepoint_web_url,
     attachmentTotal: Number(row.attachment_total || 0),
     archivedCount: Number(row.archived_count || 0),
@@ -71,9 +75,81 @@ export async function ensureWorkspaceRequest(db, input) {
 }
 
 export async function getWorkspace(db, opportunityKey) {
-  const row = await db.prepare('SELECT * FROM opportunity_workspaces WHERE opportunity_key = ?')
+  const row = await db.prepare(`SELECT w.*, m.group_id AS workspace_group_id, m.workspace_type,
+      m.type_folder_id, m.type_folder_web_url
+    FROM opportunity_workspaces w
+    LEFT JOIN opportunity_workspace_members m ON m.opportunity_key = w.opportunity_key
+    WHERE w.opportunity_key = ?`)
     .bind(normalizeWorkspaceKey(opportunityKey)).first()
   return publicWorkspace(row)
+}
+
+export async function getWorkspaceMember(db, opportunityKey) {
+  const row = await db.prepare(`SELECT m.*, g.canonical_opportunity_key, g.sharepoint_drive_id AS group_drive_id,
+      g.root_folder_id AS group_root_folder_id, g.sharepoint_web_url AS group_web_url
+    FROM opportunity_workspace_members m
+    JOIN opportunity_workspace_groups g ON g.group_id = m.group_id
+    WHERE m.opportunity_key = ?`).bind(normalizeWorkspaceKey(opportunityKey)).first()
+  return row || null
+}
+
+export async function workspaceRootIsShared(db, opportunityKey) {
+  const member = await getWorkspaceMember(db, opportunityKey)
+  if (!member?.group_id) return false
+  const row = await db.prepare('SELECT COUNT(*) AS count FROM opportunity_workspace_members WHERE group_id = ?')
+    .bind(member.group_id).first()
+  return Number(row?.count || 0) > 1
+}
+
+export async function linkWorkspaceMembers(db, leftWorkspace, rightWorkspace) {
+  const leftKey = normalizeWorkspaceKey(leftWorkspace.opportunityKey)
+  const rightKey = normalizeWorkspaceKey(rightWorkspace.opportunityKey)
+  if (!leftKey || !rightKey || leftKey === rightKey) throw Object.assign(new Error('Two different opportunity identifiers are required'), { status: 400 })
+  const [leftMember, rightMember] = await Promise.all([
+    getWorkspaceMember(db, leftKey), getWorkspaceMember(db, rightKey),
+  ])
+  if (leftMember?.group_id && rightMember?.group_id && leftMember.group_id !== rightMember.group_id) {
+    throw Object.assign(new Error('These opportunities already belong to different workspace groups. Review the existing groups before merging them.'), { status: 409 })
+  }
+  const canonical = [leftWorkspace, rightWorkspace]
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0]
+  const groupId = leftMember?.group_id || rightMember?.group_id || crypto.randomUUID()
+  const now = new Date().toISOString()
+  const rootSource = [leftWorkspace, rightWorkspace].find((workspace) => workspace.rootFolderId) || canonical
+  await db.batch([
+    db.prepare(`INSERT INTO opportunity_workspace_groups (
+        group_id, canonical_opportunity_key, sharepoint_drive_id, root_folder_id, sharepoint_web_url, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(group_id) DO UPDATE SET
+        canonical_opportunity_key = excluded.canonical_opportunity_key,
+        sharepoint_drive_id = COALESCE(opportunity_workspace_groups.sharepoint_drive_id, excluded.sharepoint_drive_id),
+        root_folder_id = COALESCE(opportunity_workspace_groups.root_folder_id, excluded.root_folder_id),
+        sharepoint_web_url = COALESCE(opportunity_workspace_groups.sharepoint_web_url, excluded.sharepoint_web_url),
+        updated_at = excluded.updated_at`)
+      .bind(groupId, canonical.opportunityKey, rootSource.sharePointDriveId, rootSource.rootFolderId, rootSource.webUrl, rootSource.rootFolderId ? 'migrating' : 'new', now, now),
+    ...[leftWorkspace, rightWorkspace].map((workspace) => db.prepare(`INSERT INTO opportunity_workspace_members (
+        opportunity_key, group_id, workspace_type, joined_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(opportunity_key) DO UPDATE SET group_id = excluded.group_id,
+        workspace_type = excluded.workspace_type, updated_at = excluded.updated_at`)
+      .bind(normalizeWorkspaceKey(workspace.opportunityKey), groupId, workspaceType(workspace.noticeType), now, now)),
+  ])
+  return { groupId, canonical, rootSource }
+}
+
+export async function completeWorkspaceGroup(db, groupId, folders, members) {
+  const now = new Date().toISOString()
+  const statements = [db.prepare(`UPDATE opportunity_workspace_groups SET sharepoint_drive_id = ?, root_folder_id = ?,
+      sharepoint_web_url = ?, status = 'ready', error_message = NULL, updated_at = ? WHERE group_id = ?`)
+    .bind(folders.driveId, folders.rootFolderId, folders.webUrl, now, groupId)]
+  for (const member of members) {
+    statements.push(db.prepare(`UPDATE opportunity_workspace_members SET type_folder_id = ?, type_folder_web_url = ?, updated_at = ?
+      WHERE opportunity_key = ?`).bind(member.typeFolderId, member.typeFolderWebUrl, now, normalizeWorkspaceKey(member.opportunityKey)))
+    statements.push(db.prepare(`UPDATE opportunity_workspaces SET sharepoint_drive_id = ?, root_folder_id = ?, sam_folder_id = ?,
+      sharepoint_web_url = ?, updated_at = ? WHERE opportunity_key = ?`)
+      .bind(folders.driveId, folders.rootFolderId, member.samFolderId, folders.webUrl, now, normalizeWorkspaceKey(member.opportunityKey)))
+  }
+  await db.batch(statements)
 }
 
 export async function deleteWorkspaceRecord(db, opportunityKey) {
