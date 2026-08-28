@@ -45,15 +45,13 @@ async function startLiveSync(env, source = 'manual', scheduledTime = null) {
     params: { mode: 'live', source, resumeRunId: resumable?.id || null },
     retention: { successRetention: '3 days', errorRetention: '7 days' },
   }])
-  if (!created?.[0]?.id) {
-    return json({ error: 'Cloudflare did not start the eBuy synchronization Workflow', code: 'ebuy_workflow_not_started' }, 503)
-  }
   return json({
     ok: true,
-    started: true,
+    started: Boolean(created?.[0]),
+    alreadyScheduled: !created?.[0],
     resumed: Boolean(resumable),
     remaining: resumable ? resumable.retryableCandidates + resumable.retryableAttachments : null,
-    instanceId: created[0].id,
+    instanceId: created?.[0]?.id || instanceId,
     mode: 'live',
   }, 202)
 }
