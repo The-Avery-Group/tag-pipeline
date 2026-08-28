@@ -79,11 +79,12 @@ export async function createReferenceMaterialUploadSession(env, workspace, file)
   if (!root?.folder) {
     throw Object.assign(new Error('The opportunity SharePoint workspace is unavailable'), { status: 409 })
   }
+  const referenceParentId = workspace.typeFolderId || root.id
   const referenceFolder = await childByName(
     env,
     token,
     workspace.sharePointDriveId,
-    root.id,
+    referenceParentId,
     REFERENCE_MATERIALS_FOLDER_NAME,
   )
   if (!referenceFolder?.folder) {
@@ -126,7 +127,7 @@ export async function removeReferenceMaterialUploads(env, workspace, itemIds) {
     env,
     token,
     workspace.sharePointDriveId,
-    workspace.rootFolderId,
+    workspace.typeFolderId || workspace.rootFolderId,
     REFERENCE_MATERIALS_FOLDER_NAME,
   )
   if (!referenceFolder?.folder) return { removed: 0 }
@@ -238,7 +239,7 @@ export async function finishRecordedWorkspaceFolders(env, workspace) {
     env,
     token,
     workspace.sharePointDriveId,
-    workspace.rootFolderId,
+    workspace.typeFolderId || workspace.rootFolderId,
     SAM_DOCUMENTS_FOLDER_NAME,
   )
   return {
@@ -394,6 +395,116 @@ export async function finishWorkspaceFolders(env, workspace, folderName) {
     samFolderId: samFolder.id,
     webUrl: folder.webUrl,
   }
+}
+
+async function listAllChildren(token, driveId, parentId) {
+  const items = []
+  let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}/children?$select=id,name,webUrl,parentReference,folder,file,size&$top=200`
+  while (nextUrl) {
+    const { body } = await graphResponse(nextUrl, token)
+    items.push(...(body.value || []))
+    nextUrl = body['@odata.nextLink'] || ''
+  }
+  return items
+}
+
+async function moveItem(token, driveId, item, targetFolderId, name = item.name) {
+  const { body } = await graphResponse(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(item.id)}`,
+    token,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parentReference: { id: targetFolderId }, name }),
+    },
+  )
+  return body
+}
+
+async function mergeFolderContents(env, token, driveId, sourceFolderId, targetFolderId, suffix) {
+  const sourceChildren = await listAllChildren(token, driveId, sourceFolderId)
+  for (const source of sourceChildren) {
+    const existing = await childByName(env, token, driveId, targetFolderId, source.name)
+    if (!existing) {
+      await moveItem(token, driveId, source, targetFolderId)
+      continue
+    }
+    if (source.folder && existing.folder) {
+      await mergeFolderContents(env, token, driveId, source.id, existing.id, suffix)
+      const remaining = await listAllChildren(token, driveId, source.id)
+      if (!remaining.length) await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(source.id)}`, token, { method: 'DELETE' })
+      continue
+    }
+    const extensionIndex = source.name.lastIndexOf('.')
+    const renamed = extensionIndex > 0 && !source.folder
+      ? `${source.name.slice(0, extensionIndex)} (${suffix})${source.name.slice(extensionIndex)}`
+      : `${source.name} (${suffix})`
+    await moveItem(token, driveId, source, targetFolderId, safeSharePointSegment(renamed, source.name, 180))
+  }
+}
+
+async function convertLegacyRootToType(env, token, driveId, root, type) {
+  const typeFolder = await ensureFolder(env, token, driveId, root.id, type)
+  const children = await listAllChildren(token, driveId, root.id)
+  const alreadyStructured = children.some((item) => item.folder && ['RFI', 'MRAS', 'RFP', 'RFQ'].includes(String(item.name).toUpperCase()) && item.id !== typeFolder.id)
+  if (!alreadyStructured) {
+    for (const child of children) {
+      if (child.id === typeFolder.id || ['RFI', 'MRAS', 'RFP', 'RFQ'].includes(String(child.name).toUpperCase())) continue
+      await moveItem(token, driveId, child, typeFolder.id)
+    }
+  }
+  return typeFolder
+}
+
+export async function shareRelatedWorkspaceFolders(env, canonicalWorkspace, relatedWorkspace) {
+  const driveId = canonicalWorkspace.sharePointDriveId || relatedWorkspace.sharePointDriveId || driveIdFor(env)
+  if (canonicalWorkspace.sharePointDriveId && relatedWorkspace.sharePointDriveId && canonicalWorkspace.sharePointDriveId !== relatedWorkspace.sharePointDriveId) {
+    throw Object.assign(new Error('Related opportunity folders are in different SharePoint libraries and cannot be merged automatically'), { status: 409 })
+  }
+  const token = await getAppOnlyGraphToken(env)
+  const canonicalRoot = canonicalWorkspace.rootFolderId
+    ? await getItem(env, token, driveId, canonicalWorkspace.rootFolderId)
+    : relatedWorkspace.rootFolderId
+      ? await getItem(env, token, driveId, relatedWorkspace.rootFolderId)
+      : null
+  if (!canonicalRoot?.folder) throw Object.assign(new Error('At least one related opportunity must have a ready SharePoint workspace'), { status: 409 })
+
+  const typeFor = (workspace) => {
+    const value = String(workspace.noticeType || '').toUpperCase()
+    if (value.includes('MRAS')) return 'MRAS'
+    if (value.includes('RFQ')) return 'RFQ'
+    if (value.includes('RFP')) return 'RFP'
+    return 'RFI'
+  }
+  const canonicalType = typeFor(canonicalWorkspace)
+  const relatedType = typeFor(relatedWorkspace)
+  await convertLegacyRootToType(env, token, driveId, canonicalRoot, canonicalType)
+  const typeFolders = {}
+  for (const type of ['RFI', 'MRAS', 'RFP', 'RFQ']) typeFolders[type] = await ensureFolder(env, token, driveId, canonicalRoot.id, type)
+
+  if (relatedWorkspace.rootFolderId && relatedWorkspace.rootFolderId !== canonicalRoot.id) {
+    const relatedRoot = await getItem(env, token, driveId, relatedWorkspace.rootFolderId)
+    if (relatedRoot?.folder) {
+      await mergeFolderContents(env, token, driveId, relatedRoot.id, typeFolders[relatedType].id, relatedWorkspace.opportunityKey)
+      const remaining = await listAllChildren(token, driveId, relatedRoot.id)
+      if (!remaining.length) await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(relatedRoot.id)}`, token, { method: 'DELETE' })
+    }
+  }
+
+  const members = []
+  for (const workspace of [canonicalWorkspace, relatedWorkspace]) {
+    const type = workspace === canonicalWorkspace ? canonicalType : relatedType
+    const typeFolder = typeFolders[type]
+    const samFolder = await ensureFolder(env, token, driveId, typeFolder.id, SAM_DOCUMENTS_FOLDER_NAME)
+    members.push({
+      opportunityKey: workspace.opportunityKey,
+      workspaceType: type,
+      typeFolderId: typeFolder.id,
+      typeFolderWebUrl: typeFolder.webUrl || '',
+      samFolderId: samFolder.id,
+    })
+  }
+  return { driveId, rootFolderId: canonicalRoot.id, webUrl: canonicalRoot.webUrl || '', members }
 }
 
 export async function uploadSAMAttachment(env, { driveId, folderId, fileName, contentType, body }) {
