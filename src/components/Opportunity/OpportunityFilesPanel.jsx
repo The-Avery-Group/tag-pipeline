@@ -112,7 +112,7 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
       setWorkspace(nextWorkspace)
       setMissing(false)
       if (nextWorkspace?.rootFolderId && ['ready', 'partial'].includes(nextWorkspace.status)) {
-        const listing = await listOpportunityWorkspaceFiles(opportunityKey)
+        const listing = await listOpportunityWorkspaceFiles(opportunityKey, nextWorkspace.typeFolderId || '')
         setItems(listing.items || [])
         if (listing.parent?.webUrl && listing.parent.webUrl !== nextWorkspace.webUrl) {
           setWorkspace((current) => current ? { ...current, webUrl: listing.parent.webUrl } : current)
@@ -196,7 +196,7 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
         <div className={styles.workspaceBar}>
           <div><strong>{workspace.progressPhase || 'SharePoint workspace'}</strong><span>{workspace.archivedCount} saved · {workspace.failedCount} need attention</span></div>
           <div className={styles.actions}>
-            {workspace.webUrl && <a className="btn" href={workspace.webUrl} target="_blank" rel="noreferrer">Open in SharePoint</a>}
+            {(workspace.typeFolderWebUrl || workspace.webUrl) && <a className="btn" href={workspace.typeFolderWebUrl || workspace.webUrl} target="_blank" rel="noreferrer">Open in SharePoint</a>}
             {['error', 'partial'].includes(workspace.status) && <button type="button" className="btn" onClick={() => setup({ retry: true })} disabled={loading}>Retry setup</button>}
           </div>
         </div>
