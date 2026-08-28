@@ -379,7 +379,7 @@ export async function refreshEbuyFollowOnWatches(env) {
   return { checked, changed }
 }
 
-async function checkWatch(env, watch, samNewTabRows = []) {
+async function checkWatch(env, watch, samNewTabRows = [], { persist = true } = {}) {
   if (!watch.source?.rules?.monitoringEnabled) return watch
   try {
     const candidates = await findCrossSourceFollowUps(env, watch, samNewTabRows)
@@ -394,7 +394,7 @@ async function checkWatch(env, watch, samNewTabRows = []) {
     watch.lastCheckedAt = new Date().toISOString()
     watch.lastError = error.message
   }
-  await writeWatch(env, watch)
+  if (persist) await writeWatch(env, watch)
   return watch
 }
 
@@ -563,18 +563,31 @@ export async function handleRFIFollowUpMonitor(req, env) {
   }
   if (path === '/sam/follow-up-monitor/check-one' && req.method === 'POST') {
     const body = await req.json()
-    const watch = await readWatch(env, watchKey(body.opportunityId))
-    if (!watch) return json({ error: 'Follow-up watch not found. Synchronize this RFI first.' }, 404)
-    let samNewTabRows = Array.isArray(body.newTabRows) ? body.newTabRows.slice(0, 1000) : []
+    let storedWatch = null
     try {
-      const appOnlyRows = (await syncFromWorkbook(env))?.newOpportunities || []
-      if (appOnlyRows.length) samNewTabRows = appOnlyRows
+      storedWatch = await readWatch(env, watchKey(body.opportunityId))
     } catch (error) {
-      console.warn(JSON.stringify({ event: 'rfi_followup_new_tab_read_failed', message: error.message }))
+      console.warn(JSON.stringify({ event: 'rfi_followup_manual_watch_read_failed', message: error.message }))
     }
-    await checkWatch(env, watch, samNewTabRows)
-    await updateStatusSnapshotEntry(env, watch)
-    return json({ ok: true, watch: await durablePublicWatch(env, watch) })
+    const watch = body.watch ? normalizeWatch(body.watch, storedWatch) : storedWatch
+    if (!watch) return json({ error: 'Follow-up watch not found. Synchronize this RFI first.' }, 404)
+    const samNewTabRows = Array.isArray(body.newTabRows) ? body.newTabRows.slice(0, 1000) : []
+    await checkWatch(env, watch, samNewTabRows, { persist: false })
+    let persisted = true
+    try {
+      await writeWatch(env, watch)
+    } catch (error) {
+      persisted = false
+      console.warn(JSON.stringify({ event: 'rfi_followup_manual_watch_write_failed', message: error.message }))
+    }
+    try {
+      if (persisted) await updateStatusSnapshotEntry(env, watch)
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'rfi_followup_manual_snapshot_update_failed', message: error.message }))
+    }
+    const publicResult = await durablePublicWatch(env, watch)
+    if (watch.lastError) return json({ error: watch.lastError, watch: publicResult, persisted }, 502)
+    return json({ ok: true, watch: publicResult, persisted })
   }
   if (path === '/sam/follow-up-monitor/seen' && req.method === 'POST') {
     const body = await req.json()
