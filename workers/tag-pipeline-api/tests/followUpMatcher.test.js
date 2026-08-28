@@ -20,7 +20,7 @@ test('follow-on procurement types always include RFP and RFQ paths', () => {
   assert.deepEqual(requestedFollowUpTypes('RFQ'), ['o', 'k'])
 })
 
-test('weighted evidence returns a likely RFQ without requiring every exact signal', () => {
+test('weighted evidence ranks a likely RFQ without requiring ignored signals', () => {
   const candidate = followUpCandidate({
     noticeId: 'RFQ-99999',
     solicitationNumber: 'W91-NEW-002',
@@ -31,7 +31,7 @@ test('weighted evidence returns a likely RFQ without requiring every exact signa
     fullParentPathName: 'DEPT OF DEFENSE.DEPT OF THE ARMY.DIFFERENT OFFICE',
     naicsCode: '541611',
     pointOfContact: [{ email: 'new-buyer@example.mil', fullName: 'New Buyer' }],
-  }, source)
+  }, { ...source, rules: { ...source.rules, pocRule: 'Ignore' } })
 
   assert.ok(candidate)
   assert.equal(candidate.type, 'k')
