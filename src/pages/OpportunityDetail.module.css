@@ -376,6 +376,18 @@
 .relatedContactOpen strong { font-size: 12px; }
 .relatedContactOpen span { color: var(--gray-500); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relatedContactOpen:hover strong { color: var(--blue-700); text-decoration: underline; }
+.relationshipRow { align-items: center; background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-md); display: flex; gap: 8px; padding: 8px 9px; }
+.relationshipOpportunity { background: transparent; border: 0; color: var(--gray-900); cursor: pointer; flex: 1; font: inherit; min-width: 0; padding: 2px; text-align: left; }
+.relationshipOpportunity strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relationshipOpportunity small { font-size: 9px; margin-top: 2px; }
+.relationshipOpportunity:hover strong { color: var(--blue-700); text-decoration: underline; }
+.relationshipOpportunity:disabled { cursor: default; opacity: .65; }
+.relationshipTypeControl, .relationshipLinkAs { align-items: center; color: var(--gray-400); display: flex; flex-shrink: 0; font-size: 9px; font-weight: 650; gap: 6px; text-transform: uppercase; }
+.relationshipTypeControl select { min-width: 126px; }
+.relationshipComposer { margin-top: 10px; position: relative; }
+.relationshipComposerRow { align-items: end; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; }
+.relationshipLinkAs { align-items: flex-start; flex-direction: column; gap: 3px; }
+.relationshipLinkAs select { min-width: 150px; text-transform: none; }
 
 .contactAv {
   width: 34px;
@@ -588,6 +600,12 @@
   .fixedLinkEditRow button { grid-column: 2; grid-row: 1; }
   .linkEditRow input:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
   .linkEditRow button { grid-column: 2; grid-row: 1; }
+  .relationshipRow { align-items: stretch; flex-wrap: wrap; }
+  .relationshipOpportunity { flex-basis: 100%; }
+  .relationshipTypeControl { flex: 1; }
+  .relationshipTypeControl select { width: 100%; }
+  .relationshipComposerRow { grid-template-columns: 1fr; }
+  .relationshipLinkAs select { width: 100%; }
 }
 
 @media (max-width: 480px) {
