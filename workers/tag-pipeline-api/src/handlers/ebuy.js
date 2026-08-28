@@ -6,6 +6,7 @@ import {
   hasRunningEbuySync,
   listEbuyOpportunities,
   purgeExpiredEbuyRecords,
+  recoverStaleEbuySyncRuns,
   reconcileEbuyPipelineRecords,
   unlinkEbuyPipelineRecord,
   updateEbuyReviewState,
@@ -34,6 +35,7 @@ async function startLiveSync(env, source = 'manual', scheduledTime = null) {
   }
   const connection = await getEbuyConnectionStatus(db, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
   if (!connection.configured) return json({ error: 'Connect the company GSA eBuy account in Settings first', code: 'ebuy_not_connected' }, 409)
+  await recoverStaleEbuySyncRuns(db)
   if (await hasRunningEbuySync(db)) return json({ ok: true, started: false, alreadyRunning: true, message: 'An eBuy synchronization is already running.' }, 202)
   const resumable = await getResumableEbuySyncRun(db)
   const slot = scheduledTime ? Math.floor(Number(scheduledTime) / (6 * 60 * 60 * 1000)) : crypto.randomUUID()
@@ -43,12 +45,15 @@ async function startLiveSync(env, source = 'manual', scheduledTime = null) {
     params: { mode: 'live', source, resumeRunId: resumable?.id || null },
     retention: { successRetention: '3 days', errorRetention: '7 days' },
   }])
+  if (!created?.[0]?.id) {
+    return json({ error: 'Cloudflare did not start the eBuy synchronization Workflow', code: 'ebuy_workflow_not_started' }, 503)
+  }
   return json({
     ok: true,
-    started: created.length > 0,
+    started: true,
     resumed: Boolean(resumable),
     remaining: resumable ? resumable.retryableCandidates + resumable.retryableAttachments : null,
-    instanceId,
+    instanceId: created[0].id,
     mode: 'live',
   }, 202)
 }
@@ -62,6 +67,7 @@ export async function startScheduledEbuySync(env, scheduledTime) {
 }
 
 export async function getEbuyStatus(env) {
+  if (env.EBUY_DB) await recoverStaleEbuySyncRuns(env.EBUY_DB)
   const connection = await getEbuyConnectionStatus(env.EBUY_DB, Boolean(env.EBUY_CREDENTIAL_ENCRYPTION_KEY))
   const storage = await ebuyStorageStatus(env.EBUY_DB, { excludeFixtures: true })
   const connector = {
