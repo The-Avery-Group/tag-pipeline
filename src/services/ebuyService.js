@@ -20,6 +20,10 @@ export async function getEbuyOpportunity(requestId) {
   return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}`, { cache: 'no-store' })
 }
 
+export async function analyzeEbuyOpportunityDocuments(requestId) {
+  return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}/analysis`, { method: 'POST' })
+}
+
 export async function updateEbuyOpportunityState(requestId, reviewState, pipelineContractId = null) {
   return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}`, {
     method: 'PATCH',
