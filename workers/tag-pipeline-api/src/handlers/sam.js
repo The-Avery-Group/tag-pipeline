@@ -48,6 +48,7 @@ const PAGE_SIZE = 10
 const PAGE_DELAY = 250   // ms between paginated follow-up requests
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
+const FOLLOW_ON_TITLE_MATCHER_VERSION = 2
 // SAM rejects a range whose endpoints are exactly a calendar year apart in
 // practice, despite documenting a one-year maximum. Keep every individual
 // request strictly below that boundary and combine adjacent windows.
@@ -586,9 +587,38 @@ function solicitationDedupKey(solicitationNumber, noticeType) {
 // parameter. Procurement type is the only hard gate; organizational continuity,
 // POC, NAICS, title language, and explicit source references are weighted evidence.
 
-const TITLE_STOP_WORDS = new Set([
-  'and', 'for', 'the', 'with', 'from', 'this', 'that', 'will', 'services',
-  'service', 'support', 'contract', 'program', 'project', 'requirement',
+// Keep every title term, including common procurement words. Common words
+// carry less weight than distinctive subject-matter terms, but they still
+// contribute to both eligibility and the evidence shown to reviewers.
+const TITLE_FILLER_WORDS = new Set([
+  'a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'or', 'the',
+  'this', 'that', 'to', 'with', 'will',
+])
+const TITLE_PROCUREMENT_WORDS = new Set([
+  'contract', 'program', 'project', 'requirement', 'service', 'support',
+])
+const TITLE_PHRASE_ALIASES = [
+  [/\bcyber\s+security\b/g, 'cybersecurity'],
+  [/\bdata\s+cent(?:er|re)\b/g, 'datacenter'],
+  [/\bhelp\s+desk\b/g, 'helpdesk'],
+  [/\bhealth\s+care\b/g, 'healthcare'],
+  [/\binformation\s+technology\b/g, 'it'],
+  [/\boperations?\s+and\s+maintenance\b/g, 'om'],
+  [/\bartificial\s+intelligence\b/g, 'ai'],
+  [/\bmachine\s+learning\b/g, 'ml'],
+  [/\bidentity\s+and\s+access\s+management\b/g, 'iam'],
+  [/\bquality\s+assurance\b/g, 'qa'],
+  [/\belectronic\s+health\s+records?\b/g, 'ehr'],
+  [/\benterprise\s+resource\s+planning\b/g, 'erp'],
+  [/\bcustomer\s+relationship\s+management\b/g, 'crm'],
+]
+const TITLE_TOKEN_ALIASES = new Map([
+  ['cyber', 'cybersecurity'], ['infosec', 'cybersecurity'],
+  ['workforce', 'personnel'],
+  ['purchase', 'acquisition'], ['procurement', 'acquisition'],
+  ['consultancy', 'consulting'], ['advisory', 'consulting'],
+  ['modernisation', 'modernization'],
+  ['catalogue', 'catalog'],
 ])
 
 const DEFAULT_FOLLOW_UP_RULES = {
@@ -642,22 +672,112 @@ function cacheFingerprint(value) {
   return (hash >>> 0).toString(36)
 }
 
-function titleKeywords(title) {
-  return new Set(
-    normalized(title)
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((word) => word.length >= 3 && !TITLE_STOP_WORDS.has(word))
-  )
+function singularTitleToken(token) {
+  if (token.length <= 3 || token.endsWith('ss') || token.endsWith('us') || token.endsWith('is')) return token
+  if (token.endsWith('ies') && token.length > 4) return `${token.slice(0, -3)}y`
+  if (/(?:sses|shes|ches|xes|zes)$/.test(token)) return token.slice(0, -2)
+  if (token.endsWith('s')) return token.slice(0, -1)
+  return token
 }
 
-function titleOverlapPercent(sourceTitle, candidateTitle) {
-  const source = titleKeywords(sourceTitle)
-  const candidate = titleKeywords(candidateTitle)
-  if (source.size === 0 || candidate.size === 0) return 0
-  let common = 0
-  source.forEach((word) => { if (candidate.has(word)) common++ })
-  return Math.round((common / source.size) * 100)
+function titleTokens(title) {
+  let text = normalized(title)
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+  TITLE_PHRASE_ALIASES.forEach(([pattern, replacement]) => { text = text.replace(pattern, replacement) })
+  return text.split(/\s+/)
+    .map((token) => singularTitleToken(token))
+    .map((token) => TITLE_TOKEN_ALIASES.get(token) || token)
+    .filter(Boolean)
+}
+
+function titleTokenWeight(token) {
+  if (TITLE_FILLER_WORDS.has(token)) return 0.15
+  if (TITLE_PROCUREMENT_WORDS.has(token)) return 0.45
+  return 1
+}
+
+function editDistance(left, right) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+    const current = [leftIndex]
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + Number(left[leftIndex - 1] !== right[rightIndex - 1]),
+      )
+    }
+    for (let index = 0; index < current.length; index++) previous[index] = current[index]
+  }
+  return previous[right.length]
+}
+
+function fuzzyTitleTokenMatch(left, right) {
+  if (left.length < 5 || right.length < 5 || left[0] !== right[0]) return false
+  return 1 - (editDistance(left, right) / Math.max(left.length, right.length)) >= 0.86
+}
+
+function phraseCoverage(sourceTokens, candidateTokens) {
+  if (sourceTokens.length < 2) return null
+  const candidatePhrases = new Set()
+  for (const size of [2, 3]) {
+    for (let index = 0; index <= candidateTokens.length - size; index++) {
+      candidatePhrases.add(candidateTokens.slice(index, index + size).join(' '))
+    }
+  }
+  let available = 0
+  let matched = 0
+  for (const size of [2, 3]) {
+    for (let index = 0; index <= sourceTokens.length - size; index++) {
+      const tokens = sourceTokens.slice(index, index + size)
+      const weight = tokens.reduce((sum, token) => sum + titleTokenWeight(token), 0)
+      available += weight
+      if (candidatePhrases.has(tokens.join(' '))) matched += weight
+    }
+  }
+  return available ? matched / available : null
+}
+
+export function matchFollowOnTitles(sourceTitle, candidateTitle) {
+  const sourceTokens = titleTokens(sourceTitle)
+  const candidateTokens = titleTokens(candidateTitle)
+  const source = [...new Set(sourceTokens)]
+  const candidate = [...new Set(candidateTokens)]
+  if (!source.length || !candidate.length) return { percent: 0, matchedTerms: [], phrasePercent: 0 }
+
+  const unusedCandidates = new Set(candidate)
+  const matches = []
+  source.forEach((sourceToken) => {
+    if (unusedCandidates.has(sourceToken)) {
+      unusedCandidates.delete(sourceToken)
+      matches.push({ source: sourceToken, candidate: sourceToken, kind: 'exact' })
+      return
+    }
+    const fuzzy = [...unusedCandidates].find((candidateToken) => fuzzyTitleTokenMatch(sourceToken, candidateToken))
+    if (fuzzy) {
+      unusedCandidates.delete(fuzzy)
+      matches.push({ source: sourceToken, candidate: fuzzy, kind: 'fuzzy' })
+    }
+  })
+
+  const sourceWeight = source.reduce((sum, token) => sum + titleTokenWeight(token), 0)
+  const candidateWeight = candidate.reduce((sum, token) => sum + titleTokenWeight(token), 0)
+  const matchedSourceWeight = matches.reduce((sum, match) => sum + titleTokenWeight(match.source), 0)
+  const matchedCandidateWeight = matches.reduce((sum, match) => sum + titleTokenWeight(match.candidate), 0)
+  const recall = matchedSourceWeight / sourceWeight
+  const precision = matchedCandidateWeight / candidateWeight
+  // F2 favours coverage of the original title while still penalizing a
+  // candidate padded with largely unrelated language.
+  const tokenScore = recall && precision ? (5 * precision * recall) / ((4 * precision) + recall) : 0
+  const phraseScore = phraseCoverage(sourceTokens, candidateTokens)
+  const combined = phraseScore === null ? tokenScore : (tokenScore * 0.8) + (phraseScore * 0.2)
+  return {
+    percent: Math.round(Math.min(1, combined) * 100),
+    matchedTerms: matches.map((match) => match.kind === 'fuzzy' ? `${match.source}≈${match.candidate}` : match.source),
+    phrasePercent: Math.round((phraseScore || 0) * 100),
+  }
 }
 
 function matchingPOC(raw, email) {
@@ -711,7 +831,8 @@ export function followUpCandidate(raw, source) {
   const agencyMatches = exactOrganizationMatch(org.agency, source.agency)
   const officeMatches = exactOrganizationMatch(org.office, source.office)
   const poc = matchingPOC(raw, source.pocEmail)
-  const overlap = titleOverlapPercent(source.title, raw.title)
+  const titleMatch = matchFollowOnTitles(source.title, raw.title)
+  const overlap = titleMatch.percent
   if (normalized(raw.noticeId) === normalized(source.noticeId)) return null
 
   // The criteria selected by the user determine eligibility. Additional
@@ -734,7 +855,11 @@ export function followUpCandidate(raw, source) {
   if (officeMatches) { score += 10; reasons.push('Same office') }
   if (naicsMatches) { score += 15; reasons.push('Same NAICS') }
   const titlePoints = Math.min(25, Math.round(overlap / 4))
-  if (titlePoints) { score += titlePoints; reasons.push(`${overlap}% title keyword overlap`) }
+  if (titlePoints) {
+    score += titlePoints
+    const evidence = titleMatch.matchedTerms.slice(0, 6).join(', ')
+    reasons.push(`${overlap}% title match${evidence ? ` (${evidence})` : ''}`)
+  }
 
   // Ignored criteria do not add weight to the ranking.
   if (rules.departmentRule === 'Ignore' && departmentMatches) score -= 10
@@ -758,6 +883,8 @@ export function followUpCandidate(raw, source) {
     type:               String(raw.type || '').trim(),
     noticeType:         normalizeDiscoveryNoticeType(raw.type, raw.baseType, raw.title),
     keywordOverlapPercent: overlap,
+    titleMatchPercent:  overlap,
+    titleMatchEvidence: titleMatch.matchedTerms,
     matchScore:         score,
     confidence:         score >= 70 ? 'Strong' : score >= 45 ? 'Likely' : 'Possible',
     matchReasons:       reasons,
@@ -902,7 +1029,10 @@ async function handleFollowUps(req, env) {
 
   // The criteria are also the cache identity: if an RFI's title, POC, or
   // organization changes, it naturally gets a fresh matching result.
-  const cacheKey = `rfi_followups:${cacheFingerprint(JSON.stringify(source))}`
+  const cacheKey = `rfi_followups:${cacheFingerprint(JSON.stringify({
+    ...source,
+    titleMatcherVersion: FOLLOW_ON_TITLE_MATCHER_VERSION,
+  }))}`
   const cached = env.CACHE ? await env.CACHE.get(cacheKey, 'json') : null
   if (cached) return json({ ...cached, cached: true })
 
