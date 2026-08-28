@@ -15,7 +15,7 @@ import {
   updateTransactionCodingTransaction,
   upsertTransactionCodingRule,
 } from '../lib/transactionCodingRepository.js'
-import { buildNeutralExportCsv, cleanText, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
+import { buildCostpointApVoucherCsv, cleanText, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
 import {
   appendTransactionExportHistory,
   deleteTransactionRuleFromWorkbook,
@@ -304,9 +304,20 @@ export async function handleTransactionCoding(req, env, identity) {
       return json({ error: error.message, code: 'transaction_selection_changed' }, 409)
     }
     if (!rows.length) return json({ error: 'There are no selected transactions available to export.' }, 409)
-    const csv = buildNeutralExportCsv(rows)
+    let costpointExport
+    try {
+      costpointExport = buildCostpointApVoucherCsv(rows, {
+        invoiceReferenceMode: body.invoiceReferenceMode,
+        invoiceReferencePattern: body.invoiceReferencePattern,
+        invoiceReferences: body.invoiceReferences,
+        inputVoucherNumbers: body.inputVoucherNumbers,
+      })
+    } catch (error) {
+      return json({ error: error.message, code: 'invalid_costpoint_export' }, 400)
+    }
+    const { csv, invoiceReferences, inputVoucherNumbers } = costpointExport
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const fileName = `${safeFilePart(body.fileName || 'Transaction-Coding')}-${timestamp}.csv`
+    const fileName = `${safeFilePart(body.fileName || 'Costpoint-AP-Vouchers')}-${timestamp}.csv`
     let workspace = null
     let archivedItem = null
     let warning = ''
@@ -331,7 +342,7 @@ export async function handleTransactionCoding(req, env, identity) {
         console.warn(JSON.stringify({ event: 'transaction_export_history_write_failed', exportId: exported.id, message: error.message }))
       }
     }
-    return json({ ok: true, export: exported, csv, warning }, 201)
+    return json({ ok: true, export: exported, csv, invoiceReferences, inputVoucherNumbers, warning }, 201)
   }
 
   const exportMatch = path.match(/^\/transaction-coding\/exports\/([^/]+)$/)
