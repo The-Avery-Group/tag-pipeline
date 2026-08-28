@@ -40,6 +40,7 @@ import {
   samArchiveStorageReady,
   updateSAMArchive,
 } from '../lib/samArchiveRepository.js'
+import { getDocumentAnalysis, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances delegated pulls while it remains open. Autonomous pulls use a
 // Cloudflare Workflow so every unit gets its own retryable durable step.
@@ -830,6 +831,8 @@ export async function findRFIFollowUps(env, source) {
 
 async function setKeyExpired(env, expired) {
   if (!env.CACHE) return
+  const current = await env.CACHE.get('sam_key_expired', 'json')
+  if (current?.expired === expired) return
   await env.CACHE.put('sam_key_expired', JSON.stringify({ expired }), {
     expirationTtl: 60 * 60 * 24 * 100,
   })
@@ -975,13 +978,15 @@ async function runSAMPull(
   // this is the "monitor progress" ask. Intentionally limited to a handful
   // of KV writes total for the whole run (not one per NAICS code), since
   // each KV put() also counts against the subrequest budget.
-  await setRunLog(env, {
-    status: 'running', phase: 'fetching', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
-    naicsTotal: naicsCodes.length, naicsProcessed: startIndex, nextNaicsIndex: startIndex,
-    nextCursor: { naicsIndex: startIndex, offset: startOffset },
-    fetched: run.totalFetched, written: run.totalWritten, deduped: run.totalDeduped, deleted: run.totalDeleted,
-    totalFetched: run.totalFetched, totalWritten: run.totalWritten, totalDeduped: run.totalDeduped, totalDeleted: run.totalDeleted,
-  })
+  if (!resumeCursor) {
+    await setRunLog(env, {
+      status: 'running', phase: 'fetching', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
+      naicsTotal: naicsCodes.length, naicsProcessed: startIndex, nextNaicsIndex: startIndex,
+      nextCursor: { naicsIndex: startIndex, offset: startOffset },
+      fetched: run.totalFetched, written: run.totalWritten, deduped: run.totalDeduped, deleted: run.totalDeleted,
+      totalFetched: run.totalFetched, totalWritten: run.totalWritten, totalDeduped: run.totalDeduped, totalDeleted: run.totalDeleted,
+    })
+  }
 
   // Build date ranges
   const now        = new Date()
@@ -1220,19 +1225,6 @@ async function runSAMPull(
   let totalRepaired = 0
   const writtenRows = []
   if (!fatalError && (toWrite.length > 0 || typeRepairs.length > 0)) {
-    await setRunLog(env, {
-      status: 'running', phase: 'writing', timestamp: runStart, runId: run.runId, startedAt: run.startedAt,
-      // If this invocation is killed during Graph writes, resume from the
-      // start of this chunk. Existing Notice IDs make that retry idempotent;
-      // resuming at the next NAICS could otherwise lose rows not yet written.
-      naicsTotal: naicsCodes.length, naicsProcessed, nextNaicsIndex: startIndex,
-      nextCursor: { naicsIndex: startIndex, offset: startOffset },
-      toWrite: Math.min(toWrite.length + typeRepairs.length, MAX_WRITES_PER_RUN), written: run.totalWritten,
-      fetched: run.totalFetched + totalFetched, deduped: run.totalDeduped + dedupDeleteRowIndices.size, deleted: run.totalDeleted,
-      totalFetched: run.totalFetched + totalFetched, totalWritten: run.totalWritten,
-      totalDeduped: run.totalDeduped + dedupDeleteRowIndices.size, totalDeleted: run.totalDeleted,
-    })
-
     for (const repair of typeRepairs) {
       try {
         await updateOpportunityRow(env, token, repair.rowIndex, repair.row, existingHeaders)
@@ -1436,6 +1428,7 @@ export async function handleSAM(req, env, ctx) {
   // GET /sam/opportunity — live SAM.gov record enriched with archive state.
   if (url.pathname === '/sam/opportunity' && req.method === 'GET') {
     const cacheKey = `sam:opportunity-detail:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
+    const cached = cacheKey && await env.CACHE?.get(cacheKey, 'json')
     try {
       const record = await fetchSAMOpportunityRecord(env, {
         noticeId: url.searchParams.get('noticeId') || '',
@@ -1447,10 +1440,11 @@ export async function handleSAM(req, env, ctx) {
         ? await findSAMArchive(env.EBUY_DB, detail)
         : null
       const opportunity = mergeSAMArchive(detail, archive)
-      await env.CACHE?.put(cacheKey, JSON.stringify(opportunity), { expirationTtl: 90 * 24 * 60 * 60 })
+      if (JSON.stringify(cached) !== JSON.stringify(opportunity)) {
+        await env.CACHE?.put(cacheKey, JSON.stringify(opportunity), { expirationTtl: 90 * 24 * 60 * 60 })
+      }
       return json({ opportunity })
     } catch (error) {
-      const cached = cacheKey && await env.CACHE?.get(cacheKey, 'json')
       if (cached) return json({ opportunity: cached, warning: error.message, stale: true })
       return json({ error: error.message, code: error.code || 'sam_opportunity_failed' }, error.status || 500)
     }
@@ -1471,6 +1465,17 @@ export async function handleSAM(req, env, ctx) {
   if (url.pathname === '/sam/archive/status' && req.method === 'GET') {
     if (!env.EBUY_DB || !(await samArchiveStorageReady(env.EBUY_DB))) return json({ archive: null })
     return json({ archive: await getSAMArchive(env.EBUY_DB, url.searchParams.get('key') || '') })
+  }
+
+  if (url.pathname === '/sam/archive/analysis' && req.method === 'POST') {
+    const body = await req.json().catch(() => ({}))
+    try {
+      const run = await runSAMArchiveDocumentAnalysis(env, body)
+      const key = body.solicitationNumber || body.noticeId
+      return json({ ok: true, run, analysis: await getDocumentAnalysis(env, key) })
+    } catch (error) {
+      return json({ error: error.message, code: error.code || 'sam_document_analysis_failed' }, error.status || 500)
+    }
   }
 
   if (url.pathname === '/sam/archive/review' && req.method === 'POST') {
