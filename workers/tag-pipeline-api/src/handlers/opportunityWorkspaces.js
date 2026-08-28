@@ -2,6 +2,9 @@ import {
   claimWorkspaceRun,
   ensureWorkspaceRequest,
   getWorkspace,
+  linkWorkspaceMembers,
+  completeWorkspaceGroup,
+  workspaceRootIsShared,
   deleteWorkspaceRecord,
   resetWorkspaceForRebuild,
   updateWorkspace,
@@ -15,8 +18,11 @@ import {
   removeReferenceMaterialUploads,
   resolveWorkspaceFolderLink,
   deleteWorkspaceRoot,
+  shareRelatedWorkspaceFolders,
+  updatePipelineFolderLink,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
+import { getDocumentAnalysis, runDocumentAnalysis } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -107,6 +113,24 @@ export async function handleOpportunityWorkspaces(req, env) {
       return json({ ok: true, ...result }, result.started ? 202 : 200)
     }
 
+    if (path === '/opportunity-workspaces/link' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      if (body.relationshipType !== 'Follow-on') {
+        return json({ ok: true, migrated: false, reason: 'Only Follow-on relationships reorganize SharePoint folders' })
+      }
+      const left = await getWorkspace(storage, body.leftOpportunityKey)
+      const right = await getWorkspace(storage, body.rightOpportunityKey)
+      if (!left || !right) return json({ error: 'Set up both opportunity workspaces before sharing their folder' }, 409)
+      if (!left.rootFolderId || !right.rootFolderId) return json({ error: 'Both SharePoint folders must finish setup before the Follow-on relationship can reorganize them. Try linking again after setup completes.' }, 409)
+      const group = await linkWorkspaceMembers(storage, left, right)
+      const canonical = group.rootSource.opportunityKey === left.opportunityKey ? left : right
+      const related = canonical === left ? right : left
+      const folders = await shareRelatedWorkspaceFolders(env, canonical, related)
+      await completeWorkspaceGroup(storage, group.groupId, folders, folders.members)
+      await Promise.all([left, right].map((workspace) => updatePipelineFolderLink(env, workspace, folders.webUrl)))
+      return json({ ok: true, groupId: group.groupId, workspaceUrl: folders.webUrl, members: folders.members })
+    }
+
     const retryMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/retry$/)
     if (retryMatch && req.method === 'POST') {
       const key = decodeURIComponent(retryMatch[1])
@@ -145,6 +169,15 @@ export async function handleOpportunityWorkspaces(req, env) {
       return json({ ok: true, ...(await removeReferenceMaterialUploads(env, workspace, body.itemIds || [])) })
     }
 
+    const analysisMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/analysis$/)
+    if (analysisMatch && req.method === 'POST') {
+      const key = decodeURIComponent(analysisMatch[1])
+      return json({ ok: true, run: await runDocumentAnalysis(env, key), analysis: await getDocumentAnalysis(env, key) })
+    }
+    if (analysisMatch && req.method === 'GET') {
+      return json({ analysis: await getDocumentAnalysis(env, decodeURIComponent(analysisMatch[1])) })
+    }
+
     const uploadsMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/uploads$/)
     if (uploadsMatch && req.method === 'POST') {
       const workspace = await getWorkspace(storage, decodeURIComponent(uploadsMatch[1]))
@@ -159,7 +192,10 @@ export async function handleOpportunityWorkspaces(req, env) {
       const workspace = await getWorkspace(storage, key)
       if (!workspace) return json({ ok: true, deleted: false })
       const body = await req.json().catch(() => ({}))
-      const sharePoint = body.deleteSharePoint === true ? await deleteWorkspaceRoot(env, workspace) : { deleted: false, retained: true }
+      const shared = await workspaceRootIsShared(storage, key)
+      const sharePoint = body.deleteSharePoint === true && !shared
+        ? await deleteWorkspaceRoot(env, workspace)
+        : { deleted: false, retained: true, reason: shared ? 'The folder is shared by related opportunities' : undefined }
       await deleteWorkspaceRecord(storage, key)
       return json({ ok: true, deleted: true, sharePoint })
     }
