@@ -112,7 +112,10 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     const response = await workerFetch('/sam/follow-up-monitor/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ watches, replace: forceReplace }),
     })
-    if (!response.ok) throw new Error('Could not refresh RFI follow-on monitoring')
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.message || data.error || 'Could not refresh RFI follow-on monitoring')
+    }
     return watches
   }, [buildWatches, refreshConfiguration, replace])
 
@@ -120,7 +123,10 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
     if (!WORKER_URL) throw new Error('VITE_API_BASE_URL not set')
     setChecking(true); setError(null)
     try {
-      await synchronize({ forceReplace: false })
+      const config = await refreshConfiguration()
+      const watch = buildWatches(config.rules, config.overrides, config.decisions)
+        .find((item) => normalized(item.opportunityId) === normalized(opportunityId))
+      if (!watch) throw new Error('This opportunity is not eligible for follow-on monitoring')
       // Manual checks must use the same SAM rows the user can see on the New
       // tab. Do not depend on the optional app-only background workbook flag.
       const newTabRows = (await getSAMOpportunities()).filter((row) => {
@@ -128,7 +134,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
         return type.includes('RFP') || type.includes('RFQ')
       })
       const response = await workerFetch('/sam/follow-up-monitor/check-one', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId, newTabRows }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityId, watch, newTabRows }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Could not check RFI follow-ons')
@@ -138,7 +144,7 @@ export function useRfiFollowUpMonitor(opportunities, contacts = [], { replace = 
       setError(err.message)
       throw err
     } finally { setChecking(false) }
-  }, [synchronize])
+  }, [buildWatches, refreshConfiguration])
 
   const markSeen = useCallback(async (opportunityId) => {
     if (!WORKER_URL) return
