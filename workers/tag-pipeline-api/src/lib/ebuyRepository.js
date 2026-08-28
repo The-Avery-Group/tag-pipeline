@@ -289,6 +289,23 @@ export async function countPendingEbuySyncCandidates(db, runId) {
   return Number(row?.count || 0)
 }
 
+export async function getEbuySyncCandidateFailures(db, runId, limit = 20) {
+  const [count, rows] = await Promise.all([
+    db.prepare("SELECT COUNT(*) AS count FROM ebuy_sync_candidates WHERE run_id = ? AND status = 'error'").bind(runId).first(),
+    db.prepare(`SELECT request_id, error_message FROM ebuy_sync_candidates
+      WHERE run_id = ? AND status = 'error' ORDER BY updated_at DESC LIMIT ?`)
+      .bind(runId, Math.min(100, Math.max(1, Number(limit || 20)))).all(),
+  ])
+  return {
+    count: Number(count?.count || 0),
+    items: (rows.results || []).map((row) => ({
+      requestId: row.request_id,
+      code: 'ebuy_candidate_failed',
+      message: row.error_message || 'This eBuy opportunity could not be processed',
+    })),
+  }
+}
+
 export async function getResumableEbuySyncRun(db, { maxAgeHours = 7 * 24 } = {}) {
   const threshold = new Date(Date.now() - Math.max(1, Number(maxAgeHours || 7 * 24)) * 60 * 60 * 1000).toISOString()
   const row = await db.prepare(`SELECT r.*,
@@ -316,12 +333,14 @@ export async function getResumableEbuySyncRun(db, { maxAgeHours = 7 * 24 } = {})
   }
 }
 
-export async function resumeEbuySyncRun(db, id) {
+export async function resumeEbuySyncRun(db, id, { retryErrors = true } = {}) {
   const row = await db.prepare('SELECT * FROM ebuy_sync_runs WHERE id = ?').bind(id).first()
   if (!row) throw new Error('The interrupted eBuy synchronization could not be found')
   const now = new Date().toISOString()
-  await db.prepare("UPDATE ebuy_sync_candidates SET status = 'pending', error_message = NULL, updated_at = ? WHERE run_id = ? AND status = 'error'")
-    .bind(now, id).run()
+  if (retryErrors) {
+    await db.prepare("UPDATE ebuy_sync_candidates SET status = 'pending', error_message = NULL, updated_at = ? WHERE run_id = ? AND status = 'error'")
+      .bind(now, id).run()
+  }
   const counts = await db.prepare(`SELECT
       SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS completed,
       COUNT(*) AS total
@@ -330,14 +349,24 @@ export async function resumeEbuySyncRun(db, id) {
   const processedCandidates = Number(counts?.completed || 0)
   const totalCandidates = Number(counts?.total || 0)
   await db.prepare(`UPDATE ebuy_sync_runs SET status = 'running', completed_at = NULL,
-      inserted_count = 0, updated_count = 0, unchanged_count = 0, removed_count = 0,
-      archived_file_count = 0, error_message = NULL, details_json = ? WHERE id = ?`)
+      error_message = NULL, details_json = ? WHERE id = ?`)
     .bind(encode({ progress: {
       phase: 'resuming', percent: totalCandidates ? 30 + Math.round((processedCandidates / totalCandidates) * 40) : 30,
       message: `Resuming ${processedCandidates} of ${totalCandidates} opportunities`,
       processed: processedCandidates, total: totalCandidates, archivedFiles: 0, updatedAt: now,
     } }), id).run()
-  return { id, startedAt: row.started_at, discovered, processedCandidates, totalCandidates }
+  return {
+    id,
+    startedAt: row.started_at,
+    discovered,
+    inserted: Number(row.inserted_count || 0),
+    updated: Number(row.updated_count || 0),
+    unchanged: Number(row.unchanged_count || 0),
+    removed: Number(row.removed_count || 0),
+    archivedFiles: Number(row.archived_file_count || 0),
+    processedCandidates,
+    totalCandidates,
+  }
 }
 
 export async function resetRetryableEbuyAttachments(db, runStartedAt) {
