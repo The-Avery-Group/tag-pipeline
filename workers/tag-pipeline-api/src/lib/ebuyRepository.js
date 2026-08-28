@@ -108,6 +108,42 @@ function publicSyncRun(row) {
   return { ...row, details, progress }
 }
 
+export const EBUY_SYNC_STALE_AFTER_MS = 30 * 60 * 1000
+
+function syncRunHeartbeat(row) {
+  const details = decode(row?.details_json, {})
+  return details?.progress?.updatedAt || details?.updatedAt || row?.started_at || null
+}
+
+export function isEbuySyncRunStale(row, now = Date.now(), staleAfterMs = EBUY_SYNC_STALE_AFTER_MS) {
+  if (!row || row.status !== 'running') return false
+  const heartbeat = new Date(syncRunHeartbeat(row)).getTime()
+  return !Number.isFinite(heartbeat) || now - heartbeat > staleAfterMs
+}
+
+export async function recoverStaleEbuySyncRuns(db, { now = new Date(), staleAfterMs = EBUY_SYNC_STALE_AFTER_MS } = {}) {
+  if (!db) return { recovered: 0 }
+  const result = await db.prepare("SELECT * FROM ebuy_sync_runs WHERE status = 'running' ORDER BY started_at DESC LIMIT 10").all()
+  let recovered = 0
+  for (const row of result.results || []) {
+    if (!isEbuySyncRunStale(row, now.getTime(), staleAfterMs)) continue
+    const details = decode(row.details_json, {})
+    const message = 'The eBuy synchronization stopped reporting progress and can now be resumed.'
+    const progress = {
+      ...(details.progress || {}),
+      phase: 'error',
+      message,
+      updatedAt: now.toISOString(),
+    }
+    const update = await db.prepare(`UPDATE ebuy_sync_runs
+      SET status = 'error', completed_at = ?, error_message = ?, details_json = ?
+      WHERE id = ? AND status = 'running'`)
+      .bind(now.toISOString(), message, encode({ ...details, progress }), row.id).run()
+    recovered += Number(update?.meta?.changes || update?.changes || 0)
+  }
+  return { recovered }
+}
+
 export async function ebuyStorageStatus(db, { excludeFixtures = false } = {}) {
   if (!db) return { status: 'not_configured', message: 'The eBuy D1 database binding is not configured.' }
   try {
@@ -253,8 +289,8 @@ export async function countPendingEbuySyncCandidates(db, runId) {
   return Number(row?.count || 0)
 }
 
-export async function getResumableEbuySyncRun(db, { maxAgeHours = 24 } = {}) {
-  const threshold = new Date(Date.now() - Math.max(1, Number(maxAgeHours || 24)) * 60 * 60 * 1000).toISOString()
+export async function getResumableEbuySyncRun(db, { maxAgeHours = 7 * 24 } = {}) {
+  const threshold = new Date(Date.now() - Math.max(1, Number(maxAgeHours || 7 * 24)) * 60 * 60 * 1000).toISOString()
   const row = await db.prepare(`SELECT r.*,
       (SELECT COUNT(*) FROM ebuy_sync_candidates c WHERE c.run_id = r.id AND c.status = 'complete') AS completed_candidates,
       (SELECT COUNT(*) FROM ebuy_sync_candidates c WHERE c.run_id = r.id AND c.status IN ('pending', 'error')) AS retryable_candidates,
@@ -262,7 +298,7 @@ export async function getResumableEbuySyncRun(db, { maxAgeHours = 24 } = {}) {
         JOIN ebuy_opportunities o ON o.request_id = a.request_id
         WHERE a.archive_status IN ('pending', 'error') AND o.last_seen_at >= r.started_at) AS retryable_attachments
     FROM ebuy_sync_runs r
-    WHERE r.status = 'error' AND r.started_at >= ?
+    WHERE r.status = 'error' AND COALESCE(r.completed_at, r.started_at) >= ?
       AND (
         EXISTS (SELECT 1 FROM ebuy_sync_candidates c WHERE c.run_id = r.id AND c.status IN ('pending', 'error'))
         OR EXISTS (SELECT 1 FROM ebuy_attachments a
@@ -299,7 +335,7 @@ export async function resumeEbuySyncRun(db, id) {
     .bind(encode({ progress: {
       phase: 'resuming', percent: totalCandidates ? 30 + Math.round((processedCandidates / totalCandidates) * 40) : 30,
       message: `Resuming ${processedCandidates} of ${totalCandidates} opportunities`,
-      processed: processedCandidates, total: totalCandidates, archivedFiles: 0,
+      processed: processedCandidates, total: totalCandidates, archivedFiles: 0, updatedAt: now,
     } }), id).run()
   return { id, startedAt: row.started_at, discovered, processedCandidates, totalCandidates }
 }
@@ -483,13 +519,14 @@ export async function listEbuyFollowOnCandidates(db, { postedAfter = null, poste
 export async function startEbuySyncRun(db, mode, details = {}) {
   const id = crypto.randomUUID()
   const startedAt = new Date().toISOString()
+  const progress = details.progress ? { ...details.progress, updatedAt: startedAt } : null
   await db.prepare('INSERT INTO ebuy_sync_runs (id, mode, status, started_at, details_json) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, mode, 'running', startedAt, encode(details)).run()
+    .bind(id, mode, 'running', startedAt, encode({ ...details, ...(progress ? { progress } : {}) })).run()
   return { id, startedAt }
 }
 
 export async function updateEbuySyncRunProgress(db, id, result = {}, progress = {}) {
-  const details = { ...(result?.details || {}), progress }
+  const details = { ...(result?.details || {}), progress: { ...progress, updatedAt: new Date().toISOString() } }
   await db.prepare(`UPDATE ebuy_sync_runs SET discovered_count = ?, inserted_count = ?, updated_count = ?,
     unchanged_count = ?, removed_count = ?, archived_file_count = ?, details_json = ?
     WHERE id = ? AND status = 'running'`)
@@ -501,8 +538,7 @@ export async function updateEbuySyncRunProgress(db, id, result = {}, progress = 
 }
 
 export async function hasRunningEbuySync(db) {
-  const threshold = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()
-  const row = await db.prepare("SELECT id FROM ebuy_sync_runs WHERE status = 'running' AND started_at >= ? ORDER BY started_at DESC LIMIT 1").bind(threshold).first()
+  const row = await db.prepare("SELECT id FROM ebuy_sync_runs WHERE status = 'running' ORDER BY started_at DESC LIMIT 1").first()
   return Boolean(row?.id)
 }
 
@@ -533,6 +569,20 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
     // a transient eBuy failure cannot erase the information needed to retry.
     if (!record.attachments.length && Array.isArray(previousRecord.attachments)) record.attachments = previousRecord.attachments
     if (!record.amendments.length && Array.isArray(previousRecord.amendments)) record.amendments = previousRecord.amendments
+    // Discovery summaries and intermittent detail fallbacks are intentionally
+    // partial. Never replace richer saved posting data with an empty field
+    // merely because one detail request timed out.
+    for (const field of [
+      'requestType', 'title', 'description', 'referenceNumber', 'buyerAgency', 'buyerDepartment',
+      'buyerName', 'buyerEmail', 'buyerPhone', 'setAsideType', 'contractType', 'awardMethod',
+      'placeOfPerformance', 'postedAt', 'closesAt',
+    ]) {
+      if ((record[field] == null || record[field] === '') && previousRecord[field]) record[field] = previousRecord[field]
+    }
+    for (const field of ['performanceStates', 'vehicleSources', 'vehicleSins', 'vehiclePairs']) {
+      if (!record[field]?.length && Array.isArray(previousRecord[field])) record[field] = previousRecord[field]
+    }
+    record.sourceDetails = { ...(previousRecord.sourceDetails || {}), ...(record.sourceDetails || {}) }
     const hash = await hashEbuyOpportunity(record)
     const lifecycle = lifecycleForEbuyOpportunity(record, now)
     const changed = existing ? changedEbuyFields(previousRecord, record) : Object.keys(record)
