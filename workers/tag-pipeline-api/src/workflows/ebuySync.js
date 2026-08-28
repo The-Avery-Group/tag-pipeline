@@ -17,6 +17,7 @@ import {
   finishEbuySyncCandidate,
   finishEbuySyncRun,
   getEbuyAttachmentArchiveProgress,
+  getEbuySyncCandidateFailures,
   nextPendingEbuyAttachment,
   nextEbuySyncCandidateBatch,
   recordArchivedEbuyAttachment,
@@ -32,7 +33,11 @@ import {
 } from '../lib/ebuyRepository.js'
 import { getWorkspace } from '../lib/opportunityWorkspaceRepository.js'
 import { archiveEbuyFile, deleteEmptyEbuyArchiveFolder, ensureEbuyArchiveFolder, moveArchivedEbuyFile } from '../lib/sharepointArchive.js'
-import { EBUY_ARCHIVE_FILES_PER_CHECKPOINT, scheduleEbuyArchiveContinuation } from './ebuySyncChain.js'
+import {
+  EBUY_ARCHIVE_FILES_PER_CHECKPOINT,
+  EBUY_OPPORTUNITIES_PER_CHECKPOINT,
+  scheduleEbuyArchiveContinuation,
+} from './ebuySyncChain.js'
 import { refreshEbuyFollowOnWatches } from '../handlers/rfiFollowUpMonitor.js'
 
 function mergeCounts(target, result) {
@@ -208,20 +213,10 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
 
   try {
     let record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
-    const attachmentEvidenceIncomplete = record.attachmentReferences?.mentioned && !record.attachments.length
-      || record.attachmentReferences?.missing?.length > 0
-    if (!candidateWarning && attachmentEvidenceIncomplete) {
-      try {
-        const verifiedDetail = await getEbuyOpportunityDetail(candidate.request_id, candidate.contract_number, jwt)
-        record = normalizeLiveEbuyOpportunity(summary, verifiedDetail, candidate.contract_number)
-      } catch (error) {
-        candidateWarning = {
-          requestId: candidate.request_id,
-          code: error.code || 'ebuy_attachment_verification_failed',
-          message: `${error.message}; attachment references will be checked again on the next sync`,
-        }
-      }
-    }
+    // The detail request above is authoritative for this pass. Repeating the
+    // same request immediately when a description mentions a missing file
+    // doubles upstream traffic without producing different data and can hold
+    // an otherwise healthy synchronization open on a slow eBuy response.
     if (!candidateWarning && (record.attachmentReferences?.mentioned && !record.attachments.length || record.attachmentReferences?.missing?.length > 0)) {
       candidateWarning = {
         requestId: candidate.request_id,
@@ -263,7 +258,11 @@ export async function runEbuySyncWorkflow(env, event, step) {
   const continuationKey = String(event.payload?.continuationKey || event.instanceId || resumeRunId || '').trim()
   const source = event.payload?.source || 'manual'
   const run = resumeRunId
-    ? await step.do('Resume interrupted eBuy sync record', () => resumeEbuySyncRun(env.EBUY_DB, resumeRunId))
+    ? await step.do('Resume interrupted eBuy sync record', () => resumeEbuySyncRun(env.EBUY_DB, resumeRunId, {
+      // Automatic checkpoints must not retry a record already classified as
+      // malformed. A user-initiated recovery can retry it on a later pull.
+      retryErrors: !event.payload?.continuationKey,
+    }))
     : await step.do('Create eBuy sync record', () => startEbuySyncRun(env.EBUY_DB, mode, {
       instanceId: event.instanceId,
       source: event.payload?.source || 'manual',
@@ -271,6 +270,11 @@ export async function runEbuySyncWorkflow(env, event, step) {
     }))
   const totals = { discovered: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
   totals.discovered = Number(run.discovered || 0)
+  totals.inserted = Number(run.inserted || 0)
+  totals.updated = Number(run.updated || 0)
+  totals.unchanged = Number(run.unchanged || 0)
+  totals.removed = Number(run.removed || 0)
+  totals.archivedFiles = Number(run.archivedFiles || 0)
   let processedCandidates = Number(run.processedCandidates || 0)
   let totalCandidates = Number(run.totalCandidates || 0)
   let processedAttachments = 0
@@ -326,7 +330,7 @@ export async function runEbuySyncWorkflow(env, event, step) {
       while (remaining > 0) {
         iteration++
         const result = await step.do(`Process eBuy opportunity ${iteration}`, {
-          retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '3 minutes',
+          retries: { limit: 1, delay: '10 seconds', backoff: 'constant' }, timeout: '1 minute',
         }, () => processCandidateBatch(env, run.id, securedTokens, 1))
         if (!result.processed) throw new Error('The eBuy synchronization batch did not advance')
         processedCandidates += result.processed
@@ -341,8 +345,32 @@ export async function runEbuySyncWorkflow(env, event, step) {
           processed: processedCandidates, total: totalCandidates,
           archivedFiles: totals.archivedFiles,
         }))
+        if (remaining > 0 && iteration >= EBUY_OPPORTUNITIES_PER_CHECKPOINT) {
+          const continuation = await scheduleEbuyArchiveContinuation({
+            env,
+            step,
+            runId: run.id,
+            continuationKey,
+            checkpoint: archiveCheckpoint,
+            source,
+          })
+          return {
+            ok: true,
+            status: 'continuing',
+            phase: 'processing',
+            runId: run.id,
+            processed: processedCandidates,
+            total: totalCandidates,
+            ...continuation,
+          }
+        }
         if (remaining > 0 && iteration % 5 === 0) await step.sleep(`Pace eBuy detail requests ${iteration}`, '1 second')
       }
+
+      const candidateFailures = await step.do('Collect eBuy opportunity processing issues', () =>
+        getEbuySyncCandidateFailures(env.EBUY_DB, run.id))
+      totals.candidateErrors = candidateFailures.items
+      totals.candidateErrorCount = candidateFailures.count
 
       await step.do('Prepare failed eBuy files for retry', () => resetRetryableEbuyAttachments(env.EBUY_DB, run.startedAt))
       const archiveProgress = await step.do('Count eBuy files to archive', () => getEbuyAttachmentArchiveProgress(env.EBUY_DB, run.startedAt))
@@ -427,7 +455,8 @@ export async function runEbuySyncWorkflow(env, event, step) {
       attachmentFailures: totals.attachmentFailures.slice(0, 20),
     }
     const issueParts = []
-    if (totals.candidateErrors.length) issueParts.push(`${totals.candidateErrors.length} opportunit${totals.candidateErrors.length === 1 ? 'y' : 'ies'} could not be saved`)
+    const candidateErrorCount = Number(totals.candidateErrorCount || totals.candidateErrors.length)
+    if (candidateErrorCount) issueParts.push(`${candidateErrorCount} opportunit${candidateErrorCount === 1 ? 'y' : 'ies'} could not be saved`)
     if (totals.attachmentFailures.length) issueParts.push(`${totals.attachmentFailures.length} file${totals.attachmentFailures.length === 1 ? '' : 's'} could not be archived`)
     const incompleteError = issueParts.length ? new Error(issueParts.join(' · ')) : null
     totals.details.progress = {
