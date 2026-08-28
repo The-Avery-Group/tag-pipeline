@@ -28,9 +28,15 @@ export async function scheduleEbuyArchiveContinuation({ env, step, runId, checkp
     }])
   ))
 
+  if (!instances?.[0]?.id) {
+    const error = new Error('Cloudflare did not start the next eBuy archive checkpoint')
+    error.code = 'ebuy_continuation_not_started'
+    throw error
+  }
+
   return {
     checkpoint: nextCheckpoint,
-    instanceId: instances[0]?.id || instanceId,
-    started: Boolean(instances[0]),
+    instanceId: instances[0].id,
+    started: true,
   }
 }
