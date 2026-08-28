@@ -51,3 +51,22 @@ test('eBuy archive continuation preserves the run and advances the checkpoint', 
 test('eBuy continuation IDs remove unsafe workflow characters', () => {
   assert.equal(ebuyArchiveContinuationId('run/with spaces', 4), 'ebuy-archive-run-with-spaces-4')
 })
+
+test('eBuy archive continuation fails visibly when Cloudflare does not create the next workflow', async () => {
+  const env = {
+    EBUY_SYNC_WORKFLOW: {
+      async createBatch() { return [] },
+    },
+  }
+  const step = {
+    async do(_name, callback) { return callback() },
+  }
+
+  await assert.rejects(() => scheduleEbuyArchiveContinuation({
+    env,
+    step,
+    runId: 'run-123',
+    checkpoint: 2,
+    source: 'manual',
+  }), (error) => error?.code === 'ebuy_continuation_not_started')
+})
