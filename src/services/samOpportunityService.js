@@ -31,3 +31,11 @@ export function updateSAMOpportunityArchiveReview(input, reviewState) {
     body: JSON.stringify({ ...input, reviewState }),
   })
 }
+
+export function analyzeSAMOpportunityDocuments(input) {
+  return workerJson('/sam/archive/analysis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
