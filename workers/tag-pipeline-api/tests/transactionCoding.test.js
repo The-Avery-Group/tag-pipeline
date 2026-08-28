@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildNeutralExportCsv, categorizeTransaction } from '../src/lib/transactionCodingDomain.js'
+import {
+  buildCostpointApVoucherCsv,
+  categorizeTransaction,
+  COSTPOINT_DETAIL_FIELD_COUNT,
+  COSTPOINT_HEADER_FIELD_COUNT,
+  resolveInvoiceReferencePattern,
+} from '../src/lib/transactionCodingDomain.js'
 import {
   alignTransactionRuleValues,
   deleteTransactionRuleFromWorkbook,
@@ -39,14 +45,58 @@ test('transaction coding access is fail-closed and accepts approved Entra IDs or
   assert.equal(transactionCodingAccess({ userId: 'other-id', email: 'other@example.com' }, env).allowed, false)
 })
 
-test('neutral export contains coding fields without CRM status or a Costpoint-specific schema', () => {
-  const csv = buildNeutralExportCsv([{ id: 'txn-1', transactionDate: '2026-08-01', rawDescription: 'SCRIBD', amountCents: 1299, direction: 'charge', vendor: 'Scribd', vendorId: 'V-1', project: 'P1', account: 'A1', organization: 'O1', status: 'review' }])
-  assert.match(csv, /Transaction ID,Transaction Date,Description/)
-  assert.match(csv, /txn-1,2026-08-01,SCRIBD/)
-  assert.doesNotMatch(csv, /Coding Status/)
-  assert.doesNotMatch(csv, /Needs review/)
-  assert.doesNotMatch(csv.split('\r\n')[0], /Merchant/)
-  assert.doesNotMatch(csv, /Costpoint/i)
+const exportRow = {
+  id: 'txn-1', sourceRow: 3, transactionDate: '2026-08-01', rawDescription: 'SCRIBD, MONTHLY\nSUBSCRIPTION',
+  city: 'Houston', amountCents: 1299, vendor: 'Scribd', vendorId: 'V-1', project: 'P1', account: 'A1', organization: 'O1',
+}
+
+test('Costpoint export emits a positional H and D record without a heading row', () => {
+  const result = buildCostpointApVoucherCsv([exportRow], {
+    invoiceReferences: { 'txn-1': 'SCRIBD-0826' },
+    inputVoucherNumbers: { 'txn-1': '123456789' },
+  })
+  const lines = result.csv.trimEnd().split('\r\n').map((line) => line.split(','))
+  assert.equal(lines.length, 2)
+  assert.equal(lines[0].length, COSTPOINT_HEADER_FIELD_COUNT)
+  assert.equal(lines[1].length, COSTPOINT_DETAIL_FIELD_COUNT)
+  assert.equal(lines[0][0], 'H')
+  assert.equal(lines[1][0], 'D')
+  assert.equal(lines[0][1], '123456789')
+  assert.equal(lines[1][1], '123456789')
+  assert.equal(lines[0][5], 'V-1')
+  assert.equal(lines[0][7], 'SCRIBD-0826')
+  assert.equal(lines[0][8], '2026-08-01')
+  assert.equal(lines[0][9], '12.99')
+  assert.equal(lines[0][14], 'N')
+  assert.equal(lines[1][4], 'A1')
+  assert.equal(lines[1][5], 'O1')
+  assert.equal(lines[1][6], 'P1')
+  assert.equal(lines[1][9], '12.99')
+  assert.equal(lines[1][10], 'N')
+  assert.equal(lines[1][18], 'SCRIBD MONTHLY SUBSCRIPTION')
+  assert.doesNotMatch(result.csv, /Transaction ID|Coding Status|Merchant/)
+})
+
+test('custom invoice reference patterns can use any transaction property', () => {
+  assert.equal(resolveInvoiceReferencePattern('{customCode}-{sourceRow}', { ...exportRow, customCode: 'OPS' }), 'OPS-3')
+  const result = buildCostpointApVoucherCsv([{ ...exportRow, customCode: 'OPS' }], {
+    invoiceReferenceMode: 'custom',
+    invoiceReferencePattern: '{customCode}-{sourceRow}',
+  })
+  assert.equal(result.invoiceReferences['txn-1'], 'OPS-3')
+})
+
+test('Costpoint export rejects invalid or duplicated user-defined identifiers', () => {
+  assert.throws(() => buildCostpointApVoucherCsv([exportRow], { invoiceReferences: { 'txn-1': 'REFERENCE-IS-TOO-LONG' } }), /15-character limit/)
+  assert.throws(() => buildCostpointApVoucherCsv([{ ...exportRow, id: 'one' }, { ...exportRow, id: 'two' }], {
+    invoiceReferences: { one: 'DUPLICATE', two: 'DUPLICATE' },
+  }), /duplicated/)
+  assert.throws(() => buildCostpointApVoucherCsv([exportRow], { inputVoucherNumbers: { 'txn-1': 'ABC' } }), /1 to 9 digits/)
+})
+
+test('Costpoint export requires complete coding and a valid transaction date', () => {
+  assert.throws(() => buildCostpointApVoucherCsv([{ ...exportRow, project: '' }]), /Project is required/)
+  assert.throws(() => buildCostpointApVoucherCsv([{ ...exportRow, transactionDate: '' }]), /valid transaction date/)
 })
 
 test('an explicit export selection can include needs-review rows but rejects stale IDs', async () => {
