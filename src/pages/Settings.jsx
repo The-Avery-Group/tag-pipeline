@@ -113,9 +113,12 @@ function ebuyIntegration(ebuy) {
     error: { label: 'Needs attention', className: 'integrationError' },
   })[ebuy.status] || { label: 'Unavailable', className: 'integrationUnavailable' }
   const count = Number(ebuy.opportunityCount || 0)
+  const runError = ebuy.lastSync?.status === 'error'
+    ? ebuy.lastSync.error_message || ebuy.lastSync.progress?.message || ebuy.message
+    : ''
   return {
     status,
-    details: `${ebuy.connector?.message || ebuy.message || 'eBuy archive status is unavailable.'}${count ? ` · ${count} archived opportunities` : ''}`,
+    details: `${runError || ebuy.connector?.message || ebuy.message || 'eBuy archive status is unavailable.'}${count ? ` · ${count} archived opportunities` : ''}`,
   }
 }
 
