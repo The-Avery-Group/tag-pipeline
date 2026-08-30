@@ -100,12 +100,13 @@ export default function SAMOpportunityDetail({ toast }) {
   const actionRef = useRef(false)
   const archiveStartedRef = useRef(false)
   const decodedNoticeId = decodeURIComponent(routeNoticeId)
-  const rowIndex = Number(searchParams.get('row'))
+  const rowParam = searchParams.get('row')
+  const rowIndex = rowParam !== null && /^\d+$/.test(rowParam) ? Number(rowParam) : null
   const returnCandidate = searchParams.get('returnTo') || '/opportunities?tab=New&source=sam'
   const returnTo = returnCandidate.startsWith('/opportunities') ? returnCandidate : '/opportunities?tab=New&source=sam'
 
   const row = useMemo(() => opportunities.find((item) => (
-    (Number.isInteger(rowIndex) && item._rowIndex === rowIndex) ||
+    (rowIndex !== null && Number(item._rowIndex) === rowIndex) ||
     same(item['Notice ID'], decodedNoticeId) || same(item['Solicitation Number'], decodedNoticeId)
   )) || null, [decodedNoticeId, opportunities, rowIndex])
 
