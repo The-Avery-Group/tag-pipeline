@@ -25,7 +25,8 @@ import OpportunityNotesSection from '@/components/Opportunity/OpportunityNotesSe
 import OpportunityTasksSection from '@/components/Opportunity/OpportunityTasksSection'
 import FollowUpEmailComposer from '@/components/Opportunity/FollowUpEmailComposer'
 import OpportunityFilesPanel from '@/components/Opportunity/OpportunityFilesPanel'
-import { connectOpportunityWorkspaceFolder } from '@/services/opportunityWorkspaceService'
+import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
+import { analyzeOpportunityDocuments, connectOpportunityWorkspaceFolder, getOpportunityDocumentAnalysis, reviewOpportunityDocumentFinding } from '@/services/opportunityWorkspaceService'
 import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Opportunity/OpportunitySaveModals'
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
@@ -1818,6 +1819,12 @@ export default function OpportunityDetail({ toast }) {
           })()}
         </Section>
 
+        <LazyMount minHeight={140}><DocumentAnalysisPanel
+          load={() => getOpportunityDocumentAnalysis(opp[C.contractNum])}
+          run={() => analyzeOpportunityDocuments(opp[C.contractNum])}
+          review={(findingReview) => reviewOpportunityDocumentFinding(opp[C.contractNum], findingReview)}
+          toast={toast}
+        /></LazyMount>
         <LazyMount minHeight={140}><OpportunityFilesPanel opportunity={opp} toast={toast} /></LazyMount>
 
         <div className={`${styles.categoryHeading} ${styles.categoryActivity}`}>Activity</div>
