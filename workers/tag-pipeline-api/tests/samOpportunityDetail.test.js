@@ -45,6 +45,7 @@ test('SAM detail separates external links, attachments, contacts, and formatted 
   assert.equal(detail.title, 'Example opportunity')
   assert.equal(detail.noticeType, 'RFI')
   assert.equal(detail.links.length, 2)
+  assert.deepEqual(detail.links.map((link) => link.label), ['PIEE solicitation', 'PIEE solicitation'])
   assert.equal(detail.attachments.length, 1)
   assert.equal(detail.attachments[0].fileName, 'SOW.docx')
   assert.deepEqual(detail.contacts.map((contact) => contact.name), ['Primary POC', 'Second POC'])
@@ -84,16 +85,35 @@ test('SAM description decodes named bullets and common document punctuation', ()
   assert.equal(text, 'Requirements:\n\n• Program support\n• Reporting & analysis — monthly')
 })
 
-test('SAM detail exposes posting links that only appear inside the description', () => {
+test('SAM detail keeps description links in the description but never promotes them to External links', () => {
   const detail = normalizeSAMOpportunityDetail({
     description: `<p>Full instructions are available at <a href="https://piee.eb.mil/sol/notice/123">PIEE solicitation package</a>.</p>
       <p>Questions: https://example.gov/acquisition/questions.</p>`,
   })
 
+  assert.deepEqual(detail.links, [])
+  assert.match(detail.description, /PIEE solicitation package/)
+  assert.match(detail.description, /example\.gov\/acquisition\/questions/)
+})
+
+test('SAM detail uses source titles and trusted service names for authoritative external links', () => {
+  const detail = normalizeSAMOpportunityDetail({
+    additionalInfoLink: 'https://www.fedconnect.net/FedConnect/?doc=ABC',
+    links: [
+      { href: 'https://piee.eb.mil/sol/notice/123', title: 'Agency PIEE package' },
+      { href: 'https://procurement.example.gov/notices/123' },
+    ],
+  })
   assert.deepEqual(detail.links, [
-    { url: 'https://piee.eb.mil/sol/notice/123', label: 'PIEE solicitation package' },
-    { url: 'https://example.gov/acquisition/questions', label: 'Link from SAM.gov posting' },
+    { url: 'https://www.fedconnect.net/FedConnect/?doc=ABC', label: 'FedConnect notice', source: 'additionalInfoLink' },
+    { url: 'https://piee.eb.mil/sol/notice/123', label: 'Agency PIEE package', source: 'links' },
+    { url: 'https://procurement.example.gov/notices/123', label: 'procurement.example.gov', source: 'links' },
   ])
+})
+
+test('SAM detail accepts the alternate set-aside fields returned by SAM records', () => {
+  assert.equal(normalizeSAMOpportunityDetail({ setAsideDescription: 'Total Small Business Set-Aside' }).setAside, 'Total Small Business Set-Aside')
+  assert.equal(normalizeSAMOpportunityDetail({ setAside: 'SBA' }).setAside, 'SBA')
 })
 
 test('SAM detail omits API self links and an unresolved description endpoint', () => {
@@ -107,5 +127,5 @@ test('SAM detail omits API self links and an unresolved description endpoint', (
     ],
   })
   assert.equal(detail.description, '')
-  assert.deepEqual(detail.links, [{ url: 'https://piee.eb.mil/sol', label: 'PIEE' }])
+  assert.deepEqual(detail.links, [{ url: 'https://piee.eb.mil/sol', label: 'PIEE', source: 'links' }])
 })
