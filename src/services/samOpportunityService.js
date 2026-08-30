@@ -39,3 +39,13 @@ export function analyzeSAMOpportunityDocuments(input) {
     body: JSON.stringify(input),
   })
 }
+
+export function getSAMOpportunityDocumentAnalysis(opportunityKey) {
+  return workerJson(`/sam/archive/analysis?key=${encodeURIComponent(opportunityKey)}`, { cache: 'no-store' })
+}
+
+export function reviewSAMOpportunityDocumentFinding(opportunityKey, review) {
+  return workerJson('/sam/archive/analysis/review', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunityKey, ...review }),
+  })
+}
