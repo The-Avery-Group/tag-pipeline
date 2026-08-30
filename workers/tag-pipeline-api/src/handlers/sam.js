@@ -1561,7 +1561,10 @@ export async function handleSAM(req, env, ctx) {
 
   // GET /sam/opportunity — live SAM.gov record enriched with archive state.
   if (url.pathname === '/sam/opportunity' && req.method === 'GET') {
-    const cacheKey = `sam:opportunity-detail:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
+    // v2 excludes links scraped from free-form descriptions. Keeping the
+    // cache versioned prevents an old generated link from returning when a
+    // live SAM.gov lookup temporarily fails after this integrity fix.
+    const cacheKey = `sam:opportunity-detail:v2:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
     const cached = cacheKey && await env.CACHE?.get(cacheKey, 'json')
     try {
       const record = await fetchSAMOpportunityRecord(env, {
