@@ -36,6 +36,8 @@ import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
 import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './handlers/transactionCoding.js'
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
+import { isQuarterlyExpiringRefreshTime } from './lib/scheduledCadence.js'
+import { purgeDocumentAnalysisData, resumeQueuedDocumentAnalysis } from './lib/documentAnalysis.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -214,6 +216,11 @@ export default {
           console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
         }))
         ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
+        if (scheduledHour === 18) {
+          ctx.waitUntil(resumeQueuedDocumentAnalysis(env).catch((error) => {
+            console.error(JSON.stringify({ event: 'document_analysis_resume_failed', message: error.message }))
+          }))
+        }
       }
 
       // SAM change monitoring keeps its existing twice-daily cadence.
@@ -225,7 +232,7 @@ export default {
         })())
       }
 
-      if (scheduledHour === 0 && [1, 4].includes(weekday)) {
+      if (isQuarterlyExpiringRefreshTime(scheduledDate)) {
         ctx.waitUntil(startExpiringContractsRefresh(env, {
           scheduledTime: controller.scheduledTime,
           source: 'scheduled',
@@ -269,6 +276,9 @@ export default {
         }))
         ctx.waitUntil(purgeExpiredTransactionCodingData(env.EBUY_DB).catch((error) => {
           console.error(JSON.stringify({ event: 'transaction_coding_retention_failed', message: error.message }))
+        }))
+        ctx.waitUntil(purgeDocumentAnalysisData(env.EBUY_DB).catch((error) => {
+          console.error(JSON.stringify({ event: 'document_analysis_retention_failed', message: error.message }))
         }))
       }
     }
