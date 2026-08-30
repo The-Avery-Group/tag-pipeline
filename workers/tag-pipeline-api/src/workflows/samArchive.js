@@ -8,6 +8,7 @@ import {
 } from '../lib/samArchiveRepository.js'
 import { archiveSAMFile, ensureSAMArchiveFolder } from '../lib/sharepointArchive.js'
 import { attachmentRecordId, fetchSAMAttachment, fetchWorkspaceSAMNotice } from '../lib/opportunityWorkspaceSam.js'
+import { queueDocumentAnalysis, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 
 export const SAM_ARCHIVE_FILES_PER_CHECKPOINT = 4
 
@@ -37,7 +38,7 @@ export async function runSAMArchiveWorkflow(env, event, step) {
       await step.do('Create SAM.gov archive request', () => ensureSAMArchive(env.EBUY_DB, {
         ...event.payload.archiveInput,
         opportunityKey,
-      }))
+      }, { automatic: true }))
     }
     let archive = await step.do('Load SAM.gov archive request', () => getSAMArchive(env.EBUY_DB, opportunityKey))
     if (!archive) return { ok: false, error: 'SAM.gov archive request was not found' }
@@ -143,6 +144,23 @@ export async function runSAMArchiveWorkflow(env, event, step) {
       errorMessage: failedCount ? `${failedCount} SAM.gov attachment${failedCount === 1 ? '' : 's'} could not be archived` : null,
       completedAt: new Date().toISOString(),
     }))
+    try {
+      let analysisRemaining = archivedCount
+      for (let pass = 1; analysisRemaining > 0 && pass <= 25; pass += 1) {
+        const analysis = await step.do(`Analyze SAM.gov documents ${pass}`, {
+          retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '5 minutes',
+        }, () => runSAMArchiveDocumentAnalysis(env, {
+          noticeId: completed.noticeId,
+          solicitationNumber: completed.solicitationNumber,
+          noticeType: '',
+        }, { automatic: true }))
+        if (analysis.cancelled) break
+        analysisRemaining = Number(analysis.opportunity?.remaining || 0)
+      }
+    } catch (analysisError) {
+      await step.do('Keep SAM.gov analysis queued after an interruption', () => queueDocumentAnalysis(env.EBUY_DB, opportunityKey, 'sam', 10))
+      console.warn(JSON.stringify({ event: 'sam_document_analysis_deferred', opportunityKey, message: analysisError.message }))
+    }
     return { ok: true, status: failedCount ? 'partial' : 'ready', archivedCount, failedCount }
   } catch (error) {
     await step.do('Record SAM.gov archive failure', () => updateSAMArchive(env.EBUY_DB, opportunityKey, {
