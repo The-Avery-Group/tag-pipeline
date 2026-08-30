@@ -40,7 +40,7 @@ import {
   samArchiveStorageReady,
   updateSAMArchive,
 } from '../lib/samArchiveRepository.js'
-import { getDocumentAnalysis, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { cancelDocumentAnalysis, getDocumentAnalysis, queueDocumentAnalysis, reviewDocumentFinding, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances delegated pulls while it remains open. Autonomous pulls use a
 // Cloudflare Workflow so every unit gets its own retryable durable step.
@@ -1612,6 +1612,23 @@ export async function handleSAM(req, env, ctx) {
     }
   }
 
+  if (url.pathname === '/sam/archive/analysis' && req.method === 'GET') {
+    try {
+      return json({ analysis: await getDocumentAnalysis(env, url.searchParams.get('key') || '') })
+    } catch (error) {
+      return json({ error: error.message, code: error.code || 'sam_document_analysis_failed' }, error.status || 500)
+    }
+  }
+
+  if (url.pathname === '/sam/archive/analysis/review' && req.method === 'POST') {
+    const body = await req.json().catch(() => ({}))
+    try {
+      return json({ ok: true, analysis: await reviewDocumentFinding(env, body.opportunityKey, body) })
+    } catch (error) {
+      return json({ error: error.message, code: error.code || 'sam_document_review_failed' }, error.status || 500)
+    }
+  }
+
   if (url.pathname === '/sam/archive/review' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     if (!env.EBUY_DB || !(await samArchiveStorageReady(env.EBUY_DB))) return json({ archive: null })
@@ -1626,7 +1643,13 @@ export async function handleSAM(req, env, ctx) {
         solicitationNumber: body.solicitationNumber,
       })
     }
-    return json({ archive: await markSAMArchiveReviewState(env.EBUY_DB, archive.opportunityKey, body.reviewState) })
+    const updated = await markSAMArchiveReviewState(env.EBUY_DB, archive.opportunityKey, body.reviewState)
+    if (String(body.reviewState || '').toLowerCase() === 'dismissed') {
+      await cancelDocumentAnalysis(env.EBUY_DB, archive.opportunityKey)
+    } else if (['tracked', 'added_to_pipeline'].includes(String(body.reviewState || '').toLowerCase())) {
+      await queueDocumentAnalysis(env.EBUY_DB, archive.opportunityKey, 'sam', 100)
+    }
+    return json({ archive: updated })
   }
 
   // GET /sam/key-status
