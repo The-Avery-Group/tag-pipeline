@@ -4,13 +4,17 @@ import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
 import CopyValue from '@/components/Common/CopyValue'
 import Modal from '@/components/Common/Modal'
+import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { formatDateTime } from '@/utils/kpiHelpers'
 import { cleanSAMOpportunityTitle, isSAMOpportunityFlagged, normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
 import {
   getSAMOpportunityArchiveStatus,
+  getSAMOpportunityDocumentAnalysis,
   getSAMOpportunityDetail,
+  analyzeSAMOpportunityDocuments,
+  reviewSAMOpportunityDocumentFinding,
   startSAMOpportunityArchive,
   updateSAMOpportunityArchiveReview,
 } from '@/services/samOpportunityService'
@@ -110,6 +114,8 @@ export default function SAMOpportunityDetail({ toast }) {
     solicitationNumber: row?.['Solicitation Number'] || '',
   }), [decodedNoticeId, row])
   const opportunityKey = clean(detail?.solicitationNumber || detail?.noticeId || identifier.solicitationNumber || identifier.noticeId).toLowerCase()
+  const loadDocumentAnalysis = useCallback(() => getSAMOpportunityDocumentAnalysis(opportunityKey), [opportunityKey])
+  const runDocumentAnalysis = useCallback(() => analyzeSAMOpportunityDocuments({ ...identifier, noticeType: detail?.noticeType || '' }), [detail?.noticeType, identifier])
   const linkedPipeline = useMemo(() => pipeline.find((item) => (
     same(item['Contract Number / Notice ID'], detail?.solicitationNumber || row?.['Solicitation Number']) ||
     same(item['Contract Number / Notice ID'], detail?.noticeId || row?.['Notice ID']) ||
@@ -242,6 +248,14 @@ export default function SAMOpportunityDetail({ toast }) {
           {detail.samUrl && <a className="btn" href={detail.samUrl} target="_blank" rel="noreferrer">Open on SAM.gov</a>}
         </div>
       </section>
+
+      {opportunityKey && <DocumentAnalysisPanel
+        load={loadDocumentAnalysis}
+        run={runDocumentAnalysis}
+        review={(findingReview) => reviewSAMOpportunityDocumentFinding(opportunityKey, findingReview)}
+        disabled={row?.Status === 'dismissed'}
+        toast={toast}
+      />}
 
       <Card eyebrow="Solicitation" title="Solicitation details">
         <div className={styles.grid}>
