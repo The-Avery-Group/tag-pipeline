@@ -22,7 +22,7 @@ import {
   updatePipelineFolderLink,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
-import { getDocumentAnalysis, runDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { getDocumentAnalysis, reviewDocumentFinding, runDocumentAnalysis } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -167,6 +167,11 @@ export async function handleOpportunityWorkspaces(req, env) {
     }
     if (analysisMatch && req.method === 'GET') {
       return json({ analysis: await getDocumentAnalysis(env, decodeURIComponent(analysisMatch[1])) })
+    }
+    const analysisReviewMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/analysis\/review$/)
+    if (analysisReviewMatch && req.method === 'POST') {
+      const analysis = await reviewDocumentFinding(env, decodeURIComponent(analysisReviewMatch[1]), await req.json().catch(() => ({})))
+      return json({ ok: true, analysis })
     }
 
     const uploadsMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/uploads$/)
