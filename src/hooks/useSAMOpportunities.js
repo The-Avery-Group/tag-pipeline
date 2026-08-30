@@ -374,6 +374,7 @@ export function useSAMOpportunities() {
     verifyCacheInBackground(['PipelineTable'])
 
     await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
+    return saved
   }, [resolveContact, updateStatus])
 
   // ── Trigger SAM pull ─────────────────────────────────────────────────
