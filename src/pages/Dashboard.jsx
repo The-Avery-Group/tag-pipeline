@@ -476,6 +476,40 @@ export default function Dashboard({ toast }) {
     [kpis]
   )
 
+  const reviewQueueEntries = useMemo(
+    () => reviewQueue.alerts.map((alert) => {
+      const normalizedAlertKey = String(alert.opportunityKey || '').trim().toLowerCase()
+      const opportunity = pipeline.find((candidate) => [
+        candidate[C.contractNum],
+        candidate['Solicitation Number'],
+        candidate['Opportunity ID'],
+      ].some((value) => String(value || '').trim().toLowerCase() === normalizedAlertKey))
+      const identifier = opportunity?.[C.contractNum] || alert.opportunityKey
+      const opportunityTitle = [
+        opportunity?.[C.title],
+        alert.details?.opportunityTitle,
+        alert.details?.opportunityName,
+        alert.details?.title,
+      ].find((value) => String(value || '').trim())
+      const supportingDetail = alert.summary
+        || alert.details?.currentDate
+        || alert.details?.awardeeName
+        || alert.details?.piid
+        || identifier
+
+      return {
+        alert,
+        opportunity,
+        identifier,
+        displayTitle: opportunityTitle || alert.summary || identifier,
+        supportingDetail: opportunityTitle && supportingDetail !== opportunityTitle
+          ? supportingDetail
+          : identifier,
+      }
+    }),
+    [pipeline, reviewQueue.alerts]
+  )
+
   const aiPrompt = useCallback(
     () => buildPipelineSummaryContext(kpis, pipeline),
     [kpis, pipeline]
@@ -523,24 +557,25 @@ export default function Dashboard({ toast }) {
           {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
             : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No unreviewed opportunity changes.</p>
             : <div className={styles.reviewQueue}>
-              {reviewQueue.alerts.map((alert) => (
+              {reviewQueueEntries.map(({ alert, opportunity, identifier, displayTitle, supportingDetail }) => (
                 <div className={styles.reviewQueueRow} key={`${alert.opportunityKey}:${alert.type}:${alert.fingerprint}`}>
                   <button type="button" className={styles.reviewQueueLink} onClick={() => {
-                    const matchedOpportunity = pipeline.find((opportunity) => [
-                      opportunity[C.contractNum],
-                      opportunity['Solicitation Number'],
-                    ].some((value) => String(value || '').trim().toLowerCase() === String(alert.opportunityKey || '').trim().toLowerCase()))
-                    const identifier = matchedOpportunity?.[C.contractNum] || alert.opportunityKey
                     const key = encodeURIComponent(identifier)
-                    const row = matchedOpportunity?._rowIndex != null ? `&row=${matchedOpportunity._rowIndex}` : ''
-                    navigate(alert.type?.includes('file')
-                      ? `/opportunities/${key}/dossier?focus=files&alert=${encodeURIComponent(alert.type)}${row}`
-                      : alert.type === 'award_notice'
-                        ? `/opportunities/${key}?focus=awards${row}`
-                        : `/opportunities/${key}${row ? `?${row.slice(1)}` : ''}`)
+                    const params = new URLSearchParams()
+                    if (opportunity?._rowIndex != null) params.set('row', opportunity._rowIndex)
+                    if (alert.type?.includes('file')) {
+                      params.set('focus', 'files')
+                      params.set('alert', alert.type)
+                      navigate(`/opportunities/${key}/dossier?${params.toString()}`)
+                      return
+                    }
+                    if (alert.type === 'award_notice') params.set('focus', 'awards')
+                    if (alert.type === 'rfi_follow_on') params.set('focus', 'follow-ups')
+                    const query = params.toString()
+                    navigate(`/opportunities/${key}${query ? `?${query}` : ''}`)
                   }}>
-                    <strong>{alert.summary || alert.opportunityKey}</strong>
-                    <small>{alert.details?.currentDate || alert.details?.awardeeName || alert.details?.piid || alert.opportunityKey}</small>
+                    <strong>{displayTitle}</strong>
+                    <small>{supportingDetail}</small>
                   </button>
                   <button className="btn btn-sm" onClick={async () => {
                     try {
