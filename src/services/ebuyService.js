@@ -24,6 +24,16 @@ export async function analyzeEbuyOpportunityDocuments(requestId) {
   return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}/analysis`, { method: 'POST' })
 }
 
+export async function getEbuyOpportunityDocumentAnalysis(requestId) {
+  return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}/analysis`, { cache: 'no-store' })
+}
+
+export async function reviewEbuyOpportunityDocumentFinding(requestId, review) {
+  return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}/analysis/review`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(review),
+  })
+}
+
 export async function updateEbuyOpportunityState(requestId, reviewState, pipelineContractId = null) {
   return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}`, {
     method: 'PATCH',
