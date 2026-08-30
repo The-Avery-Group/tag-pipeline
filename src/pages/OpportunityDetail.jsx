@@ -113,7 +113,7 @@ function safeUrl(url) {
 }
 
 function normalizeOpportunityKey(value) {
-  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+  return String(value ?? '').trim().replace(/^'+/, '').replace(/\s+/g, ' ').toLowerCase()
 }
 
 function opportunityReturnPath(value) {
