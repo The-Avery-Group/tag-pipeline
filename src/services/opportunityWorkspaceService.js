@@ -162,3 +162,9 @@ export function analyzeOpportunityDocuments(opportunityKey) {
 export function getOpportunityDocumentAnalysis(opportunityKey) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/analysis`)
 }
+
+export function reviewOpportunityDocumentFinding(opportunityKey, review) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/analysis/review`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(review),
+  })
+}
