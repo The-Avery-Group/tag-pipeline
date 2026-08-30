@@ -4,9 +4,10 @@ import Topbar from '@/components/Layout/Topbar'
 import RichText from '@/components/Common/RichText'
 import CopyValue from '@/components/Common/CopyValue'
 import Modal from '@/components/Common/Modal'
+import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
 import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
-import { ebuyToPipelineRecord, getEbuyOpportunity, updateEbuyOpportunityState } from '@/services/ebuyService'
+import { analyzeEbuyOpportunityDocuments, ebuyToPipelineRecord, getEbuyOpportunity, getEbuyOpportunityDocumentAnalysis, reviewEbuyOpportunityDocumentFinding, updateEbuyOpportunityState } from '@/services/ebuyService'
 import {
   formatEbuyChangedField,
   formatEbuyAttachmentMeta,
@@ -37,6 +38,9 @@ export default function EbuyOpportunityDetail({ toast }) {
   const actionRef = useRef(false)
   const inPipeline = useMemo(() => pipeline.some((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase()), [pipeline, requestId])
   const returnTo = searchParams.get('returnTo') || '/opportunities?tab=New&source=ebuy'
+  const decodedRequestId = decodeURIComponent(requestId)
+  const loadDocumentAnalysis = useMemo(() => () => getEbuyOpportunityDocumentAnalysis(decodedRequestId), [decodedRequestId])
+  const runDocumentAnalysis = useMemo(() => () => analyzeEbuyOpportunityDocuments(decodedRequestId), [decodedRequestId])
 
   useEffect(() => {
     let active = true
@@ -104,6 +108,14 @@ export default function EbuyOpportunityDetail({ toast }) {
           {opportunity.reviewState !== 'dismissed' && <button className={styles.dismiss} onClick={() => changeState('dismissed')} disabled={actioning}>Dismiss</button>}
         </div>
       </section>
+
+      <DocumentAnalysisPanel
+        load={loadDocumentAnalysis}
+        run={runDocumentAnalysis}
+        review={(findingReview) => reviewEbuyOpportunityDocumentFinding(decodedRequestId, findingReview)}
+        disabled={opportunity.reviewState === 'dismissed'}
+        toast={toast}
+      />
 
 
       <section className={styles.card}>
