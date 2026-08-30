@@ -11,6 +11,8 @@ import { usePartners } from '@/hooks/usePartners'
 import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
 import { parsePOCNames } from '@/services/graphService'
 import { listOpportunityWorkspaceFlatFiles } from '@/services/opportunityWorkspaceService'
+import { analyzeOpportunityDocuments, getOpportunityDocumentAnalysis, reviewOpportunityDocumentFinding } from '@/services/opportunityWorkspaceService'
+import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
 import { OPPORTUNITY_FILES_CHANGED_EVENT } from '@/services/opportunityReferenceUploadService'
 import { formatDate } from '@/utils/kpiHelpers'
 import styles from './OpportunityDossier.module.css'
@@ -158,6 +160,12 @@ export default function OpportunityDossier() {
       </div>}
 
       <Section title="Overview"><SummaryGrid opportunity={opportunity} /></Section>
+
+      <DocumentAnalysisPanel
+        load={() => getOpportunityDocumentAnalysis(opportunityKey)}
+        run={() => analyzeOpportunityDocuments(opportunityKey)}
+        review={(findingReview) => reviewOpportunityDocumentFinding(opportunityKey, findingReview)}
+      />
 
       <Section title="People and relationships">
         <div className={styles.relationshipGrid}>
