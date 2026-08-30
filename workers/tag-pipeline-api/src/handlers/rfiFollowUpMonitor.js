@@ -113,7 +113,10 @@ function normalizeWatch(input, existing = null) {
     opportunityId, rowIndex: Number(input.rowIndex ?? input._rowIndex), source, sourceFingerprint,
     decisions,
     inputFingerprint,
-    ...(changed ? { candidates: [], resultFingerprint: '', lastCheckedAt: null, seenUntil: null, needsCheck: true } : {}),
+    // Keep the last verified candidates visible while changed criteria or
+    // newly loaded contact data wait for the next check. Clearing them here
+    // made a result appear briefly on page load and then disappear.
+    ...(changed ? { lastCheckedAt: null, seenUntil: null, needsCheck: true } : {}),
   }
 }
 
@@ -155,10 +158,21 @@ async function durablePublicWatch(env, watch) {
   const result = watch && Object.hasOwn(watch, 'matchCount') ? watch : publicWatch(watch)
   if (!env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return result
   const alert = await getOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on')
+  const durableCandidates = Array.isArray(alert?.details?.candidates) ? alert.details.candidates : []
+  const hydrated = (!result.candidates?.length && durableCandidates.length)
+    ? {
+        ...result,
+        candidates: durableCandidates,
+        matchCount: durableCandidates.length,
+        pendingCount: durableCandidates.length,
+        badgeVisible: alert.badgeVisible,
+        badgeState: alert.badgeVisible ? 'active' : 'acknowledged',
+      }
+    : result
   if (alert?.status === 'active' && alert.badgeVisible === false) {
-    return { ...result, badgeVisible: false, badgeState: 'acknowledged' }
+    return { ...hydrated, badgeVisible: false, badgeState: 'acknowledged' }
   }
-  return result
+  return hydrated
 }
 
 async function durableWatches(env, watches) {
