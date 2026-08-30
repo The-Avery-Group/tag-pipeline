@@ -8,7 +8,8 @@ import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPane
 import { usePipeline } from '@/hooks/usePipeline'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { formatDateTime } from '@/utils/kpiHelpers'
-import { cleanSAMOpportunityTitle, isSAMOpportunityFlagged, normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
+import { buildSAMOpportunityPatch, cleanSAMOpportunityTitle, isSAMOpportunityFlagged, normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
+import { retryOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 import {
   getSAMOpportunityArchiveStatus,
   getSAMOpportunityDocumentAnalysis,
@@ -22,6 +23,26 @@ import styles from './SAMOpportunityDetail.module.css'
 
 function clean(value) { return String(value || '').trim() }
 function same(left, right) { return clean(left).toLowerCase() === clean(right).toLowerCase() }
+
+const PIPELINE_COLUMNS = {
+  noticeType: 'Notice Type', title: 'Project Title / Description*', solNum: 'Solicitation Number',
+  setAside: 'Set- Aside*', department: 'Department*', agency: 'Agency*', office: 'Office*',
+  naics: 'NAICS Code*', submDate: 'Submission Date (Response Date)*', otherLinks: 'Other Links*',
+}
+
+function pipelineSnapshot(detail) {
+  return {
+    title: detail.title,
+    type: detail.noticeType,
+    baseType: detail.baseType,
+    solicitationNumber: detail.solicitationNumber,
+    setAside: detail.setAside,
+    organization: [detail.organization?.department, detail.organization?.subTier, detail.organization?.office].filter(Boolean).join('.'),
+    naics: detail.naicsCode,
+    responseDate: detail.responseDeadline,
+    uiLink: detail.samUrl,
+  }
+}
 function linkHost(value) {
   try { return new URL(value).hostname.replace(/^www\./, '') } catch { return value }
 }
@@ -85,7 +106,7 @@ export default function SAMOpportunityDetail({ toast }) {
   const { noticeId: routeNoticeId = '' } = useParams()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { pipeline } = usePipeline()
+  const { pipeline, update: updatePipeline } = usePipeline()
   const {
     opportunities, loading: rowsLoading, addToPipeline, dismiss, undismiss, updateFlag,
   } = useSAMOpportunities()
@@ -129,7 +150,7 @@ export default function SAMOpportunityDetail({ toast }) {
       const result = await getSAMOpportunityDetail({ ...identifier, postedDate: row?.['Posted Date'] || row?.PostedDate || '' })
       setDetail(result.opportunity)
       setLoadError(result.warning ? new Error(result.warning) : null)
-      return result.opportunity
+      return result.warning ? null : result.opportunity
     } catch (error) {
       setLoadError(error)
       setDetail((current) => current || fallbackDetail(row, decodedNoticeId))
@@ -163,6 +184,76 @@ export default function SAMOpportunityDetail({ toast }) {
       setArchiving(false)
     }
   }, [identifier, loadDetail, toast])
+
+  const retryLiveOpportunity = useCallback(async () => {
+    if (retryingDetail) return
+    setRetryingDetail(true)
+    try {
+      const refreshed = await loadDetail()
+      if (!refreshed) return
+
+      const pipelineOpportunity = linkedPipeline || pipeline.find((item) => (
+        same(item['Contract Number / Notice ID'], refreshed.solicitationNumber) ||
+        same(item['Contract Number / Notice ID'], refreshed.noticeId) ||
+        same(item['Solicitation Number'], refreshed.solicitationNumber)
+      ))
+
+      if (pipelineOpportunity) {
+        const { patch } = buildSAMOpportunityPatch(pipelineOpportunity, pipelineSnapshot(refreshed), PIPELINE_COLUMNS)
+        const refreshedPipelineOpportunity = {
+          ...pipelineOpportunity,
+          ...patch,
+          _workspaceNoticeId: refreshed.noticeId || identifier.noticeId,
+        }
+        if (Object.keys(patch).length) {
+          await updatePipeline(pipelineOpportunity._rowIndex, patch, pipelineOpportunity)
+        }
+        setArchiving(true)
+        archiveStartedRef.current = true
+        await retryOpportunityWorkspace(
+          pipelineOpportunity['Contract Number / Notice ID'],
+          refreshedPipelineOpportunity,
+        )
+      } else if (row) {
+        const saved = await addToPipeline({
+          ...row,
+          'Notice ID': refreshed.noticeId || row['Notice ID'],
+          'Solicitation Number': refreshed.solicitationNumber || row['Solicitation Number'],
+          Title: refreshed.title || row.Title,
+          'Notice Type': refreshed.noticeType || row['Notice Type'],
+          'Set-Aside Type': refreshed.setAside || row['Set-Aside Type'],
+          Department: refreshed.organization?.department || row.Department,
+          Agency: refreshed.organization?.subTier || row.Agency,
+          Office: refreshed.organization?.office || row.Office,
+          'NAICS Code': refreshed.naicsCode || row['NAICS Code'],
+          'Response Date': refreshed.responseDeadline || row['Response Date'],
+          'SAM.gov URL': refreshed.samUrl || row['SAM.gov URL'],
+        }, row.Status === 'tracked' ? 'Tracking' : 'New')
+        if (saved?._alreadyExisted) {
+          await retryOpportunityWorkspace(saved['Contract Number / Notice ID'], {
+            ...saved,
+            _workspaceNoticeId: refreshed.noticeId || identifier.noticeId,
+          })
+        }
+      } else if (refreshed.attachments?.length) {
+        setArchiving(true)
+        archiveStartedRef.current = true
+        await startSAMOpportunityArchive({
+          noticeId: refreshed.noticeId || identifier.noticeId,
+          solicitationNumber: refreshed.solicitationNumber || identifier.solicitationNumber,
+        }, { force: true })
+      }
+      await loadDetail({ quiet: true })
+      toast?.success(pipelineOpportunity || row
+        ? 'Pipeline opportunity reloaded; attachment refresh started'
+        : 'SAM.gov opportunity and attachments are refreshing')
+    } catch (error) {
+      toast?.error(`SAM.gov attachments could not refresh: ${error.message}`)
+    } finally {
+      setArchiving(false)
+      setRetryingDetail(false)
+    }
+  }, [addToPipeline, identifier, linkedPipeline, loadDetail, pipeline, retryingDetail, row, toast, updatePipeline])
 
   useEffect(() => {
     if (!detail?.attachments?.length || archiveStartedRef.current) return
@@ -228,7 +319,7 @@ export default function SAMOpportunityDetail({ toast }) {
     <Topbar title={detail.title || detail.noticeId} subtitle1={`SAM.gov · ${detail.noticeId || detail.solicitationNumber}`} showFilter={false} showNew={false} />
     <div className={`page-body ${styles.page}`}>
       <button className={styles.back} onClick={() => navigate(returnTo)}>← Back to SAM.gov discovery</button>
-      {loadError && <div className={styles.warning}><span><strong>Live SAM.gov details could not refresh.</strong> {detail ? 'Showing the last saved opportunity information.' : 'No saved detail is available.'}</span><button disabled={retryingDetail} onClick={async () => { setRetryingDetail(true); await loadDetail(); setRetryingDetail(false) }}>{retryingDetail ? 'Trying again…' : 'Try again'}</button></div>}
+      {loadError && <div className={styles.warning}><span><strong>Live SAM.gov details could not refresh.</strong> {detail ? 'Showing the last saved opportunity information.' : 'No saved detail is available.'}</span><button disabled={retryingDetail} onClick={retryLiveOpportunity}>{retryingDetail ? 'Reloading opportunity and attachments…' : 'Try again'}</button></div>}
 
       <section className={styles.hero}>
         <div className={styles.heroText}>
