@@ -6,6 +6,19 @@ export const CURRENT_APP_VERSION = Object.freeze({
 })
 
 export const APP_VERSION_POLL_MS = 30_000
+export const APP_UPDATE_DEFERRAL_MS = 60 * 60 * 1000
+
+export function createAppUpdateDeferral(buildId, now = Date.now()) {
+  return { buildId: String(buildId || ''), deferredUntil: Number(now) + APP_UPDATE_DEFERRAL_MS }
+}
+
+export function isAppUpdateDeferred(deferral, buildId, now = Date.now()) {
+  return Boolean(
+    deferral &&
+    String(deferral.buildId || '') === String(buildId || '') &&
+    Number(deferral.deferredUntil || 0) > Number(now),
+  )
+}
 
 export function isNewerAppVersion(candidate, current = CURRENT_APP_VERSION) {
   if (!candidate?.buildId || candidate.buildId === current?.buildId) return false
