@@ -30,16 +30,16 @@ jobs:
         working-directory: workers/tag-pipeline-api
         run: npm run check
 
-      - name: Deploy Worker
-        working-directory: workers/tag-pipeline-api
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npm run deploy
-
       - name: Apply D1 migrations
         working-directory: workers/tag-pipeline-api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 migrations apply tag-pipeline-ebuy --remote
+
+      - name: Deploy Worker
+        working-directory: workers/tag-pipeline-api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy
