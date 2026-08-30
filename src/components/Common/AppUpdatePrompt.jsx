@@ -3,15 +3,20 @@ import Modal from '@/components/Common/Modal'
 import {
   APP_VERSION_POLL_MS,
   CURRENT_APP_VERSION,
+  createAppUpdateDeferral,
   fetchDeployedAppVersion,
+  isAppUpdateDeferred,
   isNewerAppVersion,
   reloadWithCacheBypass,
 } from '@/services/appUpdateService'
 
 const DISMISSED_UPDATE_KEY = 'tag_crm_dismissed_update'
 
-function dismissedBuild() {
-  try { return sessionStorage.getItem(DISMISSED_UPDATE_KEY) || '' } catch { return '' }
+function deferredUpdate() {
+  try {
+    const stored = sessionStorage.getItem(DISMISSED_UPDATE_KEY)
+    return stored ? JSON.parse(stored) : null
+  } catch { return null }
 }
 
 export default function AppUpdatePrompt() {
@@ -23,7 +28,7 @@ export default function AppUpdatePrompt() {
     checkingRef.current = true
     try {
       const deployed = await fetchDeployedAppVersion()
-      if (isNewerAppVersion(deployed, CURRENT_APP_VERSION) && deployed.buildId !== dismissedBuild()) {
+      if (isNewerAppVersion(deployed, CURRENT_APP_VERSION) && !isAppUpdateDeferred(deferredUpdate(), deployed.buildId)) {
         setAvailableVersion(deployed)
       }
     } catch {
@@ -51,7 +56,7 @@ export default function AppUpdatePrompt() {
   if (!availableVersion) return null
 
   const postpone = () => {
-    try { sessionStorage.setItem(DISMISSED_UPDATE_KEY, availableVersion.buildId) } catch {}
+    try { sessionStorage.setItem(DISMISSED_UPDATE_KEY, JSON.stringify(createAppUpdateDeferral(availableVersion.buildId))) } catch {}
     setAvailableVersion(null)
   }
 
@@ -60,7 +65,7 @@ export default function AppUpdatePrompt() {
       title="TAG CRM update available"
       onClose={postpone}
       footer={<>
-        <button type="button" className="btn" onClick={postpone}>Later</button>
+        <button type="button" className="btn" onClick={postpone}>Remind me in 1 hour</button>
         <button type="button" className="btn btn-primary" autoFocus onClick={() => reloadWithCacheBypass(availableVersion.buildId)}>
           Reload now
         </button>
