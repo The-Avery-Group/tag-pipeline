@@ -35,6 +35,10 @@ const C = {
   priority:    'Priority',
 }
 
+function normalizeOpportunityIdentifier(value) {
+  return String(value || '').trim().replace(/^'+/, '').toLowerCase()
+}
+
 const PHASE_COLORS = {
   'Identified':       'var(--chart-phase-identified)',
   'Research':         'var(--chart-phase-research)',
@@ -478,12 +482,17 @@ export default function Dashboard({ toast }) {
 
   const reviewQueueEntries = useMemo(
     () => reviewQueue.alerts.map((alert) => {
-      const normalizedAlertKey = String(alert.opportunityKey || '').trim().toLowerCase()
+      const alertIdentifiers = new Set([
+        alert.opportunityKey,
+        alert.details?.contractNumber,
+        alert.details?.solicitationNumber,
+        alert.details?.noticeId,
+      ].map(normalizeOpportunityIdentifier).filter(Boolean))
       const opportunity = pipeline.find((candidate) => [
         candidate[C.contractNum],
         candidate['Solicitation Number'],
         candidate['Opportunity ID'],
-      ].some((value) => String(value || '').trim().toLowerCase() === normalizedAlertKey))
+      ].some((value) => alertIdentifiers.has(normalizeOpportunityIdentifier(value))))
       const identifier = opportunity?.[C.contractNum] || alert.opportunityKey
       const opportunityTitle = [
         opportunity?.[C.title],
@@ -501,6 +510,8 @@ export default function Dashboard({ toast }) {
         alert,
         opportunity,
         identifier,
+        samNoticeId: alert.details?.noticeId || alert.opportunityKey,
+        samRowIndex: alert.details?.discoveryRowIndex,
         displayTitle: opportunityTitle || alert.summary || identifier,
         supportingDetail: opportunityTitle && supportingDetail !== opportunityTitle
           ? supportingDetail
@@ -557,9 +568,15 @@ export default function Dashboard({ toast }) {
           {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
             : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No unreviewed opportunity changes.</p>
             : <div className={styles.reviewQueue}>
-              {reviewQueueEntries.map(({ alert, opportunity, identifier, displayTitle, supportingDetail }) => (
+              {reviewQueueEntries.map(({ alert, opportunity, identifier, samNoticeId, samRowIndex, displayTitle, supportingDetail }) => (
                 <div className={styles.reviewQueueRow} key={`${alert.opportunityKey}:${alert.type}:${alert.fingerprint}`}>
                   <button type="button" className={styles.reviewQueueLink} onClick={() => {
+                    if (!opportunity && ['sam_change', 'sam_files'].includes(alert.type)) {
+                      const samParams = new URLSearchParams({ returnTo: '/opportunities?tab=New&source=sam' })
+                      if (samRowIndex != null) samParams.set('row', samRowIndex)
+                      navigate(`/opportunities/sam/${encodeURIComponent(samNoticeId)}?${samParams.toString()}`)
+                      return
+                    }
                     const key = encodeURIComponent(identifier)
                     const params = new URLSearchParams()
                     if (opportunity?._rowIndex != null) params.set('row', opportunity._rowIndex)
