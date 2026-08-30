@@ -13,7 +13,7 @@ import {
 } from '../lib/ebuyRepository.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
 import { deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
-import { getDocumentAnalysis, runEbuyArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { cancelDocumentAnalysis, getDocumentAnalysis, queueDocumentAnalysis, reviewDocumentFinding, runEbuyArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -132,6 +132,14 @@ export async function handleEbuy(req, env, identity = {}) {
       const run = await runEbuyArchiveDocumentAnalysis(env, requestId)
       return json({ ok: true, run, analysis: await getDocumentAnalysis(env, requestId) })
     }
+    if (analysisMatch && req.method === 'GET') {
+      return json({ analysis: await getDocumentAnalysis(env, decodeURIComponent(analysisMatch[1])) })
+    }
+    const analysisReviewMatch = path.match(/^\/ebuy\/opportunities\/([^/]+)\/analysis\/review$/)
+    if (analysisReviewMatch && req.method === 'POST') {
+      const requestId = decodeURIComponent(analysisReviewMatch[1])
+      return json({ ok: true, analysis: await reviewDocumentFinding(env, requestId, await req.json().catch(() => ({})), identity.name || identity.userId || '') })
+    }
     const detailMatch = path.match(/^\/ebuy\/opportunities\/([^/]+)$/)
     if (detailMatch && req.method === 'GET') {
       const opportunity = await getEbuyOpportunity(requireDatabase(env), decodeURIComponent(detailMatch[1]))
@@ -142,6 +150,11 @@ export async function handleEbuy(req, env, identity = {}) {
       const opportunity = await updateEbuyReviewState(
         requireDatabase(env), decodeURIComponent(detailMatch[1]), body.reviewState, body.pipelineContractId || null,
       )
+      if (body.reviewState === 'dismissed') {
+        await cancelDocumentAnalysis(requireDatabase(env), decodeURIComponent(detailMatch[1]))
+      } else if (['tracked', 'added_to_pipeline'].includes(body.reviewState)) {
+        await queueDocumentAnalysis(requireDatabase(env), decodeURIComponent(detailMatch[1]), 'ebuy', 100)
+      }
       return opportunity ? json({ ok: true, opportunity }) : json({ error: 'eBuy opportunity not found' }, 404)
     }
     if (path === '/ebuy/retention/run' && req.method === 'POST') {
