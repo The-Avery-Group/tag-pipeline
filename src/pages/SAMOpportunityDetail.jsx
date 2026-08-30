@@ -286,7 +286,7 @@ export default function SAMOpportunityDetail({ toast }) {
 
       <Card eyebrow="Classification" title="Classification">
         <div className={styles.grid}>
-          <Field label="Set-aside">{detail.setAside}</Field>
+          <Field label="Set-aside type">{detail.setAside || 'Not provided by SAM.gov'}</Field>
           <Field label="Product service code">{detail.productServiceCode}</Field>
           <Field label="NAICS">{detail.naicsCode}</Field>
           <Field label="Initiative">{detail.initiative}</Field>
