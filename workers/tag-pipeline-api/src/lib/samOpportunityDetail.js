@@ -154,39 +154,43 @@ function normalizeContacts(value) {
   }).sort((left, right) => Number(right.type.toLowerCase() === 'primary') - Number(left.type.toLowerCase() === 'primary'))
 }
 
+function authoritativeLinkTitle(value, proposedLabel = '') {
+  let hostname = ''
+  try { hostname = new URL(clean(value)).hostname.toLowerCase().replace(/^www\./, '') } catch { return '' }
+  const label = clean(proposedLabel)
+  const generic = /^(external opportunity link|additional opportunity information|link from sam\.gov posting|open link)$/i.test(label)
+  if (label && !generic) return label
+  if (hostname === 'piee.eb.mil' || hostname.endsWith('.piee.eb.mil')) return 'PIEE solicitation'
+  if (hostname === 'fedconnect.net' || hostname.endsWith('.fedconnect.net')) return 'FedConnect notice'
+  if (hostname === 'ebuy.gsa.gov' || hostname.endsWith('.ebuy.gsa.gov')) return 'GSA eBuy request'
+  if (hostname === 'acquisition.gov' || hostname.endsWith('.acquisition.gov')) return 'Acquisition.gov information'
+  if (hostname === 'grants.gov' || hostname.endsWith('.grants.gov')) return 'Grants.gov notice'
+  return hostname
+}
+
 function normalizeLinks(raw) {
   const values = []
-  const add = (value, label = '') => {
-    if (Array.isArray(value)) return value.forEach((entry) => add(entry, label))
+  const add = (value, source, label = '') => {
+    if (Array.isArray(value)) return value.forEach((entry) => add(entry, source, label))
     if (value && typeof value === 'object') {
       const url = clean(value.url || value.href || value.link)
-      if (url) values.push({ url, label: clean(value.label || value.name || label) || 'External opportunity link' })
+      if (url) values.push({ url, label: authoritativeLinkTitle(url, value.title || value.label || value.name || label), source })
       return
     }
     const url = clean(value)
-    if (url) values.push({ url, label: label || 'External opportunity link' })
+    if (url) values.push({ url, label: authoritativeLinkTitle(url, label), source })
   }
-  add(raw?.additionalInfoLink, 'Additional opportunity information')
-  add(raw?.links)
-  add(raw?.resourceLinks)
-
-  // Many SAM notices put the only external posting link inside the notice
-  // description instead of additionalInfoLink. Preserve HTML anchors,
-  // Markdown links, and visible plain URLs as first-class resources.
-  const description = descriptionCandidate(raw?.descriptionText || raw?.description)
-  for (const match of description.matchAll(/<a\b[^>]*href\s*=\s*(["'])(https?:\/\/.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)) {
-    add({ url: decodeEntities(match[2]), label: decodeEntities(match[3].replace(/<[^>]+>/g, ' ')) || 'Link from SAM.gov posting' })
-  }
-  for (const match of description.matchAll(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi)) {
-    add({ url: decodeEntities(match[2]), label: decodeEntities(match[1]) || 'Link from SAM.gov posting' })
-  }
-  for (const match of description.matchAll(/https?:\/\/[^\s<>"')\]]+/gi)) {
-    add(match[0].replace(/[.,;:!?]+$/, ''), 'Link from SAM.gov posting')
-  }
+  // Only fields supplied by SAM as link/resource fields belong in the
+  // External links section. URLs mentioned in the free-form description
+  // remain readable there but are never promoted into structured links.
+  add(raw?.additionalInfoLink, 'additionalInfoLink')
+  add(raw?.links, 'links')
+  add(raw?.resourceLinks, 'resourceLinks')
   const seen = new Set()
   return values.filter((item) => {
-    if (!/^https?:\/\//i.test(item.url) || isSAMApiUrl(item.url) || isSAMResourceDownloadUrl(item.url) || seen.has(item.url)) return false
-    seen.add(item.url)
+    const key = item.url.toLowerCase()
+    if (!/^https?:\/\//i.test(item.url) || !item.label || isSAMApiUrl(item.url) || isSAMResourceDownloadUrl(item.url) || seen.has(key)) return false
+    seen.add(key)
     return true
   })
 }
@@ -212,8 +216,8 @@ export function normalizeSAMOpportunityDetail(raw = {}) {
     archiveDate: clean(raw.archiveDate),
     archiveType: clean(raw.archiveType),
     organization,
-    setAside: clean(raw.typeOfSetAsideDescription || raw.typeOfSetAside),
-    setAsideCode: clean(raw.typeOfSetAside),
+    setAside: clean(raw.typeOfSetAsideDescription || raw.setAsideDescription || raw.typeOfSetAside || raw.setAside),
+    setAsideCode: clean(raw.typeOfSetAside || raw.setAsideCode),
     productServiceCode: clean(raw.classificationCode),
     naicsCode: clean(raw.naicsCode),
     placeOfPerformance: placeText(raw.placeOfPerformance),
