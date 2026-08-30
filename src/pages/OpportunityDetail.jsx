@@ -462,10 +462,11 @@ export default function OpportunityDetail({ toast }) {
   const opp = useMemo(
     () => {
       const byRow = routeRowIndex !== null
-        ? allPipeline.find((o) => o._rowIndex === routeRowIndex)
+        ? allPipeline.find((o) => Number(o._rowIndex) === routeRowIndex)
         : null
       return byRow || allPipeline.find((o) =>
-        normalizeOpportunityKey(o[C.contractNum]) === normalizeOpportunityKey(decodedCN)
+        [o[C.contractNum], o[C.solNum], o['Opportunity ID']]
+          .some((value) => normalizeOpportunityKey(value) === normalizeOpportunityKey(decodedCN))
       )
     },
     [allPipeline, decodedCN, routeRowIndex]
