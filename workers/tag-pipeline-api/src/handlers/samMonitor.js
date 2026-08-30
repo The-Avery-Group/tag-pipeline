@@ -271,6 +271,7 @@ function publicWatch(watch) {
   return {
     opportunityKey: watch.opportunityKey || watch.noticeId || watch.solicitationNumber,
     rowIndex: watch.rowIndex,
+    title: watch.title || watch.snapshot?.title || '',
     noticeId: watch.noticeId,
     solicitationNumber: watch.solicitationNumber,
     changed: Boolean(visibleChange && !visibleChange.reviewedAt),
@@ -311,12 +312,18 @@ async function recordDurableSAMChange(env, watch) {
   })
   watch.change.fingerprint = fingerprint
   const opportunityKey = watch.opportunityKey || watch.noticeId || watch.solicitationNumber
+  const identityDetails = {
+    opportunityTitle: watch.title || watch.snapshot?.title || '',
+    noticeId: watch.noticeId || watch.snapshot?.noticeId || '',
+    solicitationNumber: watch.solicitationNumber || watch.snapshot?.solicitationNumber || '',
+    discoveryRowIndex: watch.rowIndex ?? null,
+  }
   await upsertOpportunityAlert(env.EBUY_DB, {
     opportunityKey,
     type: 'sam_change',
     fingerprint,
     summary: watch.change.summary,
-    details: { fields: watch.change.fields, sourceModifiedAt: watch.change.sourceModifiedAt, uiLink: watch.change.uiLink },
+    details: { ...identityDetails, fields: watch.change.fields, sourceModifiedAt: watch.change.sourceModifiedAt, uiLink: watch.change.uiLink },
   })
   if (watch.change.fields?.includes('resourceLinks')) {
     await upsertOpportunityAlert(env.EBUY_DB, {
@@ -324,7 +331,7 @@ async function recordDurableSAMChange(env, watch) {
       type: 'sam_files',
       fingerprint: alertFingerprint({ sourceRevision: watch.change.sourceModifiedAt, current: watch.snapshot?.resourceLinks || [] }),
       summary: 'SAM.gov attachment list changed',
-      details: { sourceRevision: watch.change.sourceModifiedAt, resourceLinks: watch.snapshot?.resourceLinks || [] },
+      details: { ...identityDetails, sourceRevision: watch.change.sourceModifiedAt, resourceLinks: watch.snapshot?.resourceLinks || [] },
     })
   }
   return fingerprint
