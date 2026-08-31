@@ -1,4 +1,4 @@
-.panel { background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-lg); overflow: hidden; }
+.panel { background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-lg); margin-bottom: 14px; overflow: hidden; }
 .panel header { border-bottom: .5px solid var(--gray-200); }
 .heading { align-items: center; background: transparent; border: 0; color: inherit; cursor: pointer; display: flex; justify-content: space-between; padding: 12px 16px; text-align: left; width: 100%; }
 .heading > span:first-child { display: flex; flex-direction: column; gap: 3px; }
