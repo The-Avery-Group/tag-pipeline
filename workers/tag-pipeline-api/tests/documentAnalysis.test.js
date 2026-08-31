@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections } from '../src/lib/documentAnalysis.js'
+import { extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, reconcileCriticalFindings } from '../src/lib/documentAnalysis.js'
 
 test('plain-text documents retain section citations for extracted requirements', async () => {
   const bytes = new TextEncoder().encode('Background information.\n\nThe contractor shall provide weekly status reports. The response must include a staffing plan.')
@@ -27,4 +27,95 @@ test('critical scan separates questions and proposal delivery instructions with 
   assert.equal(critical.proposals.deadlines.length, 1)
   assert.equal(critical.proposals.submissionInstructions.length, 1)
   assert.deepEqual(critical.proposals.deadlines[0].citation, { fileName: 'instructions.pdf', location: 'page 18' })
+  assert.equal(critical.proposals.deadlines[0].confidence, 0.96)
+  assert.equal(critical.proposals.deadlines[0].verification, 'deterministic')
+})
+
+test('critical scan does not treat an answer-posting date as the questions deadline', () => {
+  const critical = extractCriticalSubmissionDetails([
+    { text: 'Responses to vendor questions will be posted by September 12, 2026.', location: 'page 4' },
+  ], 'questions-and-answers.pdf')
+  assert.deepEqual(critical.questions.deadlines, [])
+})
+
+test('critical scan marks tentative and historical dates as low confidence', () => {
+  const critical = extractCriticalSubmissionDetails([
+    { text: 'The draft schedule estimated that proposals were due September 18, 2025.', location: 'page 1' },
+  ], 'market-research.pdf')
+  assert.equal(critical.proposals.deadlines.length, 1)
+  assert.equal(critical.proposals.deadlines[0].confidence, 0.55)
+})
+
+test('critical scan preserves separate table rows and their citations', () => {
+  const critical = extractCriticalSubmissionDetails([
+    { text: 'Questions must be sent by October 2, 2026 at 4:00 PM ET to bids@example.gov.\nProposals must be uploaded through PIEE by October 16, 2026 at 4:00 PM ET.', location: 'table 3' },
+  ], 'Amendment 0002.docx')
+  assert.equal(critical.questions.deadlines.length, 1)
+  assert.equal(critical.proposals.deadlines.length, 1)
+  assert.equal(critical.questions.deadlines[0].amendmentNumber, 2)
+  assert.equal(critical.proposals.deadlines[0].citation.location, 'table 3')
+})
+
+test('current amendment evidence outranks an older structured deadline and exposes the conflict', () => {
+  const result = reconcileCriticalFindings([{
+    questions: { deadlines: [], submissionInstructions: [] },
+    proposals: { deadlines: [{
+      text: 'Amendment 0002 extends the proposal deadline to October 16, 2026 at 4:00 PM ET.',
+      citation: { fileName: 'Amendment 0002.pdf', location: 'page 1' },
+      confidence: 0.96,
+      verification: 'ai_validated',
+      sourceRank: 502,
+      amendmentNumber: 2,
+      supersedesPrior: true,
+    }], submissionInstructions: [] },
+  }], [{
+    text: 'Responses are due October 9, 2026 according to the current SAM.gov opportunity record.',
+    citation: { fileName: 'SAM.gov opportunity record', location: 'Response deadline' },
+    category: 'proposals.deadlines',
+    confidence: 1,
+    verification: 'structured_source',
+    sourceRank: 450,
+  }])
+
+  assert.match(result.proposals.deadlines[0].text, /October 16/)
+  assert.equal(result.conflicts.length, 1)
+  assert.match(result.conflicts[0].alternatives[0].text, /October 9/)
+})
+
+test('low-confidence tentative dates are excluded from displayed critical findings', () => {
+  const result = reconcileCriticalFindings([{
+    questions: { deadlines: [], submissionInstructions: [] },
+    proposals: { deadlines: [{
+      text: 'The tentative proposal deadline is October 16, 2026.',
+      citation: { fileName: 'draft.pdf', location: 'page 1' },
+      confidence: 0.55,
+      verification: 'deterministic',
+      sourceRank: 150,
+    }], submissionInstructions: [] },
+  }])
+
+  assert.deepEqual(result.proposals.deadlines, [])
+})
+
+test('corroborating sources with the same deadline are not reported as a conflict', () => {
+  const result = reconcileCriticalFindings([{
+    questions: { deadlines: [], submissionInstructions: [] },
+    proposals: { deadlines: [{
+      text: 'Proposals must be received by October 16, 2026 at 4:00 PM ET.',
+      citation: { fileName: 'instructions.pdf', location: 'page 5' },
+      confidence: 0.96,
+      verification: 'ai_validated',
+      sourceRank: 400,
+    }], submissionInstructions: [] },
+  }], [{
+    text: 'Responses close October 16, 2026 at 4:00 PM ET in GSA eBuy.',
+    citation: { fileName: 'GSA eBuy opportunity record', location: 'Closing date' },
+    category: 'proposals.deadlines',
+    confidence: 1,
+    verification: 'structured_source',
+    sourceRank: 450,
+  }])
+
+  assert.equal(result.proposals.deadlines.length, 2)
+  assert.deepEqual(result.conflicts, [])
 })
