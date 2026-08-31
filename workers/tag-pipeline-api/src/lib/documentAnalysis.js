@@ -26,6 +26,13 @@ function extension(name) { return String(name || '').split('.').pop().toLowerCas
 function signature(file) { return `${file.id}:${file.size || 0}:${file.lastModifiedDateTime || ''}` }
 function analysisSignature(file) { return `${signature(file)}:${DOCUMENT_ANALYSIS_VERSION}` }
 
+export function documentAnalysisWorkspace(workspace) {
+  if (!workspace?.samFolderId) {
+    throw Object.assign(new Error('The opportunity workspace is missing its 2. RFI Documents folder'), { status: 409 })
+  }
+  return { ...workspace, rootFolderId: workspace.samFolderId }
+}
+
 function layoutText(value) {
   return String(value || '')
     .replace(/\r\n?/g, '\n')
@@ -461,6 +468,19 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
   return { processed: changed.length, remaining: Math.max(0, files.filter((file) => byItem.get(file.id)?.source_signature !== analysisSignature(file)).length - changed.length), deferred }
 }
 
+async function removeAnalysisOutsideDocumentFolder(db, opportunityKey, files) {
+  const currentIds = new Set(files.map((file) => String(file.id || '')).filter(Boolean))
+  const rows = await db.prepare('SELECT id, sharepoint_item_id FROM opportunity_document_analysis WHERE opportunity_key = ?')
+    .bind(normalizeWorkspaceKey(opportunityKey)).all()
+  const stale = (rows.results || []).filter((row) => !currentIds.has(String(row.sharepoint_item_id || '')))
+  for (let index = 0; index < stale.length; index += 50) {
+    await db.batch(stale.slice(index, index + 50).map((row) => (
+      db.prepare('DELETE FROM opportunity_document_analysis WHERE id = ?').bind(row.id)
+    )))
+  }
+  return stale.length
+}
+
 async function analyzePastPerformance(env, workspace, token) {
   const driveId = driveIdFor(env)
   const workbook = await getItem(env, token, driveId, env.WORKBOOK_ID)
@@ -518,13 +538,14 @@ export async function runDocumentAnalysis(env, opportunityKey) {
   const workspace = await getWorkspace(env.EBUY_DB, opportunityKey)
   if (!workspace?.rootFolderId) throw Object.assign(new Error('Set up the opportunity workspace before analyzing documents'), { status: 409 })
   const token = await getAppOnlyGraphToken(env)
-  const index = await listWorkspaceFlatFiles(env, workspace)
+  const index = await listWorkspaceFlatFiles(env, documentAnalysisWorkspace(workspace))
+  await removeAnalysisOutsideDocumentFolder(env.EBUY_DB, opportunityKey, index.files)
   const opportunity = await analyzeOpportunityFiles(env, workspace, index.files, token)
   const pastPerformance = await analyzePastPerformance(env, workspace, token)
   const packageAnalysis = !opportunity.remaining && !opportunity.deferred ? await consolidateOpportunityAnalysis(env, opportunityKey) : { status: 'deferred' }
   const completed = !opportunity.remaining && !opportunity.deferred && packageAnalysis.status !== 'deferred'
   await updateAnalysisJob(env.EBUY_DB, opportunityKey, { status: completed ? 'complete' : 'queued', progressPhase: completed ? 'Analysis available' : 'More documents are queued', processedFiles: opportunity.processed, totalFiles: opportunity.processed + opportunity.remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: completed ? new Date().toISOString() : null })
-  return { opportunity, pastPerformance }
+  return { opportunityKey: normalizeWorkspaceKey(opportunityKey), opportunity, pastPerformance }
 }
 
 export async function runSAMArchiveDocumentAnalysis(env, input, options = {}) {
@@ -564,7 +585,7 @@ export async function runSAMArchiveDocumentAnalysis(env, input, options = {}) {
   const packageAnalysis = remaining === 0 && deferred === 0 ? await consolidateOpportunityAnalysis(env, key, options) : { status: 'deferred' }
   const completed = remaining === 0 && deferred === 0 && packageAnalysis.status !== 'deferred'
   await updateAnalysisJob(env.EBUY_DB, key, { status: completed ? 'complete' : 'queued', progressPhase: completed ? 'Analysis available' : 'More documents are queued', processedFiles: processed, totalFiles: processed + remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: completed ? new Date().toISOString() : null })
-  return { opportunity: { processed, remaining, deferred }, pastPerformance }
+  return { opportunityKey: key, opportunity: { processed, remaining, deferred }, pastPerformance }
 }
 
 export async function runEbuyArchiveDocumentAnalysis(env, requestId, options = {}) {
@@ -602,7 +623,7 @@ export async function runEbuyArchiveDocumentAnalysis(env, requestId, options = {
   const packageAnalysis = remaining === 0 && deferred === 0 ? await consolidateOpportunityAnalysis(env, requestId, options) : { status: 'deferred' }
   const completed = remaining === 0 && deferred === 0 && packageAnalysis.status !== 'deferred'
   await updateAnalysisJob(env.EBUY_DB, requestId, { status: completed ? 'complete' : 'queued', progressPhase: completed ? 'Analysis available' : 'More documents are queued', processedFiles: processed, totalFiles: processed + remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: completed ? new Date().toISOString() : null })
-  return { opportunity: { processed, remaining, deferred }, pastPerformance }
+  return { opportunityKey: normalizeWorkspaceKey(requestId), opportunity: { processed, remaining, deferred }, pastPerformance }
 }
 
 export async function resumeQueuedDocumentAnalysis(env, limit = 4) {
@@ -735,12 +756,7 @@ export async function getDocumentAnalysis(env, opportunityKey) {
   const rows = documents.results || []
   const allCritical = rows.map((row) => JSON.parse(row.critical_json || '{}'))
   const critical = reconcileCriticalFindings(allCritical, structured)
-  const readableComplete = job?.status === 'complete' || (rows.length > 0 && rows.every((row) => ['ready', 'unsupported', 'error', 'cancelled'].includes(row.status)) && !['queued', 'running'].includes(job?.status))
-  const criticalStatus = job?.status === 'cancelled' ? 'cancelled'
-    : criticalCount(critical) && critical.conflicts.length ? 'conflict'
-      : criticalCount(critical) && critical.needsReview ? 'needs_review'
-        : criticalCount(critical) ? 'cited'
-          : readableComplete ? 'not_found' : 'searching'
+  const criticalStatus = criticalAnalysisStatus(job, rows, critical)
   return {
     job: job ? { status: job.status, phase: job.progress_phase, processedFiles: job.processed_files, totalFiles: job.total_files, error: job.error_message, updatedAt: job.updated_at } : null,
     package: JSON.parse(job?.package_analysis_json || '{}'),
@@ -750,6 +766,16 @@ export async function getDocumentAnalysis(env, opportunityKey) {
     requirements: rows.flatMap((row) => JSON.parse(row.requirements_json || '[]')),
     pastPerformance: (matches.results || []).map((row) => ({ fileName: row.file_name, filePath: row.file_path, serviceCategory: row.service_category, score: row.score, metadata: JSON.parse(row.metadata_json || '{}'), evidence: JSON.parse(row.evidence_json || '[]') })),
   }
+}
+
+export function criticalAnalysisStatus(job, rows = [], critical = {}) {
+  const readableComplete = job?.status === 'complete' || (rows.length > 0 && rows.every((row) => ['ready', 'unsupported', 'error', 'cancelled'].includes(row.status)) && !['queued', 'running'].includes(job?.status))
+  if (job?.status === 'cancelled') return 'cancelled'
+  if (job?.status === 'error') return 'error'
+  if (criticalCount(critical) && critical.conflicts?.length) return 'conflict'
+  if (criticalCount(critical) && critical.needsReview) return 'needs_review'
+  if (criticalCount(critical)) return 'cited'
+  return readableComplete ? 'not_found' : 'searching'
 }
 
 export async function reviewDocumentFinding(env, opportunityKey, input = {}, reviewedBy = '') {
