@@ -33,13 +33,12 @@ export const loginRequest = {
   scopes: ['User.Read', 'Files.ReadWrite', 'Sites.ReadWrite.All'],
 }
 
-// Use cached access and refresh tokens without falling through to MSAL's
-// hidden authorization iframe. When the 24-hour SPA refresh token expires,
-// the existing session-refresh modal provides an explicit popup recovery.
-// This avoids third-party-cookie and sandbox warnings in privacy-focused
-// browsers while retaining silent renewal during the normal token lifetime.
+// Use Microsoft's full silent-renewal sequence. After the non-sliding
+// 24-hour SPA refresh token expires, MSAL may renew through the user's active
+// Entra SSO session without interrupting work. Browsers that block that
+// hidden renewal still fall back to the app's explicit refresh modal.
 export const silentTokenOptions = {
-  cacheLookupPolicy: CacheLookupPolicy.AccessTokenAndRefreshToken,
+  cacheLookupPolicy: CacheLookupPolicy.Default,
 }
 
 // Requested incrementally only when a user explicitly opens an email draft
