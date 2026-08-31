@@ -19,7 +19,7 @@ const GROQ_MAX_COMPLETION_TOKENS = 1_200
 export const GROQ_PACING_SECONDS = 60
 const GROQ_BASE = 'https://api.groq.com/openai/v1'
 const GROQ_EXTRACTION_MODEL = 'openai/gpt-oss-20b'
-const DOCUMENT_ANALYSIS_VERSION = 'critical-v4-chunked'
+const DOCUMENT_ANALYSIS_VERSION = 'critical-v5-submission-templates'
 
 function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
 function xmlText(value) {
@@ -30,7 +30,32 @@ function xmlText(value) {
 }
 function extension(name) { return String(name || '').split('.').pop().toLowerCase() }
 function signature(file) { return `${file.id}:${file.size || 0}:${file.lastModifiedDateTime || ''}` }
-function analysisSignature(file) { return `${signature(file)}:${DOCUMENT_ANALYSIS_VERSION}` }
+function analysisSignature(file) { return file.savedAnalysisSignature || `${signature(file)}:${DOCUMENT_ANALYSIS_VERSION}` }
+
+function workerSubrequestLimitReached(error) {
+  return /too many subrequests|subrequest limit/i.test(error?.message || '')
+}
+
+export function isSubmissionTemplateAttachment(file = {}, sections = []) {
+  const fileName = String(file.name || file.fileName || '').split('/').pop().replace(/[_.-]+/g, ' ').toLowerCase()
+  const explicitName = /\b(?:response|submission|proposal|pricing|price|cost|technical|management|staffing|resume|questionnaire|past performance)?\s*template\b/.test(fileName)
+    || /\b(?:pricing|price|cost|response|submission)\s+(?:workbook|worksheet|schedule)\b/.test(fileName)
+    || /\bpast performance questionnaire\b/.test(fileName)
+  if (explicitName) return true
+
+  const ext = extension(file.name || file.fileName)
+  if (!['docx', 'xlsx', 'pdf'].includes(ext)) return false
+  const sample = sections.slice(0, 80).map((section) => section.text).join('\n').slice(0, 40_000).toLowerCase()
+  const completionCues = [
+    /\b(?:offeror|vendor|quoter|respondent)\s+(?:name|response|information)\b/,
+    /\b(?:complete|fill out|populate)\s+(?:and\s+)?(?:return|submit|this|the)\b/,
+    /\b(?:insert|enter|provide)\s+(?:company|offeror|vendor|respondent|proposed)\b/,
+    /\bclick or tap here to enter text\b/,
+    /\btemplate instructions\b/,
+  ].filter((pattern) => pattern.test(sample)).length
+  const blankCues = (sample.match(/(?:_{4,}|\[\s*(?:insert|enter|offeror|vendor)[^\]]*\]|<\s*(?:insert|enter)[^>]*>)/g) || []).length
+  return completionCues >= 2 && blankCues >= 2
+}
 
 export function documentAnalysisWorkspace(workspace) {
   if (!workspace?.samFolderId) {
@@ -547,6 +572,11 @@ async function updateAnalysisJob(db, opportunityKey, changes) {
 
 export async function beginDocumentAnalysisJob(db, opportunityKey, sourceService = '') {
   await queueDocumentAnalysis(db, opportunityKey, sourceService, sourceService === 'pipeline' ? 100 : 10)
+  await db.prepare(`UPDATE opportunity_document_analysis
+    SET status = 'processing', analysis_json = '{"status":"deferred","reason":"worker_subrequest_budget"}',
+      error_message = NULL, updated_at = ?
+    WHERE opportunity_key = ? AND lower(COALESCE(error_message, '')) LIKE '%too many subrequests%'`)
+    .bind(new Date().toISOString(), normalizeWorkspaceKey(opportunityKey)).run()
   await updateAnalysisJob(db, opportunityKey, {
     status: 'queued',
     progressPhase: 'Processing documents',
@@ -695,32 +725,53 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
     let status = 'ready'; let text = continuing ? prior.extracted_text : ''; let requirements = continuing ? JSON.parse(prior.requirements_json || '[]') : []; let critical = continuing ? JSON.parse(prior.critical_json || '{}') : {}; let deeperAnalysis = {}; let errorMessage = null
     try {
       const sections = continuing ? [] : await extractDocumentSections(await downloadFile(token, workspace.sharePointDriveId, file), file.name, file.mimeType || '')
-      if (!continuing) {
+      if (!continuing && isSubmissionTemplateAttachment(file, sections)) {
+        status = 'excluded_template'
+        text = ''
+        requirements = []
+        critical = {}
+        deeperAnalysis = { status: 'excluded_template', reason: 'submission_template' }
+        completed++
+      } else if (!continuing) {
         text = sections.map((item) => item.text).join('\n').slice(0, 250000)
         requirements = extractCitedRequirements(sections, file.name)
         critical = extractCriticalSubmissionDetails(sections, file.name)
       }
-      const hasRelevantAnalysis = continuing || relevantAnalysisChunks(sections, critical).length > 0
-      if (hasRelevantAnalysis) {
-        deeperAnalysis = await analyzeRelevantSections(env, sections, file.name, options, critical, continuing ? priorAI : null)
-        if (deeperAnalysis.status === 'ready') critical = applyCriticalValidation(critical, deeperAnalysis)
+      if (status !== 'excluded_template') {
+        const hasRelevantAnalysis = continuing || relevantAnalysisChunks(sections, critical).length > 0
+        if (hasRelevantAnalysis) {
+          deeperAnalysis = await analyzeRelevantSections(env, sections, file.name, options, critical, continuing ? priorAI : null)
+          if (deeperAnalysis.status === 'ready') critical = applyCriticalValidation(critical, deeperAnalysis)
+        }
+        else deeperAnalysis = { status: 'not_applicable' }
+        aiRequestMade ||= deeperAnalysis.aiRequestMade === true
+        retryAfterSeconds = Math.max(retryAfterSeconds, Number(deeperAnalysis.retryAfterSeconds || 0))
+        pacingSeconds = Math.max(pacingSeconds, Number(deeperAnalysis.pacingSeconds || 0))
+        if (deeperAnalysis.status === 'deferred') deferred++
+        if (deeperAnalysis.status === 'error') {
+          status = 'error'
+          errorMessage = clean(deeperAnalysis.error || deeperAnalysis.warnings?.join('; ') || 'AI analysis could not read this document')
+          completed++
+        }
+        else if (['processing', 'deferred'].includes(deeperAnalysis.status)) status = 'processing'
+        else completed++
       }
-      else deeperAnalysis = { status: 'not_applicable' }
-      aiRequestMade ||= deeperAnalysis.aiRequestMade === true
-      retryAfterSeconds = Math.max(retryAfterSeconds, Number(deeperAnalysis.retryAfterSeconds || 0))
-      pacingSeconds = Math.max(pacingSeconds, Number(deeperAnalysis.pacingSeconds || 0))
-      if (deeperAnalysis.status === 'deferred') deferred++
-      if (deeperAnalysis.status === 'error') {
-        status = 'error'
-        errorMessage = clean(deeperAnalysis.error || deeperAnalysis.warnings?.join('; ') || 'AI analysis could not read this document')
+    } catch (error) {
+      if (workerSubrequestLimitReached(error)) {
+        // This is an invocation-budget condition, not a defect in the file.
+        // Persist a resumable checkpoint and let the Workflow try again in a
+        // fresh invocation with a new subrequest allowance.
+        status = 'processing'
+        deeperAnalysis = continuing && Array.isArray(priorAI.chunks)
+          ? { ...priorAI, status: 'deferred', reason: 'worker_subrequest_budget' }
+          : { status: 'deferred', reason: 'worker_subrequest_budget' }
+        deferred++
+        retryAfterSeconds = Math.max(retryAfterSeconds, 1)
+      } else {
+        status = error.code === 'unsupported_document_format' ? 'unsupported' : 'error'
+        errorMessage = error.message
         completed++
       }
-      else if (['processing', 'deferred'].includes(deeperAnalysis.status)) status = 'processing'
-      else completed++
-    } catch (error) {
-      status = error.code === 'unsupported_document_format' ? 'unsupported' : 'error'
-      errorMessage = error.message
-      completed++
     }
     await env.EBUY_DB.prepare(`INSERT INTO opportunity_document_analysis (
         id, opportunity_key, sharepoint_drive_id, sharepoint_item_id, file_name, file_path, source_kind,
@@ -742,6 +793,22 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
     pacingSeconds,
     aiRequestMade,
   }
+}
+
+async function resumableOpportunityFiles(db, opportunityKey) {
+  const rows = await db.prepare(`SELECT sharepoint_drive_id, sharepoint_item_id, file_name, file_path, source_signature, status, analysis_json
+    FROM opportunity_document_analysis WHERE opportunity_key = ? AND status = 'processing' ORDER BY updated_at ASC`)
+    .bind(normalizeWorkspaceKey(opportunityKey)).all()
+  return (rows.results || []).filter((row) => {
+    const analysis = JSON.parse(row.analysis_json || '{}')
+    return ['processing', 'deferred'].includes(analysis.status)
+  }).map((row) => ({
+    id: row.sharepoint_item_id,
+    name: row.file_name,
+    path: row.file_path,
+    savedAnalysisSignature: row.source_signature,
+    sharePointDriveId: row.sharepoint_drive_id,
+  }))
 }
 
 async function removeAnalysisOutsideDocumentFolder(db, opportunityKey, files) {
@@ -784,6 +851,16 @@ async function analyzePastPerformance(env, workspace, token) {
         error_message = excluded.error_message, analyzed_at = excluded.analyzed_at, updated_at = excluded.updated_at`)
       .bind(crypto.randomUUID(), driveId, file.id, file.serviceCategory || 'Uncategorized', file.name, file.path, signature(file), status, text, JSON.stringify(metadata), errorMessage, now, now, now).run()
   }
+  const matches = await matchIndexedPastPerformance(env, workspace)
+  return {
+    processed: changed.length,
+    remaining: Math.max(0, files.filter((file) => byItem.get(file.id)?.source_signature !== signature(file)).length - changed.length),
+    missing: false,
+    matches: matches.matches,
+  }
+}
+
+async function matchIndexedPastPerformance(env, workspace) {
   const ready = await env.EBUY_DB.prepare("SELECT * FROM past_performance_documents WHERE status = 'ready'").all()
   const opportunityAnalysis = await env.EBUY_DB.prepare(`SELECT requirements_json, analysis_json
     FROM opportunity_document_analysis WHERE opportunity_key = ? AND status = 'ready'`)
@@ -801,7 +878,7 @@ async function analyzePastPerformance(env, workspace, token) {
   if (matches.length) await env.EBUY_DB.batch(matches.map((match) => env.EBUY_DB.prepare(`INSERT INTO opportunity_past_performance_matches
       (opportunity_key, past_performance_id, score, evidence_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
     .bind(workspace.opportunityKey, match.record.id, match.score, JSON.stringify(match.evidence), matchNow, matchNow)))
-  return { processed: changed.length, remaining: Math.max(0, files.filter((file) => byItem.get(file.id)?.source_signature !== signature(file)).length - changed.length), missing: false }
+  return { processed: 0, remaining: 0, missing: false, matches: matches.length, source: 'indexed' }
 }
 
 export async function runDocumentAnalysis(env, opportunityKey, options = {}) {
@@ -814,10 +891,19 @@ export async function runDocumentAnalysis(env, opportunityKey, options = {}) {
   const workspace = await getWorkspace(env.EBUY_DB, opportunityKey)
   if (!workspace?.rootFolderId) throw Object.assign(new Error('Set up the opportunity workspace before analyzing documents'), { status: 409 })
   const token = await getAppOnlyGraphToken(env)
-  const index = await listWorkspaceFlatFiles(env, documentAnalysisWorkspace(workspace))
-  await removeAnalysisOutsideDocumentFolder(env.EBUY_DB, opportunityKey, index.files)
-  const opportunity = await analyzeOpportunityFiles(env, workspace, index.files, token, options)
-  const pastPerformance = await analyzePastPerformance(env, workspace, token)
+  const resumableFiles = await resumableOpportunityFiles(env.EBUY_DB, opportunityKey)
+  const index = resumableFiles.length
+    ? { files: resumableFiles, partial: false, resumed: true }
+    : await listWorkspaceFlatFiles(env, documentAnalysisWorkspace(workspace), { maxRequests: 20 })
+  const analysisWorkspace = index.resumed && index.files[0]?.sharePointDriveId
+    ? { ...workspace, sharePointDriveId: index.files[0].sharePointDriveId }
+    : workspace
+  if (!index.resumed) await removeAnalysisOutsideDocumentFolder(env.EBUY_DB, opportunityKey, index.files)
+  const opportunity = await analyzeOpportunityFiles(env, analysisWorkspace, index.files, token, options)
+  // Matching uses the past-performance records already indexed in D1. A full
+  // SharePoint library refresh belongs in its own bounded Workflow and must
+  // not consume the document checkpoint's outbound-request allowance.
+  const pastPerformance = await matchIndexedPastPerformance(env, workspace)
   const packageAnalysis = !opportunity.remaining && !opportunity.deferred
     ? await consolidateOpportunityAnalysis(env, opportunityKey, options)
     : { status: opportunity.deferred ? 'deferred' : 'pending' }
@@ -877,7 +963,7 @@ export async function runSAMArchiveDocumentAnalysis(env, input, options = {}) {
       break
     }
   }
-  const pastPerformance = await analyzePastPerformance(env, source, token)
+  const pastPerformance = await matchIndexedPastPerformance(env, source)
   const packageAnalysis = remaining === 0 && deferred === 0
     ? await consolidateOpportunityAnalysis(env, key, options)
     : { status: deferred ? 'deferred' : 'pending' }
@@ -931,7 +1017,7 @@ export async function runEbuyArchiveDocumentAnalysis(env, requestId, options = {
       break
     }
   }
-  const pastPerformance = await analyzePastPerformance(env, source, token)
+  const pastPerformance = await matchIndexedPastPerformance(env, source)
   const packageAnalysis = remaining === 0 && deferred === 0
     ? await consolidateOpportunityAnalysis(env, requestId, options)
     : { status: deferred ? 'deferred' : 'pending' }
@@ -1099,7 +1185,7 @@ export async function getDocumentAnalysis(env, opportunityKey) {
 }
 
 export function criticalAnalysisStatus(job, rows = [], critical = {}) {
-  const readableComplete = job?.status === 'complete' || (rows.length > 0 && rows.every((row) => ['ready', 'unsupported', 'error', 'cancelled'].includes(row.status)) && !['queued', 'running'].includes(job?.status))
+  const readableComplete = job?.status === 'complete' || (rows.length > 0 && rows.every((row) => ['ready', 'unsupported', 'error', 'cancelled', 'excluded_template'].includes(row.status)) && !['queued', 'running'].includes(job?.status))
   if (job?.status === 'cancelled') return 'cancelled'
   if (job?.status === 'error') return 'error'
   if (['queued', 'running'].includes(job?.status)) return 'processing'
