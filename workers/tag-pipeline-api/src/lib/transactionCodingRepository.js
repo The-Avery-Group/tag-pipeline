@@ -333,6 +333,12 @@ export async function listTransactionCodingExports(db) {
   return (result.results || []).map(publicExport)
 }
 
+export async function listTransactionCodingExportCsv(db) {
+  const result = await db.prepare('SELECT csv_text FROM transaction_coding_exports WHERE expires_at > ? ORDER BY created_at')
+    .bind(new Date().toISOString()).all()
+  return (result.results || []).map((row) => row.csv_text || '')
+}
+
 export async function getTransactionCodingExport(db, exportId) {
   const row = await db.prepare('SELECT * FROM transaction_coding_exports WHERE id = ?').bind(exportId).first()
   return row ? { ...publicExport(row), csv: row.csv_text } : null
