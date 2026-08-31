@@ -1605,10 +1605,10 @@ export async function handleSAM(req, env, ctx) {
   }
 
   if (url.pathname === '/sam/archive/analysis' && req.method === 'POST') {
-    const body = await req.json().catch(() => ({}))
+      const body = await req.json().catch(() => ({}))
     try {
       const run = await runSAMArchiveDocumentAnalysis(env, body)
-      const key = body.solicitationNumber || body.noticeId
+      const key = run.opportunityKey || body.solicitationNumber || body.noticeId
       return json({ ok: true, run, analysis: await getDocumentAnalysis(env, key) })
     } catch (error) {
       return json({ error: error.message, code: error.code || 'sam_document_analysis_failed' }, error.status || 500)
@@ -1617,7 +1617,9 @@ export async function handleSAM(req, env, ctx) {
 
   if (url.pathname === '/sam/archive/analysis' && req.method === 'GET') {
     try {
-      return json({ analysis: await getDocumentAnalysis(env, url.searchParams.get('key') || '') })
+      const requestedKey = url.searchParams.get('key') || ''
+      const archive = await findSAMArchive(env.EBUY_DB, { opportunityKey: requestedKey })
+      return json({ analysis: await getDocumentAnalysis(env, archive?.opportunityKey || requestedKey) })
     } catch (error) {
       return json({ error: error.message, code: error.code || 'sam_document_analysis_failed' }, error.status || 500)
     }
@@ -1626,7 +1628,8 @@ export async function handleSAM(req, env, ctx) {
   if (url.pathname === '/sam/archive/analysis/review' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     try {
-      return json({ ok: true, analysis: await reviewDocumentFinding(env, body.opportunityKey, body) })
+      const archive = await findSAMArchive(env.EBUY_DB, body)
+      return json({ ok: true, analysis: await reviewDocumentFinding(env, archive?.opportunityKey || body.opportunityKey, body) })
     } catch (error) {
       return json({ error: error.message, code: error.code || 'sam_document_review_failed' }, error.status || 500)
     }
