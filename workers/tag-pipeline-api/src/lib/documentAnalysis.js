@@ -59,7 +59,7 @@ export function isSubmissionTemplateAttachment(file = {}, sections = []) {
 
 export function documentAnalysisWorkspace(workspace) {
   if (!workspace?.samFolderId) {
-    throw Object.assign(new Error('The opportunity workspace is missing its 2. RFI Documents folder'), { status: 409 })
+    throw Object.assign(new Error('The opportunity workspace is missing its source-documents folder'), { status: 409 })
   }
   return { ...workspace, rootFolderId: workspace.samFolderId }
 }
