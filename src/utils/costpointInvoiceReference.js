@@ -1,6 +1,7 @@
 export const COSTPOINT_INVOICE_REFERENCE_LIMIT = 15
 export const DEFAULT_INVOICE_REFERENCE_PATTERN = 'INV-{date}-{sequence}'
 export const COMPACT_INVOICE_REFERENCE_PATTERN = 'INV{date}{sequence}'
+export const INVOICE_REFERENCE_PATTERN_FIELDS = Object.freeze(['date', 'sequence'])
 
 function clean(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -21,8 +22,9 @@ function normalizedFieldName(value) {
 }
 
 export function availableTransactionFields(rows = []) {
-  void rows
-  return ['date', 'sequence']
+  const fields = new Set(INVOICE_REFERENCE_PATTERN_FIELDS)
+  rows.forEach((row) => Object.keys(row || {}).forEach((key) => fields.add(key)))
+  return [...fields].sort((left, right) => left.localeCompare(right))
 }
 
 export function validateTransactionPattern(pattern) {
@@ -72,9 +74,9 @@ export function invoiceReferenceSequencePlan(rows = [], {
 }
 
 export function resolveTransactionPattern(pattern, row, sequence = 1) {
-  validateTransactionPattern(pattern)
   const transactionDate = row.transactionDate || row.transaction_date || ''
   const fields = {
+    ...row,
     sequence: String(sequenceNumber(sequence)).padStart(3, '0'),
     date: String(transactionDate).slice(0, 7),
   }
@@ -115,6 +117,9 @@ export function defaultInputVoucherNumber(row, sequence = 1, used = new Set()) {
 export function invoiceReferenceForMode(row, sequence, mode, pattern = '') {
   if (mode === 'manual') return ''
   if (mode === 'transaction_id') return transactionIdInvoiceReference(row, sequence)
-  if (mode === 'custom') return clean(resolveTransactionPattern(pattern, row, sequence))
+  if (mode === 'custom') {
+    validateTransactionPattern(pattern)
+    return clean(resolveTransactionPattern(pattern, row, sequence))
+  }
   return automaticInvoiceReference(row, sequence)
 }
