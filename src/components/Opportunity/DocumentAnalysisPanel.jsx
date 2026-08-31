@@ -118,6 +118,7 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
     return [...new Set(messages.filter(Boolean))].map((message) => ({ fileName: document.fileName, filePath: document.filePath, message }))
   })
   const analyzedDocuments = documents.filter((document) => document.status === 'ready')
+  const excludedTemplates = documents.filter((document) => document.status === 'excluded_template')
 
   return <section className={styles.panel}>
     <header>
@@ -163,6 +164,9 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
           <p>{document.summary || 'Analysis completed; no additional summary was extracted from this file.'}</p>
           {document.analysis?.coverage && <small>{document.analysis.coverage.completedChunks} of {document.analysis.coverage.chunkCount} analysis sections completed</small>}
         </article>)}
+      </details>}
+      {excludedTemplates.length > 0 && <details className={styles.requirements}><summary>{excludedTemplates.length} submission template{excludedTemplates.length === 1 ? '' : 's'} excluded</summary>
+        {excludedTemplates.map((document) => <article key={`${document.filePath}-${document.fileName}`}><p><strong>{document.fileName}</strong></p><small>Retained in SharePoint for later drafting; excluded from opportunity analysis.</small></article>)}
       </details>}
       {(analysis?.pastPerformance || []).length > 0 && <details className={styles.requirements}><summary>{analysis.pastPerformance.length} past-performance match{analysis.pastPerformance.length === 1 ? '' : 'es'}</summary>{analysis.pastPerformance.slice(0, 8).map((match) => <article key={match.fileName}><p><strong>{match.fileName}</strong> · {match.score}% match</p><small>{[match.serviceCategory, ...(match.evidence || [])].filter(Boolean).join(' · ')}</small></article>)}</details>}
     </div>}
