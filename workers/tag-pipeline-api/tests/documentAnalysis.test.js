@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks } from '../src/lib/documentAnalysis.js'
+import { consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -50,6 +50,20 @@ test('Groq pacing honors reset headers without dropping below one minute', () =>
   const response = { headers: { get: (name) => name === 'retry-after' ? '43.275' : name === 'x-ratelimit-reset-tokens' ? '1m 12.5s' : null } }
   assert.equal(groqRetryDelay(response), 73)
   assert.equal(groqRetryDelay({ headers: { get: () => null } }), 60)
+})
+
+test('available file analysis remains visible when another document fails', () => {
+  const result = consolidateReadyDocumentRows([
+    {
+      file_name: 'instructions.pdf', status: 'ready', summary: 'Fallback summary',
+      analysis_json: JSON.stringify({ overview: 'The agency needs support services.', evaluation: [{ text: 'Technical approach is evaluated.', location: 'page 12' }] }),
+    },
+    { file_name: 'corrupt.pdf', status: 'error', summary: '', analysis_json: '{}' },
+  ])
+  assert.equal(result.status, 'ready')
+  assert.equal(result.coverage.documentCount, 1)
+  assert.match(result.overview, /agency needs support services/i)
+  assert.deepEqual(result.evaluation, [{ text: 'Technical approach is evaluated.', location: 'page 12', fileName: 'instructions.pdf' }])
 })
 
 test('plain-text documents retain section citations for extracted requirements', async () => {
