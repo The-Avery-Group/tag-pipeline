@@ -272,7 +272,7 @@ const DATE_COLUMNS = new Set([
 ])
 
 /**
- * Convert an Excel date serial → 'YYYY-MM-DD'.
+ * Convert an Excel date serial → 'YYYY-MM-DD' or a local ISO date-time.
  * Passes through values that are already ISO strings.
  */
 function excelDateToISO(val) {
@@ -285,11 +285,13 @@ function excelDateToISO(val) {
   const ms = (serial - 25569) * 86400 * 1000
   const d = new Date(ms)
   if (isNaN(d.getTime())) return ''
-  // Use UTC components to avoid timezone shifting the date
-  const yyyy = d.getUTCFullYear()
-  const mm   = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const dd   = String(d.getUTCDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
+  // Excel date-times are serials whose fractional part represents the time.
+  // Preserve it so response deadlines do not silently become date-only in
+  // the opportunity summary. UTC components preserve Excel's wall-clock
+  // value without applying the browser's timezone a second time.
+  const iso = d.toISOString()
+  const hasTime = Math.abs(serial - Math.trunc(serial)) > 1e-8
+  return hasTime ? iso.slice(0, 19) : iso.slice(0, 10)
 }
 
 /**
