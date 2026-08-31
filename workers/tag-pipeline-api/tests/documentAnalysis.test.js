@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks } from '../src/lib/documentAnalysis.js'
+import { consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -64,6 +64,16 @@ test('available file analysis remains visible when another document fails', () =
   assert.equal(result.coverage.documentCount, 1)
   assert.match(result.overview, /agency needs support services/i)
   assert.deepEqual(result.evaluation, [{ text: 'Technical approach is evaluated.', location: 'page 12', fileName: 'instructions.pdf' }])
+})
+
+test('submission templates are excluded by the attachment itself, not its SharePoint parent folder', () => {
+  assert.equal(isSubmissionTemplateAttachment({ name: 'Technical_Response_Template.docx', path: '2. RFI Documents/Technical_Response_Template.docx' }), true)
+  assert.equal(isSubmissionTemplateAttachment({ name: 'Pricing Schedule.xlsx' }), true)
+  assert.equal(isSubmissionTemplateAttachment({ name: 'Solicitation.docx', path: 'Templates/Solicitation.docx' }, [{ text: 'The contractor shall provide support services.' }]), false)
+  assert.equal(isSubmissionTemplateAttachment({ name: 'Attachment 3.xlsx' }, [
+    { text: 'Offeror name: [insert offeror name]' },
+    { text: 'Complete and return this worksheet. Proposed price: ________' },
+  ]), true)
 })
 
 test('plain-text documents retain section citations for extracted requirements', async () => {
