@@ -20,7 +20,11 @@ test('invoice patterns expose only month and padded sequence', () => {
   assert.equal(resolveTransactionPattern('INV-{date}-{sequence}', row, 1), 'INV-2026-08-001')
   assert.equal(resolveTransactionPattern('INV{date}{sequence}', row, 1000), 'INV2026-081000')
   assert.deepEqual(availableTransactionFields([row]), ['date', 'sequence'])
+  // Arbitrary transaction properties were intentionally retired from the
+  // custom-pattern builder. Keep this assertion aligned with the restricted
+  // UI and Worker validation so CI cannot preserve the former behavior.
   assert.throws(() => resolveTransactionPattern('{clientProvidedField}-{sequence}', row), /Unavailable field/)
+  assert.throws(() => resolveTransactionPattern('{vendorId}-{date}', row), /Unavailable field/)
 })
 
 test('sequence plans reset per statement or continue independently by month', () => {
