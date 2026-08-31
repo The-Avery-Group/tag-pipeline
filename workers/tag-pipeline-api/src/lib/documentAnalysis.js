@@ -360,7 +360,7 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
     await env.EBUY_DB.prepare(`INSERT INTO opportunity_document_analysis (
         id, opportunity_key, sharepoint_drive_id, sharepoint_item_id, file_name, file_path, source_kind,
         source_signature, status, extracted_text, requirements_json, critical_json, analysis_json, summary, error_message, analyzed_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'opportunity', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'opportunity', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(opportunity_key, sharepoint_item_id) DO UPDATE SET file_name = excluded.file_name,
         file_path = excluded.file_path, source_signature = excluded.source_signature, status = excluded.status,
         extracted_text = excluded.extracted_text, requirements_json = excluded.requirements_json,
