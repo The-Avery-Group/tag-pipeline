@@ -4,11 +4,11 @@ import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
 import { detectStatementMapping, inspectTransactionStatement, normalizeTransactionInspection } from '@/utils/transactionStatement'
 import {
-  availableTransactionFields,
   COMPACT_INVOICE_REFERENCE_PATTERN,
   COSTPOINT_INVOICE_REFERENCE_LIMIT,
   DEFAULT_INVOICE_REFERENCE_PATTERN,
   defaultInputVoucherNumber,
+  INVOICE_REFERENCE_PATTERN_FIELDS,
   invoiceReferenceSequencePlan,
   invoiceReferenceForMode,
 } from '@/utils/costpointInvoiceReference'
@@ -111,7 +111,7 @@ export default function TransactionCoding({ toast }) {
   const selectedTransactions = useMemo(() => transactions.filter((row) => selectedIdSet.has(row.id) && !row.exportedAt), [transactions, selectedIdSet])
   const incompleteSelectionCount = selectedTransactions.filter((row) => row.status !== 'ready').length
   const allShownSelected = selectableTransactions.length > 0 && selectableTransactions.every((row) => selectedIdSet.has(row.id))
-  const exportFields = useMemo(() => availableTransactionFields(selectedTransactions), [selectedTransactions])
+  const exportFields = INVOICE_REFERENCE_PATTERN_FIELDS
   const exportValidation = useMemo(() => {
     if (!exportDraft) return ''
     if (incompleteSelectionCount) return `Complete the coding for ${incompleteSelectionCount} selected transaction${incompleteSelectionCount === 1 ? '' : 's'} before exporting to Costpoint.`
