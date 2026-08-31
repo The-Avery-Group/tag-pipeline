@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, manualAnalysisState, reconcileCriticalFindings } from '../src/lib/documentAnalysis.js'
+import { criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -12,7 +12,8 @@ test('pipeline analysis is rooted in the opportunity RFI documents folder', () =
 
 test('completed analysis without critical evidence reports not found instead of searching', () => {
   assert.equal(criticalAnalysisStatus({ status: 'complete' }, [], { questions: {}, proposals: {} }), 'not_found')
-  assert.equal(criticalAnalysisStatus({ status: 'queued' }, [], { questions: {}, proposals: {} }), 'partial')
+  assert.equal(criticalAnalysisStatus({ status: 'queued' }, [], { questions: {}, proposals: {} }), 'processing')
+  assert.equal(criticalAnalysisStatus({ status: 'running' }, [], { questions: {}, proposals: {} }), 'processing')
   assert.equal(criticalAnalysisStatus({ status: 'partial' }, [], { questions: {}, proposals: {} }), 'partial')
   assert.equal(criticalAnalysisStatus({ status: 'error' }, [], { questions: {}, proposals: {} }), 'error')
   assert.equal(criticalAnalysisStatus(null, [], { questions: {}, proposals: {} }), 'not_analyzed')
@@ -25,6 +26,30 @@ test('manual analysis never represents remaining work as an automatic queue', ()
   assert.equal(manualAnalysisState({ remaining: 4, deferred: 0 }, { status: 'pending' }).status, 'partial')
   assert.match(manualAnalysisState({ remaining: 4, deferred: 0 }, { status: 'pending' }).progressPhase, /click Analyze documents again/)
   assert.match(manualAnalysisState({ remaining: 0, deferred: 1 }, { status: 'deferred' }).progressPhase, /AI validation paused/)
+  assert.deepEqual(manualAnalysisState({ remaining: 4, deferred: 1 }, { status: 'deferred' }, { background: true }), {
+    completed: false, status: 'running', progressPhase: 'Processing documents',
+  })
+})
+
+test('relevant analysis chunks cover late document evidence without truncating it', () => {
+  const sections = [
+    { location: 'page 1', text: `The contractor shall provide alpha reporting. ${'A'.repeat(760)}` },
+    { location: 'page 80', text: `The contractor shall provide beta reporting. ${'B'.repeat(760)}` },
+    { location: 'page 160', text: `The contractor shall provide final reporting. ${'C'.repeat(760)}` },
+  ]
+  const chunks = relevantAnalysisChunks(sections, {}, 1_200)
+  assert.ok(chunks.length >= 3)
+  const combined = chunks.map((chunk) => chunk.source).join('\n')
+  assert.match(combined, /alpha reporting/)
+  assert.match(combined, /beta reporting/)
+  assert.match(combined, /final reporting/)
+  assert.match(combined, /page 160/)
+})
+
+test('Groq pacing honors reset headers without dropping below one minute', () => {
+  const response = { headers: { get: (name) => name === 'retry-after' ? '43.275' : name === 'x-ratelimit-reset-tokens' ? '1m 12.5s' : null } }
+  assert.equal(groqRetryDelay(response), 73)
+  assert.equal(groqRetryDelay({ headers: { get: () => null } }), 60)
 })
 
 test('plain-text documents retain section citations for extracted requirements', async () => {
