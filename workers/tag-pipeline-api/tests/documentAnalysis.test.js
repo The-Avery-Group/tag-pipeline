@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, reconcileCriticalFindings } from '../src/lib/documentAnalysis.js'
+import { criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, manualAnalysisState, reconcileCriticalFindings } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -12,8 +12,19 @@ test('pipeline analysis is rooted in the opportunity RFI documents folder', () =
 
 test('completed analysis without critical evidence reports not found instead of searching', () => {
   assert.equal(criticalAnalysisStatus({ status: 'complete' }, [], { questions: {}, proposals: {} }), 'not_found')
-  assert.equal(criticalAnalysisStatus({ status: 'queued' }, [], { questions: {}, proposals: {} }), 'searching')
+  assert.equal(criticalAnalysisStatus({ status: 'queued' }, [], { questions: {}, proposals: {} }), 'partial')
+  assert.equal(criticalAnalysisStatus({ status: 'partial' }, [], { questions: {}, proposals: {} }), 'partial')
   assert.equal(criticalAnalysisStatus({ status: 'error' }, [], { questions: {}, proposals: {} }), 'error')
+  assert.equal(criticalAnalysisStatus(null, [], { questions: {}, proposals: {} }), 'not_analyzed')
+})
+
+test('manual analysis never represents remaining work as an automatic queue', () => {
+  assert.deepEqual(manualAnalysisState({ remaining: 0, deferred: 0 }, { status: 'ready' }), {
+    completed: true, status: 'complete', progressPhase: 'Analysis available',
+  })
+  assert.equal(manualAnalysisState({ remaining: 4, deferred: 0 }, { status: 'pending' }).status, 'partial')
+  assert.match(manualAnalysisState({ remaining: 4, deferred: 0 }, { status: 'pending' }).progressPhase, /click Analyze documents again/)
+  assert.match(manualAnalysisState({ remaining: 0, deferred: 1 }, { status: 'deferred' }).progressPhase, /AI validation paused/)
 })
 
 test('plain-text documents retain section citations for extracted requirements', async () => {
