@@ -37,7 +37,7 @@ import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './hand
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
 import { isQuarterlyExpiringRefreshTime } from './lib/scheduledCadence.js'
-import { purgeDocumentAnalysisData, resumeQueuedDocumentAnalysis } from './lib/documentAnalysis.js'
+import { purgeDocumentAnalysisData } from './lib/documentAnalysis.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -216,11 +216,6 @@ export default {
           console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
         }))
         ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
-        if (scheduledHour === 18) {
-          ctx.waitUntil(resumeQueuedDocumentAnalysis(env).catch((error) => {
-            console.error(JSON.stringify({ event: 'document_analysis_resume_failed', message: error.message }))
-          }))
-        }
       }
 
       // SAM change monitoring keeps its existing twice-daily cadence.
