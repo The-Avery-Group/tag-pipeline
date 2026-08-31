@@ -7,7 +7,7 @@ test('pipeline analysis is rooted in the opportunity RFI documents folder', () =
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
   assert.equal(scoped.rootFolderId, 'rfi-documents')
   assert.equal(scoped.title, 'Example')
-  assert.throws(() => documentAnalysisWorkspace({ rootFolderId: 'workspace-root' }), /missing its 2\. RFI Documents folder/)
+  assert.throws(() => documentAnalysisWorkspace({ rootFolderId: 'workspace-root' }), /missing its source-documents folder/)
 })
 
 test('completed analysis without critical evidence reports not found instead of searching', () => {
