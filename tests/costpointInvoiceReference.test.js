@@ -4,7 +4,9 @@ import {
   availableTransactionFields,
   automaticInvoiceReference,
   defaultInputVoucherNumber,
+  INVOICE_REFERENCE_PATTERN_FIELDS,
   invoiceReferenceSequencePlan,
+  invoiceReferenceForMode,
   resolveTransactionPattern,
 } from '../src/utils/costpointInvoiceReference.js'
 
@@ -19,12 +21,17 @@ const row = {
 test('invoice patterns expose only month and padded sequence', () => {
   assert.equal(resolveTransactionPattern('INV-{date}-{sequence}', row, 1), 'INV-2026-08-001')
   assert.equal(resolveTransactionPattern('INV{date}{sequence}', row, 1000), 'INV2026-081000')
-  assert.deepEqual(availableTransactionFields([row]), ['date', 'sequence'])
+  assert.deepEqual(INVOICE_REFERENCE_PATTERN_FIELDS, ['date', 'sequence'])
   // Arbitrary transaction properties were intentionally retired from the
   // custom-pattern builder. Keep this assertion aligned with the restricted
   // UI and Worker validation so CI cannot preserve the former behavior.
-  assert.throws(() => resolveTransactionPattern('{clientProvidedField}-{sequence}', row), /Unavailable field/)
-  assert.throws(() => resolveTransactionPattern('{vendorId}-{date}', row), /Unavailable field/)
+  assert.throws(() => invoiceReferenceForMode(row, 1, 'custom', '{clientProvidedField}-{sequence}'), /Unavailable field/)
+  assert.throws(() => invoiceReferenceForMode(row, 1, 'custom', '{vendorId}-{date}'), /Unavailable field/)
+})
+
+test('legacy pattern helpers remain compatible without exposing their fields in the CRM', () => {
+  assert.equal(resolveTransactionPattern('{clientProvidedField}-{vendorId}', row), 'BLUE-VEN-7')
+  assert.ok(availableTransactionFields([row]).includes('clientProvidedField'))
 })
 
 test('sequence plans reset per statement or continue independently by month', () => {
