@@ -31,7 +31,7 @@ import { OpportunityRenameModal, RfiActivityPhaseModal } from '@/components/Oppo
 import Modal from '@/components/Common/Modal'
 import ActionIcon from '@/components/Common/ActionIcon'
 import CopyValue from '@/components/Common/CopyValue'
-import { formatDate } from '@/utils/kpiHelpers'
+import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
 import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
 import {
@@ -1612,7 +1612,7 @@ export default function OpportunityDetail({ toast }) {
               {
                 label: submissionDateLabel,
                 value: (isResponseRecord || hasSubmissionDate) ? f(C.submDate) : '',
-                display: formatDate(f(C.submDate)),
+                display: formatDateTime(f(C.submDate)),
                 showWhenEmpty: isResponseRecord,
               },
               { label: 'Contract end date', value: f(C.endDate), display: formatDate(f(C.endDate)) },
