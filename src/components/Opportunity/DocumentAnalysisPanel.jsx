@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './DocumentAnalysisPanel.module.css'
 
 const STATUS_LABELS = {
@@ -60,28 +60,31 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
   useEffect(() => { refresh().catch(() => {}) }, [refresh])
 
   const status = analysis?.critical?.status || (disabled ? 'cancelled' : 'searching')
-  const requirements = useMemo(() => (analysis?.requirements || []).slice(0, 12), [analysis])
-  const deepDocuments = useMemo(() => (analysis?.documents || []).filter((document) => document.analysis?.status === 'ready'), [analysis])
   const start = async () => {
     setRunning(true)
     try {
-      let result = null
-      let processed = 0
-      for (let pass = 0; pass < 25; pass += 1) {
-        result = await runRef.current()
-        setAnalysis(result.analysis || null)
-        processed += Number(result.run?.opportunity?.processed || 0)
-        const remaining = Number(result.run?.opportunity?.remaining || 0)
-        const deferred = Number(result.run?.opportunity?.deferred || 0)
-        if (!remaining || deferred || result.run?.cancelled) break
-      }
+      // Keep one click to one bounded server batch. Chaining every remaining
+      // document into one browser action made large packages prone to an
+      // interrupted connection and a generic "Failed to fetch" error.
+      const result = await runRef.current()
+      setAnalysis(result.analysis || null)
+      const processed = Number(result.run?.opportunity?.processed || 0)
       const remaining = Number(result?.run?.opportunity?.remaining || 0)
       const deferred = Number(result?.run?.opportunity?.deferred || 0)
       const analysisPaused = deferred || (result?.run?.state?.status === 'partial' && !remaining)
       if (analysisPaused) toast?.info('AI validation paused before analysis completed. Click Analyze documents again later.')
       else if (remaining) toast?.info(`${processed} document${processed === 1 ? '' : 's'} analyzed; ${remaining} remain. Click Analyze documents again.`)
       else toast?.success('Document analysis is available')
-    } catch (error) { toast?.error(`Documents could not be analyzed: ${error.message}`) }
+    } catch (error) {
+      // A completed batch is saved server-side before the response returns.
+      // Reload any saved progress so the panel never remains falsely stuck in
+      // its pre-request "Searching documents" state after a network break.
+      await refresh().catch(() => {})
+      const interrupted = /failed to fetch|network|load failed/i.test(error?.message || '')
+      toast?.error(interrupted
+        ? 'Document analysis was interrupted. Any completed progress was saved; click Analyze documents again.'
+        : `Documents could not be analyzed: ${error.message}`)
+    }
     finally { setRunning(false) }
   }
   const saveReview = async (item, status) => {
@@ -112,7 +115,6 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
       <div className={styles.grid}>
         <Finding label="Questions due" items={analysis?.critical?.questions?.deadlines} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
         <Finding label="Questions recipient or submission method" items={analysis?.critical?.questions?.submissionInstructions} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
-        <Finding label="Proposal due" items={analysis?.critical?.proposals?.deadlines} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
         <Finding label="Proposal recipient or submission method" items={analysis?.critical?.proposals?.submissionInstructions} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
       </div>
       {(analysis?.critical?.conflicts || []).length > 0 && <div className={styles.warning}>
@@ -131,15 +133,6 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
           return <div key={`${text}-${index}`}><p>• {text}</p>{typeof finding === 'object' && (finding.fileName || finding.location) && <small>{[finding.fileName, finding.location].filter(Boolean).join(' · ')}</small>}</div>
         })}
       </article></details>}
-      {deepDocuments.length > 0 && <details className={styles.requirements}><summary>Opportunity overview and full findings</summary>{deepDocuments.map((document) => <article key={document.fileName}>
-        <p><strong>{document.fileName}</strong>{document.analysis.overview ? `: ${document.analysis.overview}` : ''}</p>
-        {['contractStructure', 'performance', 'responseRequirements', 'evaluation', 'scopeAndDeliverables', 'staffingAndSecurity', 'packageIssues'].flatMap((field) => document.analysis[field] || []).slice(0, 24).map((finding, index) => {
-          const text = typeof finding === 'string' ? finding : finding?.text
-          const location = typeof finding === 'object' ? finding?.location : ''
-          return <div key={`${text}-${index}`}><p>• {text}</p>{location && <small>{document.fileName} · {location}</small>}</div>
-        })}
-      </article>)}</details>}
-      {requirements.length > 0 && <details className={styles.requirements}><summary>{analysis.requirements.length} cited requirement{analysis.requirements.length === 1 ? '' : 's'}</summary>{requirements.map((item, index) => <article key={`${item.text}-${index}`}><p>{analysis?.reviews?.[findingKey(item)]?.status === 'corrected' ? analysis.reviews[findingKey(item)].correctedText : item.text}</p><small>{item.citation?.fileName} · {item.citation?.location}</small><ReviewControl item={item} reviews={analysis?.reviews} onReview={review ? saveReview : null} /></article>)}{analysis.requirements.length > requirements.length && <p>Showing the first {requirements.length} findings.</p>}</details>}
       {(analysis?.pastPerformance || []).length > 0 && <details className={styles.requirements}><summary>{analysis.pastPerformance.length} past-performance match{analysis.pastPerformance.length === 1 ? '' : 'es'}</summary>{analysis.pastPerformance.slice(0, 8).map((match) => <article key={match.fileName}><p><strong>{match.fileName}</strong> · {match.score}% match</p><small>{[match.serviceCategory, ...(match.evidence || [])].filter(Boolean).join(' · ')}</small></article>)}</details>}
     </div>}
   </section>
