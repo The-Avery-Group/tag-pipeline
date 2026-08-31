@@ -398,6 +398,7 @@ Reject boilerplate that is not specifically operative for this solicitation. Mar
 
 function mergeChunkAnalyses(chunks) {
   const ready = chunks.filter((chunk) => chunk.status === 'ready').map((chunk) => chunk.result || {})
+  const warnings = chunks.filter((chunk) => chunk.status === 'error').map((chunk) => clean(chunk.error)).filter(Boolean)
   const uniqueFindings = (field) => {
     const seen = new Set()
     return ready.flatMap((result) => Array.isArray(result[field]) ? result[field] : []).filter((finding) => {
@@ -411,7 +412,7 @@ function mergeChunkAnalyses(chunks) {
   }
   const overview = [...new Set(ready.map((result) => clean(result.overview)).filter(Boolean))].join(' ').slice(0, 2_400)
   return {
-    status: 'ready',
+    status: ready.length || !warnings.length ? 'ready' : 'error',
     model: ready.find((result) => result.model)?.model || GROQ_EXTRACTION_MODEL,
     overview,
     contractStructure: uniqueFindings('contractStructure'),
@@ -423,7 +424,7 @@ function mergeChunkAnalyses(chunks) {
     packageIssues: uniqueFindings('packageIssues'),
     criticalSubmission: uniqueFindings('criticalSubmission'),
     coverage: { chunkCount: chunks.length, completedChunks: ready.length },
-    warnings: chunks.filter((chunk) => chunk.status === 'error').map((chunk) => chunk.error).filter(Boolean),
+    warnings,
   }
 }
 
@@ -451,12 +452,10 @@ async function analyzeRelevantSections(env, sections, fileName, { automatic = fa
   return { ...mergeChunkAnalyses(updated), pacingSeconds: result.pacingSeconds || GROQ_PACING_SECONDS, aiRequestMade: true }
 }
 
-async function consolidateOpportunityAnalysis(env, opportunityKey, { automatic = false } = {}) {
-  const rows = await env.EBUY_DB.prepare(`SELECT file_name, analysis_json
-    FROM opportunity_document_analysis WHERE opportunity_key = ? AND status = 'ready' ORDER BY file_name`)
-    .bind(normalizeWorkspaceKey(opportunityKey)).all()
-  const sources = (rows.results || []).map((row) => ({
+export function consolidateReadyDocumentRows(rows = []) {
+  const sources = rows.filter((row) => !row.status || row.status === 'ready').map((row) => ({
     fileName: row.file_name,
+    summary: clean(row.summary),
     analysis: JSON.parse(row.analysis_json || '{}'),
   }))
   if (!sources.length) return { status: 'not_applicable' }
@@ -481,7 +480,7 @@ async function consolidateOpportunityAnalysis(env, opportunityKey, { automatic =
   return {
     status: 'ready',
     model: 'deterministic-cited-consolidation',
-    overview: sources.map((source) => clean(source.analysis?.overview)).filter(Boolean).join(' ').slice(0, 3_000),
+    overview: sources.map((source) => clean(source.analysis?.overview || source.summary)).filter(Boolean).join(' ').slice(0, 3_000),
     agencyNeed: '',
     contractStructure: unique(findings(['contractStructure'])),
     responsePlan: unique(findings(['responseRequirements'])),
@@ -491,6 +490,13 @@ async function consolidateOpportunityAnalysis(env, opportunityKey, { automatic =
     conflicts: [],
     coverage: { documentCount: sources.length },
   }
+}
+
+async function consolidateOpportunityAnalysis(env, opportunityKey, { automatic = false } = {}) {
+  const rows = await env.EBUY_DB.prepare(`SELECT file_name, status, summary, analysis_json
+    FROM opportunity_document_analysis WHERE opportunity_key = ? AND status = 'ready' ORDER BY file_name`)
+    .bind(normalizeWorkspaceKey(opportunityKey)).all()
+  return consolidateReadyDocumentRows(rows.results || [])
 }
 
 async function opportunityIsDismissed(db, opportunityKey) {
@@ -704,7 +710,12 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
       retryAfterSeconds = Math.max(retryAfterSeconds, Number(deeperAnalysis.retryAfterSeconds || 0))
       pacingSeconds = Math.max(pacingSeconds, Number(deeperAnalysis.pacingSeconds || 0))
       if (deeperAnalysis.status === 'deferred') deferred++
-      if (['processing', 'deferred'].includes(deeperAnalysis.status)) status = 'processing'
+      if (deeperAnalysis.status === 'error') {
+        status = 'error'
+        errorMessage = clean(deeperAnalysis.error || deeperAnalysis.warnings?.join('; ') || 'AI analysis could not read this document')
+        completed++
+      }
+      else if (['processing', 'deferred'].includes(deeperAnalysis.status)) status = 'processing'
       else completed++
     } catch (error) {
       status = error.code === 'unsupported_document_format' ? 'unsupported' : 'error'
@@ -1060,17 +1071,26 @@ export async function getDocumentAnalysis(env, opportunityKey) {
   const publicAnalysis = (value) => {
     const parsed = JSON.parse(value || '{}')
     if (!Array.isArray(parsed.chunks)) return parsed
+    const warnings = [
+      ...(Array.isArray(parsed.warnings) ? parsed.warnings : []),
+      ...parsed.chunks.filter((chunk) => chunk.status === 'error').map((chunk) => chunk.error),
+    ].map(clean).filter(Boolean)
     return {
       status: ['processing', 'deferred'].includes(parsed.status) ? 'processing' : parsed.status,
       coverage: {
         chunkCount: parsed.chunks.length,
         completedChunks: parsed.chunks.filter((chunk) => ['ready', 'error', 'not_applicable'].includes(chunk.status)).length,
       },
+      warnings: [...new Set(warnings)],
     }
   }
+  const storedPackage = JSON.parse(job?.package_analysis_json || '{}')
+  const availablePackage = storedPackage.status === 'ready'
+    ? storedPackage
+    : consolidateReadyDocumentRows(rows)
   return {
     job: job ? { status: job.status, phase: job.progress_phase, processedFiles: job.processed_files, totalFiles: job.total_files, error: job.error_message, updatedAt: job.updated_at } : null,
-    package: JSON.parse(job?.package_analysis_json || '{}'),
+    package: availablePackage,
     reviews: Object.fromEntries((reviews.results || []).map((row) => [row.finding_key, { status: row.review_status, correctedText: row.corrected_text, reviewedBy: row.reviewed_by, updatedAt: row.updated_at }])),
     critical: { ...critical, status: criticalStatus, analysisVersion: DOCUMENT_ANALYSIS_VERSION },
     documents: rows.map((row) => ({ fileName: row.file_name, filePath: row.file_path, status: row.status, analysis: publicAnalysis(row.analysis_json), summary: row.summary, error: row.error_message, analyzedAt: row.analyzed_at })),
