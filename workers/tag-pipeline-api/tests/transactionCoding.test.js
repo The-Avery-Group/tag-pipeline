@@ -5,6 +5,7 @@ import {
   categorizeTransaction,
   COSTPOINT_DETAIL_FIELD_COUNT,
   COSTPOINT_HEADER_FIELD_COUNT,
+  invoiceReferenceSequenceState,
   resolveInvoiceReferencePattern,
 } from '../src/lib/transactionCodingDomain.js'
 import {
@@ -77,13 +78,25 @@ test('Costpoint export emits a positional H and D record without a heading row',
   assert.doesNotMatch(result.csv, /Transaction ID|Coding Status|Merchant/)
 })
 
-test('custom invoice reference patterns can use any transaction property', () => {
-  assert.equal(resolveInvoiceReferencePattern('{customCode}-{sourceRow}', { ...exportRow, customCode: 'OPS' }), 'OPS-3')
-  const result = buildCostpointApVoucherCsv([{ ...exportRow, customCode: 'OPS' }], {
+test('custom invoice reference patterns use month and padded sequence only', () => {
+  assert.equal(resolveInvoiceReferencePattern('INV-{date}-{sequence}', exportRow, 3), 'INV-2026-08-003')
+  assert.equal(resolveInvoiceReferencePattern('INV{date}{sequence}', exportRow, 1000), 'INV2026-081000')
+  const result = buildCostpointApVoucherCsv([exportRow], {
     invoiceReferenceMode: 'custom',
-    invoiceReferencePattern: '{customCode}-{sourceRow}',
+    invoiceReferencePattern: 'INV-{date}-{sequence}',
   })
-  assert.equal(result.invoiceReferences['txn-1'], 'OPS-3')
+  assert.equal(result.invoiceReferences['txn-1'], 'INV-2026-08-001')
+  assert.throws(() => resolveInvoiceReferencePattern('{customCode}-{sequence}', exportRow), /not available/)
+})
+
+test('monthly invoice sequence state is recovered from retained Costpoint exports', () => {
+  const csv = [
+    'H,1,,,,,,INV-2026-08-001,2026-08-01',
+    'D,1',
+    'H,2,,,,,,INV2026-081000,2026-08-02',
+    'H,3,,,,,,INV-2026-09-007,2026-09-01',
+  ].join('\r\n')
+  assert.deepEqual(invoiceReferenceSequenceState([csv]).nextByMonth, { '2026-08': 1001, '2026-09': 8 })
 })
 
 test('Costpoint export rejects invalid or duplicated user-defined identifiers', () => {
