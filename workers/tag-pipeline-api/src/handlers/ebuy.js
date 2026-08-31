@@ -13,7 +13,7 @@ import {
 } from '../lib/ebuyRepository.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
 import { deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
-import { cancelDocumentAnalysis, getDocumentAnalysis, queueDocumentAnalysis, reviewDocumentFinding, runEbuyArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, runEbuyArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -152,8 +152,6 @@ export async function handleEbuy(req, env, identity = {}) {
       )
       if (body.reviewState === 'dismissed') {
         await cancelDocumentAnalysis(requireDatabase(env), decodeURIComponent(detailMatch[1]))
-      } else if (['tracked', 'added_to_pipeline'].includes(body.reviewState)) {
-        await queueDocumentAnalysis(requireDatabase(env), decodeURIComponent(detailMatch[1]), 'ebuy', 100)
       }
       return opportunity ? json({ ok: true, opportunity }) : json({ error: 'eBuy opportunity not found' }, 404)
     }
