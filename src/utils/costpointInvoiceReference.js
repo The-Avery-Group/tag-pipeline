@@ -21,10 +21,8 @@ function normalizedFieldName(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
 }
 
-export function availableTransactionFields(rows = []) {
-  const fields = new Set(INVOICE_REFERENCE_PATTERN_FIELDS)
-  rows.forEach((row) => Object.keys(row || {}).forEach((key) => fields.add(key)))
-  return [...fields].sort((left, right) => left.localeCompare(right))
+export function availableTransactionFields() {
+  return [...INVOICE_REFERENCE_PATTERN_FIELDS]
 }
 
 export function validateTransactionPattern(pattern) {
@@ -74,6 +72,7 @@ export function invoiceReferenceSequencePlan(rows = [], {
 }
 
 export function resolveTransactionPattern(pattern, row, sequence = 1) {
+  validateTransactionPattern(pattern)
   const transactionDate = row.transactionDate || row.transaction_date || ''
   const fields = {
     ...row,
