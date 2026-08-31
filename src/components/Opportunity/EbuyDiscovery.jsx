@@ -36,7 +36,11 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
   const actionRef = useRef(new Set())
   const tableRef = useRef(null)
   const reconciliationRef = useRef(null)
-  const archive = useEbuyOpportunities({ search, type: 'all', includeDismissed })
+  // Match SAM discovery: a deliberate search includes dismissed records even
+  // when the normal "Show dismissed" view is off. Type and agency filters
+  // remain active in both discovery sources.
+  const searching = Boolean(String(search || '').trim())
+  const archive = useEbuyOpportunities({ search, type: 'all', includeDismissed: includeDismissed || searching })
   const syncError = archive.status?.lastSync?.status === 'error'
     ? archive.status.lastSync.error_message || archive.status.lastSync.progress?.message || archive.status.message || 'The latest eBuy synchronization stopped.'
     : ''
@@ -51,11 +55,11 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
     .map((item) => String(item.buyerAgency || '').trim())
     .filter(Boolean))].sort(), [archive.opportunities])
   const visibleOpportunities = useMemo(() => archive.opportunities.filter((item) => {
-    if (!includeDismissed && item.reviewState === 'dismissed') return false
+    if (!includeDismissed && !searching && item.reviewState === 'dismissed') return false
     if (!samTypeMatches({ 'Notice Type': normalizeEbuyNoticeType(item) }, type)) return false
     const agency = String(item.buyerAgency || '').trim()
     return agencies.size === 0 || agencies.has(agency)
-  }), [agencies, archive.opportunities, includeDismissed, type])
+  }), [agencies, archive.opportunities, includeDismissed, searching, type])
   const scrollKey = `${searchParams.toString()}|${type}|${[...agencies].sort().join(',')}|${includeDismissed}`
   useEffect(() => { onCountChange?.(visibleOpportunities.length) }, [onCountChange, visibleOpportunities.length])
   useEffect(() => {
