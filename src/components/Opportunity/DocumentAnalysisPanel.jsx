@@ -4,7 +4,7 @@ import styles from './DocumentAnalysisPanel.module.css'
 const STATUS_LABELS = {
   searching: 'Searching documents', preliminary: 'Preliminary', cited: 'Cited',
   needs_review: 'Needs review', conflict: 'Conflicting instructions',
-  not_found: 'Not found', cancelled: 'Cancelled',
+  not_found: 'Not found', cancelled: 'Cancelled', error: 'Needs attention',
 }
 
 function findingKey(item) { return [item?.citation?.fileName, item?.citation?.location, item?.text].filter(Boolean).join('|') }
@@ -31,7 +31,7 @@ function Finding({ label, items, status, reviews, onReview }) {
       <small>{first.citation?.fileName}{first.citation?.location ? ` · ${first.citation.location}` : ''}{` · ${sourceLabel}`}</small>
       <ReviewControl item={first} reviews={reviews} onReview={onReview} />
       {items.length > 1 && <details><summary>{items.length - 1} more cited finding{items.length === 2 ? '' : 's'}</summary>{items.slice(1).map((item, index) => <div className={styles.more} key={`${item.text}-${index}`}><p>{item.text}</p><small>{item.citation?.fileName}{item.citation?.location ? ` · ${item.citation.location}` : ''}</small></div>)}</details>}
-    </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : 'Searching documents…'}</strong>}
+    </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : status === 'error' ? 'ANALYSIS NEEDS ATTENTION' : 'Searching documents…'}</strong>}
   </div>
 }
 
@@ -58,6 +58,13 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
 
   useEffect(() => { refresh().catch(() => {}) }, [refresh])
 
+  const jobStatus = analysis?.job?.status || ''
+  useEffect(() => {
+    if (!['queued', 'running'].includes(jobStatus)) return undefined
+    const interval = window.setInterval(() => refresh().catch(() => {}), 10_000)
+    return () => window.clearInterval(interval)
+  }, [jobStatus, refresh])
+
   const status = analysis?.critical?.status || (disabled ? 'cancelled' : 'searching')
   const requirements = useMemo(() => (analysis?.requirements || []).slice(0, 12), [analysis])
   const deepDocuments = useMemo(() => (analysis?.documents || []).filter((document) => document.analysis?.status === 'ready'), [analysis])
@@ -66,7 +73,8 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
     try {
       const result = await runRef.current()
       setAnalysis(result.analysis || null)
-      toast?.success(result.run?.opportunity?.remaining ? 'First document batch analyzed; remaining files stay queued' : 'Document analysis updated')
+      const pending = ['queued', 'running'].includes(result.analysis?.job?.status) || result.run?.opportunity?.remaining || result.run?.opportunity?.deferred
+      toast?.success(pending ? 'Document batch analyzed; remaining documents will continue automatically' : 'Document analysis is available')
     } catch (error) { toast?.error(`Documents could not be analyzed: ${error.message}`) }
     finally { setRunning(false) }
   }
