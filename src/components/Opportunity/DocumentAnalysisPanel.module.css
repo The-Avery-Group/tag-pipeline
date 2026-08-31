@@ -9,6 +9,7 @@
 .headerRight em[data-status="verified"] { background: var(--green-50); color: var(--green-700); }
 .headerRight em[data-status="not_found"], .headerRight em[data-status="cancelled"] { background: var(--gray-100); color: var(--gray-600); }
 .headerRight em[data-status="partial"], .headerRight em[data-status="not_analyzed"] { background: var(--gray-100); color: var(--gray-600); }
+.headerRight em[data-status="processing"] { background: var(--blue-50); color: var(--blue-700); }
 .headerRight em[data-status="error"] { background: var(--red-50); color: var(--red-700); }
 .body { padding: 14px 16px 16px; }
 .actions { align-items: center; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
