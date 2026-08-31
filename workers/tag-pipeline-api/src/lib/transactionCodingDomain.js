@@ -98,23 +98,33 @@ function normalizedFieldName(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
 }
 
+export function validateInvoiceReferencePattern(pattern) {
+  const fields = [...String(pattern ?? '').matchAll(/\{([^{}]+)\}/g)].map((match) => match[1].trim())
+  const invalid = fields.filter((field) => !['date', 'sequence'].includes(field))
+  if (invalid.length) {
+    throw new Error(`Invoice reference field ${[...new Set(invalid)].map((name) => `{${name}}`).join(', ')} is not available.`)
+  }
+  if (!fields.length) {
+    throw new Error('Custom invoice reference patterns must include {date}, {sequence}, or both.')
+  }
+  return true
+}
+
+function positiveSequence(value) {
+  const numeric = Math.floor(Number(value))
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : 1
+}
+
 function transactionFields(row, sequence) {
-  const fields = { ...row }
   const transactionDate = rowValue(row, 'transaction_date', 'transactionDate') || ''
-  const amountCents = Number(rowValue(row, 'amount_cents', 'amountCents') || 0)
-  const identity = cleanText(row?.id || rowValue(row, 'source_hash', 'sourceHash') || sequence)
   return {
-    ...fields,
-    sequence,
-    hash: stableHash(identity).toString(36),
-    date: transactionDate,
-    transactionDate,
-    amount: (amountCents / 100).toFixed(2),
-    amountCents,
+    sequence: String(positiveSequence(sequence)).padStart(3, '0'),
+    date: String(transactionDate).slice(0, 7),
   }
 }
 
 export function resolveInvoiceReferencePattern(pattern, row, sequence = 1) {
+  validateInvoiceReferencePattern(pattern)
   const fields = transactionFields(row, sequence)
   const exact = new Map(Object.entries(fields).map(([key, value]) => [key, value]))
   const normalized = new Map(Object.entries(fields).map(([key, value]) => [normalizedFieldName(key), value]))
@@ -131,6 +141,26 @@ export function resolveInvoiceReferencePattern(pattern, row, sequence = 1) {
     throw new Error(`Invoice reference field ${missing.map((name) => `{${name}}`).join(', ')} is not available on transaction ${cleanText(row?.id) || sequence}.`)
   }
   return reference
+}
+
+export function invoiceReferenceSequenceState(csvTexts = []) {
+  const nextByMonth = {}
+  const references = []
+  for (const csv of csvTexts) {
+    for (const line of String(csv || '').split(/\r?\n/)) {
+      if (!line.startsWith('H,')) continue
+      const fields = line.split(',')
+      const reference = cleanText(fields[7])
+      const month = cleanText(fields[8]).slice(0, 7)
+      if (!reference || !/^\d{4}-\d{2}$/.test(month)) continue
+      references.push(reference)
+      const monthIndex = reference.lastIndexOf(month)
+      const match = monthIndex >= 0 ? reference.slice(monthIndex + month.length).match(/(\d+)$/) : null
+      if (!match) continue
+      nextByMonth[month] = Math.max(Number(nextByMonth[month] || 1), Number(match[1]) + 1)
+    }
+  }
+  return { nextByMonth, references: [...new Set(references)] }
 }
 
 function automaticInvoiceReference(row, sequence) {
@@ -191,6 +221,9 @@ function voucherNumber(row, sequence, used, overrides = {}) {
 
 export function buildCostpointApVoucherCsv(rows = [], options = {}) {
   if (!Array.isArray(rows) || !rows.length) throw new Error('Select at least one transaction to export.')
+  if (cleanText(options.invoiceReferenceMode).toLowerCase() === 'custom') {
+    validateInvoiceReferencePattern(options.invoiceReferencePattern || '')
+  }
   const usedReferences = new Set()
   const usedVoucherNumbers = new Set()
   const invoiceReferences = {}
