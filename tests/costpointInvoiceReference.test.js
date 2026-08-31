@@ -22,6 +22,7 @@ test('invoice patterns expose only month and padded sequence', () => {
   assert.equal(resolveTransactionPattern('INV-{date}-{sequence}', row, 1), 'INV-2026-08-001')
   assert.equal(resolveTransactionPattern('INV{date}{sequence}', row, 1000), 'INV2026-081000')
   assert.deepEqual(INVOICE_REFERENCE_PATTERN_FIELDS, ['date', 'sequence'])
+  assert.deepEqual(availableTransactionFields([row]), ['date', 'sequence'])
   // Arbitrary transaction properties were intentionally retired from the
   // custom-pattern builder. Keep this assertion aligned with the restricted
   // UI and Worker validation so CI cannot preserve the former behavior.
@@ -29,9 +30,8 @@ test('invoice patterns expose only month and padded sequence', () => {
   assert.throws(() => invoiceReferenceForMode(row, 1, 'custom', '{vendorId}-{date}'), /Unavailable field/)
 })
 
-test('legacy pattern helpers remain compatible without exposing their fields in the CRM', () => {
-  assert.equal(resolveTransactionPattern('{clientProvidedField}-{vendorId}', row), 'BLUE-VEN-7')
-  assert.ok(availableTransactionFields([row]).includes('clientProvidedField'))
+test('invoice pattern helpers reject arbitrary transaction fields', () => {
+  assert.throws(() => resolveTransactionPattern('{clientProvidedField}-{vendorId}', row), /Unavailable field/)
 })
 
 test('sequence plans reset per statement or continue independently by month', () => {
