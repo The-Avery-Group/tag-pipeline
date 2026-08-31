@@ -593,7 +593,7 @@ function dossierSource(path) {
   return 'Workspace'
 }
 
-export async function listWorkspaceFlatFiles(env, workspace) {
+export async function listWorkspaceFlatFiles(env, workspace, { maxRequests = 45 } = {}) {
   if (!workspace?.sharePointDriveId || !workspace?.rootFolderId) {
     throw Object.assign(new Error('The SharePoint workspace is not ready'), { status: 409 })
   }
@@ -610,7 +610,8 @@ export async function listWorkspaceFlatFiles(env, workspace) {
   // Free Workers allow a bounded number of external subrequests. Opportunity
   // templates are small, but stop cleanly instead of failing the entire
   // dossier if an unusually deep workspace exceeds that budget.
-  while (folderIndex < folders.length && requestCount < 45 && files.length < 5000) {
+  const requestLimit = Math.max(1, Math.min(45, Number(maxRequests || 45)))
+  while (folderIndex < folders.length && requestCount < requestLimit && files.length < 5000) {
     const folder = folders[folderIndex++]
     let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folder.id}/children?$select=id,name,webUrl,folder,file,size,lastModifiedDateTime&$top=200`
     do {
@@ -633,7 +634,7 @@ export async function listWorkspaceFlatFiles(env, workspace) {
         })
       }
       nextUrl = body['@odata.nextLink'] || ''
-    } while (nextUrl && requestCount < 45 && files.length < 5000)
+    } while (nextUrl && requestCount < requestLimit && files.length < 5000)
   }
   if (folderIndex < folders.length || files.length >= 5000) partial = true
   return {
