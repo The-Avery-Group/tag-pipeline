@@ -1,11 +1,15 @@
 import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
-import { organizationFolderKey, safeSharePointSegment } from './opportunityWorkspaceDomain.js'
+import { organizationFolderKey, safeSharePointSegment, workspaceType } from './opportunityWorkspaceDomain.js'
 
 export const DEFAULT_WORKSPACE_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 export const WORKSPACE_ROOT_NAME = 'RFI Pipeline and Responses'
 export const WORKSPACE_TEMPLATE_PATH = [WORKSPACE_ROOT_NAME, '_Templates', 'Copy Me For RFI']
 export const SAM_DOCUMENTS_FOLDER_NAME = '2. RFI Documents'
 export const REFERENCE_MATERIALS_FOLDER_NAME = '7. Reference Materials'
+export const REDUCED_SAM_DOCUMENTS_FOLDER_NAME = '1. RFI Documents'
+export const REDUCED_REFERENCE_MATERIALS_FOLDER_NAME = '5. Reference Materials'
+const SOURCE_DOCUMENT_FOLDER_NAMES = [REDUCED_SAM_DOCUMENTS_FOLDER_NAME, SAM_DOCUMENTS_FOLDER_NAME]
+const REFERENCE_MATERIAL_FOLDER_NAMES = [REDUCED_REFERENCE_MATERIALS_FOLDER_NAME, REFERENCE_MATERIALS_FOLDER_NAME]
 const HIDDEN_SYSTEM_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 const BLOCKED_UPLOAD_EXTENSIONS = new Set([
   'app', 'bat', 'cmd', 'com', 'cpl', 'dll', 'exe', 'gadget', 'hta', 'inf', 'ins',
@@ -13,6 +17,32 @@ const BLOCKED_UPLOAD_EXTENSIONS = new Set([
   'ps1', 'reg', 'scr', 'sct', 'shb', 'sys', 'vb', 'vbe', 'vbs', 'ws', 'wsc',
   'wsf', 'wsh',
 ])
+
+function reducedTemplateProfile(noticeType) {
+  return ['RFI', 'MRAS'].includes(workspaceType(noticeType))
+}
+
+function preferredWorkspaceFolderName(noticeType, role) {
+  if (role === 'source') return reducedTemplateProfile(noticeType) ? REDUCED_SAM_DOCUMENTS_FOLDER_NAME : SAM_DOCUMENTS_FOLDER_NAME
+  return reducedTemplateProfile(noticeType) ? REDUCED_REFERENCE_MATERIALS_FOLDER_NAME : REFERENCE_MATERIALS_FOLDER_NAME
+}
+
+async function childByNames(env, token, driveId, parentId, names) {
+  for (const name of names) {
+    const child = await childByName(env, token, driveId, parentId, name)
+    if (child) return child
+  }
+  return null
+}
+
+async function resolveWorkspaceRoleFolder(env, token, workspace, role, { ensure = false } = {}) {
+  const parentId = workspace.typeFolderId || workspace.rootFolderId
+  const names = role === 'source' ? SOURCE_DOCUMENT_FOLDER_NAMES : REFERENCE_MATERIAL_FOLDER_NAMES
+  const preferred = preferredWorkspaceFolderName(workspace.noticeType || workspace.workspaceType, role)
+  const ordered = [preferred, ...names.filter((name) => name !== preferred)]
+  const existing = await childByNames(env, token, workspace.sharePointDriveId, parentId, ordered)
+  return existing || (ensure ? ensureFolder(env, token, workspace.sharePointDriveId, parentId, preferred) : null)
+}
 
 export function driveIdFor(env) {
   // DRIVE_ID may point at a separate capabilities-document library. Keep the
@@ -80,15 +110,9 @@ export async function createReferenceMaterialUploadSession(env, workspace, file)
     throw Object.assign(new Error('The opportunity SharePoint workspace is unavailable'), { status: 409 })
   }
   const referenceParentId = workspace.typeFolderId || root.id
-  const referenceFolder = await childByName(
-    env,
-    token,
-    workspace.sharePointDriveId,
-    referenceParentId,
-    REFERENCE_MATERIALS_FOLDER_NAME,
-  )
+  const referenceFolder = await resolveWorkspaceRoleFolder(env, token, { ...workspace, typeFolderId: referenceParentId }, 'reference')
   if (!referenceFolder?.folder) {
-    throw Object.assign(new Error(`The SharePoint workspace is missing ${REFERENCE_MATERIALS_FOLDER_NAME}`), { status: 409 })
+    throw Object.assign(new Error('The SharePoint workspace is missing its Reference Materials folder'), { status: 409 })
   }
 
   const { body } = await graphResponse(
@@ -123,13 +147,7 @@ export async function removeReferenceMaterialUploads(env, workspace, itemIds) {
   const ids = [...new Set((itemIds || []).map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 20)
   if (!ids.length) return { removed: 0 }
   const token = await getAppOnlyGraphToken(env)
-  const referenceFolder = await childByName(
-    env,
-    token,
-    workspace.sharePointDriveId,
-    workspace.typeFolderId || workspace.rootFolderId,
-    REFERENCE_MATERIALS_FOLDER_NAME,
-  )
+  const referenceFolder = await resolveWorkspaceRoleFolder(env, token, workspace, 'reference')
   if (!referenceFolder?.folder) return { removed: 0 }
 
   let removed = 0
@@ -187,7 +205,7 @@ export async function describeExistingWorkspaceFolder(env, driveId, folderId) {
   const token = await getAppOnlyGraphToken(env)
   const folder = await getItem(env, token, driveId, folderId)
   if (!folder?.folder) throw Object.assign(new Error('The selected SharePoint item is not a folder'), { status: 400 })
-  const samFolder = await childByName(env, token, driveId, folder.id, SAM_DOCUMENTS_FOLDER_NAME)
+  const samFolder = await childByNames(env, token, driveId, folder.id, SOURCE_DOCUMENT_FOLDER_NAMES)
   return {
     driveId,
     rootFolderId: folder.id,
@@ -235,13 +253,10 @@ export async function finishRecordedWorkspaceFolders(env, workspace) {
   const inspection = await inspectWorkspaceRoot(env, workspace)
   if (!inspection.exists) return null
   const token = await getAppOnlyGraphToken(env)
-  const samFolder = await ensureFolder(
-    env,
-    token,
-    workspace.sharePointDriveId,
-    workspace.typeFolderId || workspace.rootFolderId,
-    SAM_DOCUMENTS_FOLDER_NAME,
-  )
+  if (!workspace.typeFolderId) {
+    await applyWorkspaceTemplateProfile(env, token, workspace.sharePointDriveId, workspace.rootFolderId, workspace.noticeType, { removePopulatedExcluded: false })
+  }
+  const samFolder = await resolveWorkspaceRoleFolder(env, token, workspace, 'source', { ensure: true })
   return {
     driveId: workspace.sharePointDriveId,
     rootFolderId: inspection.folder.id,
@@ -388,7 +403,13 @@ export async function finishWorkspaceFolders(env, workspace, folderName) {
   const folder = destination.existingFolder
   if (!folder) throw new Error('The copied opportunity folder could not be found in SharePoint')
   const token = await getAppOnlyGraphToken(env)
-  const samFolder = await ensureFolder(env, token, destination.driveId, folder.id, SAM_DOCUMENTS_FOLDER_NAME)
+  await applyWorkspaceTemplateProfile(env, token, destination.driveId, folder.id, workspace.noticeType, { removePopulatedExcluded: true })
+  const samFolder = await resolveWorkspaceRoleFolder(env, token, {
+    ...workspace,
+    sharePointDriveId: destination.driveId,
+    rootFolderId: folder.id,
+    typeFolderId: null,
+  }, 'source', { ensure: true })
   return {
     driveId: destination.driveId,
     rootFolderId: folder.id,
@@ -406,6 +427,55 @@ async function listAllChildren(token, driveId, parentId) {
     nextUrl = body['@odata.nextLink'] || ''
   }
   return items
+}
+
+function numberedFolderName(name) {
+  const match = String(name || '').match(/^\s*(\d+)\.\s*(.+)$/)
+  return match ? { number: Number(match[1]), label: match[2].trim() } : null
+}
+
+function excludedReducedFolder(name) {
+  const parsed = numberedFolderName(name)
+  if (!parsed) return false
+  const label = parsed.label.toLowerCase().replace(/\s+/g, ' ')
+  return label === 'capture management' || label === 'quality and past performance'
+}
+
+async function applyWorkspaceTemplateProfile(env, token, driveId, rootFolderId, noticeType, { removePopulatedExcluded = false } = {}) {
+  if (!reducedTemplateProfile(noticeType)) return { profile: 'full', changed: false }
+  let children = await listAllChildren(token, driveId, rootFolderId)
+  // A reduced workspace is already complete. This also prevents a later
+  // repair from reinterpreting its new numbering as the original template.
+  if (children.some((item) => item.folder && item.name === REDUCED_SAM_DOCUMENTS_FOLDER_NAME)) {
+    return { profile: 'reduced', changed: false }
+  }
+  if (!children.some((item) => item.folder && item.name === SAM_DOCUMENTS_FOLDER_NAME)) {
+    return { profile: 'reduced', changed: false }
+  }
+
+  const excluded = children.filter((item) => item.folder && excludedReducedFolder(item.name))
+  if (!removePopulatedExcluded) {
+    for (const folder of excluded) {
+      if ((await listAllChildren(token, driveId, folder.id)).length) {
+        return { profile: 'full', changed: false, reason: 'excluded_folders_not_empty' }
+      }
+    }
+  }
+  for (const folder of excluded) {
+    await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(folder.id)}`, token, { method: 'DELETE' })
+  }
+
+  children = (await listAllChildren(token, driveId, rootFolderId))
+    .filter((item) => item.folder && numberedFolderName(item.name))
+    .sort((left, right) => numberedFolderName(left.name).number - numberedFolderName(right.name).number)
+  let nextNumber = 1
+  for (const folder of children) {
+    const parsed = numberedFolderName(folder.name)
+    const nextName = `${nextNumber}. ${parsed.label}`
+    if (folder.name !== nextName) await moveItem(token, driveId, folder, rootFolderId, nextName)
+    nextNumber += 1
+  }
+  return { profile: 'reduced', changed: true }
 }
 
 async function moveItem(token, driveId, item, targetFolderId, name = item.name) {
@@ -469,22 +539,18 @@ export async function shareRelatedWorkspaceFolders(env, canonicalWorkspace, rela
       : null
   if (!canonicalRoot?.folder) throw Object.assign(new Error('At least one related opportunity must have a ready SharePoint workspace'), { status: 409 })
 
-  const typeFor = (workspace) => {
-    const value = String(workspace.noticeType || '').toUpperCase()
-    if (value.includes('MRAS')) return 'MRAS'
-    if (value.includes('RFQ')) return 'RFQ'
-    if (value.includes('RFP')) return 'RFP'
-    return 'RFI'
-  }
+  const typeFor = (workspace) => workspaceType(workspace.noticeType)
   const canonicalType = typeFor(canonicalWorkspace)
   const relatedType = typeFor(relatedWorkspace)
-  await convertLegacyRootToType(env, token, driveId, canonicalRoot, canonicalType)
-  const typeFolders = {}
-  for (const type of ['RFI', 'MRAS', 'RFP', 'RFQ']) typeFolders[type] = await ensureFolder(env, token, driveId, canonicalRoot.id, type)
+  await applyWorkspaceTemplateProfile(env, token, driveId, canonicalRoot.id, canonicalWorkspace.noticeType, { removePopulatedExcluded: false })
+  const canonicalTypeFolder = await convertLegacyRootToType(env, token, driveId, canonicalRoot, canonicalType)
+  const typeFolders = { [canonicalType]: canonicalTypeFolder }
+  if (!typeFolders[relatedType]) typeFolders[relatedType] = await ensureFolder(env, token, driveId, canonicalRoot.id, relatedType)
 
   if (relatedWorkspace.rootFolderId && relatedWorkspace.rootFolderId !== canonicalRoot.id) {
     const relatedRoot = await getItem(env, token, driveId, relatedWorkspace.rootFolderId)
     if (relatedRoot?.folder) {
+      await applyWorkspaceTemplateProfile(env, token, driveId, relatedRoot.id, relatedWorkspace.noticeType, { removePopulatedExcluded: false })
       await mergeFolderContents(env, token, driveId, relatedRoot.id, typeFolders[relatedType].id, relatedWorkspace.opportunityKey)
       const remaining = await listAllChildren(token, driveId, relatedRoot.id)
       if (!remaining.length) await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(relatedRoot.id)}`, token, { method: 'DELETE' })
@@ -495,7 +561,13 @@ export async function shareRelatedWorkspaceFolders(env, canonicalWorkspace, rela
   for (const workspace of [canonicalWorkspace, relatedWorkspace]) {
     const type = workspace === canonicalWorkspace ? canonicalType : relatedType
     const typeFolder = typeFolders[type]
-    const samFolder = await ensureFolder(env, token, driveId, typeFolder.id, SAM_DOCUMENTS_FOLDER_NAME)
+    const samFolder = await resolveWorkspaceRoleFolder(env, token, {
+      ...workspace,
+      noticeType: type,
+      sharePointDriveId: driveId,
+      rootFolderId: canonicalRoot.id,
+      typeFolderId: typeFolder.id,
+    }, 'source', { ensure: true })
     members.push({
       opportunityKey: workspace.opportunityKey,
       workspaceType: type,
@@ -587,9 +659,9 @@ export async function listWorkspaceChildren(env, workspace, parentId = '') {
 }
 
 function dossierSource(path) {
-  const first = String(path || '').split('/').filter(Boolean)[0] || ''
-  if (first === SAM_DOCUMENTS_FOLDER_NAME) return 'Source documents'
-  if (first === REFERENCE_MATERIALS_FOLDER_NAME) return 'Reference material'
+  const parts = String(path || '').split('/').filter(Boolean)
+  if (parts.some((part) => SOURCE_DOCUMENT_FOLDER_NAMES.includes(part))) return 'Source documents'
+  if (parts.some((part) => REFERENCE_MATERIAL_FOLDER_NAMES.includes(part))) return 'Reference material'
   return 'Workspace'
 }
 
