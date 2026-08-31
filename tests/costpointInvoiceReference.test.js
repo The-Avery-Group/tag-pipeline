@@ -4,6 +4,7 @@ import {
   availableTransactionFields,
   automaticInvoiceReference,
   defaultInputVoucherNumber,
+  invoiceReferenceSequencePlan,
   resolveTransactionPattern,
 } from '../src/utils/costpointInvoiceReference.js'
 
@@ -15,9 +16,23 @@ const row = {
   clientProvidedField: 'BLUE',
 }
 
-test('invoice patterns resolve arbitrary available transaction fields', () => {
-  assert.equal(resolveTransactionPattern('{clientProvidedField}-{vendorId}', row), 'BLUE-VEN-7')
-  assert.ok(availableTransactionFields([row]).includes('clientProvidedField'))
+test('invoice patterns expose only month and padded sequence', () => {
+  assert.equal(resolveTransactionPattern('INV-{date}-{sequence}', row, 1), 'INV-2026-08-001')
+  assert.equal(resolveTransactionPattern('INV{date}{sequence}', row, 1000), 'INV2026-081000')
+  assert.deepEqual(availableTransactionFields([row]), ['date', 'sequence'])
+  assert.throws(() => resolveTransactionPattern('{clientProvidedField}-{sequence}', row), /Unavailable field/)
+})
+
+test('sequence plans reset per statement or continue independently by month', () => {
+  const rows = [
+    { id: 'later', transactionDate: '2026-08-20', sourceRow: 4 },
+    { id: 'earlier', transactionDate: '2026-08-01', sourceRow: 2 },
+    { id: 'september', transactionDate: '2026-09-01', sourceRow: 3 },
+  ]
+  assert.deepEqual(invoiceReferenceSequencePlan(rows, { start: 7 }).sequences, { earlier: 7, later: 8, september: 9 })
+  assert.deepEqual(invoiceReferenceSequencePlan(rows, {
+    scope: 'monthly', start: 7, nextByMonth: { '2026-08': 20, '2026-09': 3 },
+  }).sequences, { earlier: 20, later: 21, september: 7 })
 })
 
 test('automatic invoice references fit the Costpoint field', () => {
