@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, reconcileCriticalFindings } from '../src/lib/documentAnalysis.js'
+import { criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, reconcileCriticalFindings } from '../src/lib/documentAnalysis.js'
+
+test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
+  const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
+  assert.equal(scoped.rootFolderId, 'rfi-documents')
+  assert.equal(scoped.title, 'Example')
+  assert.throws(() => documentAnalysisWorkspace({ rootFolderId: 'workspace-root' }), /missing its 2\. RFI Documents folder/)
+})
+
+test('completed analysis without critical evidence reports not found instead of searching', () => {
+  assert.equal(criticalAnalysisStatus({ status: 'complete' }, [], { questions: {}, proposals: {} }), 'not_found')
+  assert.equal(criticalAnalysisStatus({ status: 'queued' }, [], { questions: {}, proposals: {} }), 'searching')
+  assert.equal(criticalAnalysisStatus({ status: 'error' }, [], { questions: {}, proposals: {} }), 'error')
+})
 
 test('plain-text documents retain section citations for extracted requirements', async () => {
   const bytes = new TextEncoder().encode('Background information.\n\nThe contractor shall provide weekly status reports. The response must include a staffing plan.')
