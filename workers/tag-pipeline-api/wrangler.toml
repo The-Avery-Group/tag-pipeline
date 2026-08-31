@@ -62,6 +62,11 @@ name = "sam-opportunity-archive"
 binding = "SAM_ARCHIVE_WORKFLOW"
 class_name = "SAMArchiveWorkflow"
 
+[[workflows]]
+name = "opportunity-document-analysis"
+binding = "DOCUMENT_ANALYSIS_WORKFLOW"
+class_name = "DocumentAnalysisWorkflow"
+
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
@@ -71,7 +76,7 @@ ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 # - eBuy and SAM opportunity synchronization: 00:00, 06:00, 12:00, and
 #   18:00 UTC on weekdays only
 # - SAM change checks: 00:00 and 12:00 UTC every day
-# - Expiring contract refresh: Monday and Thursday at 00:00 UTC (1:00 AM WAT)
+# - Expiring contract refresh: first day of each calendar quarter at 00:00 UTC (1:00 AM WAT)
 # - RFI follow-up monitor: Monday, Wednesday, Friday at 1:00 PM WAT
 # - Capability document eTag checks: every day at 1:01 PM WAT
 # - Teams reminders: every day at 2:01 PM WAT, so weekend RFI response
