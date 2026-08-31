@@ -386,6 +386,24 @@ async function updateAnalysisJob(db, opportunityKey, changes) {
     .bind(...values, new Date().toISOString(), normalizeWorkspaceKey(opportunityKey)).run()
 }
 
+export function manualAnalysisState(opportunity = {}, packageAnalysis = {}) {
+  const remaining = Number(opportunity.remaining || 0)
+  const deferred = Number(opportunity.deferred || 0)
+  const packageDeferred = packageAnalysis?.status === 'deferred'
+  const completed = remaining === 0 && deferred === 0 && !packageDeferred
+  if (completed) return { completed: true, status: 'complete', progressPhase: 'Analysis available' }
+  if (deferred || packageDeferred) return {
+    completed: false,
+    status: 'partial',
+    progressPhase: 'AI validation paused; click Analyze documents again later',
+  }
+  return {
+    completed: false,
+    status: 'partial',
+    progressPhase: `${remaining} document${remaining === 1 ? '' : 's'} remain; click Analyze documents again`,
+  }
+}
+
 function pastPerformanceMetadata(sections) {
   const text = sections.map((item) => item.text).join('\n')
   const valueFor = (labels) => {
@@ -450,7 +468,7 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
   const changed = files.filter((file) => {
     const prior = byItem.get(file.id)
     const priorAI = JSON.parse(prior?.analysis_json || '{}')
-    return prior?.source_signature !== analysisSignature(file) || priorAI.status === 'deferred'
+    return prior?.source_signature !== analysisSignature(file) || ['deferred', 'error', 'not_configured'].includes(priorAI.status)
   }).slice(0, MAX_FILES_PER_RUN)
   let deferred = 0
   for (const file of changed) {
@@ -467,7 +485,7 @@ async function analyzeOpportunityFiles(env, workspace, files, token, options = {
         critical = applyCriticalValidation(critical, deeperAnalysis)
       }
       else deeperAnalysis = { status: 'not_applicable' }
-      if (deeperAnalysis.status === 'deferred') deferred++
+      if (['deferred', 'error', 'not_configured'].includes(deeperAnalysis.status)) deferred++
     } catch (error) { status = error.code === 'unsupported_document_format' ? 'unsupported' : 'error'; errorMessage = error.message }
     await env.EBUY_DB.prepare(`INSERT INTO opportunity_document_analysis (
         id, opportunity_key, sharepoint_drive_id, sharepoint_item_id, file_name, file_path, source_kind,
@@ -557,10 +575,12 @@ export async function runDocumentAnalysis(env, opportunityKey) {
   await removeAnalysisOutsideDocumentFolder(env.EBUY_DB, opportunityKey, index.files)
   const opportunity = await analyzeOpportunityFiles(env, workspace, index.files, token)
   const pastPerformance = await analyzePastPerformance(env, workspace, token)
-  const packageAnalysis = !opportunity.remaining && !opportunity.deferred ? await consolidateOpportunityAnalysis(env, opportunityKey) : { status: 'deferred' }
-  const completed = !opportunity.remaining && !opportunity.deferred && packageAnalysis.status !== 'deferred'
-  await updateAnalysisJob(env.EBUY_DB, opportunityKey, { status: completed ? 'complete' : 'queued', progressPhase: completed ? 'Analysis available' : 'More documents are queued', processedFiles: opportunity.processed, totalFiles: opportunity.processed + opportunity.remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: completed ? new Date().toISOString() : null })
-  return { opportunityKey: normalizeWorkspaceKey(opportunityKey), opportunity, pastPerformance }
+  const packageAnalysis = !opportunity.remaining && !opportunity.deferred
+    ? await consolidateOpportunityAnalysis(env, opportunityKey)
+    : { status: opportunity.deferred ? 'deferred' : 'pending' }
+  const state = manualAnalysisState(opportunity, packageAnalysis)
+  await updateAnalysisJob(env.EBUY_DB, opportunityKey, { status: state.status, progressPhase: state.progressPhase, processedFiles: opportunity.processed, totalFiles: opportunity.processed + opportunity.remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: state.completed ? new Date().toISOString() : null })
+  return { opportunityKey: normalizeWorkspaceKey(opportunityKey), opportunity, pastPerformance, state }
 }
 
 export async function runSAMArchiveDocumentAnalysis(env, input, options = {}) {
@@ -597,10 +617,13 @@ export async function runSAMArchiveDocumentAnalysis(env, input, options = {}) {
     processed += result.processed; remaining += result.remaining; deferred += result.deferred || 0
   }
   const pastPerformance = await analyzePastPerformance(env, source, token)
-  const packageAnalysis = remaining === 0 && deferred === 0 ? await consolidateOpportunityAnalysis(env, key, options) : { status: 'deferred' }
-  const completed = remaining === 0 && deferred === 0 && packageAnalysis.status !== 'deferred'
-  await updateAnalysisJob(env.EBUY_DB, key, { status: completed ? 'complete' : 'queued', progressPhase: completed ? 'Analysis available' : 'More documents are queued', processedFiles: processed, totalFiles: processed + remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: completed ? new Date().toISOString() : null })
-  return { opportunityKey: key, opportunity: { processed, remaining, deferred }, pastPerformance }
+  const packageAnalysis = remaining === 0 && deferred === 0
+    ? await consolidateOpportunityAnalysis(env, key, options)
+    : { status: deferred ? 'deferred' : 'pending' }
+  const opportunity = { processed, remaining, deferred }
+  const state = manualAnalysisState(opportunity, packageAnalysis)
+  await updateAnalysisJob(env.EBUY_DB, key, { status: state.status, progressPhase: state.progressPhase, processedFiles: processed, totalFiles: processed + remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: state.completed ? new Date().toISOString() : null })
+  return { opportunityKey: key, opportunity, pastPerformance, state }
 }
 
 export async function runEbuyArchiveDocumentAnalysis(env, requestId, options = {}) {
@@ -635,45 +658,13 @@ export async function runEbuyArchiveDocumentAnalysis(env, requestId, options = {
     processed += result.processed; remaining += result.remaining; deferred += result.deferred || 0
   }
   const pastPerformance = await analyzePastPerformance(env, source, token)
-  const packageAnalysis = remaining === 0 && deferred === 0 ? await consolidateOpportunityAnalysis(env, requestId, options) : { status: 'deferred' }
-  const completed = remaining === 0 && deferred === 0 && packageAnalysis.status !== 'deferred'
-  await updateAnalysisJob(env.EBUY_DB, requestId, { status: completed ? 'complete' : 'queued', progressPhase: completed ? 'Analysis available' : 'More documents are queued', processedFiles: processed, totalFiles: processed + remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: completed ? new Date().toISOString() : null })
-  return { opportunityKey: normalizeWorkspaceKey(requestId), opportunity: { processed, remaining, deferred }, pastPerformance }
-}
-
-export async function resumeQueuedDocumentAnalysis(env, limit = 4) {
-  const versionSuffix = `%:${DOCUMENT_ANALYSIS_VERSION}`
-  const outdated = await env.EBUY_DB.prepare(`SELECT DISTINCT j.opportunity_key
-    FROM opportunity_analysis_jobs j
-    JOIN opportunity_document_analysis d ON d.opportunity_key = j.opportunity_key
-    WHERE d.source_signature NOT LIKE ? AND j.status NOT IN ('running', 'cancelled')
-    ORDER BY j.updated_at LIMIT ?`)
-    .bind(versionSuffix, Math.min(10, Math.max(1, Number(limit || 4)))).all()
-  if (outdated.results?.length) {
-    const now = new Date().toISOString()
-    await env.EBUY_DB.batch(outdated.results.map((row) => env.EBUY_DB.prepare(`UPDATE opportunity_analysis_jobs
-      SET status = 'queued', progress_phase = 'Rechecking critical dates and submission instructions',
-      cancel_requested = 0, error_message = NULL, completed_at = NULL, updated_at = ?
-      WHERE opportunity_key = ?`).bind(now, row.opportunity_key)))
-  }
-  const rows = await env.EBUY_DB.prepare(`SELECT opportunity_key, source_service FROM opportunity_analysis_jobs
-    WHERE status = 'queued' AND cancel_requested = 0 ORDER BY priority DESC, updated_at LIMIT ?`)
-    .bind(Math.min(10, Math.max(1, Number(limit || 4)))).all()
-  const results = []
-  for (const row of rows.results || []) {
-    try {
-      const result = row.source_service === 'sam'
-        ? await runSAMArchiveDocumentAnalysis(env, { opportunityKey: row.opportunity_key }, { automatic: true })
-        : row.source_service === 'ebuy'
-          ? await runEbuyArchiveDocumentAnalysis(env, row.opportunity_key, { automatic: true })
-          : await runDocumentAnalysis(env, row.opportunity_key)
-      results.push({ opportunityKey: row.opportunity_key, ok: true, result })
-    } catch (error) {
-      await updateAnalysisJob(env.EBUY_DB, row.opportunity_key, { status: 'error', progressPhase: 'Analysis needs attention', errorMessage: error.message, completedAt: new Date().toISOString() })
-      results.push({ opportunityKey: row.opportunity_key, ok: false, error: error.message })
-    }
-  }
-  return results
+  const packageAnalysis = remaining === 0 && deferred === 0
+    ? await consolidateOpportunityAnalysis(env, requestId, options)
+    : { status: deferred ? 'deferred' : 'pending' }
+  const opportunityResult = { processed, remaining, deferred }
+  const state = manualAnalysisState(opportunityResult, packageAnalysis)
+  await updateAnalysisJob(env.EBUY_DB, requestId, { status: state.status, progressPhase: state.progressPhase, processedFiles: processed, totalFiles: processed + remaining, packageAnalysis: JSON.stringify(packageAnalysis), completedAt: state.completed ? new Date().toISOString() : null })
+  return { opportunityKey: normalizeWorkspaceKey(requestId), opportunity: opportunityResult, pastPerformance, state }
 }
 
 async function structuredCriticalEvidence(env, opportunityKey) {
@@ -814,9 +805,11 @@ export function criticalAnalysisStatus(job, rows = [], critical = {}) {
   const readableComplete = job?.status === 'complete' || (rows.length > 0 && rows.every((row) => ['ready', 'unsupported', 'error', 'cancelled'].includes(row.status)) && !['queued', 'running'].includes(job?.status))
   if (job?.status === 'cancelled') return 'cancelled'
   if (job?.status === 'error') return 'error'
+  if (['queued', 'partial'].includes(job?.status)) return 'partial'
   if (criticalCount(critical) && critical.conflicts?.length) return 'conflict'
   if (criticalCount(critical) && critical.needsReview) return 'needs_review'
   if (criticalCount(critical)) return 'cited'
+  if (!job && rows.length === 0) return 'not_analyzed'
   return readableComplete ? 'not_found' : 'searching'
 }
 
