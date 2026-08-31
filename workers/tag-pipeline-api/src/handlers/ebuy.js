@@ -13,7 +13,7 @@ import {
 } from '../lib/ebuyRepository.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
 import { deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
-import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, runEbuyArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, startDocumentAnalysisWorkflow } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -129,8 +129,8 @@ export async function handleEbuy(req, env, identity = {}) {
     const analysisMatch = path.match(/^\/ebuy\/opportunities\/([^/]+)\/analysis$/)
     if (analysisMatch && req.method === 'POST') {
       const requestId = decodeURIComponent(analysisMatch[1])
-      const run = await runEbuyArchiveDocumentAnalysis(env, requestId)
-      return json({ ok: true, run, analysis: await getDocumentAnalysis(env, requestId) })
+      const run = await startDocumentAnalysisWorkflow(env, { source: 'ebuy', opportunityKey: requestId })
+      return json({ ok: true, run, analysis: await getDocumentAnalysis(env, requestId) }, 202)
     }
     if (analysisMatch && req.method === 'GET') {
       return json({ analysis: await getDocumentAnalysis(env, decodeURIComponent(analysisMatch[1])) })
