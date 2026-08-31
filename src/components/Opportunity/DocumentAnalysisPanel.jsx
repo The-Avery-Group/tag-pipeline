@@ -5,7 +5,7 @@ const STATUS_LABELS = {
   searching: 'Searching documents', preliminary: 'Preliminary', cited: 'Cited',
   needs_review: 'Needs review', conflict: 'Conflicting instructions',
   not_found: 'Not found', cancelled: 'Cancelled', error: 'Needs attention',
-  partial: 'Incomplete', not_analyzed: 'Not analyzed',
+  partial: 'Incomplete', processing: 'Processing', not_analyzed: 'Not analyzed',
 }
 
 function findingKey(item) { return [item?.citation?.fileName, item?.citation?.location, item?.text].filter(Boolean).join('|') }
@@ -32,7 +32,7 @@ function Finding({ label, items, status, reviews, onReview }) {
       <small>{first.citation?.fileName}{first.citation?.location ? ` · ${first.citation.location}` : ''}{` · ${sourceLabel}`}</small>
       <ReviewControl item={first} reviews={reviews} onReview={onReview} />
       {items.length > 1 && <details><summary>{items.length - 1} more cited finding{items.length === 2 ? '' : 's'}</summary>{items.slice(1).map((item, index) => <div className={styles.more} key={`${item.text}-${index}`}><p>{item.text}</p><small>{item.citation?.fileName}{item.citation?.location ? ` · ${item.citation.location}` : ''}</small></div>)}</details>}
-    </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : status === 'error' ? 'ANALYSIS NEEDS ATTENTION' : status === 'partial' ? 'NOT FOUND YET — ANALYZE AGAIN' : status === 'not_analyzed' ? 'NOT ANALYZED' : 'Analyzing documents…'}</strong>}
+    </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : status === 'error' ? 'ANALYSIS NEEDS ATTENTION' : status === 'partial' ? 'NOT FOUND YET' : status === 'not_analyzed' ? 'NOT ANALYZED' : 'PROCESSING DOCUMENTS…'}</strong>}
   </div>
 }
 
@@ -60,6 +60,12 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
   useEffect(() => { refresh().catch(() => {}) }, [refresh])
 
   const status = analysis?.critical?.status || (disabled ? 'cancelled' : 'searching')
+  useEffect(() => {
+    if (status !== 'processing') return undefined
+    const timer = window.setInterval(() => refresh().catch(() => {}), 8_000)
+    return () => window.clearInterval(timer)
+  }, [refresh, status])
+
   const start = async () => {
     setRunning(true)
     try {
@@ -68,6 +74,10 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
       // interrupted connection and a generic "Failed to fetch" error.
       const result = await runRef.current()
       setAnalysis(result.analysis || null)
+      if (result.run?.started || result.analysis?.critical?.status === 'processing') {
+        toast?.info('Document analysis is processing in the background')
+        return
+      }
       const processed = Number(result.run?.opportunity?.processed || 0)
       const remaining = Number(result?.run?.opportunity?.remaining || 0)
       const deferred = Number(result?.run?.opportunity?.deferred || 0)
@@ -110,7 +120,7 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
     {open && <div className={styles.body}>
       <div className={styles.actions}>
         <p>{analysis?.job?.phase || (loading ? 'Loading analysis…' : 'Archived documents have not been analyzed yet.')}</p>
-        <button className="btn" type="button" disabled={disabled || running} onClick={start}>{running ? 'Analyzing…' : 'Analyze documents'}</button>
+        <button className="btn" type="button" disabled={disabled || running || status === 'processing'} onClick={start}>{running || status === 'processing' ? 'Processing…' : 'Analyze documents'}</button>
       </div>
       <div className={styles.grid}>
         <Finding label="Questions due" items={analysis?.critical?.questions?.deadlines} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
