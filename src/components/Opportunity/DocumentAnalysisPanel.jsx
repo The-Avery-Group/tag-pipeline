@@ -5,6 +5,7 @@ const STATUS_LABELS = {
   searching: 'Searching documents', preliminary: 'Preliminary', cited: 'Cited',
   needs_review: 'Needs review', conflict: 'Conflicting instructions',
   not_found: 'Not found', cancelled: 'Cancelled', error: 'Needs attention',
+  partial: 'Incomplete', not_analyzed: 'Not analyzed',
 }
 
 function findingKey(item) { return [item?.citation?.fileName, item?.citation?.location, item?.text].filter(Boolean).join('|') }
@@ -31,7 +32,7 @@ function Finding({ label, items, status, reviews, onReview }) {
       <small>{first.citation?.fileName}{first.citation?.location ? ` · ${first.citation.location}` : ''}{` · ${sourceLabel}`}</small>
       <ReviewControl item={first} reviews={reviews} onReview={onReview} />
       {items.length > 1 && <details><summary>{items.length - 1} more cited finding{items.length === 2 ? '' : 's'}</summary>{items.slice(1).map((item, index) => <div className={styles.more} key={`${item.text}-${index}`}><p>{item.text}</p><small>{item.citation?.fileName}{item.citation?.location ? ` · ${item.citation.location}` : ''}</small></div>)}</details>}
-    </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : status === 'error' ? 'ANALYSIS NEEDS ATTENTION' : 'Searching documents…'}</strong>}
+    </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : status === 'error' ? 'ANALYSIS NEEDS ATTENTION' : status === 'partial' ? 'NOT FOUND YET — ANALYZE AGAIN' : status === 'not_analyzed' ? 'NOT ANALYZED' : 'Analyzing documents…'}</strong>}
   </div>
 }
 
@@ -58,23 +59,28 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
 
   useEffect(() => { refresh().catch(() => {}) }, [refresh])
 
-  const jobStatus = analysis?.job?.status || ''
-  useEffect(() => {
-    if (!['queued', 'running'].includes(jobStatus)) return undefined
-    const interval = window.setInterval(() => refresh().catch(() => {}), 10_000)
-    return () => window.clearInterval(interval)
-  }, [jobStatus, refresh])
-
   const status = analysis?.critical?.status || (disabled ? 'cancelled' : 'searching')
   const requirements = useMemo(() => (analysis?.requirements || []).slice(0, 12), [analysis])
   const deepDocuments = useMemo(() => (analysis?.documents || []).filter((document) => document.analysis?.status === 'ready'), [analysis])
   const start = async () => {
     setRunning(true)
     try {
-      const result = await runRef.current()
-      setAnalysis(result.analysis || null)
-      const pending = ['queued', 'running'].includes(result.analysis?.job?.status) || result.run?.opportunity?.remaining || result.run?.opportunity?.deferred
-      toast?.success(pending ? 'Document batch analyzed; remaining documents will continue automatically' : 'Document analysis is available')
+      let result = null
+      let processed = 0
+      for (let pass = 0; pass < 25; pass += 1) {
+        result = await runRef.current()
+        setAnalysis(result.analysis || null)
+        processed += Number(result.run?.opportunity?.processed || 0)
+        const remaining = Number(result.run?.opportunity?.remaining || 0)
+        const deferred = Number(result.run?.opportunity?.deferred || 0)
+        if (!remaining || deferred || result.run?.cancelled) break
+      }
+      const remaining = Number(result?.run?.opportunity?.remaining || 0)
+      const deferred = Number(result?.run?.opportunity?.deferred || 0)
+      const analysisPaused = deferred || (result?.run?.state?.status === 'partial' && !remaining)
+      if (analysisPaused) toast?.info('AI validation paused before analysis completed. Click Analyze documents again later.')
+      else if (remaining) toast?.info(`${processed} document${processed === 1 ? '' : 's'} analyzed; ${remaining} remain. Click Analyze documents again.`)
+      else toast?.success('Document analysis is available')
     } catch (error) { toast?.error(`Documents could not be analyzed: ${error.message}`) }
     finally { setRunning(false) }
   }
