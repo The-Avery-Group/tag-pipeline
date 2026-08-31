@@ -66,9 +66,9 @@ export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
 }
 
 function dossierFileSource(path) {
-  const topLevelFolder = String(path || '').split('/').filter(Boolean)[0] || ''
-  if (topLevelFolder === '2. RFI Documents') return 'Source documents'
-  if (topLevelFolder === '7. Reference Materials') return 'Reference material'
+  const folders = String(path || '').split('/').filter(Boolean)
+  if (folders.some((name) => name === '1. RFI Documents' || name === '2. RFI Documents')) return 'Source documents'
+  if (folders.some((name) => name === '5. Reference Materials' || name === '7. Reference Materials')) return 'Reference material'
   return 'Workspace'
 }
 
