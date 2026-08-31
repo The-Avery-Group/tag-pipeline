@@ -40,7 +40,7 @@ import {
   samArchiveStorageReady,
   updateSAMArchive,
 } from '../lib/samArchiveRepository.js'
-import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, startDocumentAnalysisWorkflow } from '../lib/documentAnalysis.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances delegated pulls while it remains open. Autonomous pulls use a
 // Cloudflare Workflow so every unit gets its own retryable durable step.
@@ -1605,11 +1605,15 @@ export async function handleSAM(req, env, ctx) {
   }
 
   if (url.pathname === '/sam/archive/analysis' && req.method === 'POST') {
-      const body = await req.json().catch(() => ({}))
+    const body = await req.json().catch(() => ({}))
     try {
-      const run = await runSAMArchiveDocumentAnalysis(env, body)
-      const key = run.opportunityKey || body.solicitationNumber || body.noticeId
-      return json({ ok: true, run, analysis: await getDocumentAnalysis(env, key) })
+      const archive = await findSAMArchive(env.EBUY_DB, body)
+      if (!archive) throw Object.assign(new Error('SAM.gov attachment archive is not ready yet'), { status: 409 })
+      const key = archive.opportunityKey
+      const run = await startDocumentAnalysisWorkflow(env, {
+        source: 'sam', opportunityKey: key, input: { ...body, opportunityKey: key },
+      })
+      return json({ ok: true, run, analysis: await getDocumentAnalysis(env, key) }, 202)
     } catch (error) {
       return json({ error: error.message, code: error.code || 'sam_document_analysis_failed' }, error.status || 500)
     }
