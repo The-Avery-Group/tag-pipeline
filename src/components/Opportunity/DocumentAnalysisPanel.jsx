@@ -110,6 +110,15 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
     } catch (error) { toast?.error(`Finding review could not be saved: ${error.message}`) }
   }
 
+  const documents = analysis?.documents || []
+  const documentIssues = documents.flatMap((document) => {
+    const messages = []
+    if (['unsupported', 'error'].includes(document.status)) messages.push(document.error || (document.status === 'unsupported' ? 'This file format is not supported.' : 'This file could not be analyzed.'))
+    for (const warning of document.analysis?.warnings || []) messages.push(warning)
+    return [...new Set(messages.filter(Boolean))].map((message) => ({ fileName: document.fileName, filePath: document.filePath, message }))
+  })
+  const analyzedDocuments = documents.filter((document) => document.status === 'ready')
+
   return <section className={styles.panel}>
     <header>
       <button type="button" className={styles.heading} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
@@ -134,7 +143,12 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
           {(conflict.alternatives || []).map((item, index) => <div key={`${item.text}-${index}`}><p>{item.text}</p><small>{item.citation?.fileName}{item.citation?.location ? ` · ${item.citation.location}` : ''}</small></div>)}
         </div>)}</details>
       </div>}
-      {(analysis?.documents || []).some((document) => ['unsupported', 'error'].includes(document.status)) && <div className={styles.warning}><strong>Some documents need attention.</strong> The available files were still analyzed.</div>}
+      {documentIssues.length > 0 && <div className={styles.warning}>
+        <strong>{documentIssues.length} document issue{documentIssues.length === 1 ? '' : 's'} need attention.</strong> Results from the other files remain available.
+        <ul className={styles.issueList}>{documentIssues.map((issue, index) => <li key={`${issue.fileName}-${issue.message}-${index}`}>
+          <b>{issue.fileName || issue.filePath || 'Unknown file'}</b><span>{issue.message}</span>
+        </li>)}</ul>
+      </div>}
       {analysis?.package?.status === 'ready' && <details className={styles.requirements} open><summary>Package-wide summary</summary><article>
         {analysis.package.overview && <p><strong>Overview:</strong> {analysis.package.overview}</p>}
         {analysis.package.agencyNeed && <p><strong>Agency need:</strong> {analysis.package.agencyNeed}</p>}
@@ -143,6 +157,13 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
           return <div key={`${text}-${index}`}><p>• {text}</p>{typeof finding === 'object' && (finding.fileName || finding.location) && <small>{[finding.fileName, finding.location].filter(Boolean).join(' · ')}</small>}</div>
         })}
       </article></details>}
+      {analyzedDocuments.length > 0 && <details className={styles.requirements}><summary>{analyzedDocuments.length} analyzed document{analyzedDocuments.length === 1 ? '' : 's'}</summary>
+        {analyzedDocuments.map((document) => <article key={`${document.filePath}-${document.fileName}`}>
+          <p><strong>{document.fileName}</strong></p>
+          <p>{document.summary || 'Analysis completed; no additional summary was extracted from this file.'}</p>
+          {document.analysis?.coverage && <small>{document.analysis.coverage.completedChunks} of {document.analysis.coverage.chunkCount} analysis sections completed</small>}
+        </article>)}
+      </details>}
       {(analysis?.pastPerformance || []).length > 0 && <details className={styles.requirements}><summary>{analysis.pastPerformance.length} past-performance match{analysis.pastPerformance.length === 1 ? '' : 'es'}</summary>{analysis.pastPerformance.slice(0, 8).map((match) => <article key={match.fileName}><p><strong>{match.fileName}</strong> · {match.score}% match</p><small>{[match.serviceCategory, ...(match.evidence || [])].filter(Boolean).join(' · ')}</small></article>)}</details>}
     </div>}
   </section>
