@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './DocumentAnalysisPanel.module.css'
 
 const STATUS_LABELS = {
-  searching: 'Searching documents', preliminary: 'Preliminary', verified: 'Verified',
+  searching: 'Searching documents', preliminary: 'Preliminary', cited: 'Cited',
+  needs_review: 'Needs review', conflict: 'Conflicting instructions',
   not_found: 'Not found', cancelled: 'Cancelled',
 }
 
@@ -18,11 +19,16 @@ function ReviewControl({ item, reviews, onReview }) {
 
 function Finding({ label, items, status, reviews, onReview }) {
   const first = items?.[0]
+  const sourceLabel = first?.verification === 'structured_source'
+    ? 'Structured opportunity source'
+    : first?.verification === 'ai_validated'
+      ? 'AI-validated cited evidence'
+      : 'Cited evidence—review recommended'
   return <div className={styles.finding}>
     <span>{label}</span>
     {first ? <>
       <p>{first.text}</p>
-      <small>{first.citation?.fileName}{first.citation?.location ? ` · ${first.citation.location}` : ''}</small>
+      <small>{first.citation?.fileName}{first.citation?.location ? ` · ${first.citation.location}` : ''}{` · ${sourceLabel}`}</small>
       <ReviewControl item={first} reviews={reviews} onReview={onReview} />
       {items.length > 1 && <details><summary>{items.length - 1} more cited finding{items.length === 2 ? '' : 's'}</summary>{items.slice(1).map((item, index) => <div className={styles.more} key={`${item.text}-${index}`}><p>{item.text}</p><small>{item.citation?.fileName}{item.citation?.location ? ` · ${item.citation.location}` : ''}</small></div>)}</details>}
     </> : <strong>{status === 'not_found' ? 'NOT FOUND' : status === 'cancelled' ? 'CANCELLED' : 'Searching documents…'}</strong>}
@@ -95,6 +101,13 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
         <Finding label="Proposal due" items={analysis?.critical?.proposals?.deadlines} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
         <Finding label="Proposal recipient or submission method" items={analysis?.critical?.proposals?.submissionInstructions} status={status} reviews={analysis?.reviews} onReview={review ? saveReview : null} />
       </div>
+      {(analysis?.critical?.conflicts || []).length > 0 && <div className={styles.warning}>
+        <strong>Conflicting instructions found.</strong> The highest-ranked current source is shown. Review the cited alternatives before submission.
+        <details><summary>Show conflicting evidence</summary>{analysis.critical.conflicts.map((conflict) => <div className={styles.conflict} key={conflict.category}>
+          <b>{conflict.category.replace('.', ' · ')}</b>
+          {(conflict.alternatives || []).map((item, index) => <div key={`${item.text}-${index}`}><p>{item.text}</p><small>{item.citation?.fileName}{item.citation?.location ? ` · ${item.citation.location}` : ''}</small></div>)}
+        </div>)}</details>
+      </div>}
       {(analysis?.documents || []).some((document) => ['unsupported', 'error'].includes(document.status)) && <div className={styles.warning}><strong>Some documents need attention.</strong> The available files were still analyzed.</div>}
       {analysis?.package?.status === 'ready' && <details className={styles.requirements} open><summary>Package-wide summary</summary><article>
         {analysis.package.overview && <p><strong>Overview:</strong> {analysis.package.overview}</p>}
