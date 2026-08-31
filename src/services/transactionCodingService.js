@@ -16,6 +16,7 @@ export const createTransactionRule = (payload) => workerJson('/transaction-codin
 export const updateTransactionRule = (id, payload) => workerJson(`/transaction-coding/rules/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 export const deleteTransactionRule = (id) => workerJson(`/transaction-coding/rules/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const getTransactionExports = () => workerJson('/transaction-coding/exports', { cache: 'no-store' }).then((data) => data.exports || [])
+export const getInvoiceReferenceSequences = () => workerJson('/transaction-coding/invoice-reference-sequences', { cache: 'no-store' })
 export const getTransactionExport = (id) => workerJson(`/transaction-coding/exports/${encodeURIComponent(id)}`, { cache: 'no-store' }).then((data) => data.export)
 export const createTransactionExport = (payload) => workerJson('/transaction-coding/exports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 
