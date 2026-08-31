@@ -39,7 +39,6 @@ import {
   scheduleEbuyArchiveContinuation,
 } from './ebuySyncChain.js'
 import { refreshEbuyFollowOnWatches } from '../handlers/rfiFollowUpMonitor.js'
-import { queueDocumentAnalysis, runEbuyArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 
 function mergeCounts(target, result) {
   for (const field of ['discovered', 'inserted', 'updated', 'unchanged', 'removed', 'archivedFiles']) {
@@ -447,28 +446,6 @@ export async function runEbuySyncWorkflow(env, event, step) {
         totals.removed = await step.do('Mark unavailable eBuy opportunities', () => completeLiveEbuySnapshot(env.EBUY_DB, run.startedAt))
       }
 
-      const analysisCandidates = await step.do('Find newly archived eBuy packages to analyze', async () => {
-        const rows = await env.EBUY_DB.prepare(`SELECT DISTINCT a.request_id
-          FROM ebuy_attachments a JOIN ebuy_opportunities o ON o.request_id = a.request_id
-          WHERE a.archive_status = 'archived' AND a.archived_at >= ? AND o.review_state != 'dismissed'
-          ORDER BY a.archived_at LIMIT 50`).bind(run.startedAt).all()
-        return (rows.results || []).map((row) => row.request_id)
-      })
-      for (const requestId of analysisCandidates) {
-        try {
-          let remainingAnalysis = 1
-          for (let pass = 1; remainingAnalysis > 0 && pass <= 25; pass += 1) {
-            const analysis = await step.do(`Analyze eBuy ${requestId} documents ${pass}`, {
-              retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '5 minutes',
-            }, () => runEbuyArchiveDocumentAnalysis(env, requestId, { automatic: true }))
-            if (analysis.cancelled) break
-            remainingAnalysis = Number(analysis.opportunity?.remaining || 0)
-          }
-        } catch (analysisError) {
-          await step.do(`Keep eBuy ${requestId} analysis queued`, () => queueDocumentAnalysis(env.EBUY_DB, requestId, 'ebuy', 10))
-          console.warn(JSON.stringify({ event: 'ebuy_document_analysis_deferred', requestId, message: analysisError.message }))
-        }
-      }
     } else {
       throw new Error(`Unsupported eBuy sync mode: ${mode}`)
     }
