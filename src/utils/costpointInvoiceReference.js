@@ -1,4 +1,6 @@
 export const COSTPOINT_INVOICE_REFERENCE_LIMIT = 15
+export const DEFAULT_INVOICE_REFERENCE_PATTERN = 'INV-{date}-{sequence}'
+export const COMPACT_INVOICE_REFERENCE_PATTERN = 'INV{date}{sequence}'
 
 function clean(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -19,23 +21,62 @@ function normalizedFieldName(value) {
 }
 
 export function availableTransactionFields(rows = []) {
-  const fields = new Set(['sequence', 'hash', 'date', 'amount'])
-  rows.forEach((row) => Object.keys(row || {}).forEach((key) => fields.add(key)))
-  return [...fields].sort((left, right) => left.localeCompare(right))
+  void rows
+  return ['date', 'sequence']
+}
+
+export function validateTransactionPattern(pattern) {
+  const fields = [...String(pattern ?? '').matchAll(/\{([^{}]+)\}/g)].map((match) => match[1].trim())
+  const invalid = fields.filter((field) => !['date', 'sequence'].includes(field))
+  if (invalid.length) throw new Error(`Unavailable field: ${[...new Set(invalid)].map((name) => `{${name}}`).join(', ')}`)
+  if (!fields.length) {
+    throw new Error('Custom patterns must include {date}, {sequence}, or both.')
+  }
+  return true
+}
+
+function sequenceNumber(value) {
+  const numeric = Math.floor(Number(value))
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : 1
+}
+
+export function invoiceReferenceSequencePlan(rows = [], {
+  scope = 'statement',
+  start = 1,
+  nextByMonth = {},
+} = {}) {
+  const ordered = [...rows].sort((left, right) => (
+    String(left.transactionDate || left.transaction_date || '').localeCompare(String(right.transactionDate || right.transaction_date || ''))
+    || Number(left.sourceRow || left.source_row || 0) - Number(right.sourceRow || right.source_row || 0)
+    || String(left.id || '').localeCompare(String(right.id || ''))
+  ))
+  const first = sequenceNumber(start)
+  const counters = new Map()
+  const sequences = {}
+  ordered.forEach((row, index) => {
+    const month = String(row.transactionDate || row.transaction_date || '').slice(0, 7)
+    if (scope === 'monthly') {
+      const current = counters.has(month)
+        ? counters.get(month)
+        : Math.max(first, sequenceNumber(nextByMonth?.[month] || first))
+      sequences[row.id] = current
+      counters.set(month, current + 1)
+    } else {
+      sequences[row.id] = first + index
+    }
+  })
+  return {
+    sequences,
+    maximum: Math.max(0, ...Object.values(sequences)),
+  }
 }
 
 export function resolveTransactionPattern(pattern, row, sequence = 1) {
+  validateTransactionPattern(pattern)
   const transactionDate = row.transactionDate || row.transaction_date || ''
-  const amountCents = Number(row.amountCents ?? row.amount_cents ?? 0)
-  const identity = clean(row.id || row.sourceHash || row.source_hash || sequence)
   const fields = {
-    ...row,
-    sequence,
-    hash: stableHash(identity).toString(36),
-    date: transactionDate,
-    transactionDate,
-    amount: (amountCents / 100).toFixed(2),
-    amountCents,
+    sequence: String(sequenceNumber(sequence)).padStart(3, '0'),
+    date: String(transactionDate).slice(0, 7),
   }
   const exact = new Map(Object.entries(fields))
   const normalized = new Map(Object.entries(fields).map(([key, value]) => [normalizedFieldName(key), value]))
