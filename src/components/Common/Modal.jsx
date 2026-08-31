@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import styles from './Modal.module.css'
 
-export default function Modal({ title, onClose, children, footer, dismissible = true }) {
+export default function Modal({ title, onClose, children, footer, dismissible = true, className = '' }) {
   useEffect(() => {
     if (!dismissible) return undefined
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
@@ -11,7 +11,7 @@ export default function Modal({ title, onClose, children, footer, dismissible = 
 
   return (
     <div className={styles.overlay} onClick={(e) => dismissible && e.target === e.currentTarget && onClose()}>
-      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div className={`${styles.modal} ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div className={styles.header}>
           <h2 id="modal-title" className={styles.title}>{title}</h2>
           {dismissible && <button className={styles.close} onClick={onClose} aria-label="Close">✕</button>}
