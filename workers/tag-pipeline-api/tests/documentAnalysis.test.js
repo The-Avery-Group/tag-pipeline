@@ -51,6 +51,22 @@ test('critical scan does not treat an answer-posting date as the questions deadl
   assert.deepEqual(critical.questions.deadlines, [])
 })
 
+test('critical scan does not treat late-offer boilerplate as a proposal submission method', () => {
+  const critical = extractCriticalSubmissionDetails([{
+    text: 'Any offer received after the time specified for receipt of offers is late and will not be considered unless the Contracting Officer determines otherwise.',
+    location: 'paragraph 1132',
+  }], 'solicitation.docx')
+  assert.deepEqual(critical.proposals.submissionInstructions, [])
+})
+
+test('critical scan recognizes day-month-year proposal deadlines', () => {
+  const critical = extractCriticalSubmissionDetails([{
+    text: 'Quotations are due no later than 08 September 2026, 1:00 PM Eastern Time.',
+    location: 'paragraph 1166',
+  }], 'solicitation.docx')
+  assert.equal(critical.proposals.deadlines.length, 1)
+})
+
 test('critical scan marks tentative and historical dates as low confidence', () => {
   const critical = extractCriticalSubmissionDetails([
     { text: 'The draft schedule estimated that proposals were due September 18, 2025.', location: 'page 1' },
@@ -110,6 +126,20 @@ test('low-confidence tentative dates are excluded from displayed critical findin
   assert.deepEqual(result.proposals.deadlines, [])
 })
 
+test('unvalidated deterministic candidates are never displayed as critical facts', () => {
+  const result = reconcileCriticalFindings([{
+    questions: { deadlines: [{
+      text: 'Questions are due August 28, 2026 at 1:00 PM ET.',
+      citation: { fileName: 'solicitation.docx', location: 'paragraph 1176' },
+      confidence: 0.96,
+      verification: 'deterministic',
+      sourceRank: 400,
+    }], submissionInstructions: [] },
+    proposals: { deadlines: [], submissionInstructions: [] },
+  }])
+  assert.deepEqual(result.questions.deadlines, [])
+})
+
 test('corroborating sources with the same deadline are not reported as a conflict', () => {
   const result = reconcileCriticalFindings([{
     questions: { deadlines: [], submissionInstructions: [] },
@@ -129,6 +159,25 @@ test('corroborating sources with the same deadline are not reported as a conflic
     sourceRank: 450,
   }])
 
+  assert.equal(result.proposals.deadlines.length, 2)
+  assert.deepEqual(result.conflicts, [])
+})
+
+test('ISO and day-month deadline formats reconcile as the same fact', () => {
+  const result = reconcileCriticalFindings([{
+    questions: { deadlines: [], submissionInstructions: [] },
+    proposals: { deadlines: [{
+      text: 'Quotations are due no later than 08 September 2026, 1:00 PM Eastern Time.',
+      citation: { fileName: 'solicitation.docx', location: 'paragraph 1166' },
+      confidence: 0.96,
+      verification: 'ai_validated',
+      sourceRank: 400,
+    }], submissionInstructions: [] },
+  }], [{
+    text: 'Responses are due 2026-09-08T13:00:00-04:00 according to the current SAM.gov opportunity record.',
+    citation: { fileName: 'SAM.gov opportunity record', location: 'Response deadline' },
+    category: 'proposals.deadlines', confidence: 1, verification: 'structured_source', sourceRank: 450,
+  }])
   assert.equal(result.proposals.deadlines.length, 2)
   assert.deepEqual(result.conflicts, [])
 })
