@@ -40,7 +40,7 @@ import {
   samArchiveStorageReady,
   updateSAMArchive,
 } from '../lib/samArchiveRepository.js'
-import { cancelDocumentAnalysis, getDocumentAnalysis, queueDocumentAnalysis, reviewDocumentFinding, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
+import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, runSAMArchiveDocumentAnalysis } from '../lib/documentAnalysis.js'
 // Pulls are intentionally paged in small, checkpointable units. The browser
 // advances delegated pulls while it remains open. Autonomous pulls use a
 // Cloudflare Workflow so every unit gets its own retryable durable step.
@@ -1652,8 +1652,6 @@ export async function handleSAM(req, env, ctx) {
     const updated = await markSAMArchiveReviewState(env.EBUY_DB, archive.opportunityKey, body.reviewState)
     if (String(body.reviewState || '').toLowerCase() === 'dismissed') {
       await cancelDocumentAnalysis(env.EBUY_DB, archive.opportunityKey)
-    } else if (['tracked', 'added_to_pipeline'].includes(String(body.reviewState || '').toLowerCase())) {
-      await queueDocumentAnalysis(env.EBUY_DB, archive.opportunityKey, 'sam', 100)
     }
     return json({ archive: updated })
   }
