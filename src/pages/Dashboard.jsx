@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from 'react'
+import { useMemo, useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Cell, ResponsiveContainer,
@@ -19,6 +19,7 @@ import { buildPipelineSummaryContext } from '@/services/groqService'
 import styles from './Dashboard.module.css'
 import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
 import { acknowledgeOpportunityAlert } from '@/services/opportunityAlertService'
+import { getSAMOpportunities } from '@/services/graphService'
 
 const C = {
   phase:       'TAG Opportunity Phase',
@@ -405,6 +406,7 @@ export default function Dashboard({ toast }) {
   const { pipeline, loading: pLoading } = usePipeline()
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
   const reviewQueue = useOpportunityAlerts()
+  const [samReviewRows, setSamReviewRows] = useState(null)
   const [closingTask, setClosingTask] = useState(null)
   const [taskTab, setTaskTab] = useState('overdue')
   const [expandExpiring, setExpandExpiring] = useState(false)
@@ -419,6 +421,15 @@ export default function Dashboard({ toast }) {
   const [timelineBasis, setTimelineBasis] = useState('fiscal')
   const initialPLoad = pLoading && pipeline.length === 0
   const initialTLoad = tLoading && tasks.length === 0
+
+  useEffect(() => {
+    if (samReviewRows !== null || !reviewQueue.alerts.some((alert) => ['sam_change', 'sam_files'].includes(alert.type))) return undefined
+    let active = true
+    getSAMOpportunities()
+      .then((rows) => { if (active) setSamReviewRows(rows) })
+      .catch(() => { if (active) setSamReviewRows([]) })
+    return () => { active = false }
+  }, [reviewQueue.alerts, samReviewRows])
 
   // Navigate to Opportunities with filters pre-applied — the single
   // mechanism every chart/KPI drilldown uses. Filters show up as real,
@@ -493,12 +504,18 @@ export default function Dashboard({ toast }) {
         candidate['Solicitation Number'],
         candidate['Opportunity ID'],
       ].some((value) => alertIdentifiers.has(normalizeOpportunityIdentifier(value))))
+      const samOpportunity = (samReviewRows || []).find((candidate) => [
+        candidate['Notice ID'],
+        candidate['Solicitation Number'],
+      ].some((value) => alertIdentifiers.has(normalizeOpportunityIdentifier(value))))
       const identifier = opportunity?.[C.contractNum] || alert.opportunityKey
       const opportunityTitle = [
         opportunity?.[C.title],
         alert.details?.opportunityTitle,
         alert.details?.opportunityName,
         alert.details?.title,
+        samOpportunity?.Title,
+        samOpportunity?.['Project Title / Description*'],
       ].find((value) => String(value || '').trim())
       const supportingDetail = alert.summary
         || alert.details?.currentDate
@@ -510,15 +527,15 @@ export default function Dashboard({ toast }) {
         alert,
         opportunity,
         identifier,
-        samNoticeId: alert.details?.noticeId || alert.opportunityKey,
-        samRowIndex: alert.details?.discoveryRowIndex,
+        samNoticeId: alert.details?.noticeId || samOpportunity?.['Notice ID'] || alert.opportunityKey,
+        samRowIndex: alert.details?.discoveryRowIndex ?? samOpportunity?._rowIndex,
         displayTitle: opportunityTitle || alert.summary || identifier,
         supportingDetail: opportunityTitle && supportingDetail !== opportunityTitle
           ? supportingDetail
           : identifier,
       }
     }),
-    [pipeline, reviewQueue.alerts]
+    [pipeline, reviewQueue.alerts, samReviewRows]
   )
 
   const aiPrompt = useCallback(
