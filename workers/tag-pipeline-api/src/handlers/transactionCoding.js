@@ -5,6 +5,7 @@ import {
   importTransactionBatch,
   listTransactionCodingBatches,
   listTransactionCodingExports,
+  listTransactionCodingExportCsv,
   listTransactionCodingRules,
   listTransactionCodingTransactions,
   transactionsForExport,
@@ -15,7 +16,7 @@ import {
   updateTransactionCodingTransaction,
   upsertTransactionCodingRule,
 } from '../lib/transactionCodingRepository.js'
-import { buildCostpointApVoucherCsv, cleanText, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
+import { buildCostpointApVoucherCsv, cleanText, invoiceReferenceSequenceState, ruleWorkbookRow } from '../lib/transactionCodingDomain.js'
 import {
   appendTransactionExportHistory,
   deleteTransactionRuleFromWorkbook,
@@ -289,6 +290,11 @@ export async function handleTransactionCoding(req, env, identity) {
     return json({ exports: await listTransactionCodingExports(env.EBUY_DB) })
   }
 
+  if (path === '/transaction-coding/invoice-reference-sequences' && req.method === 'GET') {
+    const state = invoiceReferenceSequenceState(await listTransactionCodingExportCsv(env.EBUY_DB))
+    return json({ nextByMonth: state.nextByMonth })
+  }
+
   if (path === '/transaction-coding/exports' && req.method === 'POST') {
     const body = await req.json().catch(() => ({}))
     const batchId = String(body.batchId || '').trim()
@@ -314,6 +320,14 @@ export async function handleTransactionCoding(req, env, identity) {
       })
     } catch (error) {
       return json({ error: error.message, code: 'invalid_costpoint_export' }, 400)
+    }
+    if (body.invoiceSequenceScope === 'monthly') {
+      const previous = invoiceReferenceSequenceState(await listTransactionCodingExportCsv(env.EBUY_DB))
+      const used = new Set(previous.references.map((reference) => reference.toLowerCase()))
+      const duplicate = Object.values(costpointExport.invoiceReferences).find((reference) => used.has(String(reference).toLowerCase()))
+      if (duplicate) {
+        return json({ error: `Invoice reference “${duplicate}” was already generated in an earlier export. Choose a later starting sequence.`, code: 'invoice_reference_already_used' }, 409)
+      }
     }
     const { csv, invoiceReferences, inputVoucherNumbers } = costpointExport
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
