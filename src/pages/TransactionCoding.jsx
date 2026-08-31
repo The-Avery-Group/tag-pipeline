@@ -5,8 +5,11 @@ import ActionIcon from '@/components/Common/ActionIcon'
 import { detectStatementMapping, inspectTransactionStatement, normalizeTransactionInspection } from '@/utils/transactionStatement'
 import {
   availableTransactionFields,
+  COMPACT_INVOICE_REFERENCE_PATTERN,
   COSTPOINT_INVOICE_REFERENCE_LIMIT,
+  DEFAULT_INVOICE_REFERENCE_PATTERN,
   defaultInputVoucherNumber,
+  invoiceReferenceSequencePlan,
   invoiceReferenceForMode,
 } from '@/utils/costpointInvoiceReference'
 import {
@@ -18,6 +21,7 @@ import {
   getTransactionCodingStatus,
   getTransactionExport,
   getTransactionExports,
+  getInvoiceReferenceSequences,
   getTransactionRules,
   getTransactions,
   importTransactionStatement,
@@ -203,23 +207,50 @@ export default function TransactionCoding({ toast }) {
     finally { setBusy('') }
   }
 
-  const buildExportDraft = (mode = 'automatic', pattern = '', current = null) => {
+  const buildExportDraft = (mode = 'custom', pattern = DEFAULT_INVOICE_REFERENCE_PATTERN, current = null, changes = {}) => {
     const invoiceReferences = {}
     const usedVoucherNumbers = new Set()
     const inputVoucherNumbers = { ...(current?.inputVoucherNumbers || {}) }
+    const sequenceScope = changes.sequenceScope || current?.sequenceScope || 'statement'
+    const sequenceStart = Math.max(1, Math.floor(Number(changes.sequenceStart ?? current?.sequenceStart ?? 1) || 1))
+    const nextByMonth = changes.nextByMonth || current?.nextByMonth || {}
+    const sequencePlan = invoiceReferenceSequencePlan(selectedTransactions, {
+      scope: sequenceScope,
+      start: sequenceStart,
+      nextByMonth,
+    })
     let generationError = ''
     selectedTransactions.forEach((row, index) => {
-      try { invoiceReferences[row.id] = invoiceReferenceForMode(row, index + 1, mode, pattern) }
+      try { invoiceReferences[row.id] = invoiceReferenceForMode(row, sequencePlan.sequences[row.id] || index + 1, mode, pattern) }
       catch (referenceError) { generationError ||= referenceError.message; invoiceReferences[row.id] = '' }
       if (!inputVoucherNumbers[row.id]) inputVoucherNumbers[row.id] = defaultInputVoucherNumber(row, index + 1, usedVoucherNumbers)
       else usedVoucherNumbers.add(inputVoucherNumbers[row.id])
     })
-    setExportDraft({ mode, pattern, invoiceReferences, inputVoucherNumbers: { ...inputVoucherNumbers }, generationError })
+    setExportDraft({
+      mode,
+      pattern,
+      sequenceScope,
+      sequenceStart,
+      nextByMonth,
+      maximumSequence: sequencePlan.maximum,
+      invoiceReferences,
+      inputVoucherNumbers: { ...inputVoucherNumbers },
+      generationError,
+    })
   }
 
-  const openExportReview = () => {
+  const openExportReview = async () => {
     if (!selectedBatch || !selectedTransactionIds.length || busy) return
-    buildExportDraft('automatic', '')
+    setBusy('export-review')
+    try {
+      const sequenceState = await getInvoiceReferenceSequences()
+      buildExportDraft('custom', DEFAULT_INVOICE_REFERENCE_PATTERN, null, { nextByMonth: sequenceState.nextByMonth || {} })
+    } catch (sequenceError) {
+      buildExportDraft('custom', DEFAULT_INVOICE_REFERENCE_PATTERN)
+      notify(toast, `Previous monthly sequences could not be checked: ${sequenceError.message}`, 'warning')
+    } finally {
+      setBusy('')
+    }
   }
 
   const runExport = async () => {
@@ -232,6 +263,7 @@ export default function TransactionCoding({ toast }) {
         archive,
         invoiceReferenceMode: exportDraft.mode,
         invoiceReferencePattern: exportDraft.pattern,
+        invoiceSequenceScope: exportDraft.sequenceScope,
         invoiceReferences: exportDraft.invoiceReferences,
         inputVoucherNumbers: exportDraft.inputVoucherNumbers,
       })
@@ -374,6 +406,7 @@ export default function TransactionCoding({ toast }) {
       {exportDraft && (
         <Modal
           title="Review Costpoint AP voucher export"
+          className={styles.exportReviewModal}
           onClose={() => setExportDraft(null)}
           footer={<>
             <button className="btn btn-secondary" onClick={() => setExportDraft(null)}>Cancel</button>
@@ -386,9 +419,22 @@ export default function TransactionCoding({ toast }) {
             <div><strong>{archive ? 'Yes' : 'No'}</strong><span>Save to SharePoint</span></div>
           </div>
           <div className={styles.referenceBuilder}>
-            <label><span>Invoice reference method</span><select value={exportDraft.mode} onChange={(event) => buildExportDraft(event.target.value, exportDraft.pattern, exportDraft)}><option value="automatic">Automatic</option><option value="transaction_id">Use CRM transaction ID</option><option value="custom">Custom pattern</option><option value="manual">Enter each reference manually</option></select></label>
-            {exportDraft.mode === 'custom' && <label className={styles.patternField}><span>Custom pattern</span><input value={exportDraft.pattern} onChange={(event) => buildExportDraft('custom', event.target.value, exportDraft)} placeholder="Example: INV-{vendorId}-{sequence}" /><small>Use any text and any available transaction field inside braces. The finished value must fit Costpoint’s 15-character limit.</small></label>}
+            <label><span>Invoice reference method</span><select value={exportDraft.mode} onChange={(event) => buildExportDraft(event.target.value, exportDraft.pattern, exportDraft)}><option value="custom">Custom pattern</option><option value="automatic">Automatic</option><option value="transaction_id">Use CRM transaction ID</option><option value="manual">Enter each reference manually</option></select></label>
+            {exportDraft.mode === 'custom' && <label className={styles.patternField}><span>Custom pattern</span><input value={exportDraft.pattern} onChange={(event) => buildExportDraft('custom', event.target.value, exportDraft)} placeholder={DEFAULT_INVOICE_REFERENCE_PATTERN} /><small>Use the transaction month and sequence fields below. The finished value must fit Costpoint’s 15-character limit.</small></label>}
             {exportDraft.mode === 'custom' && <div className={styles.fieldTokens} aria-label="Available transaction fields">{exportFields.map((field) => <button key={field} type="button" onClick={() => buildExportDraft('custom', `${exportDraft.pattern}{${field}}`, exportDraft)}>{`{${field}}`}</button>)}</div>}
+            {exportDraft.mode === 'custom' && <div className={styles.sequenceOptions}>
+              <label><span>Sequence method</span><select value={exportDraft.sequenceScope} onChange={(event) => buildExportDraft('custom', exportDraft.pattern, exportDraft, { sequenceScope: event.target.value })}><option value="statement">Reset for this statement</option><option value="monthly">Continue within each month</option></select></label>
+              <label><span>Starting number</span><input type="number" inputMode="numeric" min="1" step="1" value={exportDraft.sequenceStart} onChange={(event) => buildExportDraft('custom', exportDraft.pattern, exportDraft, { sequenceStart: event.target.value })} /></label>
+            </div>}
+            {exportDraft.mode === 'custom' && exportDraft.sequenceScope === 'monthly' && <small className={styles.sequenceHint}>For a month with previous exports, the CRM uses the later of this starting number and the next unused monthly number.</small>}
+            {exportDraft.mode === 'custom' && exportDraft.maximumSequence > 999 && exportDraft.pattern === DEFAULT_INVOICE_REFERENCE_PATTERN && <div className={styles.compactSuggestion}>
+              <span>The sequence now needs four or more digits. The compact pattern preserves the date format and creates room through sequence 99,999.</span>
+              <button type="button" onClick={() => {
+                if (window.confirm(`Change the invoice reference pattern to ${COMPACT_INVOICE_REFERENCE_PATTERN}?`)) {
+                  buildExportDraft('custom', COMPACT_INVOICE_REFERENCE_PATTERN, exportDraft)
+                }
+              }}>Use compact pattern</button>
+            </div>}
           </div>
           {exportValidation && <div className={styles.exportValidation}>{exportValidation}</div>}
           <div className={styles.exportReviewTable}>
