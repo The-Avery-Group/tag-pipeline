@@ -22,7 +22,6 @@ const GROQ_CHUNK_CHARACTERS = 18_000
 const AI_MAX_OUTPUT_TOKENS = 2_000
 const AI_CHUNKS_PER_CHECKPOINT = 4
 const MAX_MALFORMED_RESPONSE_ATTEMPTS = 3
-const ABANDONED_ANALYSIS_MS = 5 * 60 * 1000
 export const GROQ_PACING_SECONDS = 60
 const GROQ_BASE = 'https://api.groq.com/openai/v1'
 const GROQ_EXTRACTION_MODEL = 'openai/gpt-oss-20b'
@@ -1630,11 +1629,10 @@ export async function getDocumentAnalysis(env, opportunityKey) {
     structuredCriticalEvidence(env, key),
   ])
   const rows = documents.results || []
-  const displayJob = documentAnalysisDisplayJob(job)
-  const status = displayJob?.status === 'cancelled' ? 'cancelled'
-    : displayJob?.status === 'error' ? 'error'
-      : ['queued', 'running'].includes(displayJob?.status) ? 'processing'
-        : displayJob?.status === 'partial' ? 'partial'
+  const status = job?.status === 'cancelled' ? 'cancelled'
+    : job?.status === 'error' ? 'error'
+      : ['queued', 'running'].includes(job?.status) ? 'processing'
+        : job?.status === 'partial' ? 'partial'
           : !job && rows.length === 0 ? 'not_analyzed'
             : 'ready'
   const publicAnalysis = (value) => {
@@ -1684,24 +1682,12 @@ export async function getDocumentAnalysis(env, opportunityKey) {
   }
   return {
     status,
-    job: displayJob ? { status: displayJob.status, phase: displayJob.progress_phase, processedFiles: displayJob.processed_files, totalFiles: displayJob.total_files, error: displayJob.error_message, updatedAt: displayJob.updated_at } : null,
+    job: job ? { status: job.status, phase: job.progress_phase, processedFiles: job.processed_files, totalFiles: job.total_files, error: job.error_message, updatedAt: job.updated_at } : null,
     package: publicPackage,
     reviews: Object.fromEntries((reviews.results || []).map((row) => [row.finding_key, { status: row.review_status, correctedText: row.corrected_text, reviewedBy: row.reviewed_by, updatedAt: row.updated_at }])),
     analysisVersion: DOCUMENT_ANALYSIS_VERSION,
     documents: rows.map((row) => ({ fileName: row.file_name, filePath: row.file_path, status: row.status, analysis: publicAnalysis(row.analysis_json), summary: row.summary, error: row.error_message, analyzedAt: row.analyzed_at })),
     pastPerformance: (matches.results || []).map((row) => ({ fileName: row.file_name, filePath: row.file_path, serviceCategory: row.service_category, score: row.score, metadata: JSON.parse(row.metadata_json || '{}'), evidence: JSON.parse(row.evidence_json || '[]') })),
-  }
-}
-
-export function documentAnalysisDisplayJob(job, now = new Date()) {
-  if (!job || !['queued', 'running'].includes(job.status)) return job
-  const updatedAt = Date.parse(job.updated_at || '')
-  if (!Number.isFinite(updatedAt) || now.getTime() - updatedAt <= ABANDONED_ANALYSIS_MS) return job
-  return {
-    ...job,
-    status: 'error',
-    progress_phase: 'Analysis stopped before completion. Click Analyze documents to restart.',
-    error_message: 'The background analysis is no longer reporting progress.',
   }
 }
 
