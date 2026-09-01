@@ -14,9 +14,13 @@ const MAX_FILE_BYTES = 15 * 1024 * 1024
 // durably between checkpoints, keeping the free-tier 8K TPM budget from being
 // consumed by several documents in the same minute.
 const MAX_FILES_PER_RUN = 1
-const GROQ_CHUNK_CHARACTERS = 12_000
+// The primary Workers AI model has a large context window. Supplying broader
+// excerpts both preserves surrounding solicitation context and reduces the
+// number of serial Workflow checkpoints required for long documents. Keep the
+// fallback payload below Groq's tighter free-tier TPM allowance.
+const GROQ_CHUNK_CHARACTERS = 18_000
 const AI_MAX_OUTPUT_TOKENS = 2_000
-const AI_CHUNKS_PER_CHECKPOINT = 2
+const AI_CHUNKS_PER_CHECKPOINT = 4
 const MAX_MALFORMED_RESPONSE_ATTEMPTS = 3
 export const GROQ_PACING_SECONDS = 60
 const GROQ_BASE = 'https://api.groq.com/openai/v1'
@@ -762,7 +766,7 @@ Return only JSON with documentType and sections.
         status: 'ready',
         model: WORKERS_AI_EXTRACTION_MODEL,
         provider: 'workers_ai',
-        pacingSeconds: 1,
+        pacingSeconds: 0,
         ...analysis,
       }
     } catch (error) {
