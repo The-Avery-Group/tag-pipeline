@@ -22,7 +22,7 @@ export const GROQ_PACING_SECONDS = 60
 const GROQ_BASE = 'https://api.groq.com/openai/v1'
 const GROQ_EXTRACTION_MODEL = 'openai/gpt-oss-20b'
 const WORKERS_AI_EXTRACTION_MODEL = '@cf/openai/gpt-oss-20b'
-export const DOCUMENT_ANALYSIS_VERSION = 'critical-v7-document-guide'
+export const DOCUMENT_ANALYSIS_VERSION = 'solicitation-review-v8'
 const ANALYSIS_FINDING_FIELDS = [
   'contractStructure', 'performance', 'responseRequirements', 'evaluation',
   'scopeAndDeliverables', 'staffingAndSecurity', 'packageIssues',
@@ -42,9 +42,12 @@ const ANALYSIS_RESPONSE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    documentType: { type: 'string', enum: ['solicitation', 'instructions', 'statement_of_work', 'evaluation', 'pricing', 'amendment', 'questions_answers', 'supporting', 'other'] },
+    // Keep provider-side structure permissive and normalize vocabulary below.
+    // Strict enums caused otherwise useful reviews to fail when a model used a
+    // harmless synonym such as "rfq" or "requirements".
+    documentType: { type: 'string' },
     summary: { type: 'string' },
-    keyPoints: { type: 'array', maxItems: 6, items: { type: 'string' } },
+    keyPoints: { type: 'array', items: { type: 'string' } },
     documentMap: {
       type: 'array',
       maxItems: 10,
@@ -52,9 +55,9 @@ const ANALYSIS_RESPONSE_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          topic: { type: 'string', enum: DOCUMENT_MAP_TOPICS },
+          topic: { type: 'string' },
           description: { type: 'string' },
-          sectionIds: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string' } },
+          sectionIds: { type: 'array', maxItems: 4, items: { type: 'string' } },
         },
         required: ['topic', 'description', 'sectionIds'],
       },
@@ -81,6 +84,80 @@ const ANALYSIS_RESPONSE_SCHEMA = {
 }
 
 function clean(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
+
+const DOCUMENT_TYPE_ALIASES = {
+  rfi: 'solicitation', rfp: 'solicitation', rfq: 'solicitation', solicitation_document: 'solicitation',
+  instruction: 'instructions', submission_instructions: 'instructions', instructions_to_offerors: 'instructions',
+  sow: 'statement_of_work', pws: 'statement_of_work', soo: 'statement_of_work', requirements: 'statement_of_work',
+  evaluation_criteria: 'evaluation', price: 'pricing', price_schedule: 'pricing',
+  q_and_a: 'questions_answers', qa: 'questions_answers', attachment: 'supporting', reference: 'supporting',
+}
+const DOCUMENT_TYPES = new Set(['solicitation', 'instructions', 'statement_of_work', 'evaluation', 'pricing', 'amendment', 'questions_answers', 'supporting', 'other'])
+const TOPIC_ALIASES = {
+  proposal: 'submission', proposal_submission: 'submission', submission_instructions: 'submission',
+  question: 'questions', clarifications: 'questions', evaluation_criteria: 'evaluation',
+  scope_of_work: 'scope', statement_of_work: 'scope', tasks: 'scope',
+  deliverable: 'deliverables', price: 'pricing', cost: 'pricing',
+  performance_requirements: 'performance', staffing: 'staffing_security', security: 'staffing_security',
+  pastperformance: 'past_performance', required_forms: 'forms_attachments', attachments: 'forms_attachments',
+  contract: 'contract_structure', risks: 'risks_changes', amendments: 'risks_changes', changes: 'risks_changes',
+}
+
+function normalizedToken(value) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function normalizeDocumentType(value) {
+  const token = normalizedToken(value)
+  const mapped = DOCUMENT_TYPE_ALIASES[token] || token
+  return DOCUMENT_TYPES.has(mapped) ? mapped : 'other'
+}
+
+function normalizeDocumentTopic(value, description = '') {
+  const token = normalizedToken(value)
+  const mapped = TOPIC_ALIASES[token] || token
+  if (DOCUMENT_MAP_TOPICS.includes(mapped)) return mapped
+  const text = clean(description).toLowerCase()
+  const inferred = [
+    ['questions', /\bquestions?|clarifications?|inquir(?:y|ies)\b/],
+    ['submission', /\bsubmit|submission|proposal|quotation|offer\b/],
+    ['evaluation', /\bevaluat|basis for award|factor\b/],
+    ['deliverables', /\bdeliverable|reporting\b/],
+    ['pricing', /\bpricing|price|cost|clin\b/],
+    ['staffing_security', /\bstaff|personnel|security|clearance|cui\b/],
+    ['past_performance', /\bpast performance\b/],
+    ['forms_attachments', /\bforms?|attachments?|volume\b/],
+    ['contract_structure', /\bcontract (?:type|structure)|period of performance|option year\b/],
+    ['risks_changes', /\bamend|change|risk|conflict\b/],
+    ['performance', /\bperformance standard|service level|quality\b/],
+    ['scope', /\bscope|task|statement of work|work to be performed\b/],
+  ].find(([, pattern]) => pattern.test(text))
+  return inferred?.[0] || ''
+}
+
+function informationScore(value) {
+  const text = clean(value)
+  const specifics = (text.match(/(?:\b\d+(?:\.\d+)*\b|\b[A-Z]\b|@|\$|https?:\/\/)/g) || []).length
+  return Math.min(text.length, 360) + specifics * 20
+}
+
+export function consolidateDocumentMap(items = [], limit = 8) {
+  const grouped = new Map()
+  for (const item of items) {
+    const description = clean(item?.description)
+    const topic = normalizeDocumentTopic(item?.topic, description)
+    if (!topic || !description) continue
+    const locations = [...new Set((Array.isArray(item?.locations) ? item.locations : []).map(clean).filter(Boolean))]
+    const existing = grouped.get(topic)
+    if (!existing) {
+      grouped.set(topic, { topic, description, locations })
+      continue
+    }
+    if (informationScore(description) > informationScore(existing.description)) existing.description = description
+    existing.locations = [...new Set([...existing.locations, ...locations])].slice(0, 6)
+  }
+  return [...grouped.values()].slice(0, limit)
+}
 function xmlText(value) {
   return clean(String(value || '')
     .replace(/<w:tab\b[^>]*\/>/g, '\t').replace(/<w:br\b[^>]*\/>/g, '\n')
@@ -181,18 +258,29 @@ function ooxmlSections(bytes, name) {
   const ext = extension(name)
   if (ext === 'docx') {
     const xml = archive['word/document.xml'] ? strFromU8(archive['word/document.xml']) : ''
-    let tableIndex = 0; let paragraphIndex = 0
+    const hasRenderedPagination = /<w:(?:lastRenderedPageBreak|br\b[^>]*w:type="page")/i.test(xml)
+    let tableIndex = 0; let paragraphIndex = 0; let pageNumber = 1; let currentHeading = ''
     return [...xml.matchAll(/<w:tbl\b[\s\S]*?<\/w:tbl>|<w:p\b[\s\S]*?<\/w:p>/g)].map((match) => {
+      const startPage = pageNumber
+      const pageBreaks = (match[0].match(/<w:lastRenderedPageBreak\b[^>]*\/?>|<w:br\b[^>]*w:type="page"[^>]*\/?>/gi) || []).length
+      const pageLabel = hasRenderedPagination
+        ? pageBreaks ? `pages ${startPage}–${startPage + pageBreaks}` : `page ${startPage}`
+        : ''
       if (match[0].startsWith('<w:tbl')) {
         tableIndex++
         const rows = [...match[0].matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map((row) => [...row[0].matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)].map((cell) => xmlText(cell[0])).filter(Boolean).join(' | ')).filter(Boolean)
-        return { text: rows.join('\n'), location: `table ${tableIndex}`, kind: 'table' }
+        pageNumber += pageBreaks
+        const location = [pageLabel, currentHeading && `section “${currentHeading}”`, `table ${tableIndex}`].filter(Boolean).join(' · ')
+        return { text: rows.join('\n'), location, kind: 'table', heading: currentHeading }
       }
       paragraphIndex++
       const style = match[0].match(/<w:pStyle\b[^>]*w:val="([^"]+)"/i)?.[1] || ''
       const text = xmlText(match[0])
       const heading = /^(?:heading|title|subtitle)/i.test(style)
-      return { text, location: `paragraph ${paragraphIndex}`, kind: heading ? 'heading' : 'paragraph', heading: heading ? text : '', style }
+      if (heading && text) currentHeading = clean(text).slice(0, 140)
+      const location = [pageLabel, currentHeading && `section “${currentHeading}”`, `paragraph ${paragraphIndex}`].filter(Boolean).join(' · ')
+      pageNumber += pageBreaks
+      return { text, location, kind: heading ? 'heading' : 'paragraph', heading: currentHeading, style }
     }).filter((item) => item.text)
   }
   if (ext === 'pptx') {
@@ -393,6 +481,20 @@ function locationRange(items) {
   const first = locations[0]
   const last = locations.at(-1)
   if (first === last) return first
+  const structured = locations.map((location) => ({
+    page: location.match(/\bpage\s+(\d+)\b/i)?.[1] || '',
+    section: location.match(/\bsection\s+“([^”]+)”/i)?.[1] || '',
+    paragraph: location.match(/\bparagraph\s+(\d+)\b/i)?.[1] || '',
+  }))
+  if (structured.every((item) => item.paragraph)) {
+    const pages = structured.map((item) => item.page).filter(Boolean)
+    const sections = [...new Set(structured.map((item) => item.section).filter(Boolean))]
+    const pageLabel = pages.length
+      ? pages[0] === pages.at(-1) ? `page ${pages[0]}` : `pages ${pages[0]}–${pages.at(-1)}`
+      : ''
+    const sectionLabel = sections.length === 1 ? `section “${sections[0]}”` : ''
+    return [pageLabel, sectionLabel, `paragraphs ${structured[0].paragraph}–${structured.at(-1).paragraph}`].filter(Boolean).join(' · ')
+  }
   const firstNumber = first.match(/^(page|paragraph|slide|section)\s+(\d+)$/i)
   const lastNumber = last.match(/^(page|paragraph|slide|section)\s+(\d+)$/i)
   if (firstNumber && lastNumber && firstNumber[1].toLowerCase() === lastNumber[1].toLowerCase()) {
@@ -593,20 +695,19 @@ function modelResponseContent(body) {
 
 export function validateDocumentAnalysisResponse(value, chunk, critical = null) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('AI response is not an object')
-  if (!['solicitation', 'instructions', 'statement_of_work', 'evaluation', 'pricing', 'amendment', 'questions_answers', 'supporting', 'other'].includes(value.documentType)) throw new Error('AI response has an invalid document type')
   if (typeof value.summary !== 'string') throw new Error('AI response is missing its summary')
   if (!Array.isArray(value.keyPoints)) throw new Error('AI response is missing key points')
   if (!Array.isArray(value.documentMap)) throw new Error('AI response is missing its document map')
   const references = Object.fromEntries(Object.entries(chunk?.references || {}).map(([sectionId, location]) => [clean(sectionId), clean(location)]))
   const validated = {
-    documentType: value.documentType,
+    documentType: normalizeDocumentType(value.documentType),
     overview: clean(value.summary).slice(0, 1_200),
     keyPoints: [...new Set(value.keyPoints.map((item) => clean(item)).filter(Boolean))].slice(0, 6),
     documentMap: [],
   }
   for (const field of ANALYSIS_FINDING_FIELDS) validated[field] = []
   for (const item of value.documentMap) {
-    const topic = clean(item?.topic)
+    const topic = normalizeDocumentTopic(item?.topic, item?.description)
     const description = clean(item?.description)
     const sectionIds = [...new Set((Array.isArray(item?.sectionIds) ? item.sectionIds : []).map((sectionId) => clean(sectionId)))]
       .filter((sectionId) => references[sectionId]).slice(0, 4)
@@ -616,6 +717,7 @@ export function validateDocumentAnalysisResponse(value, chunk, critical = null) 
     const field = DOCUMENT_MAP_FIELDS[topic]
     if (field) validated[field].push({ text: description.slice(0, 600), location: locations.join(', ') })
   }
+  validated.documentMap = consolidateDocumentMap(validated.documentMap, 8)
   if (!Array.isArray(value.criticalSubmission)) throw new Error('AI response is missing criticalSubmission')
   const candidates = new Map(candidatesForChunk(critical || {}, chunk).map((candidate) => [candidate.candidateId, candidate]))
   validated.criticalSubmission = value.criticalSubmission.flatMap((item) => {
@@ -654,7 +756,7 @@ Return only JSON with documentType, summary, keyPoints, documentMap, and critica
 - documentType identifies the document or excerpt as solicitation, instructions, statement_of_work, evaluation, pricing, amendment, questions_answers, supporting, or other.
 - summary is one readable paragraph of no more than three sentences explaining what the document is about and the work or response it covers. Do not pack unrelated facts into one sentence.
 - keyPoints contains no more than six complete, plain-language sentences with only the most important opportunity-specific information.
-- documentMap contains no more than ten navigational entries shaped {"topic":"submission|questions|evaluation|scope|deliverables|pricing|performance|staffing_security|past_performance|forms_attachments|contract_structure|risks_changes","description":"what the user will find there and why it matters","sectionIds":["exact supplied S-number"]}. Combine related content into one entry and cite every contextual section needed for the complete instruction. Copy sectionIds exactly. Never invent page, paragraph, table, sheet, or slide labels.
+- documentMap contains no more than eight navigational entries shaped {"topic":"submission|questions|evaluation|scope|deliverables|pricing|performance|staffing_security|past_performance|forms_attachments|contract_structure|risks_changes","description":"what the user will find there and why it matters","sectionIds":["exact supplied S-number"]}. Return at most one entry per topic, combine related content, and cite every contextual section needed for the complete instruction. Copy sectionIds exactly. Never invent page, paragraph, table, sheet, or slide labels.
 - Exclude generic acquisition boilerplate from summary, keyPoints, and documentMap unless it creates a solicitation-specific obligation, risk, deviation, alternate, or unusual requirement.
 - criticalSubmission contains only supplied candidate IDs, shaped {"candidateId":"id","category":"questions.deadlines|questions.submissionInstructions|proposals.deadlines|proposals.submissionInstructions","supported":true|false,"current":true|false,"confidence":"high|medium|low","amendmentNumber":number|null,"supersedesPrior":true|false}.
 
@@ -808,13 +910,7 @@ function mergeChunkAnalyses(chunks) {
   }
   const summaries = uniqueText(ready.map((result) => result.overview), 4)
   const keyPoints = uniqueText(ready.flatMap((result) => result.keyPoints || []), 8)
-  const mapSeen = new Set()
-  const documentMap = ready.flatMap((result) => result.documentMap || []).filter((item) => {
-    const key = clean(`${item.topic}|${item.description}|${(item.locations || []).join('|')}`).toLowerCase()
-    if (!key || mapSeen.has(key)) return false
-    mapSeen.add(key)
-    return true
-  }).slice(0, 24)
+  const documentMap = consolidateDocumentMap(ready.flatMap((result) => result.documentMap || []), 8)
   const types = ready.map((result) => result.documentType).filter(Boolean)
   const documentType = types.sort((left, right) => types.filter((item) => item === right).length - types.filter((item) => item === left).length)[0] || 'other'
   const documentCoverage = chunks.find((chunk) => chunk.documentCoverage)?.documentCoverage || {}
@@ -938,7 +1034,7 @@ export function consolidateReadyDocumentRows(rows = []) {
     documentType: source.analysis?.documentType || 'other',
     summary: clean(source.analysis?.overview || source.summary),
     keyPoints: Array.isArray(source.analysis?.keyPoints) ? source.analysis.keyPoints.slice(0, 6) : [],
-    locations: Array.isArray(source.analysis?.documentMap) ? source.analysis.documentMap.slice(0, 24) : [],
+    locations: consolidateDocumentMap(source.analysis?.documentMap || [], 8),
     coverage: source.analysis?.coverage || {},
   }))
   // Groq already analyzed every relevant chunk. Consolidating those cited
