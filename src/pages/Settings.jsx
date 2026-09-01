@@ -3,6 +3,7 @@ import Topbar from '@/components/Layout/Topbar'
 import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
 import FollowUpEmailTemplates from '@/components/Settings/FollowUpEmailTemplates'
 import LegacyFolderMigration from '@/components/Settings/LegacyFolderMigration'
+import ParserEvaluation from '@/components/Settings/ParserEvaluation'
 import { useAuth } from '@/auth/AuthContext'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
@@ -163,6 +164,7 @@ export default function Settings({ toast }) {
     health:    false,
     emailTemplates: false,
     folderMigration: false,
+    parserEvaluation: false,
     sam:       false,
     ebuy:      false,
   })
@@ -666,6 +668,17 @@ export default function Settings({ toast }) {
               )}
             </div>
           )}
+        </div>
+
+        <div className={styles.collapsible}>
+          <button className={styles.collapsibleHeader} onClick={() => toggleSection('parserEvaluation')}>
+            <span>
+              <span className={styles.collapsibleTitle}>Document parser evaluation</span>
+              <span className={styles.collapsibleHint}>Compare the current parser with Cloudflare before migration</span>
+            </span>
+            <span className={`${styles.chevron} ${openSections.parserEvaluation ? styles.chevronOpen : ''}`}>›</span>
+          </button>
+          {openSections.parserEvaluation && <ParserEvaluation toast={toast} />}
         </div>
 
         <div className={styles.collapsible}>
