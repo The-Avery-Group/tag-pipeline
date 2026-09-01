@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { requiredCrmToolForMessage } from '../src/handlers/ai.js'
+import { contactQueryFromMessage, requiredCrmToolForMessage } from '../src/handlers/ai.js'
 
 test('contact-to-contract questions require the relationship tool', () => {
   assert.equal(
@@ -16,4 +16,11 @@ test('contact-to-contract questions require the relationship tool', () => {
 test('ordinary conversation does not force a relationship tool', () => {
   assert.equal(requiredCrmToolForMessage('hello'), '')
   assert.equal(requiredCrmToolForMessage('Summarize the pipeline'), '')
+})
+
+test('contact name can be recovered from a forced relationship request', () => {
+  assert.equal(
+    contactQueryFromMessage('I need all contracts that currently have Amanda Haynes as their contact.'),
+    'Amanda Haynes'
+  )
 })
