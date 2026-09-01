@@ -12,7 +12,7 @@ import {
   updateEbuyReviewState,
 } from '../lib/ebuyRepository.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
-import { deleteArchivedEbuyFile } from '../lib/sharepointArchive.js'
+import { deleteArchivedEbuyFile, deleteEmptyEbuyArchiveFolder } from '../lib/sharepointArchive.js'
 import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, startDocumentAnalysisWorkflow } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
@@ -158,6 +158,7 @@ export async function handleEbuy(req, env, identity = {}) {
     if (path === '/ebuy/retention/run' && req.method === 'POST') {
       return json({ ok: true, ...(await purgeExpiredEbuyRecords(requireDatabase(env), {
         deleteFile: (driveId, itemId) => deleteArchivedEbuyFile(env, driveId, itemId),
+        deleteFolder: (driveId, requestId) => deleteEmptyEbuyArchiveFolder(env, driveId, requestId),
       })) })
     }
     return json({ error: 'Not found' }, 404)
