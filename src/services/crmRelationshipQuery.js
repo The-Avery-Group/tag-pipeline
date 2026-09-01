@@ -1,3 +1,5 @@
+import { findOpportunitiesForContact, opportunityHasLinkedContact } from '../utils/contactOpportunityLinks.js'
+
 const OPPORTUNITY_FIELDS = {
   id: 'Opportunity ID',
   contractNumber: 'Contract Number / Notice ID',
@@ -80,9 +82,11 @@ function contactMatchesQuery(contact, query) {
 }
 
 function opportunityReferencesContact(opportunity, contact) {
-  const poc = opportunity?.[OPPORTUNITY_FIELDS.pointOfContact]
-  const email = text(contact?.Email)
-  return includesPhrase(poc, contact?.Name) || (email && normalizeCrmRelationshipText(poc).includes(normalizeCrmRelationshipText(email)))
+  return opportunityHasLinkedContact(opportunity, contact?.Name, OPPORTUNITY_FIELDS.pointOfContact)
+}
+
+function opportunityReferencesName(opportunity, name) {
+  return opportunityHasLinkedContact(opportunity, name, OPPORTUNITY_FIELDS.pointOfContact)
 }
 
 function opportunityMatches(opportunity, query) {
@@ -148,11 +152,32 @@ export function createCrmRelationshipQuery(data = {}) {
       if (exactName.length) matches = exactName
     }
     if (!matches.length) {
-      return { status: 'not_found', dataReady: true, contactFound: false, query, contacts: [] }
+      const linkedByPocName = query
+        ? pipeline.filter((opportunity) =>
+            (includeArchived || !isArchived(opportunity)) && opportunityReferencesName(opportunity, query)
+          )
+        : []
+      if (linkedByPocName.length) {
+        return {
+          status: 'ready',
+          dataReady: true,
+          contactFound: false,
+          contactReferenceFound: true,
+          contactResolution: 'pipeline_poc',
+          query,
+          contacts: [],
+          linkedOpportunityCount: linkedByPocName.length,
+          opportunities: linkedByPocName.slice(0, Math.min(Number(limit) || 50, 100)).map(summarizeOpportunity),
+        }
+      }
+      return { status: 'not_found', dataReady: true, contactFound: false, contactReferenceFound: false, query, contacts: [] }
     }
 
+    const linkedNames = new Set(matches.map((contact) => contact.Name).filter(Boolean))
     const linked = pipeline.filter((opportunity) =>
-      (includeArchived || !isArchived(opportunity)) && matches.some((contact) => opportunityReferencesContact(opportunity, contact))
+      (includeArchived || !isArchived(opportunity)) && [...linkedNames].some((name) =>
+        findOpportunitiesForContact([opportunity], name, OPPORTUNITY_FIELDS.pointOfContact).length > 0
+      )
     )
     return {
       status: matches.length > 1 ? 'ambiguous' : 'ready',
@@ -214,4 +239,63 @@ export function queryCrmRelationships(data, args = {}) {
   }
   if (args.entityType === 'opportunity') return query.getOpportunityRelationships(args.query, args.limit)
   return { status: 'invalid_request', dataReady: true, error: 'entityType must be contact or opportunity' }
+}
+
+function escapeMarkdownCell(value) {
+  const result = text(value).replace(/\|/g, '\\|').replace(/\s+/g, ' ')
+  return result || 'Not provided'
+}
+
+function extractContactQuery(message, contacts = []) {
+  const normalizedMessage = normalizeCrmRelationshipText(message)
+  const namedContact = [...contacts]
+    .filter((contact) => normalizeCrmRelationshipText(contact?.Name).length >= 3)
+    .sort((a, b) => text(b.Name).length - text(a.Name).length)
+    .find((contact) => normalizedMessage.includes(normalizeCrmRelationshipText(contact.Name)))
+  if (namedContact) return text(namedContact.Name)
+
+  const patterns = [
+    /\b(?:contracts?|opportunit(?:y|ies))\b.*?\bhave\s+(.+?)\s+as\s+(?:their|the|a)\s+(?:contact|poc)\b/i,
+    /\b(?:contracts?|opportunit(?:y|ies))\b.*?\b(?:linked|associated)\s+(?:to|with)\s+(.+?)(?:[?.]|$)/i,
+  ]
+  for (const pattern of patterns) {
+    const match = text(message).match(pattern)
+    if (match?.[1]) {
+      return text(match[1])
+        .replace(/^(?:contact|poc)\s+/i, '')
+        .replace(/\s+as\s+(?:the|a|their)?\s*(?:contact|poc)$/i, '')
+        .trim()
+    }
+  }
+  return ''
+}
+
+/**
+ * Resolve precise list/table questions locally. These answers come directly
+ * from workbook relationships and never depend on an AI model selecting the
+ * right tool or interpreting an empty result correctly.
+ */
+export function answerDeterministicCrmQuery(message, data = {}) {
+  const request = text(message)
+  const relationshipIntent = /\b(?:contracts?|opportunit(?:y|ies))\b/i.test(request) &&
+    /\b(?:contact|poc|linked|associated)\b/i.test(request)
+  if (!relationshipIntent) return null
+
+  const contactQuery = extractContactQuery(request, Array.isArray(data.contacts) ? data.contacts : [])
+  if (!contactQuery) return null
+  const result = createCrmRelationshipQuery(data).getContactContracts({ query: contactQuery })
+  if (result.status === 'data_unavailable') {
+    return 'I could not verify this relationship because the pipeline or contacts data is currently unavailable. Refresh the CRM data and try again.'
+  }
+  if (result.status === 'not_found') {
+    return `I found no active pipeline opportunity whose contact field references **${escapeMarkdownCell(contactQuery)}**.`
+  }
+  if (!result.opportunities?.length) {
+    return `**${escapeMarkdownCell(result.contacts?.[0]?.name || contactQuery)}** exists in Contacts, but no active pipeline contracts currently reference that contact.`
+  }
+
+  const rows = result.opportunities.map((opportunity) =>
+    `| ${escapeMarkdownCell(opportunity.title)} | ${escapeMarkdownCell(opportunity.contractNumber)} | ${escapeMarkdownCell(opportunity.expiryDate)} | ${escapeMarkdownCell(opportunity.value)} |`
+  )
+  return `Contracts currently linked to **${escapeMarkdownCell(result.contacts?.[0]?.name || contactQuery)}**:\n\n| Title | Contract number | Expiry date | Value |\n|---|---|---|---|\n${rows.join('\n')}`
 }
