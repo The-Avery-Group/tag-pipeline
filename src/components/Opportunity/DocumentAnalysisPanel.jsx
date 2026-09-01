@@ -47,6 +47,47 @@ const DOCUMENT_TYPE_LABELS = {
   pricing: 'Pricing', amendment: 'Amendment', questions_answers: 'Questions and answers', supporting: 'Supporting document', other: 'Document',
 }
 
+const GUIDE_TOPICS = new Set(Object.keys(TOPIC_LABELS))
+
+function cleanGuideText(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
+
+function guideInformationScore(value) {
+  const text = cleanGuideText(value)
+  const specifics = (text.match(/(?:\b\d+(?:\.\d+)*\b|\b[A-Z]\b|@|\$|https?:\/\/)/g) || []).length
+  return Math.min(text.length, 360) + specifics * 20
+}
+
+function prepareSolicitationGuides(guides = []) {
+  return guides.map((guide) => {
+    const grouped = new Map()
+    for (const item of guide?.locations || []) {
+      const topic = cleanGuideText(item?.topic).toLowerCase()
+      const description = cleanGuideText(item?.description)
+      if (!GUIDE_TOPICS.has(topic) || !description) continue
+      const locations = [...new Set((item?.locations || []).map(cleanGuideText).filter(Boolean))]
+      const existing = grouped.get(topic)
+      if (!existing) grouped.set(topic, { ...item, topic, description, locations })
+      else {
+        if (guideInformationScore(description) > guideInformationScore(existing.description)) existing.description = description
+        existing.locations = [...new Set([...existing.locations, ...locations])].slice(0, 6)
+      }
+    }
+    return { ...guide, locations: [...grouped.values()].slice(0, 8) }
+  }).filter((guide) => cleanGuideText(guide?.fileName) && (cleanGuideText(guide?.summary) || guide.locations.length))
+}
+
+function userFacingDocumentIssues(documents = []) {
+  return documents.flatMap((document) => {
+    if (document.status === 'unsupported') return [{ fileName: document.fileName, filePath: document.filePath, message: 'This file type cannot be reviewed automatically.' }]
+    if (document.status === 'error') return [{ fileName: document.fileName, filePath: document.filePath, message: 'The review could not finish for this document. Run Analyze documents again.' }]
+    if (document.status === 'ready' && (
+      (document.analysis?.warnings || []).length > 0
+      || Number(document.analysis?.coverage?.completedChunks || 0) < Number(document.analysis?.coverage?.chunkCount || 0)
+    )) return [{ fileName: document.fileName, filePath: document.filePath, message: 'Some sections could not be reviewed. Run Analyze documents again.' }]
+    return []
+  })
+}
+
 function ReadableSummary({ text }) {
   const paragraphs = String(text || '').split(/\n{2,}/).map((item) => item.trim()).filter(Boolean)
   return paragraphs.map((paragraph, index) => <p key={`${paragraph}-${index}`}>{paragraph}</p>)
@@ -64,7 +105,7 @@ function PackageOverview({ analysis }) {
   const overviewPoints = (analysis.overviewPoints || []).filter(Boolean)
   return <section className={styles.packageOverview}>
     <div className={styles.packageHeader}>
-      <span><small>PACKAGE OVERVIEW</small><strong>What the opportunity documents say</strong></span>
+      <span><small>OPPORTUNITY OVERVIEW</small><strong>What the opportunity documents say</strong></span>
       {metrics.length > 0 && <div className={styles.coverage}>{metrics.map((metric) => <em key={metric}>{metric}</em>)}</div>}
     </div>
     {overviewPoints.length > 0
@@ -77,15 +118,14 @@ function PackageOverview({ analysis }) {
 function DocumentGuides({ guides }) {
   if (!guides.length) return null
   return <section className={styles.documentGuides}>
-    <div className={styles.sectionHeading}><small>DOCUMENT GUIDE</small><strong>Where to find the important information</strong></div>
+    <div className={styles.sectionHeading}><small>SUBMISSION GUIDE</small><strong>Where to verify the important information</strong></div>
     {guides.map((guide) => <article className={styles.documentGuide} key={`${guide.filePath || ''}-${guide.fileName}`}>
       <header><strong>{guide.fileName}</strong><span>{DOCUMENT_TYPE_LABELS[guide.documentType] || 'Document'}</span></header>
       {guide.summary && <div className={styles.guideSummary}><ReadableSummary text={guide.summary} /></div>}
-      {(guide.keyPoints || []).length > 0 && <ul className={styles.keyPoints}>{guide.keyPoints.map((point, index) => <li key={`${point}-${index}`}>{point}</li>)}</ul>}
       {(guide.locations || []).length > 0 && <div className={styles.locationMap}>{guide.locations.map((item, index) => <div key={`${item.topic}-${item.description}-${index}`}>
         <strong>{TOPIC_LABELS[item.topic] || item.topic}</strong>
         <p>{item.description}</p>
-        <small>Go to: {(item.locations || []).join(' · ')}</small>
+        <small>Verify in: {(item.locations || []).join(' · ')}</small>
       </div>)}</div>}
     </article>)}
   </section>
@@ -166,26 +206,21 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
   }
 
   const documents = analysis?.documents || []
-  const documentIssues = documents.flatMap((document) => {
-    const messages = []
-    if (['unsupported', 'error'].includes(document.status)) messages.push(document.error || (document.status === 'unsupported' ? 'This file format is not supported.' : 'This file could not be analyzed.'))
-    for (const warning of document.analysis?.warnings || []) messages.push(warning)
-    return [...new Set(messages.filter(Boolean))].map((message) => ({ fileName: document.fileName, filePath: document.filePath, message }))
-  })
+  const documentIssues = userFacingDocumentIssues(documents)
   const analyzedDocuments = documents.filter((document) => document.status === 'ready')
   const excludedTemplates = documents.filter((document) => document.status === 'excluded_template')
-  const documentGuides = analysis?.package?.documentGuides || analyzedDocuments.map((document) => ({
+  const documentGuides = prepareSolicitationGuides(analysis?.package?.documentGuides || analyzedDocuments.map((document) => ({
     fileName: document.fileName,
     documentType: document.analysis?.documentType || 'other',
     summary: document.analysis?.overview || document.summary,
     keyPoints: document.analysis?.keyPoints || [],
     locations: document.analysis?.documentMap || [],
-  }))
+  })))
 
   return <section className={styles.panel}>
     <header>
       <button type="button" className={styles.heading} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span><small>DOCUMENT INTELLIGENCE</small><strong>Critical dates and submission instructions</strong></span>
+        <span><small>SOLICITATION REVIEW</small><strong>What to know and where to verify it</strong></span>
         <span className={styles.headerRight}><em data-status={status}>{STATUS_LABELS[status] || status}</em><b aria-hidden="true">{open ? '⌃' : '⌄'}</b></span>
       </button>
     </header>
