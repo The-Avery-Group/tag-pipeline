@@ -115,9 +115,21 @@ export function createCrmRelationshipQuery(data = {}) {
     const unavailable = tableUnavailable(readiness, ['contacts'])
     if (unavailable) return unavailable
     const matches = contacts.filter((contact) => contactMatchesQuery(contact, query))
+    const pipelineReady = readiness?.pipeline !== false
     return {
       status: 'ready', dataReady: true, count: matches.length,
-      contacts: matches.slice(0, Math.min(Number(limit) || 8, 20)).map(summarizeContact),
+      relationshipDataReady: pipelineReady,
+      contacts: matches.slice(0, Math.min(Number(limit) || 8, 20)).map((contact) => {
+        const linked = pipelineReady
+          ? pipeline.filter((opportunity) => !isArchived(opportunity) && opportunityReferencesContact(opportunity, contact))
+          : []
+        return {
+          ...summarizeContact(contact),
+          relationshipStatus: pipelineReady ? 'ready' : 'data_unavailable',
+          linkedOpportunityCount: pipelineReady ? linked.length : null,
+          linkedOpportunities: pipelineReady ? linked.map(summarizeOpportunity) : [],
+        }
+      }),
     }
   }
 
