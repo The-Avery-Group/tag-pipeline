@@ -166,7 +166,13 @@ export async function purgeDismissedSAMArchives(db, { limit = 10, deleteFile, de
       if (deleteFolder && archive?.sharePointDriveId) {
         await deleteFolder(archive.sharePointDriveId, archive.opportunityKey)
       }
-      await db.prepare('DELETE FROM sam_archives WHERE opportunity_key = ?').bind(row.opportunity_key).run()
+      await db.batch([
+        db.prepare('DELETE FROM opportunity_analysis_reviews WHERE opportunity_key = ?').bind(row.opportunity_key),
+        db.prepare('DELETE FROM opportunity_past_performance_matches WHERE opportunity_key = ?').bind(row.opportunity_key),
+        db.prepare('DELETE FROM opportunity_document_analysis WHERE opportunity_key = ?').bind(row.opportunity_key),
+        db.prepare('DELETE FROM opportunity_analysis_jobs WHERE opportunity_key = ?').bind(row.opportunity_key),
+        db.prepare('DELETE FROM sam_archives WHERE opportunity_key = ?').bind(row.opportunity_key),
+      ])
       deleted++
     } catch (error) {
       failures.push({ opportunityKey: row.opportunity_key, message: error.message })
