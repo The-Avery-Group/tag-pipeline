@@ -933,7 +933,7 @@ export async function recordEbuyAttachmentFailure(db, id, message) {
   if (row?.request_id) await refreshEbuyFileAlertArchiveState(db, row.request_id)
 }
 
-export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = null } = {}) {
+export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = null, deleteFolder = null } = {}) {
   const now = new Date().toISOString()
   const rows = await db.prepare(`SELECT request_id FROM ebuy_opportunities
     WHERE purge_after IS NOT NULL AND purge_after <= ?
@@ -944,21 +944,30 @@ export async function purgeExpiredEbuyRecords(db, { limit = 25, deleteFile = nul
   let archivedFilesDeleted = 0
   const failures = []
   for (const row of rows.results || []) {
-    if (deleteFile) {
+    try {
       const attachments = await db.prepare('SELECT sharepoint_drive_id, sharepoint_item_id FROM ebuy_attachments WHERE request_id = ? AND sharepoint_item_id IS NOT NULL')
         .bind(row.request_id).all()
-      try {
+      if (deleteFile) {
         for (const attachment of attachments.results || []) {
           await deleteFile(attachment.sharepoint_drive_id, attachment.sharepoint_item_id)
           archivedFilesDeleted++
         }
-      } catch (error) {
-        failures.push({ requestId: row.request_id, message: error.message })
-        continue
       }
+      const archiveLocation = (attachments.results || []).find((attachment) => attachment.sharepoint_drive_id)
+      if (deleteFolder && archiveLocation?.sharepoint_drive_id) {
+        await deleteFolder(archiveLocation.sharepoint_drive_id, row.request_id)
+      }
+      await db.batch([
+        db.prepare('DELETE FROM opportunity_analysis_reviews WHERE opportunity_key = ?').bind(row.request_id.toLowerCase()),
+        db.prepare('DELETE FROM opportunity_past_performance_matches WHERE opportunity_key = ?').bind(row.request_id.toLowerCase()),
+        db.prepare('DELETE FROM opportunity_document_analysis WHERE opportunity_key = ?').bind(row.request_id.toLowerCase()),
+        db.prepare('DELETE FROM opportunity_analysis_jobs WHERE opportunity_key = ?').bind(row.request_id.toLowerCase()),
+        db.prepare('DELETE FROM ebuy_opportunities WHERE request_id = ?').bind(row.request_id),
+      ])
+      deleted++
+    } catch (error) {
+      failures.push({ requestId: row.request_id, message: error.message })
     }
-    await db.prepare('DELETE FROM ebuy_opportunities WHERE request_id = ?').bind(row.request_id).run()
-    deleted++
   }
   return { deleted, archivedFilesDeleted, failures }
 }
