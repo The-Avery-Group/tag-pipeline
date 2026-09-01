@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { addStructuredBriefEvidence, analyzeRelevantChunk, classifyAnalysisSection, consolidateBriefItems, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisDisplayJob, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, OPPORTUNITY_BRIEF_CATEGORIES, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { addStructuredBriefEvidence, analyzeRelevantChunk, classifyAnalysisSection, consolidateBriefItems, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, OPPORTUNITY_BRIEF_CATEGORIES, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -17,15 +17,6 @@ test('completed analysis without critical evidence reports not found instead of 
   assert.equal(criticalAnalysisStatus({ status: 'partial' }, [], { questions: {}, proposals: {} }), 'partial')
   assert.equal(criticalAnalysisStatus({ status: 'error' }, [], { questions: {}, proposals: {} }), 'error')
   assert.equal(criticalAnalysisStatus(null, [], { questions: {}, proposals: {} }), 'not_analyzed')
-})
-
-test('an abandoned background job becomes restartable instead of processing forever', () => {
-  const now = new Date('2026-09-02T12:00:00.000Z')
-  const current = { status: 'running', progress_phase: 'Processing documents', updated_at: '2026-09-02T11:58:00.000Z' }
-  const abandoned = { ...current, updated_at: '2026-09-02T11:50:00.000Z' }
-  assert.equal(documentAnalysisDisplayJob(current, now).status, 'running')
-  assert.equal(documentAnalysisDisplayJob(abandoned, now).status, 'error')
-  assert.match(documentAnalysisDisplayJob(abandoned, now).progress_phase, /restart/i)
 })
 
 test('manual analysis never represents remaining work as an automatic queue', () => {
