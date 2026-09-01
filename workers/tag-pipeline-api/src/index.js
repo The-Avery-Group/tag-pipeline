@@ -38,6 +38,8 @@ import { purgeExpiredTransactionCodingData } from './lib/transactionCodingReposi
 import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
 import { isQuarterlyExpiringRefreshTime } from './lib/scheduledCadence.js'
 import { purgeDocumentAnalysisData } from './lib/documentAnalysis.js'
+import { handleParserEvaluation } from './handlers/parserEvaluation.js'
+import { purgeParserEvaluationData } from './lib/parserEvaluation.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -185,6 +187,9 @@ export default {
       } else if (path.startsWith('/transaction-coding') && TRANSACTION_CODING_HTTP_METHODS.includes(req.method)) {
         response = await handleTransactionCoding(req, env, identity)
 
+      } else if (path.startsWith('/parser-evaluation/') && ['GET', 'POST'].includes(req.method)) {
+        response = await handleParserEvaluation(req, env, identity)
+
       } else {
         response = json({ error: 'Not found' }, 404)
       }
@@ -275,6 +280,9 @@ export default {
         ctx.waitUntil(purgeDocumentAnalysisData(env.EBUY_DB).catch((error) => {
           console.error(JSON.stringify({ event: 'document_analysis_retention_failed', message: error.message }))
         }))
+        ctx.waitUntil(purgeParserEvaluationData(env).catch((error) => {
+          console.error(JSON.stringify({ event: 'parser_evaluation_retention_failed', message: error.message }))
+        }))
       }
     }
   },
@@ -286,3 +294,4 @@ export { EbuySyncWorkflow } from './workflows/ebuySync.js'
 export { OpportunityWorkspaceWorkflow } from './workflows/opportunityWorkspace.js'
 export { SAMArchiveWorkflow } from './workflows/samArchive.js'
 export { DocumentAnalysisWorkflow } from './workflows/documentAnalysis.js'
+export { ParserEvaluationWorkflow } from './workflows/parserEvaluation.js'
