@@ -36,6 +36,51 @@ function Finding({ label, items, status, reviews, onReview }) {
   </div>
 }
 
+const PACKAGE_GROUPS = [
+  { label: 'Contract', fields: ['contractStructure'] },
+  { label: 'Submission', fields: ['responsePlan'] },
+  { label: 'Evaluation', fields: ['evaluation'] },
+  { label: 'Scope and deliverables', fields: ['scopeAndDeliverables'] },
+  { label: 'Staffing, security and risks', fields: ['risksAndPackageIssues'] },
+  { label: 'Package conflicts', fields: ['conflicts'] },
+]
+
+function PackageFinding({ finding, index }) {
+  const text = typeof finding === 'string' ? finding : finding?.text
+  if (!text) return null
+  const citation = typeof finding === 'object' ? [finding.fileName, finding.location].filter(Boolean).join(' · ') : ''
+  return <li key={`${text}-${index}`}><p>{text}</p>{citation && <small>{citation}</small>}</li>
+}
+
+function PackageOverview({ analysis }) {
+  if (analysis?.status !== 'ready') return null
+  const coverage = analysis.coverage || {}
+  const metrics = [
+    coverage.analyzedDocuments !== undefined && `${coverage.analyzedDocuments} analyzed`,
+    coverage.totalSections > 0 && `${coverage.completedSections}/${coverage.totalSections} sections`,
+    coverage.excludedTemplates > 0 && `${coverage.excludedTemplates} templates excluded`,
+    coverage.issueDocuments > 0 && `${coverage.issueDocuments} need attention`,
+  ].filter(Boolean)
+  return <section className={styles.packageOverview}>
+    <div className={styles.packageHeader}>
+      <span><small>PACKAGE OVERVIEW</small><strong>What the opportunity documents say</strong></span>
+      {metrics.length > 0 && <div className={styles.coverage}>{metrics.map((metric) => <em key={metric}>{metric}</em>)}</div>}
+    </div>
+    {analysis.overview && <p className={styles.overview}>{analysis.overview}</p>}
+    {analysis.agencyNeed && <p className={styles.agencyNeed}><strong>Agency need:</strong> {analysis.agencyNeed}</p>}
+    <div className={styles.packageGroups}>
+      {PACKAGE_GROUPS.map((group) => {
+        const findings = group.fields.flatMap((field) => analysis[field] || []).filter((finding) => typeof finding === 'string' ? finding.trim() : finding?.text)
+        if (!findings.length) return null
+        return <details key={group.label} className={styles.packageGroup}>
+          <summary><span>{group.label}</span><b>{findings.length}</b></summary>
+          <ul>{findings.map((finding, index) => <PackageFinding finding={finding} index={index} key={`${group.label}-${typeof finding === 'string' ? finding : finding?.text}-${index}`} />)}</ul>
+        </details>
+      })}
+    </div>
+  </section>
+}
+
 export default function DocumentAnalysisPanel({ load, run, review, disabled = false, toast }) {
   const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -150,14 +195,7 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
           <b>{issue.fileName || issue.filePath || 'Unknown file'}</b><span>{issue.message}</span>
         </li>)}</ul>
       </div>}
-      {analysis?.package?.status === 'ready' && <details className={styles.requirements} open><summary>Package-wide summary</summary><article>
-        {analysis.package.overview && <p><strong>Overview:</strong> {analysis.package.overview}</p>}
-        {analysis.package.agencyNeed && <p><strong>Agency need:</strong> {analysis.package.agencyNeed}</p>}
-        {['contractStructure', 'responsePlan', 'evaluation', 'scopeAndDeliverables', 'risksAndPackageIssues', 'conflicts'].flatMap((field) => analysis.package[field] || []).slice(0, 30).map((finding, index) => {
-          const text = typeof finding === 'string' ? finding : finding?.text
-          return <div key={`${text}-${index}`}><p>• {text}</p>{typeof finding === 'object' && (finding.fileName || finding.location) && <small>{[finding.fileName, finding.location].filter(Boolean).join(' · ')}</small>}</div>
-        })}
-      </article></details>}
+      <PackageOverview analysis={analysis?.package} />
       {analyzedDocuments.length > 0 && <details className={styles.requirements}><summary>{analyzedDocuments.length} analyzed document{analyzedDocuments.length === 1 ? '' : 's'}</summary>
         {analyzedDocuments.map((document) => <article key={`${document.filePath}-${document.fileName}`}>
           <p><strong>{document.fileName}</strong></p>
