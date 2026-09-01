@@ -17,6 +17,7 @@ import {
   getSAMOpportunities,
   getPartners,
   getContactInteractions,
+  getOpportunityRelationships,
   getEmailFollowUpTemplates,
   getEmailFollowUpDrafts,
   getWorkbookVersion,
@@ -39,6 +40,7 @@ const SECONDARY_TABLES = [
   'NewOpportunitiesTable',
   'PartnersTable',
   'ContactInteractionsTable',
+  'OpportunityRelationshipsTable',
 ]
 const loaders = {
   PipelineTable: getPipeline,
@@ -49,6 +51,7 @@ const loaders = {
   NewOpportunitiesTable: getSAMOpportunities,
   PartnersTable: getPartners,
   ContactInteractionsTable: getContactInteractions,
+  OpportunityRelationshipsTable: getOpportunityRelationships,
   EmailFollowUpTemplatesTable: getEmailFollowUpTemplates,
   EmailFollowUpDraftsTable: getEmailFollowUpDrafts,
 }
