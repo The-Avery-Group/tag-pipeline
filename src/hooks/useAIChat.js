@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { sendAIMessage, getConversationHistory, clearConversation, executeClientTool } from '@/services/groqService'
+import { answerDeterministicCrmQuery } from '@/services/crmRelationshipQuery'
 
 // Mirrors the Worker's own MAX_TOOL_ROUNDS safety net — belt and suspenders
 // against a pathological loop where the model keeps asking for more tools.
@@ -135,6 +136,12 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
     if (!userMessage.trim() || loading || !dataReady) return
 
     const newUserMsg = { role: 'user', content: userMessage }
+    const deterministicAnswer = answerDeterministicCrmQuery(userMessage, dataRef.current)
+    if (deterministicAnswer) {
+      setMessages((prev) => [...prev, newUserMsg, { role: 'assistant', content: deterministicAnswer }])
+      setError(null)
+      return
+    }
     setMessages((prev) => [...prev, newUserMsg])
     setLoading(true)
     setError(null)
