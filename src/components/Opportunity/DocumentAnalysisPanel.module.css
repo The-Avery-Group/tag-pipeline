@@ -57,7 +57,6 @@
 .documentGuide > header span { background: var(--blue-50); border-radius: 999px; color: var(--blue-700); flex: 0 0 auto; font-size: 9px; font-weight: 750; padding: 3px 7px; }
 .guideSummary { color: var(--gray-800); font-size: 11px; line-height: 1.55; margin-top: 8px; }
 .guideSummary p { margin: 0 0 6px; }
-.keyPoints { color: var(--gray-700); display: grid; gap: 4px; font-size: 10px; line-height: 1.5; margin: 8px 0 0; padding-left: 17px; }
 .locationMap { border-top: .5px solid var(--gray-200); display: grid; gap: 0; margin-top: 9px; }
 .locationMap > div { display: grid; gap: 3px; padding: 8px 0 2px; }
 .locationMap > div + div { border-top: .5px solid var(--gray-100); }
