@@ -91,6 +91,7 @@ test('document analysis uses Workers AI with the existing parser output', async 
 test('Groq fallback uses strict structured output when Workers AI cannot complete a chunk', async () => {
   const originalFetch = globalThis.fetch
   let requestBody
+  const workersModels = []
   globalThis.fetch = async (_url, request) => {
     requestBody = JSON.parse(request.body)
     return {
@@ -108,7 +109,7 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
   }
   try {
     const result = await analyzeRelevantChunk({
-      AI: { run: async () => { throw new Error('Workers AI output was truncated') } },
+      AI: { run: async (model) => { workersModels.push(model); throw new Error('Workers AI output was truncated') } },
       GROQ_API_KEY: 'test-key',
     }, {
       source: '[S0001]\nThe contractor shall provide support services.',
@@ -118,6 +119,7 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
 
     assert.equal(result.status, 'ready')
     assert.equal(result.provider, 'groq')
+    assert.deepEqual(workersModels, ['@cf/openai/gpt-oss-20b', '@cf/openai/gpt-oss-120b'])
     assert.equal(requestBody.max_completion_tokens, 2_000)
     assert.equal(requestBody.response_format.type, 'json_schema')
     assert.equal(requestBody.response_format.json_schema.strict, true)
