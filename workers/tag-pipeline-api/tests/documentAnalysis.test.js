@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { analyzeRelevantChunk, consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { analyzeRelevantChunk, consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -84,23 +84,92 @@ test('document analysis uses Workers AI with the existing parser output', async 
   assert.equal(result.overview, 'Verified overview')
   assert.equal(calls.length, 1)
   assert.equal(calls[0].model, '@cf/openai/gpt-oss-20b')
+  assert.equal(calls[0].input.max_tokens, 2_400)
+  assert.equal(calls[0].input.max_completion_tokens, undefined)
   assert.equal(calls[0].input.response_format.type, 'json_schema')
-  assert.equal(calls[0].input.response_format.json_schema.strict, true)
+  assert.equal(calls[0].input.response_format.json_schema.type, 'object')
   assert.match(calls[0].input.messages[1].content, /paragraph 1/)
 })
 
-test('document analysis rejects citations the parser did not provide', () => {
-  assert.throws(() => validateDocumentAnalysisResponse({
+test('Groq fallback uses strict structured output when Workers AI cannot complete a chunk', async () => {
+  const originalFetch = globalThis.fetch
+  let requestBody
+  globalThis.fetch = async (_url, request) => {
+    requestBody = JSON.parse(request.body)
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        model: 'openai/gpt-oss-20b',
+        choices: [{ message: { content: JSON.stringify({
+          overview: 'Fallback overview',
+          contractStructure: [],
+          performance: [],
+          responseRequirements: [],
+          evaluation: [],
+          scopeAndDeliverables: [],
+          staffingAndSecurity: [],
+          packageIssues: [],
+          criticalSubmission: [],
+        }) } }],
+      }),
+    }
+  }
+  try {
+    const result = await analyzeRelevantChunk({
+      AI: { run: async () => { throw new Error('Workers AI output was truncated') } },
+      GROQ_API_KEY: 'test-key',
+    }, {
+      source: '[paragraph 1]\nThe contractor shall provide support services.',
+      locations: ['paragraph 1'],
+    }, 'solicitation.docx', {})
+
+    assert.equal(result.status, 'ready')
+    assert.equal(result.provider, 'groq')
+    assert.equal(requestBody.max_completion_tokens, 2_400)
+    assert.equal(requestBody.response_format.type, 'json_schema')
+    assert.equal(requestBody.response_format.json_schema.strict, true)
+    assert.equal(requestBody.response_format.json_schema.schema.type, 'object')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('legacy unreadable chunks are resumed without discarding completed chunks', () => {
+  const prior = { status: 'ready', chunks: [
+    { index: 0, status: 'error', error: 'Groq returned analysis that could not be read', source: 'failed' },
+    { index: 1, status: 'ready', result: { overview: 'Preserved' }, source: 'complete' },
+  ] }
+  assert.equal(hasResumableAnalysisChunks(prior), true)
+  const chunks = resumableAnalysisChunks(prior, [], {})
+  assert.equal(chunks[0].status, 'deferred')
+  assert.equal(chunks[0].malformedResponseAttempts, 1)
+  assert.equal(chunks[1].status, 'ready')
+  assert.equal(chunks[1].result.overview, 'Preserved')
+  assert.equal(hasResumableAnalysisChunks({ chunks: [{ status: 'error', malformedResponseAttempts: 3, error: 'Groq: malformed JSON' }] }), false)
+  assert.equal(hasResumableAnalysisChunks({
+    status: 'ready', coverage: { chunkCount: 13, completedChunks: 11 },
+    warnings: ['Groq returned analysis that could not be read'],
+  }), true)
+})
+
+test('document analysis discards unsupported citations without losing the valid chunk', () => {
+  const result = validateDocumentAnalysisResponse({
     overview: 'Overview',
     contractStructure: [],
     performance: [],
-    responseRequirements: [{ text: 'Invented instruction', location: 'page 99' }],
+    responseRequirements: [
+      { text: 'Supported instruction', location: 'page 1' },
+      { text: 'Invented instruction', location: 'page 99' },
+    ],
     evaluation: [],
     scopeAndDeliverables: [],
     staffingAndSecurity: [],
     packageIssues: [],
     criticalSubmission: [],
-  }, { locations: ['page 1'] }, {}), /unsupported citation/)
+  }, { locations: ['page 1'] }, {})
+  assert.deepEqual(result.responseRequirements, [{ text: 'Supported instruction', location: 'page 1' }])
 })
 
 test('available file analysis remains visible when another document fails', () => {
