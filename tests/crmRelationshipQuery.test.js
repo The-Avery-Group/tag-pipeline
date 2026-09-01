@@ -35,6 +35,12 @@ test('contact not found differs from a found contact with no contracts', () => {
   assert.equal(found.linkedOpportunityCount, 0)
 })
 
+test('legacy contact search results include reverse-linked contracts', () => {
+  const result = createCrmRelationshipQuery(data).searchContacts('Amanda Haynes')
+  assert.equal(result.contacts[0].linkedOpportunityCount, 2)
+  assert.deepEqual(result.contacts[0].linkedOpportunities.map((opportunity) => opportunity.contractNumber), ['VA-001', 'VA-002'])
+})
+
 test('unavailable tables are never reported as zero results', () => {
   const result = queryCrmRelationships({ ...data, readiness: { contacts: true, pipeline: false } }, {
     entityType: 'contact', query: 'Amanda Haynes',
