@@ -11,7 +11,8 @@ import CopyValue from '@/components/Common/CopyValue'
 import RichText from '@/components/Common/RichText'
 import { useValidationLists, pickList } from '@/hooks/useValidationLists'
 import { CONTACT_TYPES } from '@/services/graphService'
-import { parsePOCNames, addContactToPOC, removeContactFromPOC } from '@/services/graphService'
+import { addContactToPOC, removeContactFromPOC } from '@/services/graphService'
+import { findOpportunitiesForContact } from '@/utils/contactOpportunityLinks'
 import { formatDate } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import { useAuth } from '@/auth/AuthContext'
@@ -101,7 +102,7 @@ export default function Contacts({ toast }) {
   // Opportunities linked to the selected contact (POC column contains their name)
   const linkedOpps = useMemo(() => {
     if (!selected) return []
-    return pipeline.filter((o) => parsePOCNames(o[C_POC]).includes(selected.Name))
+    return findOpportunitiesForContact(pipeline, selected.Name, C_POC)
   }, [selected, pipeline])
 
   const selectedInteractions = useMemo(() => {
