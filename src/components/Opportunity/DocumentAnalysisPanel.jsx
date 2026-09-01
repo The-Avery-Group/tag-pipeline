@@ -4,6 +4,7 @@ import styles from './DocumentAnalysisPanel.module.css'
 const STATUS_LABELS = {
   ready: 'Ready', cancelled: 'Cancelled', error: 'Needs attention', partial: 'Incomplete',
   processing: 'Processing', not_analyzed: 'Not analyzed', searching: 'Searching documents',
+  unavailable: 'Reconnecting',
 }
 
 const BRIEF_SECTIONS = [
@@ -70,30 +71,54 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [open, setOpen] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const loadRef = useRef(load)
   const runRef = useRef(run)
   const reviewRef = useRef(review)
+  const loadFailureNotifiedRef = useRef(false)
   loadRef.current = load
   runRef.current = run
   reviewRef.current = review
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ quiet = false } = {}) => {
     try {
       const result = await loadRef.current()
       setAnalysis(result.analysis || null)
+      setLoadError('')
+      loadFailureNotifiedRef.current = false
     } catch (error) {
-      if (error.status !== 404) toast?.error(`Opportunity Brief could not load: ${error.message}`)
+      if (error.status === 404) {
+        setAnalysis((current) => current || { status: 'not_analyzed' })
+        setLoadError('')
+      } else {
+        setLoadError(error.message || 'Connection interrupted')
+        if (!quiet && !loadFailureNotifiedRef.current) {
+          loadFailureNotifiedRef.current = true
+          toast?.error('Opportunity Brief temporarily lost connection. Retrying in the background.')
+        }
+      }
     } finally { setLoading(false) }
   }, [toast])
 
   useEffect(() => { refresh().catch(() => {}) }, [refresh])
 
-  const status = analysis?.status || (disabled ? 'cancelled' : 'searching')
+  const status = analysis?.status || (disabled ? 'cancelled' : loadError ? 'unavailable' : 'searching')
   useEffect(() => {
     if (status !== 'processing') return undefined
-    const timer = window.setInterval(() => refresh().catch(() => {}), 8_000)
+    const timer = window.setInterval(() => refresh({ quiet: true }).catch(() => {}), 8_000)
     return () => window.clearInterval(timer)
   }, [refresh, status])
+
+  useEffect(() => {
+    if (!loadError) return undefined
+    const retry = () => refresh({ quiet: true }).catch(() => {})
+    const timer = window.setInterval(retry, 12_000)
+    window.addEventListener('online', retry)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('online', retry)
+    }
+  }, [loadError, refresh])
 
   const start = async () => {
     setRunning(true)
@@ -146,8 +171,12 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
     </header>
     {open && <div className={styles.body}>
       <div className={styles.actions}>
-        <p>{analysis?.job?.phase || (loading ? 'Loading Opportunity Brief…' : 'Documents have not been analyzed yet.')}</p>
-        <button className="btn" type="button" disabled={disabled || running || status === 'processing'} onClick={start}>{running || status === 'processing' ? 'Processing…' : 'Analyze documents'}</button>
+        <p>{loadError
+          ? analysis?.status === 'processing' ? 'Connection interrupted. Analysis continues in the background; reconnecting…' : 'Connection interrupted. Reconnecting…'
+          : analysis?.job?.phase || (loading ? 'Loading Opportunity Brief…' : 'Documents have not been analyzed yet.')}</p>
+        {loadError
+          ? <button className="btn" type="button" onClick={() => refresh()}>Try again</button>
+          : <button className="btn" type="button" disabled={disabled || running || status === 'processing'} onClick={start}>{running || status === 'processing' ? 'Processing…' : 'Analyze documents'}</button>}
       </div>
       {analysis?.package?.status === 'ready' && <div className={styles.coverage}>
         <em>{Number(coverage.analyzedDocuments || 0)} document{Number(coverage.analyzedDocuments || 0) === 1 ? '' : 's'} reviewed</em>
