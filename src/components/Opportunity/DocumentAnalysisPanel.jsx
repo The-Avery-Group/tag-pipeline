@@ -36,20 +36,20 @@ function Finding({ label, items, status, reviews, onReview }) {
   </div>
 }
 
-const PACKAGE_GROUPS = [
-  { label: 'Contract', fields: ['contractStructure'] },
-  { label: 'Submission', fields: ['responsePlan'] },
-  { label: 'Evaluation', fields: ['evaluation'] },
-  { label: 'Scope and deliverables', fields: ['scopeAndDeliverables'] },
-  { label: 'Staffing, security and risks', fields: ['risksAndPackageIssues'] },
-  { label: 'Package conflicts', fields: ['conflicts'] },
-]
+const TOPIC_LABELS = {
+  submission: 'Proposal submission', questions: 'Questions', evaluation: 'Evaluation', scope: 'Scope of work',
+  deliverables: 'Deliverables', pricing: 'Pricing', performance: 'Performance requirements',
+  staffing_security: 'Staffing and security', past_performance: 'Past performance',
+  forms_attachments: 'Required forms and attachments', contract_structure: 'Contract structure', risks_changes: 'Risks and changes',
+}
+const DOCUMENT_TYPE_LABELS = {
+  solicitation: 'Solicitation', instructions: 'Instructions', statement_of_work: 'Statement of work', evaluation: 'Evaluation',
+  pricing: 'Pricing', amendment: 'Amendment', questions_answers: 'Questions and answers', supporting: 'Supporting document', other: 'Document',
+}
 
-function PackageFinding({ finding, index }) {
-  const text = typeof finding === 'string' ? finding : finding?.text
-  if (!text) return null
-  const citation = typeof finding === 'object' ? [finding.fileName, finding.location].filter(Boolean).join(' · ') : ''
-  return <li key={`${text}-${index}`}><p>{text}</p>{citation && <small>{citation}</small>}</li>
+function ReadableSummary({ text }) {
+  const paragraphs = String(text || '').split(/\n{2,}/).map((item) => item.trim()).filter(Boolean)
+  return paragraphs.map((paragraph, index) => <p key={`${paragraph}-${index}`}>{paragraph}</p>)
 }
 
 function PackageOverview({ analysis }) {
@@ -57,27 +57,37 @@ function PackageOverview({ analysis }) {
   const coverage = analysis.coverage || {}
   const metrics = [
     coverage.analyzedDocuments !== undefined && `${coverage.analyzedDocuments} analyzed`,
-    coverage.totalSections > 0 && `${coverage.completedSections}/${coverage.totalSections} sections`,
+    coverage.boilerplateSections > 0 && `${coverage.boilerplateSections} standard sections skipped`,
     coverage.excludedTemplates > 0 && `${coverage.excludedTemplates} templates excluded`,
     coverage.issueDocuments > 0 && `${coverage.issueDocuments} need attention`,
   ].filter(Boolean)
+  const overviewPoints = (analysis.overviewPoints || []).filter(Boolean)
   return <section className={styles.packageOverview}>
     <div className={styles.packageHeader}>
       <span><small>PACKAGE OVERVIEW</small><strong>What the opportunity documents say</strong></span>
       {metrics.length > 0 && <div className={styles.coverage}>{metrics.map((metric) => <em key={metric}>{metric}</em>)}</div>}
     </div>
-    {analysis.overview && <p className={styles.overview}>{analysis.overview}</p>}
+    {overviewPoints.length > 0
+      ? <ul className={styles.overviewList}>{overviewPoints.map((point, index) => <li key={`${point}-${index}`}>{point}</li>)}</ul>
+      : analysis.overview && <div className={styles.overview}><ReadableSummary text={analysis.overview} /></div>}
     {analysis.agencyNeed && <p className={styles.agencyNeed}><strong>Agency need:</strong> {analysis.agencyNeed}</p>}
-    <div className={styles.packageGroups}>
-      {PACKAGE_GROUPS.map((group) => {
-        const findings = group.fields.flatMap((field) => analysis[field] || []).filter((finding) => typeof finding === 'string' ? finding.trim() : finding?.text)
-        if (!findings.length) return null
-        return <details key={group.label} className={styles.packageGroup}>
-          <summary><span>{group.label}</span><b>{findings.length}</b></summary>
-          <ul>{findings.map((finding, index) => <PackageFinding finding={finding} index={index} key={`${group.label}-${typeof finding === 'string' ? finding : finding?.text}-${index}`} />)}</ul>
-        </details>
-      })}
-    </div>
+  </section>
+}
+
+function DocumentGuides({ guides }) {
+  if (!guides.length) return null
+  return <section className={styles.documentGuides}>
+    <div className={styles.sectionHeading}><small>DOCUMENT GUIDE</small><strong>Where to find the important information</strong></div>
+    {guides.map((guide) => <article className={styles.documentGuide} key={`${guide.filePath || ''}-${guide.fileName}`}>
+      <header><strong>{guide.fileName}</strong><span>{DOCUMENT_TYPE_LABELS[guide.documentType] || 'Document'}</span></header>
+      {guide.summary && <div className={styles.guideSummary}><ReadableSummary text={guide.summary} /></div>}
+      {(guide.keyPoints || []).length > 0 && <ul className={styles.keyPoints}>{guide.keyPoints.map((point, index) => <li key={`${point}-${index}`}>{point}</li>)}</ul>}
+      {(guide.locations || []).length > 0 && <div className={styles.locationMap}>{guide.locations.map((item, index) => <div key={`${item.topic}-${item.description}-${index}`}>
+        <strong>{TOPIC_LABELS[item.topic] || item.topic}</strong>
+        <p>{item.description}</p>
+        <small>Go to: {(item.locations || []).join(' · ')}</small>
+      </div>)}</div>}
+    </article>)}
   </section>
 }
 
@@ -164,6 +174,13 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
   })
   const analyzedDocuments = documents.filter((document) => document.status === 'ready')
   const excludedTemplates = documents.filter((document) => document.status === 'excluded_template')
+  const documentGuides = analysis?.package?.documentGuides || analyzedDocuments.map((document) => ({
+    fileName: document.fileName,
+    documentType: document.analysis?.documentType || 'other',
+    summary: document.analysis?.overview || document.summary,
+    keyPoints: document.analysis?.keyPoints || [],
+    locations: document.analysis?.documentMap || [],
+  }))
 
   return <section className={styles.panel}>
     <header>
@@ -196,17 +213,11 @@ export default function DocumentAnalysisPanel({ load, run, review, disabled = fa
         </li>)}</ul>
       </div>}
       <PackageOverview analysis={analysis?.package} />
-      {analyzedDocuments.length > 0 && <details className={styles.requirements}><summary>{analyzedDocuments.length} analyzed document{analyzedDocuments.length === 1 ? '' : 's'}</summary>
-        {analyzedDocuments.map((document) => <article key={`${document.filePath}-${document.fileName}`}>
-          <p><strong>{document.fileName}</strong></p>
-          <p>{document.summary || 'Analysis completed; no additional summary was extracted from this file.'}</p>
-          {document.analysis?.coverage && <small>{document.analysis.coverage.completedChunks} of {document.analysis.coverage.chunkCount} analysis sections completed</small>}
-        </article>)}
-      </details>}
-      {excludedTemplates.length > 0 && <details className={styles.requirements}><summary>{excludedTemplates.length} submission template{excludedTemplates.length === 1 ? '' : 's'} excluded</summary>
-        {excludedTemplates.map((document) => <article key={`${document.filePath}-${document.fileName}`}><p><strong>{document.fileName}</strong></p><small>Retained in SharePoint for later drafting; excluded from opportunity analysis.</small></article>)}
-      </details>}
-      {(analysis?.pastPerformance || []).length > 0 && <details className={styles.requirements}><summary>{analysis.pastPerformance.length} past-performance match{analysis.pastPerformance.length === 1 ? '' : 'es'}</summary>{analysis.pastPerformance.slice(0, 8).map((match) => <article key={match.fileName}><p><strong>{match.fileName}</strong> · {match.score}% match</p><small>{[match.serviceCategory, ...(match.evidence || [])].filter(Boolean).join(' · ')}</small></article>)}</details>}
+      <DocumentGuides guides={documentGuides} />
+      {excludedTemplates.length > 0 && <section className={styles.fileList}><strong>{excludedTemplates.length} submission template{excludedTemplates.length === 1 ? '' : 's'} excluded</strong>
+        {excludedTemplates.map((document) => <div key={`${document.filePath}-${document.fileName}`}><b>{document.fileName}</b><small>Retained in SharePoint for later drafting; excluded from opportunity analysis.</small></div>)}
+      </section>}
+      {(analysis?.pastPerformance || []).length > 0 && <section className={styles.fileList}><strong>{analysis.pastPerformance.length} past-performance match{analysis.pastPerformance.length === 1 ? '' : 'es'}</strong>{analysis.pastPerformance.slice(0, 8).map((match) => <div key={match.fileName}><b>{match.fileName} · {match.score}% match</b><small>{[match.serviceCategory, ...(match.evidence || [])].filter(Boolean).join(' · ')}</small></div>)}</section>}
     </div>}
   </section>
 }
