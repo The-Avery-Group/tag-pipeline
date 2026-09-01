@@ -4,6 +4,9 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useTasks } from '@/hooks/useTasks'
 import { useContacts } from '@/hooks/useContacts'
 import { useNotes } from '@/hooks/useNotes'
+import { usePartners } from '@/hooks/usePartners'
+import { useContactEngagement } from '@/hooks/useContactEngagement'
+import { useCrmRelationships } from '@/hooks/useCrmRelationships'
 import { useAuth } from '@/auth/AuthContext'
 import { useAIChat } from '@/hooks/useAIChat'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
@@ -28,10 +31,13 @@ function makeConvId(userId, base) {
 export function AIChat({ toast }) {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { pipeline } = usePipeline()
-  const { tasks } = useTasks()
-  const { contacts } = useContacts()
-  const { notes } = useNotes()
+  const { pipeline, allPipeline, loading: pipelineLoading, error: pipelineError } = usePipeline()
+  const { tasks, loading: tasksLoading, error: tasksError } = useTasks()
+  const { contacts, loading: contactsLoading, error: contactsError } = useContacts()
+  const { notes, loading: notesLoading, error: notesError } = useNotes()
+  const { partners, loading: partnersLoading, error: partnersError } = usePartners()
+  const { interactions, interactionsConfigured, loading: interactionsLoading, error: interactionsError } = useContactEngagement(true)
+  const { relationships, loading: relationshipsLoading, error: relationshipsError } = useCrmRelationships(true)
   const { user } = useAuth()
   const [preferredModel, setPreferredModel] = useState(() => {
     try {
@@ -52,6 +58,21 @@ export function AIChat({ toast }) {
   )
 
   const promptType = opp ? 'opportunity_detail' : 'general'
+  // Wait for the two tables needed by reverse contact lookups to finish their
+  // first load. A completed load that failed is still allowed through: the
+  // relationship tool returns data_unavailable instead of a false zero.
+  const crmReady = !pipelineLoading && !contactsLoading
+  const readiness = useMemo(() => ({
+    pipeline: !pipelineLoading && !pipelineError,
+    tasks: !tasksLoading && !tasksError,
+    contacts: !contactsLoading && !contactsError,
+    notes: !notesLoading && !notesError,
+    partners: !partnersLoading && !partnersError,
+    interactions: !interactionsLoading && !interactionsError && interactionsConfigured,
+    relationships: !relationshipsLoading && !relationshipsError,
+  }), [pipelineLoading, pipelineError, tasksLoading, tasksError, contactsLoading, contactsError,
+    notesLoading, notesError, partnersLoading, partnersError, interactionsLoading, interactionsError,
+    interactionsConfigured, relationshipsLoading, relationshipsError])
 
   const recentOpportunityNotes = useMemo(() => {
     if (!opp) return ''
@@ -86,7 +107,8 @@ export function AIChat({ toast }) {
     conversationId: convId,
     promptType,
     initialContext: context,
-    data: { pipeline, tasks, contacts, notes },
+    data: { pipeline: allPipeline, tasks, contacts, notes, partners, interactions, relationships, readiness },
+    dataReady: crmReady,
     preferredModel,
   })
 
@@ -121,7 +143,7 @@ export function AIChat({ toast }) {
   }, [messages, loading])
 
   const handleSend = () => {
-    if (!input.trim() || loading) return
+    if (!input.trim() || loading || !crmReady) return
     send(input.trim())
     setInput('')
     inputRef.current?.focus()
@@ -186,7 +208,7 @@ export function AIChat({ toast }) {
                     'Are there any red flags?',
                     'Draft a follow-up email',
                   ].map((s) => (
-                    <button key={s} className={styles.suggestion} disabled={loading}
+                    <button key={s} className={styles.suggestion} disabled={loading || !crmReady}
                       onClick={() => { send(s) }}>
                       {s}
                     </button>
@@ -201,7 +223,7 @@ export function AIChat({ toast }) {
                     'What needs attention this week?',
                     'Show me contracts expiring soon',
                   ].map((s) => (
-                    <button key={s} className={styles.suggestion} disabled={loading}
+                    <button key={s} className={styles.suggestion} disabled={loading || !crmReady}
                       onClick={() => { send(s) }}>
                       {s}
                     </button>
@@ -262,6 +284,7 @@ export function AIChat({ toast }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              disabled={!crmReady}
               rows={1}
             />
             {loading && (
@@ -272,7 +295,7 @@ export function AIChat({ toast }) {
             <button
               className={styles.sendBtn}
               onClick={handleSend}
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || !crmReady}
               aria-label="Send"
             >
               {loading ? '…' : '↑'}
@@ -280,7 +303,7 @@ export function AIChat({ toast }) {
           </div>
           <div className={styles.inputMeta}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className={styles.hint}>{loading ? 'You can draft your next message while this response finishes' : 'Enter to send · Shift+Enter for new line'}</span>
+              <span className={styles.hint}>{!crmReady ? 'Loading CRM relationships…' : loading ? 'You can draft your next message while this response finishes' : 'Enter to send · Shift+Enter for new line'}</span>
               <label className={styles.hint} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 Model
                 <select
