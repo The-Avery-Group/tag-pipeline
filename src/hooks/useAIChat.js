@@ -156,7 +156,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
       if (err.name === 'AbortError') {
         setMessages((prev) => [...prev, { role: 'assistant', content: 'Response stopped.' }])
       } else {
-        setError('Failed to get response. Please try again.')
+        setError(err.message || 'Failed to get response. Please try again.')
         // Remove the user message on error so they can retry
         setMessages((prev) => prev.slice(0, -1))
       }
