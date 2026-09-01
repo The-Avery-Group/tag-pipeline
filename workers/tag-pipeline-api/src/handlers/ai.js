@@ -234,13 +234,49 @@ const CLIENT_TOOLS = [
     type: 'function',
     function: {
       name: 'search_contacts',
-      description: 'Search contacts by name, agency, or organization.',
+      description: 'Search CRM contacts by ID, name, title, agency, organization, email, or phone. Use this to resolve a person before making claims about whether the contact exists.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Free-text search across name, agency, organization' },
+          query: { type: 'string', description: 'Free-text search across contact ID, name, title, agency, organization, email, and phone' },
           limit: { type: 'number', description: 'Max results to return, default 20' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_contact_contracts',
+      description: 'Find a CRM contact and traverse the reverse relationship from that contact to every pipeline opportunity whose POC field references them. MUST be used when a user asks which contracts or opportunities are associated with a named contact. Returns title, contract number, expiry date, value, phase, agency, and POC. Distinguishes data unavailable, contact not found, and contact found with no linked contracts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Contact name or other identifying text, for example Amanda Haynes' },
+          contactId: { type: 'string', description: 'Optional exact ContactID when already known' },
+          email: { type: 'string', description: 'Optional exact email when already known' },
+          includeArchived: { type: 'boolean', description: 'Include archived pipeline opportunities, default false' },
+          limit: { type: 'number', description: 'Maximum linked opportunities to return, default 50' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_crm_relationships',
+      description: 'Traverse verified CRM relationships instead of guessing from a single table. Use contact to find linked opportunities, or opportunity to retrieve its contacts, tasks, notes, related opportunities, partners, and contact interactions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entityType: { type: 'string', enum: ['contact', 'opportunity'], description: 'Entity from which to start the relationship traversal' },
+          query: { type: 'string', description: 'Contact name/email/ID or opportunity title/contract number/ID' },
+          contactId: { type: 'string', description: 'Optional exact ContactID for contact traversal' },
+          email: { type: 'string', description: 'Optional exact contact email for contact traversal' },
+          includeArchived: { type: 'boolean', description: 'Include archived opportunities for contact traversal, default false' },
+          limit: { type: 'number', description: 'Maximum records per relationship type, default 25' },
+        },
+        required: ['entityType', 'query'],
       },
     },
   },
@@ -683,6 +719,10 @@ WORKING WITH INFORMATION:
 - Clearly distinguish facts, analysis, and recommendations whenever that distinction matters.
 - If evidence is insufficient, say what is missing instead of guessing.
 - Use tools to retrieve an opportunity, its notes, tasks, or contacts when those details are needed and are not already in the current reference data.
+- For a request that connects records across tables, use get_contact_contracts or query_crm_relationships. Do not try to infer a reverse relationship from a pipeline summary.
+- Before saying that a named CRM contact or opportunity does not exist, search for it with a CRM tool. Before saying that it has no linked records, run the relationship tool.
+- A tool result with dataReady=false or status=data_unavailable is not an empty result. Explain that the CRM data was unavailable and do not claim that the entity or relationship does not exist.
+- Treat an earlier assistant statement as conversation context, not CRM evidence. Re-check the CRM when the user challenges a prior lookup.
 
 CONVERSATION STYLE:
 - Start with the answer. Do not restate the question or narrate hidden reasoning.
