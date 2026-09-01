@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { analyzeRelevantChunk, classifyAnalysisSection, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { analyzeRelevantChunk, classifyAnalysisSection, consolidateDocumentMap, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -185,6 +185,48 @@ test('document analysis discards unsupported citations without losing the valid 
   assert.deepEqual(result.documentMap, [{ topic: 'submission', description: 'Supported instruction', locations: ['page 1'] }])
 })
 
+test('AI vocabulary differences are normalized instead of failing the document review', () => {
+  const result = validateDocumentAnalysisResponse({
+    documentType: 'RFQ',
+    summary: 'Overview',
+    keyPoints: Array.from({ length: 7 }, (_, index) => `Point ${index + 1}`),
+    documentMap: [
+      { topic: 'proposal_submission', description: 'Complete submission instructions.', sectionIds: ['S0001'] },
+      { topic: 'miscellaneous', description: 'No supported citation.', sectionIds: [] },
+    ],
+    criticalSubmission: [],
+  }, { references: { S0001: 'page 4 · section “L” · paragraph 80' } }, {})
+  assert.equal(result.documentType, 'solicitation')
+  assert.equal(result.keyPoints.length, 6)
+  assert.deepEqual(result.documentMap, [{
+    topic: 'submission', description: 'Complete submission instructions.',
+    locations: ['page 4 · section “L” · paragraph 80'],
+  }])
+})
+
+test('document map exposes one concise entry per topic with all useful locations', () => {
+  assert.deepEqual(consolidateDocumentMap([
+    { topic: 'submission', description: 'Submission details.', locations: ['paragraph 10'] },
+    { topic: 'submission', description: 'Complete quotation submission details and recipient.', locations: ['paragraph 12'] },
+    { topic: 'questions', description: 'Question deadline and recipient.', locations: ['paragraph 8'] },
+  ]), [
+    { topic: 'submission', description: 'Complete quotation submission details and recipient.', locations: ['paragraph 10', 'paragraph 12'] },
+    { topic: 'questions', description: 'Question deadline and recipient.', locations: ['paragraph 8'] },
+  ])
+})
+
+test('Word citations include rendered page and section context when available', async () => {
+  const xml = `<w:document xmlns:w="word"><w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>L. Instructions to Offerors</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Introductory text.</w:t></w:r><w:lastRenderedPageBreak/></w:p>
+    <w:p><w:r><w:t>Quotations shall be submitted by email.</w:t></w:r></w:p>
+  </w:body></w:document>`
+  const { zipSync, strToU8 } = await import('fflate')
+  const bytes = zipSync({ 'word/document.xml': strToU8(xml) })
+  const sections = await extractDocumentSections(bytes, 'solicitation.docx')
+  assert.equal(sections[2].location, 'page 2 · section “L. Instructions to Offerors” · paragraph 3')
+})
+
 test('available file analysis remains visible when another document fails', () => {
   const result = consolidateReadyDocumentRows([
     {
@@ -245,6 +287,15 @@ test('standard clauses are skipped while solicitation-specific deviations remain
   ])
   assert.doesNotMatch(chunks.map((chunk) => chunk.source).join('\n'), /52\.212-4/)
   assert.match(chunks.map((chunk) => chunk.source).join('\n'), /required technical volumes/i)
+})
+
+test('document review ranges retain page, heading, and paragraph precision', () => {
+  const [chunk] = relevantAnalysisChunks([
+    { text: 'L. Instructions to Offerors', location: 'page 4 · section “L. Instructions to Offerors” · paragraph 80', kind: 'heading', heading: 'L. Instructions to Offerors' },
+    { text: 'The offeror shall submit a technical volume.', location: 'page 4 · section “L. Instructions to Offerors” · paragraph 81', kind: 'paragraph', heading: 'L. Instructions to Offerors' },
+    { text: 'The technical volume has a 20-page limit.', location: 'page 5 · section “L. Instructions to Offerors” · paragraph 82', kind: 'paragraph', heading: 'L. Instructions to Offerors' },
+  ])
+  assert.deepEqual(Object.values(chunk.references), ['pages 4–5 · section “L. Instructions to Offerors” · paragraphs 80–82'])
 })
 
 test('ordinary narrative is not presented as a solicitation requirement', () => {
