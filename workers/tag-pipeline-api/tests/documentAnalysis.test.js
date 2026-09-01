@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks } from '../src/lib/documentAnalysis.js'
+import { analyzeRelevantChunk, consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -50,6 +50,57 @@ test('Groq pacing honors reset headers without dropping below one minute', () =>
   const response = { headers: { get: (name) => name === 'retry-after' ? '43.275' : name === 'x-ratelimit-reset-tokens' ? '1m 12.5s' : null } }
   assert.equal(groqRetryDelay(response), 73)
   assert.equal(groqRetryDelay({ headers: { get: () => null } }), 60)
+})
+
+test('document analysis uses Workers AI with the existing parser output', async () => {
+  const calls = []
+  const result = await analyzeRelevantChunk({
+    AI: {
+      run: async (model, input) => {
+        calls.push({ model, input })
+        return {
+          choices: [{ message: { content: JSON.stringify({
+            overview: 'Verified overview',
+            contractStructure: [],
+            performance: [],
+            responseRequirements: [{ text: 'Submit support details.', location: 'paragraph 1' }],
+            evaluation: [],
+            scopeAndDeliverables: [],
+            staffingAndSecurity: [],
+            packageIssues: [],
+            criticalSubmission: [],
+          }) } }],
+        }
+      },
+    },
+    GROQ_API_KEY: 'unused-fallback-key',
+  }, {
+    source: '[paragraph 1]\nThe contractor shall provide support services.',
+    locations: ['paragraph 1'],
+  }, 'solicitation.docx', {})
+
+  assert.equal(result.status, 'ready')
+  assert.equal(result.provider, 'workers_ai')
+  assert.equal(result.overview, 'Verified overview')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].model, '@cf/openai/gpt-oss-20b')
+  assert.equal(calls[0].input.response_format.type, 'json_schema')
+  assert.equal(calls[0].input.response_format.json_schema.strict, true)
+  assert.match(calls[0].input.messages[1].content, /paragraph 1/)
+})
+
+test('document analysis rejects citations the parser did not provide', () => {
+  assert.throws(() => validateDocumentAnalysisResponse({
+    overview: 'Overview',
+    contractStructure: [],
+    performance: [],
+    responseRequirements: [{ text: 'Invented instruction', location: 'page 99' }],
+    evaluation: [],
+    scopeAndDeliverables: [],
+    staffingAndSecurity: [],
+    packageIssues: [],
+    criticalSubmission: [],
+  }, { locations: ['page 1'] }, {}), /unsupported citation/)
 })
 
 test('available file analysis remains visible when another document fails', () => {
