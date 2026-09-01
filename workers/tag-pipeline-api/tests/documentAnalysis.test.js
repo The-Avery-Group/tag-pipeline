@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { analyzeRelevantChunk, consolidateReadyDocumentRows, criticalAnalysisStatus, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { analyzeRelevantChunk, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -43,7 +43,8 @@ test('relevant analysis chunks cover late document evidence without truncating i
   assert.match(combined, /alpha reporting/)
   assert.match(combined, /beta reporting/)
   assert.match(combined, /final reporting/)
-  assert.match(combined, /page 160/)
+  assert.equal(Object.values(chunks.at(-1).references).includes('page 160'), true)
+  assert.match(combined, /\[S\d{4}\]/)
 })
 
 test('Groq pacing honors reset headers without dropping below one minute', () => {
@@ -60,14 +61,8 @@ test('document analysis uses Workers AI with the existing parser output', async 
         calls.push({ model, input })
         return {
           choices: [{ message: { content: JSON.stringify({
-            overview: 'Verified overview',
-            contractStructure: [],
-            performance: [],
-            responseRequirements: [{ text: 'Submit support details.', location: 'paragraph 1' }],
-            evaluation: [],
-            scopeAndDeliverables: [],
-            staffingAndSecurity: [],
-            packageIssues: [],
+            summary: 'Verified overview',
+            findings: [{ category: 'response_requirements', text: 'Submit support details.', sectionId: 'S0001' }],
             criticalSubmission: [],
           }) } }],
         }
@@ -75,7 +70,8 @@ test('document analysis uses Workers AI with the existing parser output', async 
     },
     GROQ_API_KEY: 'unused-fallback-key',
   }, {
-    source: '[paragraph 1]\nThe contractor shall provide support services.',
+    source: '[S0001]\nThe contractor shall provide support services.',
+    references: { S0001: 'paragraph 1' },
     locations: ['paragraph 1'],
   }, 'solicitation.docx', {})
 
@@ -88,7 +84,7 @@ test('document analysis uses Workers AI with the existing parser output', async 
   assert.equal(calls[0].input.max_completion_tokens, undefined)
   assert.equal(calls[0].input.response_format.type, 'json_schema')
   assert.equal(calls[0].input.response_format.json_schema.type, 'object')
-  assert.match(calls[0].input.messages[1].content, /paragraph 1/)
+  assert.match(calls[0].input.messages[1].content, /S0001/)
 })
 
 test('Groq fallback uses strict structured output when Workers AI cannot complete a chunk', async () => {
@@ -103,14 +99,8 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
       json: async () => ({
         model: 'openai/gpt-oss-20b',
         choices: [{ message: { content: JSON.stringify({
-          overview: 'Fallback overview',
-          contractStructure: [],
-          performance: [],
-          responseRequirements: [],
-          evaluation: [],
-          scopeAndDeliverables: [],
-          staffingAndSecurity: [],
-          packageIssues: [],
+          summary: 'Fallback overview',
+          findings: [],
           criticalSubmission: [],
         }) } }],
       }),
@@ -121,7 +111,8 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
       AI: { run: async () => { throw new Error('Workers AI output was truncated') } },
       GROQ_API_KEY: 'test-key',
     }, {
-      source: '[paragraph 1]\nThe contractor shall provide support services.',
+      source: '[S0001]\nThe contractor shall provide support services.',
+      references: { S0001: 'paragraph 1' },
       locations: ['paragraph 1'],
     }, 'solicitation.docx', {})
 
@@ -136,10 +127,10 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
   }
 })
 
-test('legacy unreadable chunks are resumed without discarding completed chunks', () => {
-  const prior = { status: 'ready', chunks: [
-    { index: 0, status: 'error', error: 'Groq returned analysis that could not be read', source: 'failed' },
-    { index: 1, status: 'ready', result: { overview: 'Preserved' }, source: 'complete' },
+test('current unreadable chunks are resumed without discarding completed chunks', () => {
+  const prior = { version: DOCUMENT_ANALYSIS_VERSION, status: 'ready', chunks: [
+    { index: 0, status: 'error', error: 'Groq returned analysis that could not be read', source: 'failed', references: {}, fingerprint: 'failed' },
+    { index: 1, status: 'ready', result: { overview: 'Preserved' }, source: 'complete', references: {}, fingerprint: 'complete' },
   ] }
   assert.equal(hasResumableAnalysisChunks(prior), true)
   const chunks = resumableAnalysisChunks(prior, [], {})
@@ -154,21 +145,36 @@ test('legacy unreadable chunks are resumed without discarding completed chunks',
   }), true)
 })
 
+test('unchanged sections reuse their completed AI result after a document refresh', () => {
+  const sections = [
+    { location: 'paragraph 12', text: 'The contractor shall submit a monthly status report.' },
+  ]
+  const [fresh] = relevantAnalysisChunks(sections, {}, 1_200)
+  const cachedResult = {
+    overview: 'Monthly reporting is required.',
+    responseRequirements: [{ text: 'Submit a monthly status report.', location: 'paragraph 12' }],
+  }
+  const chunks = resumableAnalysisChunks({
+    version: DOCUMENT_ANALYSIS_VERSION,
+    status: 'ready',
+    chunkCache: [{ fingerprint: fresh.fingerprint, result: cachedResult }],
+  }, sections, {})
+
+  assert.equal(chunks.length, 1)
+  assert.equal(chunks[0].status, 'ready')
+  assert.equal(chunks[0].reused, true)
+  assert.deepEqual(chunks[0].result, cachedResult)
+})
+
 test('document analysis discards unsupported citations without losing the valid chunk', () => {
   const result = validateDocumentAnalysisResponse({
-    overview: 'Overview',
-    contractStructure: [],
-    performance: [],
-    responseRequirements: [
-      { text: 'Supported instruction', location: 'page 1' },
-      { text: 'Invented instruction', location: 'page 99' },
+    summary: 'Overview',
+    findings: [
+      { category: 'response_requirements', text: 'Supported instruction', sectionId: 'S0001' },
+      { category: 'response_requirements', text: 'Invented instruction', sectionId: 'S9999' },
     ],
-    evaluation: [],
-    scopeAndDeliverables: [],
-    staffingAndSecurity: [],
-    packageIssues: [],
     criticalSubmission: [],
-  }, { locations: ['page 1'] }, {})
+  }, { references: { S0001: 'page 1' }, locations: ['page 1'] }, {})
   assert.deepEqual(result.responseRequirements, [{ text: 'Supported instruction', location: 'page 1' }])
 })
 
