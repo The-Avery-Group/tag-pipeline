@@ -4,6 +4,7 @@
  */
 
 import { WORKER_URL, workerFetch } from '@/services/workerClient'
+import { createCrmRelationshipQuery, queryCrmRelationships } from '@/services/crmRelationshipQuery'
 
 export const AI_MODELS = [
   { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', description: 'Best strategy and reasoning' },
@@ -153,14 +154,18 @@ function isOverdueTask(t) {
  */
 export function executeClientTool(name, args = {}, data = {}) {
   const { pipeline = [], tasks = [], contacts = [], notes = [] } = data
+  const relationshipQuery = createCrmRelationshipQuery(data)
 
   switch (name) {
     case 'search_pipeline': {
+      if (data.readiness?.pipeline === false) {
+        return { status: 'data_unavailable', dataReady: false, unavailableTables: ['pipeline'], message: 'Pipeline data is still loading or unavailable.' }
+      }
       let rows = pipeline
       if (args.query) {
         const q = args.query.toLowerCase()
         rows = rows.filter((o) =>
-          [o[C_TITLE], o[C_CN], o[C_AGENCY]].some((v) => v && String(v).toLowerCase().includes(q))
+          [o[C_TITLE], o[C_CN], o[C_AGENCY], o[C_POC], o[C_DEPARTMENT], o[C_OFFICE]].some((v) => v && String(v).toLowerCase().includes(q))
         )
       }
       if (args.phase)   rows = rows.filter((o) => o[C_PHASE] === args.phase)
@@ -258,19 +263,14 @@ export function executeClientTool(name, args = {}, data = {}) {
     }
 
     case 'search_contacts': {
-      let rows = contacts
-      if (args.query) {
-        const q = args.query.toLowerCase()
-        rows = rows.filter((c) =>
-          [c.Name, c.Agency, c.Organization].some((v) => v && String(v).toLowerCase().includes(q))
-        )
-      }
-      const limit = Math.min(args.limit || 5, 8)
-      return {
-        count: rows.length,
-        contacts: rows.slice(0, limit).map((c) => ({ name: c.Name, title: c.Title, agency: c.Agency, organization: c.Organization, email: c.Email })),
-      }
+      return relationshipQuery.searchContacts(args.query, args.limit)
     }
+
+    case 'get_contact_contracts':
+      return relationshipQuery.getContactContracts(args)
+
+    case 'query_crm_relationships':
+      return queryCrmRelationships(data, args)
 
     case 'get_expiring_contracts': {
       const withinDays = args.withinDays || 180
