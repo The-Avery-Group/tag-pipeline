@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { analyzeRelevantChunk, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { analyzeRelevantChunk, classifyAnalysisSection, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -43,7 +43,7 @@ test('relevant analysis chunks cover late document evidence without truncating i
   assert.match(combined, /alpha reporting/)
   assert.match(combined, /beta reporting/)
   assert.match(combined, /final reporting/)
-  assert.equal(Object.values(chunks.at(-1).references).includes('page 160'), true)
+  assert.equal(chunks.some((chunk) => Object.values(chunk.referenceLocations || {}).flat().includes('page 160')), true)
   assert.match(combined, /\[S\d{4}\]/)
 })
 
@@ -61,8 +61,10 @@ test('document analysis uses Workers AI with the existing parser output', async 
         calls.push({ model, input })
         return {
           choices: [{ message: { content: JSON.stringify({
+            documentType: 'instructions',
             summary: 'Verified overview',
-            findings: [{ category: 'response_requirements', text: 'Submit support details.', sectionId: 'S0001' }],
+            keyPoints: ['The response requires support details.'],
+            documentMap: [{ topic: 'submission', description: 'Response instructions and required support details.', sectionIds: ['S0001'] }],
             criticalSubmission: [],
           }) } }],
         }
@@ -80,7 +82,7 @@ test('document analysis uses Workers AI with the existing parser output', async 
   assert.equal(result.overview, 'Verified overview')
   assert.equal(calls.length, 1)
   assert.equal(calls[0].model, '@cf/openai/gpt-oss-20b')
-  assert.equal(calls[0].input.max_tokens, 2_400)
+  assert.equal(calls[0].input.max_tokens, 2_000)
   assert.equal(calls[0].input.max_completion_tokens, undefined)
   assert.equal(calls[0].input.response_format.type, 'json_schema')
   assert.equal(calls[0].input.response_format.json_schema.type, 'object')
@@ -99,8 +101,10 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
       json: async () => ({
         model: 'openai/gpt-oss-20b',
         choices: [{ message: { content: JSON.stringify({
+          documentType: 'supporting',
           summary: 'Fallback overview',
-          findings: [],
+          keyPoints: [],
+          documentMap: [],
           criticalSubmission: [],
         }) } }],
       }),
@@ -118,7 +122,7 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
 
     assert.equal(result.status, 'ready')
     assert.equal(result.provider, 'groq')
-    assert.equal(requestBody.max_completion_tokens, 2_400)
+    assert.equal(requestBody.max_completion_tokens, 2_000)
     assert.equal(requestBody.response_format.type, 'json_schema')
     assert.equal(requestBody.response_format.json_schema.strict, true)
     assert.equal(requestBody.response_format.json_schema.schema.type, 'object')
@@ -168,21 +172,28 @@ test('unchanged sections reuse their completed AI result after a document refres
 
 test('document analysis discards unsupported citations without losing the valid chunk', () => {
   const result = validateDocumentAnalysisResponse({
+    documentType: 'instructions',
     summary: 'Overview',
-    findings: [
-      { category: 'response_requirements', text: 'Supported instruction', sectionId: 'S0001' },
-      { category: 'response_requirements', text: 'Invented instruction', sectionId: 'S9999' },
+    keyPoints: ['Use the documented submission process.'],
+    documentMap: [
+      { topic: 'submission', description: 'Supported instruction', sectionIds: ['S0001'] },
+      { topic: 'submission', description: 'Invented instruction', sectionIds: ['S9999'] },
     ],
     criticalSubmission: [],
   }, { references: { S0001: 'page 1' }, locations: ['page 1'] }, {})
   assert.deepEqual(result.responseRequirements, [{ text: 'Supported instruction', location: 'page 1' }])
+  assert.deepEqual(result.documentMap, [{ topic: 'submission', description: 'Supported instruction', locations: ['page 1'] }])
 })
 
 test('available file analysis remains visible when another document fails', () => {
   const result = consolidateReadyDocumentRows([
     {
-      file_name: 'instructions.pdf', status: 'ready', summary: 'Fallback summary',
-      analysis_json: JSON.stringify({ overview: 'The agency needs support services.', evaluation: [{ text: 'Technical approach is evaluated.', location: 'page 12' }] }),
+      file_name: 'instructions.pdf', file_path: 'RFP/instructions.pdf', status: 'ready', summary: 'Fallback summary',
+      analysis_json: JSON.stringify({
+        documentType: 'instructions', overview: 'The agency needs support services.', keyPoints: ['Offerors must explain their technical approach.'],
+        documentMap: [{ topic: 'evaluation', description: 'Technical evaluation criteria.', locations: ['page 12'] }],
+        evaluation: [{ text: 'Technical approach is evaluated.', location: 'page 12' }],
+      }),
     },
     { file_name: 'corrupt.pdf', status: 'error', summary: '', analysis_json: '{}' },
   ])
@@ -190,6 +201,8 @@ test('available file analysis remains visible when another document fails', () =
   assert.equal(result.coverage.documentCount, 1)
   assert.match(result.overview, /agency needs support services/i)
   assert.deepEqual(result.evaluation, [{ text: 'Technical approach is evaluated.', location: 'page 12', fileName: 'instructions.pdf' }])
+  assert.deepEqual(result.documentGuides[0].locations, [{ topic: 'evaluation', description: 'Technical evaluation criteria.', locations: ['page 12'] }])
+  assert.deepEqual(result.overviewPoints, ['Offerors must explain their technical approach.'])
 })
 
 test('submission templates are excluded by the attachment itself, not its SharePoint parent folder', () => {
@@ -206,9 +219,32 @@ test('plain-text documents retain section citations for extracted requirements',
   const bytes = new TextEncoder().encode('Background information.\n\nThe contractor shall provide weekly status reports. The response must include a staffing plan.')
   const sections = await extractDocumentSections(bytes, 'requirements.txt', 'text/plain')
   const requirements = extractCitedRequirements(sections, 'requirements.txt')
-  assert.equal(requirements.length, 2)
+  assert.equal(requirements.length, 1)
   assert.deepEqual(requirements[0].citation, { fileName: 'requirements.txt', location: 'section 2' })
   assert.match(requirements[0].text, /shall provide weekly status reports/i)
+  assert.match(requirements[0].text, /staffing plan/i)
+})
+
+test('standard clauses are skipped while solicitation-specific deviations remain in context', () => {
+  assert.deepEqual(classifyAnalysisSection({ text: 'FAR 52.212-4 Contract Terms and Conditions—Commercial Products and Commercial Services.' }), {
+    disposition: 'boilerplate', reason: 'recognized_standard_clause',
+  })
+  assert.equal(classifyAnalysisSection({ text: 'FAR 52.212-4 is tailored by this addendum to require monthly security reporting.' }).disposition, 'analyze')
+  const coverage = documentAnalysisCoverage([
+    { text: 'FAR 52.212-4 Contract Terms and Conditions—Commercial Products and Commercial Services.', location: 'page 1' },
+    { text: 'The offeror shall submit its technical response by email on September 8, 2026.', location: 'page 2' },
+    { text: 'Program background and acquisition history.', location: 'page 3' },
+  ])
+  assert.equal(coverage.boilerplateSections, 1)
+  assert.equal(coverage.analyzedSections, 1)
+  assert.equal(coverage.referenceSections, 1)
+  const chunks = relevantAnalysisChunks([
+    { text: 'FAR 52.212-4 Contract Terms and Conditions—Commercial Products and Commercial Services.', location: 'page 1', kind: 'page' },
+    { text: 'The offeror shall submit its technical response by email on September 8, 2026.', location: 'page 2', kind: 'page' },
+    { text: 'The next page identifies the required technical volumes and attachments.', location: 'page 3', kind: 'page' },
+  ])
+  assert.doesNotMatch(chunks.map((chunk) => chunk.source).join('\n'), /52\.212-4/)
+  assert.match(chunks.map((chunk) => chunk.source).join('\n'), /required technical volumes/i)
 })
 
 test('ordinary narrative is not presented as a solicitation requirement', () => {
