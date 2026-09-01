@@ -35,6 +35,8 @@ const TOOL_ACTIVITY_LABELS = {
   search_notes:           'Searching CRM notes…',
   search_tasks:           'Checking tasks…',
   search_contacts:        'Searching contacts…',
+  get_contact_contracts:  'Finding contracts linked to that contact…',
+  query_crm_relationships: 'Following CRM relationships…',
   get_expiring_contracts: 'Checking expiring contracts…',
   get_pipeline_metrics:   'Pulling pipeline metrics…',
 }
@@ -52,7 +54,7 @@ const TOOL_ACTIVITY_LABELS = {
  * @param {object} initialContext — context to seed the conversation (opportunity data etc)
  * @param {object} data           — { pipeline, tasks, contacts } for tool execution
  */
-export function useAIChat({ conversationId, promptType = 'general', initialContext = {}, data = {}, preferredModel = null }) {
+export function useAIChat({ conversationId, promptType = 'general', initialContext = {}, data = {}, dataReady = true, preferredModel = null }) {
   const [messages,  setMessages]  = useState([])   // { role, content }[]
   const [loading,   setLoading]   = useState(false)
   const [error,     setError]     = useState(null)
@@ -130,7 +132,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
   }, [promptType, initialContext, sendWithRateLimitRetry])
 
   const send = useCallback(async (userMessage) => {
-    if (!userMessage.trim() || loading) return
+    if (!userMessage.trim() || loading || !dataReady) return
 
     const newUserMsg = { role: 'user', content: userMessage }
     setMessages((prev) => [...prev, newUserMsg])
@@ -163,7 +165,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
       setLoading(false)
       setToolActivity(null)
     }
-  }, [loading, promptType, initialContext, conversationId, runToolLoop, sendWithRateLimitRetry])
+  }, [loading, dataReady, promptType, initialContext, conversationId, runToolLoop, sendWithRateLimitRetry])
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
