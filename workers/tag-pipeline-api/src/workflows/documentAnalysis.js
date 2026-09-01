@@ -30,8 +30,10 @@ export async function runDocumentAnalysisWorkflow(env, event, step) {
 
       // Never expose provider capacity timing to users. The Workflow sleeps
       // durably and the page continues to show a single Processing state.
-      const delay = Math.max(1, Number(result.nextDelaySeconds || 0))
-      await step.sleep(`Pace document analysis checkpoint ${checkpoint + 1}`, `${Math.ceil(delay)} seconds`)
+      const delay = Math.max(0, Number(result.nextDelaySeconds || 0))
+      if (delay > 0) {
+        await step.sleep(`Pace document analysis checkpoint ${checkpoint + 1}`, `${Math.ceil(delay)} seconds`)
+      }
     }
     throw new Error('Document analysis exceeded its safe checkpoint limit')
   } catch (error) {
