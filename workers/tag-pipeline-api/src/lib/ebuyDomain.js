@@ -96,7 +96,7 @@ export function changedEbuyFields(previous, next) {
 
 export function retentionDeadline(state, lifecycle, now = new Date(), settings = {}) {
   const days = state === 'dismissed'
-    ? Number(settings.dismissedRetentionDays || 30)
+    ? 30
     : lifecycle === 'expired'
       ? Number(settings.expiredRetentionDays || 90)
       : lifecycle === 'unavailable'
