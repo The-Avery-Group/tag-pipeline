@@ -25,7 +25,7 @@ import { handleRFIFollowUpMonitor, runRFIFollowUpMonitor } from './handlers/rfiF
 import { getNotificationMonitorStatus, runScheduledNotifications } from './handlers/notificationMonitor.js'
 import { getEbuyStatus, handleEbuy, startScheduledEbuySync } from './handlers/ebuy.js'
 import { purgeExpiredEbuyRecords } from './lib/ebuyRepository.js'
-import { deleteArchivedEbuyFile, deleteEmptySAMArchiveFolder } from './lib/sharepointArchive.js'
+import { deleteArchivedEbuyFile, deleteEmptyEbuyArchiveFolder, deleteEmptySAMArchiveFolder } from './lib/sharepointArchive.js'
 import { AuthError, verifyEntraRequest } from './lib/auth.js'
 import { getAutomationHealth } from './lib/automationHealth.js'
 import { handleOpportunityWorkspaces } from './handlers/opportunityWorkspaces.js'
@@ -257,6 +257,7 @@ export default {
       if (new Date(controller.scheduledTime).getUTCDay() === 1 && env.EBUY_DB) {
         ctx.waitUntil(purgeExpiredEbuyRecords(env.EBUY_DB, {
           deleteFile: (driveId, itemId) => deleteArchivedEbuyFile(env, driveId, itemId),
+          deleteFolder: (driveId, requestId) => deleteEmptyEbuyArchiveFolder(env, driveId, requestId),
         }).catch((error) => {
           console.error(JSON.stringify({ event: 'ebuy_retention_failed', message: error.message }))
         }))
