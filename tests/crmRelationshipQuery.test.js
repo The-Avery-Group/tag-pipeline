@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { answerDeterministicCrmQuery, createCrmRelationshipQuery, queryCrmRelationships } from '../src/services/crmRelationshipQuery.js'
+import { createCrmRelationshipQuery, queryCrmRelationships } from '../src/services/crmRelationshipQuery.js'
 
 const data = {
   readiness: { pipeline: true, contacts: true, tasks: true, notes: true },
@@ -41,25 +41,23 @@ test('legacy contact search results include reverse-linked contracts', () => {
   assert.deepEqual(result.contacts[0].linkedOpportunities.map((opportunity) => opportunity.contractNumber), ['VA-001', 'VA-002'])
 })
 
-test('contact contract table requests are answered deterministically without an AI tool decision', () => {
-  const answer = answerDeterministicCrmQuery(
-    'I need a table of all the contracts that currently have Amanda Haynes as their contact. title, contract number, expiry date, value',
-    data
-  )
-  assert.match(answer, /\| Title \| Contract number \| Expiry date \| Value \|/)
-  assert.match(answer, /\| Insurance Support \| VA-001 \| 2027-09-30 \| \$2,000,000 \|/)
-  assert.match(answer, /\| Claims Processing \| VA-002 \| 2028-03-31 \| 750000 \|/)
-  assert.doesNotMatch(answer, /VA-003/)
+test('a name without the stored middle initial resolves the exact CRM contact relationship', () => {
+  const result = createCrmRelationshipQuery({
+    ...data,
+    contacts: [{ ContactID: 'C-9', Name: 'Amanda E. Haynes', Agency: 'VA' }],
+    pipeline: [{
+      'Opportunity ID': 'O-9',
+      'Project Title / Description*': 'Exact stored-name contract',
+      'Contract Number / Notice ID': 'VA-009',
+      'Contracting Officer / Specialist (POC)*': 'Amanda E. Haynes',
+    }],
+  }).getContactContracts({ query: 'Amanda Haynes' })
+
+  assert.equal(result.contactFound, true)
+  assert.equal(result.contacts[0].name, 'Amanda E. Haynes')
+  assert.equal(result.opportunities[0].contractNumber, 'VA-009')
 })
 
-test('POC evidence can answer even when the separate contact row is missing', () => {
-  const answer = answerDeterministicCrmQuery(
-    'Show contracts associated with Amanda Haynes as contact',
-    { ...data, contacts: [] }
-  )
-  assert.match(answer, /Insurance Support/)
-  assert.match(answer, /Claims Processing/)
-})
 
 test('unavailable tables are never reported as zero results', () => {
   const result = queryCrmRelationships({ ...data, readiness: { contacts: true, pipeline: false } }, {
