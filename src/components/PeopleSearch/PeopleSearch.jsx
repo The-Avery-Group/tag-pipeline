@@ -71,6 +71,11 @@ function isPublicLinkedInProfile(result) {
   return Boolean(result.url)
 }
 
+function openProfileInNewTab(url) {
+  const opened = window.open(url, '_blank', 'noopener,noreferrer')
+  if (opened) opened.opener = null
+}
+
 function embeddedGoogleQuery(query) {
   const withoutSiteFilter = String(query || '')
     .replace(/site:\s*(?:www\.)?linkedin\.com\/in\/?/i, '')
@@ -813,7 +818,7 @@ export default function PeopleSearch({
                       )}
                     </dl>
                     <div className={styles.detailActions}>
-                      <a className="btn" href={selected.url} target="_blank" rel="noreferrer">Open profile</a>
+                      <button type="button" className="btn" onClick={() => openProfileInNewTab(selected.url)}>Open profile</button>
                       {decisions[selected.url] === 'irrelevant'
                         ? <button type="button" className="btn" onClick={() => restoreResult(selected)}>Restore</button>
                         : <>
