@@ -26,6 +26,7 @@ export const GROQ_PACING_SECONDS = 60
 const GROQ_BASE = 'https://api.groq.com/openai/v1'
 const GROQ_EXTRACTION_MODEL = 'openai/gpt-oss-20b'
 const WORKERS_AI_EXTRACTION_MODEL = '@cf/openai/gpt-oss-20b'
+const WORKERS_AI_FALLBACK_MODEL = '@cf/openai/gpt-oss-120b'
 export const DOCUMENT_ANALYSIS_VERSION = 'opportunity-brief-v1'
 export const OPPORTUNITY_BRIEF_CATEGORIES = [
   'purpose_overview',
@@ -749,31 +750,34 @@ Return only JSON with documentType and sections.
     { role: 'user', content: `Source file: ${fileName}\nDocument excerpts:\n${chunk.source}` },
   ]
 
-  let workersAiError = ''
+  const workersAiErrors = []
   if (env.AI?.run) {
-    try {
-      const body = await env.AI.run(WORKERS_AI_EXTRACTION_MODEL, {
-        messages,
-        temperature: 0,
-        max_tokens: AI_MAX_OUTPUT_TOKENS,
-        response_format: {
-          type: 'json_schema',
-          json_schema: ANALYSIS_RESPONSE_SCHEMA,
-        },
-      })
-      const analysis = validateDocumentAnalysisResponse(modelResponseContent(body), chunk, critical)
-      return {
-        status: 'ready',
-        model: WORKERS_AI_EXTRACTION_MODEL,
-        provider: 'workers_ai',
-        pacingSeconds: 0,
-        ...analysis,
+    for (const model of [WORKERS_AI_EXTRACTION_MODEL, WORKERS_AI_FALLBACK_MODEL]) {
+      try {
+        const body = await env.AI.run(model, {
+          messages,
+          temperature: 0,
+          max_tokens: AI_MAX_OUTPUT_TOKENS,
+          response_format: {
+            type: 'json_schema',
+            json_schema: ANALYSIS_RESPONSE_SCHEMA,
+          },
+        })
+        const analysis = validateDocumentAnalysisResponse(modelResponseContent(body), chunk, critical)
+        return {
+          status: 'ready',
+          model,
+          provider: 'workers_ai',
+          pacingSeconds: 0,
+          ...analysis,
+        }
+      } catch (error) {
+        workersAiErrors.push(`${model}: ${clean(error?.message || 'returned an unreadable response')}`)
+        console.warn(JSON.stringify({ event: 'workers_ai_document_analysis_fallback', fileName, model, message: error.message }))
       }
-    } catch (error) {
-      workersAiError = clean(error?.message || 'Workers AI returned an unreadable response')
-      console.warn(JSON.stringify({ event: 'workers_ai_document_analysis_fallback', fileName, message: error.message }))
     }
   }
+  const workersAiError = workersAiErrors.join('; ')
 
   if (!allowGroq) return {
     status: 'deferred',
