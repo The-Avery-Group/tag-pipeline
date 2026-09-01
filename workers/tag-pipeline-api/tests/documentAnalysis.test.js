@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { analyzeRelevantChunk, classifyAnalysisSection, consolidateDocumentMap, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { addStructuredBriefEvidence, analyzeRelevantChunk, classifyAnalysisSection, consolidateBriefItems, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, OPPORTUNITY_BRIEF_CATEGORIES, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -62,10 +62,7 @@ test('document analysis uses Workers AI with the existing parser output', async 
         return {
           choices: [{ message: { content: JSON.stringify({
             documentType: 'instructions',
-            summary: 'Verified overview',
-            keyPoints: ['The response requires support details.'],
-            documentMap: [{ topic: 'submission', description: 'Response instructions and required support details.', sectionIds: ['S0001'] }],
-            criticalSubmission: [],
+            sections: [{ category: 'scope', text: 'The contractor will provide support services.', assessment: 'found', sectionIds: ['S0001'] }],
           }) } }],
         }
       },
@@ -79,7 +76,9 @@ test('document analysis uses Workers AI with the existing parser output', async 
 
   assert.equal(result.status, 'ready')
   assert.equal(result.provider, 'workers_ai')
-  assert.equal(result.overview, 'Verified overview')
+  assert.deepEqual(result.briefSections, [{
+    category: 'scope', text: 'The contractor will provide support services.', assessment: 'found', locations: ['paragraph 1'], citations: undefined,
+  }])
   assert.equal(calls.length, 1)
   assert.equal(calls[0].model, '@cf/openai/gpt-oss-20b')
   assert.equal(calls[0].input.max_tokens, 2_000)
@@ -102,10 +101,7 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
         model: 'openai/gpt-oss-20b',
         choices: [{ message: { content: JSON.stringify({
           documentType: 'supporting',
-          summary: 'Fallback overview',
-          keyPoints: [],
-          documentMap: [],
-          criticalSubmission: [],
+          sections: [],
         }) } }],
       }),
     }
@@ -173,45 +169,40 @@ test('unchanged sections reuse their completed AI result after a document refres
 test('document analysis discards unsupported citations without losing the valid chunk', () => {
   const result = validateDocumentAnalysisResponse({
     documentType: 'instructions',
-    summary: 'Overview',
-    keyPoints: ['Use the documented submission process.'],
-    documentMap: [
-      { topic: 'submission', description: 'Supported instruction', sectionIds: ['S0001'] },
-      { topic: 'submission', description: 'Invented instruction', sectionIds: ['S9999'] },
+    sections: [
+      { category: 'proposal_submission_poc', text: 'Supported instruction', assessment: 'found', sectionIds: ['S0001'] },
+      { category: 'proposal_submission_poc', text: 'Invented instruction', assessment: 'found', sectionIds: ['S9999'] },
     ],
-    criticalSubmission: [],
   }, { references: { S0001: 'page 1' }, locations: ['page 1'] }, {})
-  assert.deepEqual(result.responseRequirements, [{ text: 'Supported instruction', location: 'page 1' }])
-  assert.deepEqual(result.documentMap, [{ topic: 'submission', description: 'Supported instruction', locations: ['page 1'] }])
+  assert.deepEqual(result.briefSections, [{
+    category: 'proposal_submission_poc', text: 'Supported instruction', assessment: 'found', locations: ['page 1'], citations: undefined,
+  }])
 })
 
 test('AI vocabulary differences are normalized instead of failing the document review', () => {
   const result = validateDocumentAnalysisResponse({
     documentType: 'RFQ',
-    summary: 'Overview',
-    keyPoints: Array.from({ length: 7 }, (_, index) => `Point ${index + 1}`),
-    documentMap: [
-      { topic: 'proposal_submission', description: 'Complete submission instructions.', sectionIds: ['S0001'] },
-      { topic: 'miscellaneous', description: 'No supported citation.', sectionIds: [] },
+    sections: [
+      { category: 'proposal_submission', text: 'Complete submission instructions.', assessment: 'found', sectionIds: ['S0001'] },
+      { category: 'miscellaneous', text: 'No supported citation.', assessment: 'found', sectionIds: [] },
     ],
-    criticalSubmission: [],
   }, { references: { S0001: 'page 4 · section “L” · paragraph 80' } }, {})
   assert.equal(result.documentType, 'solicitation')
-  assert.equal(result.keyPoints.length, 6)
-  assert.deepEqual(result.documentMap, [{
-    topic: 'submission', description: 'Complete submission instructions.',
+  assert.deepEqual(result.briefSections, [{
+    category: 'proposal_submission_poc', text: 'Complete submission instructions.', assessment: 'found',
     locations: ['page 4 · section “L” · paragraph 80'],
+    citations: undefined,
   }])
 })
 
-test('document map exposes one concise entry per topic with all useful locations', () => {
-  assert.deepEqual(consolidateDocumentMap([
-    { topic: 'submission', description: 'Submission details.', locations: ['paragraph 10'] },
-    { topic: 'submission', description: 'Complete quotation submission details and recipient.', locations: ['paragraph 12'] },
-    { topic: 'questions', description: 'Question deadline and recipient.', locations: ['paragraph 8'] },
+test('opportunity brief consolidates duplicate findings and retains useful citations', () => {
+  assert.deepEqual(consolidateBriefItems([
+    { category: 'proposal_submission_poc', text: 'Submit the quotation by email.', citations: [{ fileName: 'a.docx', location: 'paragraph 10' }] },
+    { category: 'proposal_submission_poc', text: 'Submit the complete quotation by email to bids@example.gov.', citations: [{ fileName: 'a.docx', location: 'paragraph 12' }] },
+    { category: 'scope', text: 'Provide help desk support.', citations: [{ fileName: 'a.docx', location: 'paragraph 8' }] },
   ]), [
-    { topic: 'submission', description: 'Complete quotation submission details and recipient.', locations: ['paragraph 10', 'paragraph 12'] },
-    { topic: 'questions', description: 'Question deadline and recipient.', locations: ['paragraph 8'] },
+    { category: 'proposal_submission_poc', text: 'Submit the complete quotation by email to bids@example.gov.', assessment: 'found', citations: [{ fileName: 'a.docx', location: 'paragraph 10' }, { fileName: 'a.docx', location: 'paragraph 12' }] },
+    { category: 'scope', text: 'Provide help desk support.', assessment: 'found', citations: [{ fileName: 'a.docx', location: 'paragraph 8' }] },
   ])
 })
 
@@ -232,22 +223,37 @@ test('available file analysis remains visible when another document fails', () =
     {
       file_name: 'instructions.pdf', file_path: 'RFP/instructions.pdf', status: 'ready', summary: 'Fallback summary',
       analysis_json: JSON.stringify({
-        documentType: 'instructions', overview: 'The agency needs support services.', keyPoints: ['Offerors must explain their technical approach.'],
-        documentMap: [{ topic: 'evaluation', description: 'Technical evaluation criteria.', locations: ['page 12'] }],
-        evaluation: [{ text: 'Technical approach is evaluated.', location: 'page 12' }],
+        documentType: 'instructions', briefSections: [
+          { category: 'purpose_overview', text: 'The agency needs support services.', assessment: 'found', locations: ['page 2'] },
+          { category: 'evaluation_criteria', text: 'Technical approach is evaluated.', assessment: 'found', locations: ['page 12'] },
+        ],
       }),
     },
     { file_name: 'corrupt.pdf', status: 'error', summary: '', analysis_json: '{}' },
   ])
   assert.equal(result.status, 'ready')
   assert.equal(result.coverage.documentCount, 1)
-  assert.match(result.overview, /agency needs support services/i)
-  assert.deepEqual(result.evaluation, [{ text: 'Technical approach is evaluated.', location: 'page 12', fileName: 'instructions.pdf' }])
-  assert.deepEqual(result.documentGuides[0].locations, [{ topic: 'evaluation', description: 'Technical evaluation criteria.', locations: ['page 12'] }])
-  assert.deepEqual(result.overviewPoints, ['Offerors must explain their technical approach.'])
+  assert.equal(result.sections.length, 8)
+  assert.deepEqual(result.sections.find((section) => section.category === 'purpose_overview').items, [{
+    category: 'purpose_overview', text: 'The agency needs support services.', assessment: 'found', citations: [{ fileName: 'instructions.pdf', location: 'page 2' }],
+  }])
+  assert.deepEqual(result.sections.find((section) => section.category === 'evaluation_criteria').items, [{
+    category: 'evaluation_criteria', text: 'Technical approach is evaluated.', assessment: 'found', citations: [{ fileName: 'instructions.pdf', location: 'page 12' }],
+  }])
+  assert.equal(result.sections.find((section) => section.category === 'scope').status, 'not_found')
 })
 
-test('submission templates are excluded by the attachment itself, not its SharePoint parent folder', () => {
+test('structured posting evidence is added to proposal submission without fabricating other sections', () => {
+  const result = addStructuredBriefEvidence(consolidateReadyDocumentRows([]), [{
+    text: 'Responses close September 8, 2026 at 1:00 PM ET.',
+    citation: { fileName: 'SAM.gov opportunity record', location: 'Response deadline' },
+  }])
+  assert.deepEqual(result.sections.map((section) => section.category), OPPORTUNITY_BRIEF_CATEGORIES)
+  assert.equal(result.sections.find((section) => section.category === 'proposal_submission_poc').status, 'found')
+  assert.equal(result.sections.find((section) => section.category === 'scope').status, 'not_found')
+})
+
+test('submission templates can be identified for later drafting without excluding their parent folder', () => {
   assert.equal(isSubmissionTemplateAttachment({ name: 'Technical_Response_Template.docx', path: '2. RFI Documents/Technical_Response_Template.docx' }), true)
   assert.equal(isSubmissionTemplateAttachment({ name: 'Pricing Schedule.xlsx' }), true)
   assert.equal(isSubmissionTemplateAttachment({ name: 'Solicitation.docx', path: 'Templates/Solicitation.docx' }, [{ text: 'The contractor shall provide support services.' }]), false)
