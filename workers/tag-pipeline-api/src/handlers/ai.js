@@ -318,6 +318,15 @@ const CLIENT_TOOLS = [
 // to them.
 const TOOL_CAPABLE_PROMPT_TYPES = ['general', 'opportunity_detail']
 
+export function requiredCrmToolForMessage(message) {
+  const value = String(message || '')
+  if (
+    /\b(?:contracts?|opportunit(?:y|ies))\b/i.test(value) &&
+    /\b(?:contact|poc|linked|associated)\b/i.test(value)
+  ) return 'get_contact_contracts'
+  return ''
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -1074,7 +1083,10 @@ async function callGroq(messages, apiKey, tools = null, preferredModel = null, o
         max_tokens: options.maxTokens || 1000,
         messages,
       }
-      if (tools) { body.tools = tools; body.tool_choice = 'auto' }
+      if (tools) {
+        body.tools = tools
+        body.tool_choice = options.toolChoice || 'auto'
+      }
       if (options.responseFormat) {
         body.response_format = typeof options.responseFormat === 'function'
           ? options.responseFormat(model)
@@ -1455,9 +1467,13 @@ export async function handleAIChat(req, env) {
   // another tool call, so a pathological loop can't run forever.
   const forceNoTools = toolCapable && toolRound >= MAX_TOOL_ROUNDS
   const toolsForThisCall = toolCapable && !forceNoTools ? CLIENT_TOOLS : null
+  const requiredTool = toolsForThisCall && !toolResults ? requiredCrmToolForMessage(userMessage) : ''
+  const toolChoice = requiredTool
+    ? { type: 'function', function: { name: requiredTool } }
+    : 'auto'
 
   try {
-    const result = await callGroq(messages, env.GROQ_API_KEY, toolsForThisCall, preferredModel)
+    const result = await callGroq(messages, env.GROQ_API_KEY, toolsForThisCall, preferredModel, { toolChoice })
     const historyBase = [...existingHistory, ...turnMessages]
 
     if (result.toolCalls?.length > 0) {
