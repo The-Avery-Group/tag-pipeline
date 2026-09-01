@@ -70,11 +70,6 @@ name = "opportunity-document-analysis"
 binding = "DOCUMENT_ANALYSIS_WORKFLOW"
 class_name = "DocumentAnalysisWorkflow"
 
-[[workflows]]
-name = "opportunity-parser-evaluation"
-binding = "PARSER_EVALUATION_WORKFLOW"
-class_name = "ParserEvaluationWorkflow"
-
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
