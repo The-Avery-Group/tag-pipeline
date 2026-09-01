@@ -8,6 +8,9 @@ import {
   queueTableMutation,
 } from '@/services/workbookMutations'
 import { deterministicDraftId } from '@/utils/followUpEmails'
+import { parsePOCNames } from '@/utils/contactOpportunityLinks'
+
+export { parsePOCNames } from '@/utils/contactOpportunityLinks'
 
 // VITE_ONEDRIVE_FILE_ID is the SharePoint drive item ID of the workbook,
 // e.g. 01FVYRIFDLMKLW3D4HKVE34O5ZGVXE4Y6H
@@ -1008,12 +1011,6 @@ export async function setNotifLog(key, dateStr) {
 const POC_COL = 'Contracting Officer / Specialist (POC)*'
 const POC_SEP = ', '
 const RELATED_OPPORTUNITY_PREFIX = '[TAG_RELATED_OPPORTUNITY]'
-
-/** Parse POC column into array of trimmed names */
-export function parsePOCNames(pocValue) {
-  if (!pocValue) return []
-  return String(pocValue).split(',').map((s) => s.trim()).filter(Boolean)
-}
 
 /** Add a contact name to an opportunity's POC column */
 export async function addContactToPOC(rowIndex, currentPOC, contactName) {
