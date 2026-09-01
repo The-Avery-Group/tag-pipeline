@@ -78,7 +78,7 @@ function cacheTablesForLocation(location) {
       : ['PipelineTable', 'DataValidationTable']
   }
   if (path === '/ai-chat') {
-    return ['PipelineTable', 'TasksTable', 'ContactsTable', 'NotesTable']
+    return ['PipelineTable', 'TasksTable', 'ContactsTable', 'NotesTable', 'PartnersTable', 'ContactInteractionsTable', 'OpportunityRelationshipsTable']
   }
   if (path === '/transaction-coding') return []
   return []
