@@ -37,6 +37,9 @@ binding = "EBUY_DB"
 database_name = "tag-pipeline-ebuy"
 migrations_dir = "migrations"
 
+[ai]
+binding = "AI"
+
 [[workflows]]
 name = "sam-opportunity-pull"
 binding = "SAM_PULL_WORKFLOW"
@@ -66,6 +69,11 @@ class_name = "SAMArchiveWorkflow"
 name = "opportunity-document-analysis"
 binding = "DOCUMENT_ANALYSIS_WORKFLOW"
 class_name = "DocumentAnalysisWorkflow"
+
+[[workflows]]
+name = "opportunity-parser-evaluation"
+binding = "PARSER_EVALUATION_WORKFLOW"
+class_name = "ParserEvaluationWorkflow"
 
 [vars]
 ENVIRONMENT = "production"
