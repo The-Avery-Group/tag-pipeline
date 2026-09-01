@@ -327,6 +327,34 @@ export function requiredCrmToolForMessage(message) {
   return ''
 }
 
+export function contactQueryFromMessage(message) {
+  const value = String(message || '').trim()
+  const patterns = [
+    /\b(?:contracts?|opportunit(?:y|ies))\b.*?\bhave\s+(.+?)\s+as\s+(?:their|the|a)\s+(?:contact|poc)\b/i,
+    /\b(?:contracts?|opportunit(?:y|ies))\b.*?\b(?:linked|associated)\s+(?:to|with)\s+(.+?)(?:[?.]|$)/i,
+  ]
+  for (const pattern of patterns) {
+    const match = value.match(pattern)
+    if (match?.[1]) return match[1].trim()
+  }
+  return ''
+}
+
+function safeToolArguments(toolCall, userMessage) {
+  let args = {}
+  try {
+    const parsed = JSON.parse(toolCall?.function?.arguments || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed
+  } catch {
+    args = {}
+  }
+  if (toolCall?.function?.name === 'get_contact_contracts' && !String(args.query || '').trim()) {
+    const query = contactQueryFromMessage(userMessage)
+    if (query) args.query = query
+  }
+  return args
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -1115,6 +1143,15 @@ async function callGroq(messages, apiKey, tools = null, preferredModel = null, o
         const errBody = await res.json().catch(() => ({}))
         const message = errBody?.error?.message || `Groq error: ${res.status}`
         const code = String(errBody?.error?.code || errBody?.errorCode || '').toLowerCase()
+        const toolCallFailure = Boolean(tools) && [400, 422].includes(res.status) && (
+          code.includes('failed_generation') ||
+          /tool.?call|function.?call|tool_choice|failed_generation|tool use/i.test(message)
+        )
+        if (toolCallFailure) {
+          lastError = new Error(message)
+          lastError.status = res.status
+          continue
+        }
         const structuredOutputFailure = options.retryInvalidOutput &&
           [400, 422, 500, 502].includes(res.status) &&
           (
@@ -1491,7 +1528,7 @@ export async function handleAIChat(req, env) {
         toolCalls: result.toolCalls.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments || '{}'),
+          arguments: safeToolArguments(tc, userMessage || previousUserMessage),
         })),
         conversationId,
       })
