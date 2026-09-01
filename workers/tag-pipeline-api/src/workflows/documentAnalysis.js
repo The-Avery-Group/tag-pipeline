@@ -1,6 +1,5 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers'
 import {
-  GROQ_PACING_SECONDS,
   failDocumentAnalysisJob,
   runDocumentAnalysis,
   runEbuyArchiveDocumentAnalysis,
@@ -31,10 +30,7 @@ export async function runDocumentAnalysisWorkflow(env, event, step) {
 
       // Never expose provider capacity timing to users. The Workflow sleeps
       // durably and the page continues to show a single Processing state.
-      const delay = Math.max(
-        result.aiRequestMade ? GROQ_PACING_SECONDS : 1,
-        Number(result.nextDelaySeconds || 0),
-      )
+      const delay = Math.max(1, Number(result.nextDelaySeconds || 0))
       await step.sleep(`Pace document analysis checkpoint ${checkpoint + 1}`, `${Math.ceil(delay)} seconds`)
     }
     throw new Error('Document analysis exceeded its safe checkpoint limit')
