@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createCrmRelationshipQuery, queryCrmRelationships } from '../src/services/crmRelationshipQuery.js'
+import { answerDeterministicCrmQuery, createCrmRelationshipQuery, queryCrmRelationships } from '../src/services/crmRelationshipQuery.js'
 
 const data = {
   readiness: { pipeline: true, contacts: true, tasks: true, notes: true },
@@ -10,7 +10,7 @@ const data = {
   ],
   pipeline: [
     { 'Opportunity ID': 'O-1', 'Project Title / Description*': 'Insurance Support', 'Contract Number / Notice ID': 'VA-001', 'Contract End Date*': '2027-09-30', 'Total Contract Value ($)*': '$2,000,000', 'Contracting Officer / Specialist (POC)*': 'Amanda Haynes', 'Agency*': 'VA' },
-    { 'Opportunity ID': 'O-2', 'Project Title / Description*': 'Claims Processing', 'Contract Number / Notice ID': 'VA-002', 'Contract End Date*': '2028-03-31', 'Total Contract Value ($)*': 750000, 'Contracting Officer / Specialist (POC)*': 'John Doe; Amanda Haynes (CO)', 'Agency*': 'VA' },
+    { 'Opportunity ID': 'O-2', 'Project Title / Description*': 'Claims Processing', 'Contract Number / Notice ID': 'VA-002', 'Contract End Date*': '2028-03-31', 'Total Contract Value ($)*': 750000, 'Contracting Officer / Specialist (POC)*': 'John Doe, Amanda Haynes', 'Agency*': 'VA' },
     { 'Opportunity ID': 'O-3', 'Project Title / Description*': 'Archived Work', 'Contract Number / Notice ID': 'VA-003', 'Contracting Officer / Specialist (POC)*': 'Amanda Haynes', Archived: 'Yes' },
   ],
 }
@@ -39,6 +39,26 @@ test('legacy contact search results include reverse-linked contracts', () => {
   const result = createCrmRelationshipQuery(data).searchContacts('Amanda Haynes')
   assert.equal(result.contacts[0].linkedOpportunityCount, 2)
   assert.deepEqual(result.contacts[0].linkedOpportunities.map((opportunity) => opportunity.contractNumber), ['VA-001', 'VA-002'])
+})
+
+test('contact contract table requests are answered deterministically without an AI tool decision', () => {
+  const answer = answerDeterministicCrmQuery(
+    'I need a table of all the contracts that currently have Amanda Haynes as their contact. title, contract number, expiry date, value',
+    data
+  )
+  assert.match(answer, /\| Title \| Contract number \| Expiry date \| Value \|/)
+  assert.match(answer, /\| Insurance Support \| VA-001 \| 2027-09-30 \| \$2,000,000 \|/)
+  assert.match(answer, /\| Claims Processing \| VA-002 \| 2028-03-31 \| 750000 \|/)
+  assert.doesNotMatch(answer, /VA-003/)
+})
+
+test('POC evidence can answer even when the separate contact row is missing', () => {
+  const answer = answerDeterministicCrmQuery(
+    'Show contracts associated with Amanda Haynes as contact',
+    { ...data, contacts: [] }
+  )
+  assert.match(answer, /Insurance Support/)
+  assert.match(answer, /Claims Processing/)
 })
 
 test('unavailable tables are never reported as zero results', () => {
