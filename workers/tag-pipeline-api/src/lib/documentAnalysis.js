@@ -907,15 +907,19 @@ export function resumableAnalysisChunks(priorAnalysis, sections, critical) {
   })
 }
 
+function retryableStructuredAnalysisError(value) {
+  return /returned analysis that could not be read|unreadable structured response|malformed json|generated json does not match|jsonschema|missing properties|invalid document type/i.test(value || '')
+}
+
 export function hasResumableAnalysisChunks(analysis) {
   if (!Array.isArray(analysis?.chunks)) {
     return Array.isArray(analysis?.warnings)
-      && analysis.warnings.some((warning) => /returned analysis that could not be read|unreadable structured response|malformed json/i.test(warning || ''))
+      && analysis.warnings.some((warning) => retryableStructuredAnalysisError(warning))
   }
   return analysis.chunks.some((chunk) => {
     if (['queued', 'processing', 'deferred', 'retryable_error'].includes(chunk.status)) return true
     return chunk.status === 'error'
-      && /returned analysis that could not be read|unreadable structured response|malformed json/i.test(chunk.error || '')
+      && retryableStructuredAnalysisError(chunk.error)
       && Number(chunk.malformedResponseAttempts || 0) < MAX_MALFORMED_RESPONSE_ATTEMPTS
   })
 }
