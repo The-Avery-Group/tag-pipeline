@@ -30,7 +30,7 @@ const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
 import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
-import { isSAMApiUrl, normalizeSAMOpportunityDetail, samDescriptionText } from '../lib/samOpportunityDetail.js'
+import { fetchSAMStructuredResources, isSAMApiUrl, normalizeSAMOpportunityDetail, samDescriptionText } from '../lib/samOpportunityDetail.js'
 import {
   claimSAMArchive,
   ensureSAMArchive,
@@ -1564,7 +1564,7 @@ export async function handleSAM(req, env, ctx) {
     // v2 excludes links scraped from free-form descriptions. Keeping the
     // cache versioned prevents an old generated link from returning when a
     // live SAM.gov lookup temporarily fails after this integrity fix.
-    const cacheKey = `sam:opportunity-detail:v2:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
+    const cacheKey = `sam:opportunity-detail:v3:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
     const cached = cacheKey && await env.CACHE?.get(cacheKey, 'json')
     try {
       const record = await fetchSAMOpportunityRecord(env, {
@@ -1572,7 +1572,8 @@ export async function handleSAM(req, env, ctx) {
         solicitationNumber: url.searchParams.get('solicitationNumber') || '',
         postedDate: url.searchParams.get('postedDate') || '',
       })
-      const detail = normalizeSAMOpportunityDetail(await resolveSAMOpportunityDescription(env, record))
+      const described = await resolveSAMOpportunityDescription(env, record)
+      const detail = normalizeSAMOpportunityDetail(await fetchSAMStructuredResources(described))
       const archive = env.EBUY_DB && await samArchiveStorageReady(env.EBUY_DB)
         ? await findSAMArchive(env.EBUY_DB, detail)
         : null
@@ -1592,7 +1593,7 @@ export async function handleSAM(req, env, ctx) {
     try {
       const body = await req.json().catch(() => ({}))
       const record = await fetchSAMOpportunityRecord(env, body)
-      const detail = normalizeSAMOpportunityDetail(record)
+      const detail = normalizeSAMOpportunityDetail(await fetchSAMStructuredResources(record))
       return json({ ok: true, ...(await startSAMArchive(env, detail, { force: body.force === true })) }, 202)
     } catch (error) {
       return json({ error: error.message, code: error.code || 'sam_archive_failed' }, error.status || 500)
