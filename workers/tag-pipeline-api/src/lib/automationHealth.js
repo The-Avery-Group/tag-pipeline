@@ -84,12 +84,12 @@ export async function getAutomationHealth(env) {
   const graphConfigured = Boolean(env.MS_TENANT_ID && env.MS_CLIENT_ID && env.MS_CLIENT_SECRET && env.WORKBOOK_ID)
   return [
     healthEntry({
-      id: 'sam_pull', label: 'SAM.gov opportunity pull', schedule: 'Weekdays at 1 PM WAT', run: samPull,
+      id: 'sam_pull', label: 'SAM.gov opportunity pull', schedule: 'Weekdays at 1 AM, 7 AM, 1 PM, and 7 PM WAT', run: samPull,
       configured: Boolean(env.SAM_API_KEY && graphConfigured),
       unavailableMessage: env.SAM_API_KEY && graphConfigured ? null : 'SAM.gov or Microsoft 365 application access is not configured.',
     }),
     healthEntry({
-      id: 'sam_changes', label: 'SAM.gov update checks', schedule: 'Twice daily', run: samChanges,
+      id: 'sam_changes', label: 'SAM.gov update checks', schedule: 'Four times on weekdays; twice daily on weekends', run: samChanges,
       configured: Boolean(env.SAM_API_KEY),
       unavailableMessage: env.SAM_API_KEY ? null : 'SAM API access is not configured.',
     }),
