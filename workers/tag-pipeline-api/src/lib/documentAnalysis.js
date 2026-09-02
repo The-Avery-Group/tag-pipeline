@@ -18,13 +18,17 @@ const MAX_FILES_PER_RUN = 1
 // excerpts both preserves surrounding solicitation context and reduces the
 // number of serial Workflow checkpoints required for long documents. Keep the
 // fallback payload below Groq's tighter free-tier TPM allowance.
-const GROQ_CHUNK_CHARACTERS = 18_000
+// Keep the Groq fallback comfortably below its free-tier TPM ceiling. The
+// document is still covered in full because oversized sections are split into
+// additional cited chunks rather than truncated.
+const GROQ_CHUNK_CHARACTERS = 12_000
 const AI_MAX_OUTPUT_TOKENS = 2_000
 const AI_CHUNKS_PER_CHECKPOINT = 4
 const MAX_MALFORMED_RESPONSE_ATTEMPTS = 3
 export const GROQ_PACING_SECONDS = 60
 const GROQ_BASE = 'https://api.groq.com/openai/v1'
-const GROQ_EXTRACTION_MODEL = 'openai/gpt-oss-20b'
+const GROQ_EXTRACTION_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b']
+const GROQ_EXTRACTION_MODEL = GROQ_EXTRACTION_MODELS[0]
 const WORKERS_AI_EXTRACTION_MODEL = '@cf/openai/gpt-oss-20b'
 const WORKERS_AI_FALLBACK_MODEL = '@cf/openai/gpt-oss-120b'
 export const DOCUMENT_ANALYSIS_VERSION = 'opportunity-brief-v1'
@@ -55,7 +59,10 @@ const ANALYSIS_RESPONSE_SCHEMA = {
           category: { type: 'string' },
           text: { type: 'string' },
           assessment: { type: 'string' },
-          sectionIds: { type: 'array', maxItems: 6, items: { type: 'string' } },
+          // Provider-side size limits can reject an otherwise valid response
+          // when the model cites extra supporting passages. Normalize and cap
+          // the citations locally after receiving the complete JSON instead.
+          sectionIds: { type: 'array', items: { type: 'string' } },
         },
         required: ['category', 'text', 'assessment', 'sectionIds'],
       },
@@ -617,11 +624,13 @@ export function relevantAnalysisChunks(sections, critical = {}, maxCharacters = 
     if (!current.length) return
     const references = Object.fromEntries(current.map((section) => [section.sectionId, section.sourceLocation || section.location]))
     const referenceLocations = Object.fromEntries(current.map((section) => [section.sectionId, section.sourceLocations || [section.sourceLocation || section.location]]))
+    const referenceTexts = Object.fromEntries(current.map((section) => [section.sectionId, section.text]))
     const fingerprintSource = current.map((section) => `${section.sourceLocation || section.location}\n${section.text}`).join('\n\n')
     chunks.push({
       source: current.map((section) => `[${section.sectionId}]\n${section.text}`).join('\n\n'),
       references,
       referenceLocations,
+      referenceTexts,
       fingerprint: contentFingerprint(fingerprintSource),
       locations: [...new Set(current.flatMap((section) => [...(section.sourceLocations || []), section.location, section.sourceLocation]).filter(Boolean))],
       documentCoverage: contextual.coverage,
@@ -697,6 +706,26 @@ export function validateDocumentAnalysisResponse(value, chunk, critical = null) 
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('AI response is not an object')
   if (!Array.isArray(value.sections)) throw new Error('AI response is missing opportunity brief sections')
   const references = Object.fromEntries(Object.entries(chunk?.references || {}).map(([sectionId, location]) => [clean(sectionId), clean(location)]))
+  const suppliedReferenceTexts = Object.fromEntries(Object.entries(chunk?.referenceTexts || {}).map(([sectionId, text]) => [clean(sectionId), clean(text)]))
+  const parsedReferenceTexts = Object.fromEntries([...String(chunk?.source || '').matchAll(/\[(S\d+)\]\s*\n([\s\S]*?)(?=\n\n\[S\d+\]\s*\n|$)/g)]
+    .map((match) => [clean(match[1]), clean(match[2])]))
+  const referenceTexts = { ...parsedReferenceTexts, ...suppliedReferenceTexts }
+  const citationScore = (sectionId, finding, originalIndex) => {
+    const evidence = clean(referenceTexts[sectionId]).toLowerCase()
+    const location = clean(references[sectionId]).toLowerCase()
+    if (!evidence) return -originalIndex / 1_000
+    const findingTokens = briefTokens(finding)
+    const evidenceTokens = briefTokens(evidence)
+    const shared = [...findingTokens].filter((token) => evidenceTokens.has(token)).length
+    const lexicalSupport = findingTokens.size ? shared / findingTokens.size : 0
+    const findingSpecifics = new Set((clean(finding).toLowerCase().match(/(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|https?:\/\/\S+|\b\d[\d.,:/-]*\b)/g) || []))
+    const sharedSpecifics = [...findingSpecifics].filter((value) => evidence.includes(value)).length
+    const operative = /\b(?:shall|must|required|no later than|due|submit|deliver|minimum|maximum)\b/i.test(evidence) ? 12 : 0
+    const precision = (/(?:\bpage|pages)\s+\d/.test(location) ? 5 : 0)
+      + (/\bsection\b/.test(location) ? 5 : 0)
+      + (/\b(?:paragraph|table|row|sheet|slide)\b/.test(location) ? 7 : 0)
+    return lexicalSupport * 100 + sharedSpecifics * 25 + operative + precision - originalIndex / 1_000
+  }
   const validated = {
     documentType: normalizeDocumentType(value.documentType),
     briefSections: [],
@@ -704,8 +733,20 @@ export function validateDocumentAnalysisResponse(value, chunk, critical = null) 
   for (const item of value.sections) {
     const text = clean(item?.text)
     const category = normalizeBriefCategory(item?.category, text)
-    const sectionIds = [...new Set((Array.isArray(item?.sectionIds) ? item.sectionIds : []).map((sectionId) => clean(sectionId)))]
-      .filter((sectionId) => references[sectionId]).slice(0, 6)
+    const candidateSectionIds = [...new Set((Array.isArray(item?.sectionIds) ? item.sectionIds : []).map((sectionId) => clean(sectionId)))]
+      .filter((sectionId) => references[sectionId])
+    const rankedSectionIds = candidateSectionIds
+      .map((sectionId, index) => ({ sectionId, index, score: citationScore(sectionId, text, index) }))
+      .sort((left, right) => right.score - left.score || left.index - right.index)
+    const seenLocations = new Set()
+    const sectionIds = []
+    for (const candidate of rankedSectionIds) {
+      const location = references[candidate.sectionId]
+      if (seenLocations.has(location)) continue
+      seenLocations.add(location)
+      sectionIds.push(candidate.sectionId)
+      if (sectionIds.length === 6) break
+    }
     if (!category || !text || !sectionIds.length) continue
     const locations = [...new Set(sectionIds.map((sectionId) => references[sectionId]))]
     validated.briefSections.push({
@@ -763,10 +804,6 @@ Return only JSON with documentType and sections.
           messages,
           temperature: 0,
           max_tokens: AI_MAX_OUTPUT_TOKENS,
-          response_format: {
-            type: 'json_schema',
-            json_schema: ANALYSIS_RESPONSE_SCHEMA,
-          },
         })
         const analysis = validateDocumentAnalysisResponse(modelResponseContent(body), chunk, critical)
         return {
@@ -788,57 +825,66 @@ Return only JSON with documentType and sections.
     status: 'deferred',
     reason: 'groq_pacing_slot',
     retryAfterSeconds: 1,
+    providerDiagnostics: { workersAi: workersAiErrors },
   }
   if (!env.GROQ_API_KEY) return {
     status: 'retryable_error',
     error: workersAiError || 'Cloudflare Workers AI could not analyze this document chunk.',
     retryAfterSeconds: GROQ_PACING_SECONDS,
+    providerDiagnostics: { workersAi: workersAiErrors },
   }
-  const response = await fetch(`${GROQ_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GROQ_API_KEY}` },
-    body: JSON.stringify({
-      model: GROQ_EXTRACTION_MODEL,
-      temperature: 0,
-      reasoning_effort: 'low',
-      max_completion_tokens: AI_MAX_OUTPUT_TOKENS,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'opportunity_brief_evidence',
-          strict: true,
-          schema: ANALYSIS_RESPONSE_SCHEMA,
+  const groqDiagnostics = []
+  for (const model of GROQ_EXTRACTION_MODELS) {
+    const response = await fetch(`${GROQ_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GROQ_API_KEY}` },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        reasoning_effort: 'low',
+        max_completion_tokens: AI_MAX_OUTPUT_TOKENS,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'opportunity_brief_evidence',
+            strict: true,
+            schema: ANALYSIS_RESPONSE_SCHEMA,
+          },
         },
-      },
-      messages,
-    }),
-  })
-  const pacingSeconds = groqRetryDelay(response)
-  if (response.status === 429 || response.status === 503) return { status: 'deferred', retryAfterSeconds: pacingSeconds }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    const groqError = clean(body?.error?.message || `Groq returned ${response.status}`)
-    return {
-      status: response.status >= 500 ? 'retryable_error' : 'error',
-      error: [workersAiError && `Workers AI: ${workersAiError}`, `Groq: ${groqError}`].filter(Boolean).join('; '),
-      retryAfterSeconds: response.status >= 500 ? pacingSeconds : undefined,
-      pacingSeconds,
+        messages,
+      }),
+    })
+    const pacingSeconds = groqRetryDelay(response)
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      const groqError = clean(body?.error?.message || `Groq returned ${response.status}`)
+      groqDiagnostics.push({ model, status: response.status, error: groqError, retryAfterSeconds: pacingSeconds })
+      continue
+    }
+    const body = await response.json()
+    try {
+      const analysis = validateDocumentAnalysisResponse(modelResponseContent(body), chunk, critical)
+      return {
+        status: 'ready', model: body.model || model, provider: 'groq', pacingSeconds,
+        providerDiagnostics: { workersAi: workersAiErrors, groq: groqDiagnostics },
+        ...analysis,
+      }
+    } catch (error) {
+      groqDiagnostics.push({ model, status: response.status, error: clean(error?.message || 'returned an unreadable response'), retryAfterSeconds: pacingSeconds })
     }
   }
-  const body = await response.json()
-  try {
-    const analysis = validateDocumentAnalysisResponse(modelResponseContent(body), chunk, critical)
-    return { status: 'ready', model: body.model || GROQ_EXTRACTION_MODEL, provider: 'groq', pacingSeconds, ...analysis }
-  } catch (error) {
-    return {
-      status: 'retryable_error',
-      error: [
-        workersAiError && `Workers AI: ${workersAiError}`,
-        `Groq: ${clean(error?.message || 'returned an unreadable response')}`,
-      ].filter(Boolean).join('; '),
-      retryAfterSeconds: pacingSeconds,
-      pacingSeconds,
-    }
+
+  const retryDelays = groqDiagnostics.map((item) => Number(item.retryAfterSeconds || 0)).filter((value) => value > 0)
+  const retryAfterSeconds = retryDelays.length ? Math.min(...retryDelays) : GROQ_PACING_SECONDS
+  const allCapacityLimited = groqDiagnostics.length > 0 && groqDiagnostics.every((item) => [429, 503].includes(item.status))
+  const terminalAuthenticationFailure = groqDiagnostics.length > 0 && groqDiagnostics.every((item) => [401, 403].includes(item.status))
+  const groqError = groqDiagnostics.map((item) => `${item.model}: ${item.error}`).join('; ')
+  return {
+    status: allCapacityLimited ? 'deferred' : terminalAuthenticationFailure ? 'error' : 'retryable_error',
+    error: allCapacityLimited ? undefined : [workersAiError && `Workers AI: ${workersAiError}`, groqError && `Groq: ${groqError}`].filter(Boolean).join('; '),
+    retryAfterSeconds: terminalAuthenticationFailure ? undefined : retryAfterSeconds,
+    pacingSeconds: retryAfterSeconds,
+    providerDiagnostics: { workersAi: workersAiErrors, groq: groqDiagnostics },
   }
 }
 
@@ -929,6 +975,7 @@ async function analyzeRelevantSections(env, sections, fileName, { automatic = fa
       result: result.status === 'ready' ? result : undefined,
       error: result.error || undefined,
       retryAfterSeconds: result.retryAfterSeconds || undefined,
+      providerDiagnostics: result.providerDiagnostics || undefined,
       malformedResponseAttempts: malformedResponseAttempts || undefined,
     }
   })
