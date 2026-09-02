@@ -1093,7 +1093,7 @@ export async function cancelDocumentAnalysis(db, opportunityKey) {
 async function updateAnalysisJob(db, opportunityKey, changes) {
   const fields = Object.keys(changes)
   if (!fields.length) return
-  const names = { status: 'status', progressPhase: 'progress_phase', processedFiles: 'processed_files', totalFiles: 'total_files', packageAnalysis: 'package_analysis_json', errorMessage: 'error_message', startedAt: 'started_at', completedAt: 'completed_at' }
+  const names = { status: 'status', progressPhase: 'progress_phase', processedFiles: 'processed_files', totalFiles: 'total_files', packageAnalysis: 'package_analysis_json', errorMessage: 'error_message', startedAt: 'started_at', completedAt: 'completed_at', workflowInstanceId: 'workflow_instance_id' }
   const clauses = fields.filter((field) => names[field]).map((field) => `${names[field]} = ?`)
   const values = fields.filter((field) => names[field]).map((field) => changes[field])
   await db.prepare(`UPDATE opportunity_analysis_jobs SET ${clauses.join(', ')}, updated_at = ? WHERE opportunity_key = ?`)
@@ -1128,6 +1128,44 @@ function safeWorkflowInstancePart(value) {
   return String(value || 'opportunity').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 70)
 }
 
+export function activeDocumentAnalysisWorkflowStatus(status) {
+  return ['queued', 'running', 'waiting', 'paused', 'waitingForPause', 'rollingBack', 'unknown'].includes(String(status || ''))
+}
+
+async function analysisWorkflowJob(db, opportunityKey) {
+  return db.prepare(`SELECT status, source_service, workflow_instance_id, updated_at
+    FROM opportunity_analysis_jobs WHERE opportunity_key = ?`).bind(opportunityKey).first()
+}
+
+async function workflowInstanceStatus(binding, instanceId) {
+  if (!instanceId || !binding?.get) return null
+  try {
+    const instance = await binding.get(instanceId)
+    return { instance, details: await instance.status() }
+  } catch {
+    return null
+  }
+}
+
+async function ensureAnalysisWorkflowJob(db, opportunityKey, source) {
+  const now = new Date().toISOString()
+  return db.prepare(`INSERT OR IGNORE INTO opportunity_analysis_jobs
+    (opportunity_key, source_service, status, priority, progress_phase, created_at, updated_at)
+    VALUES (?, ?, 'queued', ?, 'Waiting for archived documents', ?, ?)`)
+    .bind(opportunityKey, source, source === 'pipeline' ? 100 : 10, now, now).run()
+}
+
+async function claimAnalysisWorkflowJob(db, opportunityKey, source, instanceId, previousInstanceId = '') {
+  const now = new Date().toISOString()
+  const condition = previousInstanceId ? 'workflow_instance_id = ?' : 'workflow_instance_id IS NULL'
+  const bindings = [instanceId, source, source === 'pipeline' ? 100 : 10, now, opportunityKey]
+  if (previousInstanceId) bindings.push(previousInstanceId)
+  return db.prepare(`UPDATE opportunity_analysis_jobs SET workflow_instance_id = ?, source_service = ?,
+      priority = MAX(priority, ?), status = 'queued', progress_phase = 'Processing documents',
+      cancel_requested = 0, error_message = NULL, completed_at = NULL, updated_at = ?
+    WHERE opportunity_key = ? AND ${condition}`).bind(...bindings).run()
+}
+
 export async function startDocumentAnalysisWorkflow(env, payload = {}) {
   if (!env.EBUY_DB) throw Object.assign(new Error('Document analysis storage is not configured'), { status: 503 })
   if (!env.DOCUMENT_ANALYSIS_WORKFLOW?.createBatch) {
@@ -1136,8 +1174,37 @@ export async function startDocumentAnalysisWorkflow(env, payload = {}) {
   const opportunityKey = String(payload.opportunityKey || '').trim().toLowerCase()
   if (!opportunityKey) throw Object.assign(new Error('An opportunity identifier is required'), { status: 400 })
   const source = ['sam', 'ebuy', 'pipeline'].includes(payload.source) ? payload.source : 'pipeline'
-  await beginDocumentAnalysisJob(env.EBUY_DB, opportunityKey, source)
+  await ensureAnalysisWorkflowJob(env.EBUY_DB, opportunityKey, source)
+  let existing = await analysisWorkflowJob(env.EBUY_DB, opportunityKey)
+  if (existing?.workflow_instance_id) {
+    const active = await workflowInstanceStatus(env.DOCUMENT_ANALYSIS_WORKFLOW, existing.workflow_instance_id)
+    if (activeDocumentAnalysisWorkflowStatus(active?.details?.status)) return {
+      started: false, reused: true, instanceId: existing.workflow_instance_id, opportunityKey,
+      status: active.details.status,
+    }
+    // If Cloudflare status is temporarily unavailable, preserve a job that D1
+    // still considers active instead of risking duplicate analysis.
+    if (!active && ['queued', 'running'].includes(existing.status)) return {
+      started: false, reused: true, instanceId: existing.workflow_instance_id, opportunityKey,
+      status: existing.status,
+    }
+  } else if (existing?.status === 'running') {
+    // Legacy workflows created before workflow_instance_id existed cannot be
+    // looked up by binding. Their live D1 state is still enough to suppress a
+    // duplicate Analyze click.
+    return { started: false, reused: true, legacy: true, instanceId: null, opportunityKey, status: existing.status }
+  }
+
   const instanceId = `document-analysis-${safeWorkflowInstancePart(opportunityKey)}-${crypto.randomUUID().slice(0, 12)}`
+  const claim = await claimAnalysisWorkflowJob(env.EBUY_DB, opportunityKey, source, instanceId, existing?.workflow_instance_id || '')
+  if (!Number(claim.meta?.changes || 0)) {
+    existing = await analysisWorkflowJob(env.EBUY_DB, opportunityKey)
+    return {
+      started: false, reused: true, instanceId: existing?.workflow_instance_id || null,
+      opportunityKey, status: existing?.status || 'queued',
+    }
+  }
+  await beginDocumentAnalysisJob(env.EBUY_DB, opportunityKey, source)
   try {
     const instances = await env.DOCUMENT_ANALYSIS_WORKFLOW.createBatch([{
       id: instanceId,
