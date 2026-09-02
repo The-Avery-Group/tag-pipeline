@@ -146,8 +146,13 @@ export function consolidateBriefItems(items = [], limit = 6) {
     const duplicate = consolidated.find((candidate) => candidate.category === category && briefSimilarity(candidate.text, text) >= 0.7)
     if (!duplicate) consolidated.push(item)
     else {
-      if (informationScore(text) > informationScore(duplicate.text)) duplicate.text = text
-      duplicate.citations = [...new Map([...duplicate.citations, ...citations].map((citation) => [`${citation.fileName}|${citation.location}`, citation])).values()].slice(0, 8)
+      const sameWording = clean(duplicate.text).toLowerCase() === text.toLowerCase()
+      if (informationScore(text) > informationScore(duplicate.text)) {
+        duplicate.text = text
+        duplicate.citations = citations
+      } else if (sameWording) {
+        duplicate.citations = [...new Map([...duplicate.citations, ...citations].map((citation) => [`${citation.fileName}|${citation.location}`, citation])).values()].slice(0, 8)
+      }
       if (item.assessment === 'conflicting' || (item.assessment === 'ambiguous' && duplicate.assessment === 'found')) duplicate.assessment = item.assessment
     }
   }
