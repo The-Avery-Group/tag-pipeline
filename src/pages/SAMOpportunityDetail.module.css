@@ -34,6 +34,8 @@
 .contactList article, .resourceList article { align-items: center; border: .5px solid var(--gray-200); border-radius: var(--radius-md); display: flex; gap: 14px; justify-content: space-between; padding: 9px 10px; }
 .contactList article > div, .resourceList article > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .contactList strong, .resourceList strong { font-size: 11px; overflow-wrap: anywhere; }
+.resourceList strong a { color: inherit; text-decoration: none; }
+.resourceList strong a:hover { color: var(--blue-700); text-decoration: underline; }
 .contactList span, .resourceList span, .resourceHeading span { color: var(--gray-500); font-size: 10px; overflow-wrap: anywhere; }
 .contactMethods { align-items: flex-end; text-align: right; }
 .contactMethods a { font-size: 10px; }
@@ -44,7 +46,6 @@
 .resourceHeading > div { display: flex; flex-direction: column; gap: 2px; }
 .resourceHeading h3 { margin: 0; }
 .resourceHeading > a { font-size: 10px; }
-.resourceActions { align-items: center; flex-direction: row !important; flex: 0 0 auto; }
 .archiveProgress { background: var(--blue-50); border: .5px solid var(--blue-200); border-radius: var(--radius-md); margin-bottom: 8px; padding: 8px 10px; }
 .archiveProgress > div:first-child { color: var(--blue-700); display: flex; font-size: 10px; justify-content: space-between; margin-bottom: 6px; }
 .archiveProgress > div:last-child { background: var(--blue-100); border-radius: 999px; height: 4px; overflow: hidden; }
