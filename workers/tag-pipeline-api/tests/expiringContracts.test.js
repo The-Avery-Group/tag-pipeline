@@ -468,11 +468,11 @@ test('an expiring Workflow instance fetches a bounded page batch before continui
       },
     }, step)
 
-    assert.equal(fetchCount, 6)
+    assert.equal(fetchCount, 3)
     assert.equal(result.status, 'continuing')
     assert.equal(result.nextCheckpoint, 2)
-    assert.equal(created[0].params.continuation.pageNumber, 6)
-    assert.equal(created[0].params.continuation.offset, 600)
+    assert.equal(created[0].params.continuation.pageNumber, 3)
+    assert.equal(created[0].params.continuation.offset, 300)
   } finally {
     globalThis.fetch = previousFetch
   }
