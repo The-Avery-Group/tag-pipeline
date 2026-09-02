@@ -10,6 +10,7 @@ import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { formatDateTime } from '@/utils/kpiHelpers'
 import { buildSAMOpportunityPatch, cleanSAMOpportunityTitle, isSAMOpportunityFlagged, normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
 import { retryOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
+import { startAdaptivePolling } from '@/services/workerClient'
 import {
   getSAMOpportunityArchiveStatus,
   getSAMOpportunityDocumentAnalysis,
@@ -143,10 +144,13 @@ export default function SAMOpportunityDetail({ toast }) {
     same(item['Solicitation Number'], detail?.solicitationNumber || row?.['Solicitation Number'])
   )) || null, [detail, pipeline, row])
 
-  const loadDetail = useCallback(async ({ quiet = false } = {}) => {
+  const loadDetail = useCallback(async ({ quiet = false, refresh = false } = {}) => {
     if (!quiet) setLoading(true)
     try {
-      const result = await getSAMOpportunityDetail({ ...identifier, postedDate: row?.['Posted Date'] || row?.PostedDate || '' })
+      const result = await getSAMOpportunityDetail(
+        { ...identifier, postedDate: row?.['Posted Date'] || row?.PostedDate || '' },
+        { refresh },
+      )
       setDetail(result.opportunity)
       setLoadError(result.warning ? new Error(result.warning) : null)
       return result.warning ? null : result.opportunity
@@ -175,8 +179,8 @@ export default function SAMOpportunityDetail({ toast }) {
     if (!identifier.noticeId && !identifier.solicitationNumber) return
     setArchiving(true)
     try {
-      await startSAMOpportunityArchive(identifier, { force })
-      await loadDetail({ quiet: true })
+      const result = await startSAMOpportunityArchive(identifier, { force })
+      if (result.archive) setDetail((current) => mergeArchive(current, result.archive))
     } catch (error) {
       toast?.error(`SAM.gov archive could not start: ${error.message}`)
     } finally {
@@ -188,7 +192,7 @@ export default function SAMOpportunityDetail({ toast }) {
     if (retryingDetail) return
     setRetryingDetail(true)
     try {
-      const refreshed = await loadDetail()
+      const refreshed = await loadDetail({ refresh: true })
       if (!refreshed) return
 
       const pipelineOpportunity = linkedPipeline || pipeline.find((item) => (
@@ -264,15 +268,15 @@ export default function SAMOpportunityDetail({ toast }) {
   useEffect(() => {
     if (!opportunityKey || detail?.archive?.archiveStatus !== 'running') return undefined
     let active = true
-    const poll = async () => {
-      try {
-        const result = await getSAMOpportunityArchiveStatus(opportunityKey)
+    const stop = startAdaptivePolling({
+      key: `sam-archive:${opportunityKey}`,
+      poll: () => getSAMOpportunityArchiveStatus(opportunityKey),
+      onResult: (result) => {
         if (active && result.archive) setDetail((current) => mergeArchive(current, result.archive))
-      } catch { /* the next poll can recover */ }
-    }
-    const timer = setInterval(poll, 3000)
-    poll()
-    return () => { active = false; clearInterval(timer) }
+      },
+      shouldContinue: (result) => result?.archive?.archiveStatus === 'running',
+    })
+    return () => { active = false; stop() }
   }, [detail?.archive?.archiveStatus, opportunityKey])
 
   const act = async (callback) => {
@@ -341,6 +345,7 @@ export default function SAMOpportunityDetail({ toast }) {
       </section>
 
       {opportunityKey && <DocumentAnalysisPanel
+        pollKey={opportunityKey}
         load={loadDocumentAnalysis}
         run={runDocumentAnalysis}
         review={(findingReview) => reviewSAMOpportunityDocumentFinding(opportunityKey, findingReview)}

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { workerJson } from '@/services/workerClient'
-
-const POLL_MS = 2500
+import { startAdaptivePolling, workerJson } from '@/services/workerClient'
 
 export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidden = false) {
   const [config, setConfig] = useState({ agencies: [], ranges: ['6-12', '12-18', '18-24'] })
@@ -11,7 +9,6 @@ export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidd
   const [status, setStatus] = useState({ status: 'idle' })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const timerRef = useRef(null)
   const refreshPromiseRef = useRef(null)
 
   const loadResults = useCallback(async () => {
@@ -51,17 +48,16 @@ export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidd
   }, [loadResults, loadStatus])
 
   useEffect(() => {
-    clearInterval(timerRef.current)
     if (!['queued', 'running'].includes(status.status)) return undefined
-    timerRef.current = setInterval(async () => {
-      try {
-        const next = await loadStatus()
+    return startAdaptivePolling({
+      key: 'expiring-contract-refresh',
+      poll: () => workerJson('/sam/expiring-contracts/status', { cache: 'no-store' }),
+      onResult: async (next) => {
+        setStatus(next)
         if (['success', 'partial'].includes(next.status)) await loadResults()
-      } catch (nextError) {
-        setError(nextError.message)
-      }
-    }, POLL_MS)
-    return () => clearInterval(timerRef.current)
+      },
+      shouldContinue: (next) => ['queued', 'running'].includes(next?.status),
+    })
   }, [loadResults, loadStatus, status.status])
 
   const refresh = useCallback(async (agencies) => {

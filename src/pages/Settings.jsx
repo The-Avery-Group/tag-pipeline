@@ -7,7 +7,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
-import { WORKER_URL, workerFetch } from '@/services/workerClient'
+import { startAdaptivePolling, WORKER_URL, workerFetch } from '@/services/workerClient'
 import {
   connectEbuyAccount,
   disconnectEbuyAccount,
@@ -325,16 +325,15 @@ export default function Settings({ toast }) {
   useEffect(() => {
     if (integrationStatus?.ebuy?.lastSync?.status !== 'running') return undefined
     let disposed = false
-    const refreshEbuyProgress = async () => {
-      try {
-        const ebuy = await getEbuyStatus()
+    const stop = startAdaptivePolling({
+      key: 'ebuy-sync-status',
+      poll: getEbuyStatus,
+      onResult: (ebuy) => {
         if (!disposed) setIntegrationStatus((current) => ({ ...(current || {}), ebuy }))
-      } catch {
-        // Preserve the last durable progress value through temporary status failures.
-      }
-    }
-    const timer = window.setInterval(refreshEbuyProgress, 2000)
-    return () => { disposed = true; window.clearInterval(timer) }
+      },
+      shouldContinue: (ebuy) => ebuy?.lastSync?.status === 'running',
+    })
+    return () => { disposed = true; stop() }
   }, [integrationStatus?.ebuy?.lastSync?.status])
 
   const handleSaveSAM = async () => {

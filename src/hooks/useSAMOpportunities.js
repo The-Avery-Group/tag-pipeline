@@ -12,7 +12,7 @@ import {
 } from '@/services/dataCache'
 import { retryIdempotent } from '@/services/workbookMutations'
 import { notifyNewOpportunity } from '@/services/notifyService'
-import { WORKER_URL, workerFetch } from '@/services/workerClient'
+import { startAdaptivePolling, WORKER_URL, workerFetch } from '@/services/workerClient'
 import {
   cleanSAMOpportunityTitle,
   isSAMOpportunityFlagged,
@@ -23,7 +23,6 @@ import { requestOpportunityWorkspace } from '@/services/opportunityWorkspaceServ
 
 
 // How often to poll /sam/run-status while a pull is actively running.
-const POLL_MS = 3000
 // A run still reporting status: 'running' after this long is presumed
 // stalled — most likely the Worker's background task hit a Cloudflare
 // execution-time limit mid-run and was killed before it could write a
@@ -41,8 +40,7 @@ let _resumeAttemptedThisSession = false
 // run state outside individual hook instances so navigation (and a second app
 // tab) can immediately render the same Worker-backed progress.
 let _sharedPullProgress = null
-let _sharedPollTimer = null
-let _sharedPollInFlight = false
+let _sharedPollStop = null
 const _pullProgressListeners = new Set()
 const PULL_ORIGIN_STORAGE_KEY = 'tag_sam_pull_origin'
 
@@ -79,37 +77,26 @@ function subscribeToPullProgress(listener) {
 }
 
 function stopSharedPullPolling() {
-  if (_sharedPollTimer) {
-    clearInterval(_sharedPollTimer)
-    _sharedPollTimer = null
-  }
+  _sharedPollStop?.()
+  _sharedPollStop = null
 }
 
-async function refreshSharedPullProgress() {
-  if (_sharedPollInFlight) return
-  _sharedPollInFlight = true
-  try {
-    const status = await getSAMRunStatus()
-    publishPullProgress(status)
-    // A partial result is only a completed checkpoint. The next checkpoint
-    // must keep polling and remain visually in progress until the full pull
-    // succeeds or fails.
-    if (status?.status === 'success' || status?.status === 'error') {
-      stopSharedPullPolling()
-      await invalidateCache(['NewOpportunitiesTable'])
-    }
-  } finally {
-    _sharedPollInFlight = false
+async function applySharedPullProgress(status) {
+  publishPullProgress(status)
+  if (status?.status === 'success' || status?.status === 'error') {
+    await invalidateCache(['NewOpportunitiesTable'])
   }
 }
 
 function startSharedPullPolling({ reconcileNow = false } = {}) {
-  if (_sharedPollTimer) return
-  _sharedPollTimer = setInterval(refreshSharedPullProgress, POLL_MS)
-  // Used when a page mounts with a pull already marked as running. The
-  // triggering page waits for its normal interval so it cannot accidentally
-  // read the previous run before the Worker writes the new running status.
-  if (reconcileNow) refreshSharedPullProgress()
+  if (_sharedPollStop) return
+  _sharedPollStop = startAdaptivePolling({
+    key: 'sam-pull-status',
+    poll: getSAMRunStatus,
+    onResult: applySharedPullProgress,
+    shouldContinue: (status) => !['success', 'error'].includes(status?.status),
+    immediate: reconcileNow,
+  })
 }
 
 // ── Worker status checks ──────────────────────────────────────────────────

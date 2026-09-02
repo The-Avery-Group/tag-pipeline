@@ -1821,6 +1821,7 @@ export default function OpportunityDetail({ toast }) {
         </Section>
 
         <LazyMount minHeight={140}><DocumentAnalysisPanel
+          pollKey={opp[C.contractNum]}
           load={() => getOpportunityDocumentAnalysis(opp[C.contractNum])}
           run={() => analyzeOpportunityDocuments(opp[C.contractNum])}
           review={(findingReview) => reviewOpportunityDocumentFinding(opp[C.contractNum], findingReview)}

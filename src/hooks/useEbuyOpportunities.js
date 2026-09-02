@@ -5,6 +5,7 @@ import {
   startEbuyLiveSync,
   updateEbuyOpportunityState,
 } from '@/services/ebuyService'
+import { startAdaptivePolling } from '@/services/workerClient'
 
 const listCache = new Map()
 let statusCache = null
@@ -61,10 +62,8 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
   useEffect(() => {
     if (status?.lastSync?.status !== 'running') return undefined
     let disposed = false
-    const refreshProgress = async () => {
-      try {
-        const nextStatus = await getEbuyStatus()
-        if (disposed) return
+    const applyProgress = async (nextStatus) => {
+        if (disposed || !nextStatus) return
         const requestedAt = requestedSyncAtRef.current
         const observedStartedAt = new Date(nextStatus?.lastSync?.started_at || 0).getTime()
         // Workflow creation is asynchronous. The first status read can still
@@ -86,12 +85,14 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
           terminalRunRef.current = run.id
           await load({ silent: true })
         }
-      } catch {
-        // Keep the last known progress visible through a temporary status-read failure.
-      }
     }
-    const timer = window.setInterval(refreshProgress, 2000)
-    return () => { disposed = true; window.clearInterval(timer) }
+    const stop = startAdaptivePolling({
+      key: 'ebuy-sync-status',
+      poll: getEbuyStatus,
+      onResult: applyProgress,
+      shouldContinue: (nextStatus) => nextStatus?.lastSync?.status === 'running',
+    })
+    return () => { disposed = true; stop() }
   }, [load, status?.lastSync?.status])
 
   const synchronize = useCallback(async () => {

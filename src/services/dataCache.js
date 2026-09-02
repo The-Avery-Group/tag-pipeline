@@ -33,15 +33,7 @@ const ACTIVE_TABLE_REFRESH_INTERVAL_MS = {
 }
 const RETURN_REFRESH_AFTER_MS = 60 * 1000
 const PAGE_ENTRY_FRESH_MS = 30 * 1000
-const CORE_TABLES = ['PipelineTable', 'TasksTable', 'DataValidationTable']
-const SECONDARY_TABLES = [
-  'NotesTable',
-  'ContactsTable',
-  'NewOpportunitiesTable',
-  'PartnersTable',
-  'ContactInteractionsTable',
-  'OpportunityRelationshipsTable',
-]
+const CORE_TABLES = ['PipelineTable', 'TasksTable']
 const loaders = {
   PipelineTable: getPipeline,
   TasksTable: getTasks,
@@ -113,16 +105,6 @@ async function recordWorkbookVersion() {
   return knownWorkbookVersion
 }
 
-async function warmSecondaryTables() {
-  try {
-    const refreshed = await loadTables(SECONDARY_TABLES, { tolerateFailures: true })
-    await notify(refreshed)
-  } catch (error) {
-    // Secondary datasets should never delay the workspace becoming usable.
-    console.warn('[Cache] Secondary preload failed:', error.message)
-  }
-}
-
 export async function warmCache() {
   if (warming || warmed) return
   warming = true
@@ -131,8 +113,6 @@ export async function warmCache() {
     await recordWorkbookVersion().catch(() => '')
     warmed = true
     await notify(CORE_TABLES)
-    // Continue warming the search/contact datasets without blocking the app.
-    void warmSecondaryTables()
   } catch (error) {
     console.warn('[Cache] Core preload failed, pages will fetch on demand:', error.message)
   } finally {

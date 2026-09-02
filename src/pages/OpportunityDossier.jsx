@@ -162,6 +162,7 @@ export default function OpportunityDossier() {
       <Section title="Overview"><SummaryGrid opportunity={opportunity} /></Section>
 
       <DocumentAnalysisPanel
+        pollKey={opportunityKey}
         load={() => getOpportunityDocumentAnalysis(opportunityKey)}
         run={() => analyzeOpportunityDocuments(opportunityKey)}
         review={(findingReview) => reviewOpportunityDocumentFinding(opportunityKey, findingReview)}

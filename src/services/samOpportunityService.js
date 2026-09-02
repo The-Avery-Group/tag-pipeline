@@ -8,8 +8,10 @@ function queryFor(input = {}) {
   return query
 }
 
-export function getSAMOpportunityDetail(input) {
-  return workerJson(`/sam/opportunity?${queryFor(input).toString()}`, { cache: 'no-store' })
+export function getSAMOpportunityDetail(input, { refresh = false } = {}) {
+  const query = queryFor(input)
+  if (refresh) query.set('refresh', '1')
+  return workerJson(`/sam/opportunity?${query.toString()}`, { cache: 'no-store' })
 }
 
 export function startSAMOpportunityArchive(input, { force = false } = {}) {

@@ -110,6 +110,7 @@ export default function EbuyOpportunityDetail({ toast }) {
       </section>
 
       <DocumentAnalysisPanel
+        pollKey={decodedRequestId}
         load={loadDocumentAnalysis}
         run={runDocumentAnalysis}
         review={(findingReview) => reviewEbuyOpportunityDocumentFinding(decodedRequestId, findingReview)}
