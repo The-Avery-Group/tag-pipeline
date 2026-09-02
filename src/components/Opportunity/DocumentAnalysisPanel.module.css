@@ -14,24 +14,25 @@
 .actions p { color: var(--gray-500); font-size: 11px; margin: 0; }
 .coverage { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .coverage em { background: var(--gray-50); border: .5px solid var(--gray-200); border-radius: 999px; color: var(--gray-600); font-size: 9px; font-style: normal; font-weight: 700; padding: 4px 8px; }
-.briefGrid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.briefSection { border: .5px solid var(--gray-200); border-radius: var(--radius-md); min-width: 0; padding: 11px 12px; }
-.briefSection > header { align-items: center; border: 0; display: flex; gap: 8px; justify-content: space-between; }
-.briefSection > header strong { color: var(--gray-900); font-size: 11px; }
-.briefSection > header span { background: var(--green-50); border-radius: 999px; color: var(--green-700); flex: 0 0 auto; font-size: 8px; font-weight: 800; padding: 3px 7px; text-transform: uppercase; }
-.briefSection[data-state="not_found"] > header span { background: var(--gray-100); color: var(--gray-600); }
-.briefSection[data-state="ambiguous"] > header span, .briefSection[data-state="conflicting"] > header span { background: var(--amber-50); color: var(--amber-700); }
-.notFound { color: var(--gray-500); font-size: 10px; margin: 9px 0 0; }
-.briefItems { display: grid; margin-top: 5px; }
-.briefItem { padding-top: 7px; }
-.briefItem + .briefItem { border-top: .5px solid var(--gray-100); margin-top: 7px; }
-.briefItem p { color: var(--gray-800); font-size: 11px; line-height: 1.55; margin: 0 0 4px; white-space: pre-line; }
-.briefItem small { color: var(--blue-700); display: block; font-size: 9px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+.briefDocument { margin: 2px auto 0; width: 100%; }
+.briefSection { border-top: .5px solid var(--gray-200); min-width: 0; padding: 18px 2px; }
+.briefSection:first-child { border-top: 0; padding-top: 8px; }
+.briefSection h3 { color: var(--gray-900); font-size: 15px; line-height: 1.35; margin: 0 0 10px; }
+.notFound { color: var(--gray-500); font-size: 12px; margin: 0; }
+.briefItems { display: grid; gap: 14px; }
+.briefItem { min-width: 0; }
+.briefItem + .briefItem { border-top: .5px solid var(--gray-100); padding-top: 14px; }
+.briefItem p { color: var(--gray-800); font-size: 13px; line-height: 1.7; margin: 0; max-width: none; white-space: pre-line; }
+.citations { border-left: 2px solid var(--blue-200); margin-top: 8px; padding-left: 9px; }
+.citations > strong { color: var(--blue-700); display: block; font-size: 9px; letter-spacing: .04em; margin-bottom: 4px; text-transform: uppercase; }
+.citations ul { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.citations li { align-items: baseline; display: flex; flex-wrap: wrap; gap: 3px 7px; }
+.citations span { color: var(--gray-700); font-size: 10px; font-weight: 700; overflow-wrap: anywhere; }
+.citations small { color: var(--blue-700); font-size: 10px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
 .briefItem em { color: var(--amber-700); display: block; font-size: 9px; font-style: normal; margin-top: 4px; }
-.review { background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-sm); color: var(--gray-600); display: block; font: 600 9px var(--font); margin-top: 7px; padding: 4px 6px; }
 .warning { background: var(--amber-50); border: .5px solid var(--amber-600); border-radius: var(--radius-md); color: var(--amber-700); font-size: 10px; margin-bottom: 10px; padding: 8px 10px; }
 .issueList { list-style: none; margin: 8px 0 0; padding: 0; }
 .issueList li { border-top: .5px solid var(--amber-600); display: grid; gap: 2px; padding: 7px 0 1px; }
 .issueList b { color: var(--gray-900); overflow-wrap: anywhere; }
 .issueList span { line-height: 1.4; overflow-wrap: anywhere; }
-@media (max-width: 680px) { .briefGrid { grid-template-columns: 1fr; } .actions { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 680px) { .actions { align-items: flex-start; flex-direction: column; } }
