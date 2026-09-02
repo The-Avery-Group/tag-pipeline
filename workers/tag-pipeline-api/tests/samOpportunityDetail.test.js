@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeSAMOpportunityDetail, samDescriptionText, samOrganizationHierarchy } from '../src/lib/samOpportunityDetail.js'
+import { normalizeSAMOpportunityDetail, normalizeSAMStructuredResources, samDescriptionText, samOrganizationHierarchy } from '../src/lib/samOpportunityDetail.js'
 import { samArchiveInputForDiscoveryRow } from '../src/handlers/sam.js'
 
 test('SAM detail keeps every organization level without inventing an additional section', () => {
@@ -105,10 +105,48 @@ test('SAM detail uses source titles and trusted service names for authoritative 
     ],
   })
   assert.deepEqual(detail.links, [
-    { url: 'https://www.fedconnect.net/FedConnect/?doc=ABC', label: 'FedConnect notice', source: 'additionalInfoLink' },
-    { url: 'https://piee.eb.mil/sol/notice/123', label: 'Agency PIEE package', source: 'links' },
-    { url: 'https://procurement.example.gov/notices/123', label: 'procurement.example.gov', source: 'links' },
+    { url: 'https://www.fedconnect.net/FedConnect/?doc=ABC', label: 'FedConnect notice', source: 'additionalInfoLink', resourceType: 'opportunity_portal', resourceTypeLabel: 'Opportunity portal', retrievalEligible: false },
+    { url: 'https://piee.eb.mil/sol/notice/123', label: 'Agency PIEE package', source: 'links', resourceType: 'opportunity_portal', resourceTypeLabel: 'Opportunity portal', retrievalEligible: false },
+    { url: 'https://procurement.example.gov/notices/123', label: 'procurement.example.gov', source: 'links', resourceType: 'reference', resourceTypeLabel: 'Reference website', retrievalEligible: false },
   ])
+})
+
+test('SAM website resources retain a described FedConnect portal without inventing an attachment', () => {
+  const structuredResources = normalizeSAMStructuredResources({
+    _embedded: { opportunityAttachmentList: [{ attachments: [{
+      attachmentId: 'link-1', resourceId: 'resource-1', type: 'link',
+      uri: 'https://www.fedconnect.net/FedConnect/?doc=1305M326Q0504&agency=DOC',
+      description: 'Click here to see more information about this opportunity on FedConnect',
+    }] }] },
+  })
+  const detail = normalizeSAMOpportunityDetail({ noticeId: 'sample', structuredResources })
+  assert.equal(detail.attachments.length, 0)
+  assert.deepEqual(detail.links, [{
+    url: 'https://www.fedconnect.net/FedConnect/?doc=1305M326Q0504&agency=DOC',
+    label: 'Click here to see more information about this opportunity on FedConnect',
+    source: 'samResources', resourceType: 'opportunity_portal', resourceTypeLabel: 'Opportunity portal', retrievalEligible: false,
+  }])
+})
+
+test('structured forms can be archived while their original URL remains available', () => {
+  const structuredResources = normalizeSAMStructuredResources({ resources: [{
+    type: 'link', uri: 'https://agency.gov/forms/SF-1449.pdf', description: 'SF 1449 submission form',
+  }] })
+  const detail = normalizeSAMOpportunityDetail({ structuredResources })
+  assert.equal(detail.links.length, 0)
+  assert.equal(detail.attachments.length, 1)
+  assert.equal(detail.attachments[0].sourceUrl, 'https://agency.gov/forms/SF-1449.pdf')
+  assert.equal(detail.attachments[0].resourceType, 'form')
+})
+
+test('structured reference websites remain visible but are not sent to the file archiver', () => {
+  const structuredResources = normalizeSAMStructuredResources({ resources: [
+    { type: 'link', uri: 'https://agency.gov/policy', description: 'Applicable agency policy' },
+    { type: 'link', uri: 'https://standards.example.org/specification', description: 'Technical standard' },
+  ] })
+  const detail = normalizeSAMOpportunityDetail({ structuredResources })
+  assert.equal(detail.attachments.length, 0)
+  assert.deepEqual(detail.links.map((link) => link.resourceType), ['reference', 'external'])
 })
 
 test('SAM detail accepts the alternate set-aside fields returned by SAM records', () => {
@@ -127,5 +165,8 @@ test('SAM detail omits API self links and an unresolved description endpoint', (
     ],
   })
   assert.equal(detail.description, '')
-  assert.deepEqual(detail.links, [{ url: 'https://piee.eb.mil/sol', label: 'PIEE', source: 'links' }])
+  assert.deepEqual(detail.links, [{
+    url: 'https://piee.eb.mil/sol', label: 'PIEE', source: 'links',
+    resourceType: 'opportunity_portal', resourceTypeLabel: 'Opportunity portal', retrievalEligible: false,
+  }])
 })
