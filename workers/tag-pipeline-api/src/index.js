@@ -37,14 +37,17 @@ import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './hand
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
 import {
+  isEbuyPullCron,
   isOpportunityPullBackupCron,
   isOpportunityPullCron,
   isQuarterlyExpiringRefreshTime,
+  isSAMPullCron,
   opportunityPullSlotTime,
   samMonitorAlreadyRanForSlot,
   samMonitorDueAtSlot,
 } from './lib/scheduledCadence.js'
 import { purgeDocumentAnalysisData } from './lib/documentAnalysis.js'
+import { getRuntimeState, purgeRuntimeState } from './lib/automationHealth.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -87,6 +90,7 @@ function json(data, status = 200) {
 
 export default {
   async fetch(req, env, ctx) {
+    const requestStartedAt = Date.now()
     const url = new URL(req.url)
     const path = url.pathname
 
@@ -204,13 +208,19 @@ export default {
       }
     }
 
+    console.info(JSON.stringify({
+      event: 'worker_request_measurement',
+      method: req.method,
+      route: path,
+      status: response.status,
+      wallMs: Date.now() - requestStartedAt,
+    }))
     return cors(env, req, response)
   },
 
   // All scheduled times are UTC. Nigeria is UTC+1 year-round. SAM and eBuy
-  // opportunity synchronization share the four six-hour weekday checkpoints;
-  // follow-on checks run once each weekday and response-deadline reminders
-  // may still run on weekends.
+  // opportunity synchronization uses staggered weekday checkpoints. Follow-on
+  // checks use each recovery slot; response-deadline reminders also run weekends.
   async scheduled(controller, env, ctx) {
     if (isOpportunityPullCron(controller.cron)) {
       const isBackup = isOpportunityPullBackupCron(controller.cron)
@@ -221,19 +231,19 @@ export default {
       const isWeekday = weekday >= 1 && weekday <= 5
 
       if (isWeekday) {
-        ctx.waitUntil(startScheduledEbuySync(env, pullSlotTime).catch((error) => {
+        if (isEbuyPullCron(controller.cron) || isBackup) ctx.waitUntil(startScheduledEbuySync(env, pullSlotTime).catch((error) => {
           console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
         }))
-        ctx.waitUntil(startScheduledSAMPull(env, pullSlotTime).catch((error) => {
+        if (isSAMPullCron(controller.cron) || isBackup) ctx.waitUntil(startScheduledSAMPull(env, pullSlotTime).catch((error) => {
           console.error(JSON.stringify({ event: 'sam_scheduled_start_failed', code: error.code || null, message: error.message }))
         }))
       }
 
       // Check changes at every weekday pull slot, retaining twice-daily
       // weekend coverage. A backup pass only replaces a missed primary pass.
-      if (samMonitorDueAtSlot(scheduledDate)) {
+      if (isBackup && samMonitorDueAtSlot(scheduledDate)) {
         ctx.waitUntil((async () => {
-          const run = await env.CACHE?.get('sam_monitor_run', 'json')
+          const run = await getRuntimeState(env, 'sam_monitor_run')
           if (isBackup && samMonitorAlreadyRanForSlot(run, pullSlotTime)) {
             console.info(JSON.stringify({
               event: 'sam_monitor_backup', status: 'already_completed',
@@ -253,14 +263,19 @@ export default {
         }))
       }
 
-      if (!isBackup && scheduledHour === 12 && isWeekday) {
+      if (isBackup && isWeekday) {
         ctx.waitUntil(runRFIFollowUpMonitor(env))
+      }
+
+      if (isBackup && scheduledHour === 12 && isWeekday) {
         ctx.waitUntil(runPendingAwardMonitor(env).catch((error) => {
           console.error(JSON.stringify({ event: 'pending_award_monitor_failed', message: error.message }))
         }))
-        ctx.waitUntil(runQuarterlyExpirationReconciliation(env, controller.scheduledTime).catch((error) => {
-          console.error(JSON.stringify({ event: 'pipeline_expiration_reconciliation_failed', message: error.message }))
-        }))
+        if (scheduledDate.getUTCDate() === 1 && [0, 3, 6, 9].includes(scheduledDate.getUTCMonth())) {
+          ctx.waitUntil(runQuarterlyExpirationReconciliation(env, controller.scheduledTime).catch((error) => {
+            console.error(JSON.stringify({ event: 'pipeline_expiration_reconciliation_failed', message: error.message }))
+          }))
+        }
       }
     }
     // One minute after the workload-heavy SAM pull, compare the capabilities
@@ -271,6 +286,14 @@ export default {
     // Teams reminders retain their dedicated 2:01 PM WAT run.
     if (controller.cron === '1 13 * * *') {
       ctx.waitUntil(runScheduledNotifications(env))
+      if (env.EBUY_DB) {
+        ctx.waitUntil(purgeRuntimeState(env.EBUY_DB, { limit: 500 }).catch((error) => {
+          console.error(JSON.stringify({ event: 'runtime_state_retention_failed', message: error.message }))
+        }))
+        ctx.waitUntil(purgeDocumentAnalysisData(env.EBUY_DB).catch((error) => {
+          console.error(JSON.stringify({ event: 'document_analysis_retention_failed', message: error.message }))
+        }))
+      }
       // Retention is intentionally modest and only runs once each Monday.
       // Protected records remain until a user explicitly changes their state.
       if (new Date(controller.scheduledTime).getUTCDay() === 1 && env.EBUY_DB) {
@@ -291,9 +314,6 @@ export default {
         }))
         ctx.waitUntil(purgeExpiredTransactionCodingData(env.EBUY_DB).catch((error) => {
           console.error(JSON.stringify({ event: 'transaction_coding_retention_failed', message: error.message }))
-        }))
-        ctx.waitUntil(purgeDocumentAnalysisData(env.EBUY_DB).catch((error) => {
-          console.error(JSON.stringify({ event: 'document_analysis_retention_failed', message: error.message }))
         }))
       }
     }

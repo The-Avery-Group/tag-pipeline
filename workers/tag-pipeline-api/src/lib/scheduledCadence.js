@@ -1,9 +1,13 @@
 export const OPPORTUNITY_PULL_CRON = '0 0,6,12,18 * * *'
+export const EBUY_PULL_CRON = '5 0,6,12,18 * * *'
 export const OPPORTUNITY_PULL_BACKUP_CRON = '15 0,6,12,18 * * *'
 
 export function isOpportunityPullCron(value) {
-  return value === OPPORTUNITY_PULL_CRON || value === OPPORTUNITY_PULL_BACKUP_CRON
+  return value === OPPORTUNITY_PULL_CRON || value === EBUY_PULL_CRON || value === OPPORTUNITY_PULL_BACKUP_CRON
 }
+
+export function isEbuyPullCron(value) { return value === EBUY_PULL_CRON }
+export function isSAMPullCron(value) { return value === OPPORTUNITY_PULL_CRON }
 
 export function isOpportunityPullBackupCron(value) {
   return value === OPPORTUNITY_PULL_BACKUP_CRON
@@ -15,7 +19,9 @@ export function isOpportunityPullBackupCron(value) {
 export function opportunityPullSlotTime(scheduledTime, cron) {
   const timestamp = Number(scheduledTime)
   if (!Number.isFinite(timestamp)) return scheduledTime
-  return isOpportunityPullBackupCron(cron) ? timestamp - (15 * 60 * 1000) : timestamp
+  if (isOpportunityPullBackupCron(cron)) return timestamp - (15 * 60 * 1000)
+  if (isEbuyPullCron(cron)) return timestamp - (5 * 60 * 1000)
+  return timestamp
 }
 
 export function samMonitorDueAtSlot(value) {
