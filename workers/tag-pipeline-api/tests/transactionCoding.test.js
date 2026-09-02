@@ -78,6 +78,20 @@ test('Costpoint export emits a positional H and D record without a heading row',
   assert.doesNotMatch(result.csv, /Transaction ID|Coding Status|Merchant/)
 })
 
+test('Costpoint export matches the official Advanced AOPUTLAP CSV record lengths', () => {
+  const result = buildCostpointApVoucherCsv([exportRow], {
+    invoiceReferences: { 'txn-1': 'SCRIBD-0826' },
+    inputVoucherNumbers: { 'txn-1': '123456789' },
+  })
+  const [header, detail] = result.csv.trimEnd().split('\r\n').map((line) => line.split(','))
+  assert.equal(COSTPOINT_HEADER_FIELD_COUNT, 37)
+  assert.equal(COSTPOINT_DETAIL_FIELD_COUNT, 23)
+  assert.equal(header.length, 37)
+  assert.equal(detail.length, 23)
+  assert.equal(header.at(-1), '')
+  assert.equal(detail.at(-1), '')
+})
+
 test('custom invoice reference patterns use month and padded sequence only', () => {
   assert.equal(resolveInvoiceReferencePattern('INV-{date}-{sequence}', exportRow, 3), 'INV-2026-08-003')
   assert.equal(resolveInvoiceReferencePattern('INV{date}{sequence}', exportRow, 1000), 'INV2026-081000')
