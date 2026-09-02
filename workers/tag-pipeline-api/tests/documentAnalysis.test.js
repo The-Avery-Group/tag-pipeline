@@ -296,6 +296,10 @@ test('current unreadable chunks are resumed without discarding completed chunks'
     status: 'ready', coverage: { chunkCount: 13, completedChunks: 11 },
     warnings: ['Groq returned analysis that could not be read'],
   }), true)
+  assert.equal(hasResumableAnalysisChunks({
+    status: 'ready', coverage: { chunkCount: 28, completedChunks: 27 },
+    warnings: ["Generated JSON does not match the expected schema: '/sections/0/sectionIds' exceeds maxItems"],
+  }), true)
 })
 
 test('unchanged sections reuse their completed AI result after a document refresh', () => {
