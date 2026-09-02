@@ -1,3 +1,5 @@
+import { fetchSAMStructuredResources, isSAMResourceDownloadUrl } from './samOpportunityDetail.js'
+
 function formatSAMDate(date) {
   const d = new Date(date)
   return `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`
@@ -26,9 +28,13 @@ export async function fetchWorkspaceSAMNotice(env, workspace) {
   const record = records.find((item) => exactNotice && String(item.noticeId || '').trim().toLowerCase() === exactNotice)
     || records.find((item) => exactSolicitation && String(item.solicitationNumber || '').trim().toLowerCase() === exactSolicitation)
     || records[0]
+  const enriched = record ? await fetchSAMStructuredResources(record) : record
   return {
-    noticeId: record?.noticeId || workspace.noticeId || '',
-    resourceLinks: [...new Set((record?.resourceLinks || []).map((url) => String(url || '').trim()).filter(Boolean))],
+    noticeId: enriched?.noticeId || workspace.noticeId || '',
+    resourceLinks: [...new Set([
+      ...(enriched?.resourceLinks || []),
+      ...(enriched?.structuredResources || []).filter((resource) => resource.retrievalEligible).map((resource) => resource.url),
+    ].map((url) => String(url || '').trim()).filter(Boolean))],
   }
 }
 
@@ -49,7 +55,7 @@ function attachmentName(response, sourceUrl, index) {
 
 export async function fetchSAMAttachment(env, sourceUrl, index = 0) {
   let response = await fetch(sourceUrl)
-  if ([401, 403].includes(response.status) && env.SAM_API_KEY) {
+  if ([401, 403].includes(response.status) && env.SAM_API_KEY && isSAMResourceDownloadUrl(sourceUrl)) {
     const retryUrl = new URL(sourceUrl)
     if (!retryUrl.searchParams.has('api_key')) retryUrl.searchParams.set('api_key', env.SAM_API_KEY)
     response = await fetch(retryUrl)
