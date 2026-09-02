@@ -58,7 +58,9 @@ function cacheTablesForLocation(location) {
   if (path.startsWith('/opportunities/ebuy/')) return ['PipelineTable']
   if (path.startsWith('/opportunities/sam/')) return ['PipelineTable', 'NewOpportunitiesTable']
   if (path.startsWith('/opportunities/')) {
-    return ['PipelineTable', 'NotesTable', 'TasksTable', 'ContactsTable', 'PartnersTable', 'DataValidationTable', 'EmailFollowUpTemplatesTable', 'EmailFollowUpDraftsTable']
+    // The detail shell only needs the opportunity row. Notes, tasks, contacts,
+    // validation lists and research data load after the main record renders.
+    return ['PipelineTable']
   }
   if (path === '/opportunities') {
     return params.get('tab') === 'New'

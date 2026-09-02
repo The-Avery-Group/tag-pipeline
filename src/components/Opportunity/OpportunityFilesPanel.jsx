@@ -6,6 +6,7 @@ import {
   retryOpportunityWorkspace,
 } from '@/services/opportunityWorkspaceService'
 import { OPPORTUNITY_FILES_CHANGED_EVENT } from '@/services/opportunityReferenceUploadService'
+import { startAdaptivePolling } from '@/services/workerClient'
 import styles from './OpportunityFilesPanel.module.css'
 
 function formatSize(bytes) {
@@ -139,9 +140,16 @@ export default function OpportunityFilesPanel({ opportunity, toast }) {
 
   useEffect(() => {
     if (!open || !['queued', 'running'].includes(workspace?.status)) return undefined
-    const timer = window.setInterval(() => load({ quiet: true }), 3500)
-    return () => window.clearInterval(timer)
-  }, [open, workspace?.status, load])
+    return startAdaptivePolling({
+      key: `opportunity-workspace:${opportunityKey}`,
+      poll: () => getOpportunityWorkspace(opportunityKey),
+      onResult: async (result) => {
+        if (result?.workspace) setWorkspace(result.workspace)
+        if (['ready', 'partial', 'error'].includes(result?.workspace?.status)) await load({ quiet: true })
+      },
+      shouldContinue: (result) => ['queued', 'running'].includes(result?.workspace?.status),
+    })
+  }, [load, open, opportunityKey, workspace?.status])
 
   useEffect(() => {
     const handleFilesChanged = (event) => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { startAdaptivePolling } from '@/services/workerClient'
 import styles from './DocumentAnalysisPanel.module.css'
 
 const STATUS_LABELS = {
@@ -55,7 +56,7 @@ function BriefSection({ category, label, section }) {
   </article>
 }
 
-export default function DocumentAnalysisPanel({ load, run, disabled = false, toast }) {
+export default function DocumentAnalysisPanel({ load, run, pollKey = 'current', disabled = false, toast }) {
   const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
@@ -92,20 +93,29 @@ export default function DocumentAnalysisPanel({ load, run, disabled = false, toa
   const status = analysis?.status || (disabled ? 'cancelled' : loadError ? 'unavailable' : 'searching')
   useEffect(() => {
     if (status !== 'processing') return undefined
-    const timer = window.setInterval(() => refresh({ quiet: true }).catch(() => {}), 8_000)
-    return () => window.clearInterval(timer)
-  }, [refresh, status])
+    return startAdaptivePolling({
+      key: `document-analysis:${pollKey}`,
+      poll: loadRef.current,
+      onResult: (result) => {
+        setAnalysis(result.analysis || null)
+        setLoadError('')
+      },
+      shouldContinue: (result) => result?.analysis?.status === 'processing',
+    })
+  }, [pollKey, status])
 
   useEffect(() => {
     if (!loadError) return undefined
-    const retry = () => refresh({ quiet: true }).catch(() => {})
-    const timer = window.setInterval(retry, 12_000)
-    window.addEventListener('online', retry)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener('online', retry)
-    }
-  }, [loadError, refresh])
+    return startAdaptivePolling({
+      key: `document-analysis-recovery:${pollKey}`,
+      poll: loadRef.current,
+      onResult: (result) => {
+        setAnalysis(result.analysis || null)
+        setLoadError('')
+      },
+      shouldContinue: () => false,
+    })
+  }, [loadError, pollKey])
 
   const start = async () => {
     setRunning(true)
