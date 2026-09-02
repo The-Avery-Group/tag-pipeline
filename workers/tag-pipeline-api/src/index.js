@@ -36,7 +36,14 @@ import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
 import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './handlers/transactionCoding.js'
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
-import { isQuarterlyExpiringRefreshTime } from './lib/scheduledCadence.js'
+import {
+  isOpportunityPullBackupCron,
+  isOpportunityPullCron,
+  isQuarterlyExpiringRefreshTime,
+  opportunityPullSlotTime,
+  samMonitorAlreadyRanForSlot,
+  samMonitorDueAtSlot,
+} from './lib/scheduledCadence.js'
 import { purgeDocumentAnalysisData } from './lib/documentAnalysis.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
@@ -205,36 +212,48 @@ export default {
   // follow-on checks run once each weekday and response-deadline reminders
   // may still run on weekends.
   async scheduled(controller, env, ctx) {
-    if (controller.cron === '0 0,6,12,18 * * *') {
-      const scheduledDate = new Date(controller.scheduledTime)
+    if (isOpportunityPullCron(controller.cron)) {
+      const isBackup = isOpportunityPullBackupCron(controller.cron)
+      const pullSlotTime = opportunityPullSlotTime(controller.scheduledTime, controller.cron)
+      const scheduledDate = new Date(pullSlotTime)
       const scheduledHour = scheduledDate.getUTCHours()
       const weekday = scheduledDate.getUTCDay()
       const isWeekday = weekday >= 1 && weekday <= 5
 
       if (isWeekday) {
-        ctx.waitUntil(startScheduledEbuySync(env, controller.scheduledTime).catch((error) => {
+        ctx.waitUntil(startScheduledEbuySync(env, pullSlotTime).catch((error) => {
           console.error(JSON.stringify({ event: 'ebuy_scheduled_start_failed', code: error.code || null, message: error.message }))
         }))
-        ctx.waitUntil(startScheduledSAMPull(env, controller.scheduledTime))
+        ctx.waitUntil(startScheduledSAMPull(env, pullSlotTime).catch((error) => {
+          console.error(JSON.stringify({ event: 'sam_scheduled_start_failed', code: error.code || null, message: error.message }))
+        }))
       }
 
-      // SAM change monitoring keeps its existing twice-daily cadence.
-      if ([0, 12].includes(scheduledHour)) {
+      // Check changes at every weekday pull slot, retaining twice-daily
+      // weekend coverage. A backup pass only replaces a missed primary pass.
+      if (samMonitorDueAtSlot(scheduledDate)) {
         ctx.waitUntil((async () => {
           const run = await env.CACHE?.get('sam_monitor_run', 'json')
+          if (isBackup && samMonitorAlreadyRanForSlot(run, pullSlotTime)) {
+            console.info(JSON.stringify({
+              event: 'sam_monitor_backup', status: 'already_completed',
+              slot: new Date(pullSlotTime).toISOString(), checkedAt: run?.checkedAt || null,
+            }))
+            return { ok: true, skipped: true, reason: 'primary_completed' }
+          }
           const cursor = run?.nextCursor ?? 0
           return runSAMMonitorCheck(env, cursor, { scheduled: true })
         })())
       }
 
-      if (isQuarterlyExpiringRefreshTime(scheduledDate)) {
+      if (!isBackup && isQuarterlyExpiringRefreshTime(scheduledDate)) {
         ctx.waitUntil(startExpiringContractsRefresh(env, {
-          scheduledTime: controller.scheduledTime,
+          scheduledTime: pullSlotTime,
           source: 'scheduled',
         }))
       }
 
-      if (scheduledHour === 12 && isWeekday) {
+      if (!isBackup && scheduledHour === 12 && isWeekday) {
         ctx.waitUntil(runRFIFollowUpMonitor(env))
         ctx.waitUntil(runPendingAwardMonitor(env).catch((error) => {
           console.error(JSON.stringify({ event: 'pending_award_monitor_failed', message: error.message }))
