@@ -373,7 +373,36 @@ export function useSAMOpportunities() {
     }
     verifyCacheInBackground(['PipelineTable'])
 
-    await updateStatus(row._rowIndex, outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline')
+    const monitoringStatus = outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline'
+    await updateStatus(row._rowIndex, monitoringStatus)
+    // Register this watch with the background Worker now. Monitoring must not
+    // depend on somebody returning to the New tab after the pursuit decision.
+    if (WORKER_URL) {
+      await workerFetch('/sam/changes/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opportunities: [{
+            _rowIndex: row._rowIndex,
+            'Notice ID': row['Notice ID'],
+            'Solicitation Number': row['Solicitation Number'],
+            Title: row.Title,
+            Agency: row.Agency,
+            Department: row.Department,
+            Status: monitoringStatus,
+            'SAM.gov URL': row['SAM.gov URL'],
+            'Date Added': row['Date Added'],
+          }],
+          dismissedRowIndices: [],
+        }),
+      }).then((response) => {
+        if (!response.ok) throw new Error(`SAM monitoring returned ${response.status}`)
+      }).catch((error) => {
+        // Adding to the pipeline already succeeded. The existing page-level
+        // synchronization remains a fallback if monitoring is unavailable.
+        console.warn('[SAM monitor] Immediate registration failed:', error.message)
+      })
+    }
     return saved
   }, [resolveContact, updateStatus])
 
