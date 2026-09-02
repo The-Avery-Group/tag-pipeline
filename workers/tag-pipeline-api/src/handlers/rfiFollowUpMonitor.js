@@ -1,7 +1,13 @@
 import { followUpCandidate } from './sam.js'
 import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 import { findEbuyPipelineSource, listEbuyFollowOnCandidates } from '../lib/ebuyRepository.js'
-import { putAutomationRun } from '../lib/automationHealth.js'
+import {
+  deleteRuntimeState,
+  getRuntimeState,
+  listRuntimeState,
+  putAutomationRun,
+  putRuntimeState,
+} from '../lib/automationHealth.js'
 import { isFollowOnSourceOpportunity } from '../lib/noticeTypes.js'
 import {
   acknowledgeOpportunityAlert,
@@ -121,13 +127,11 @@ function normalizeWatch(input, existing = null) {
 }
 
 async function readWatch(env, key) {
-  const value = await env.CACHE.get(key)
-  try { return value ? JSON.parse(value) : null } catch { return null }
+  return getRuntimeState(env, key)
 }
-async function writeWatch(env, watch) { await env.CACHE.put(watch.key, JSON.stringify(watch)) }
+async function writeWatch(env, watch) { await putRuntimeState(env, watch.key, watch, { category: 'follow-on-watch' }) }
 async function listWatches(env) {
-  const list = await env.CACHE.list({ prefix: WATCH_PREFIX, limit: 1000 })
-  return (await Promise.all(list.keys.map((item) => readWatch(env, item.name)))).filter(Boolean)
+  return (await listRuntimeState(env, WATCH_PREFIX)).map((item) => item.value).filter(Boolean)
 }
 
 function decisionFor(watch, candidate) {
@@ -188,9 +192,7 @@ async function writeStatusSnapshot(env, watches) {
 
 async function readStatusSnapshot(env) {
   try {
-    const value = await env.CACHE.get(STATUS_SNAPSHOT_KEY)
-    if (!value) return null
-    const snapshot = JSON.parse(value)
+    const snapshot = await getRuntimeState(env, STATUS_SNAPSHOT_KEY)
     return Array.isArray(snapshot?.watches) ? snapshot : null
   } catch (error) {
     console.warn(JSON.stringify({
@@ -203,7 +205,7 @@ async function readStatusSnapshot(env) {
 
 async function persistStatusSnapshot(env, snapshot) {
   try {
-    await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+    await putRuntimeState(env, STATUS_SNAPSHOT_KEY, snapshot, { category: 'follow-on-snapshot' })
     return true
   } catch (error) {
     // This is a read optimization, not the source of truth. KV quota,
@@ -218,7 +220,7 @@ async function persistStatusSnapshot(env, snapshot) {
 
 async function readRunStatus(env) {
   try {
-    return await env.CACHE.get(RUN_KEY, 'json')
+    return await getRuntimeState(env, RUN_KEY)
   } catch (error) {
     console.warn(JSON.stringify({
       event: 'rfi_followup_run_status_read_failed',
@@ -368,7 +370,7 @@ async function findLocalEbuyFollowUps(env, watch) {
 }
 
 export async function refreshEbuyFollowOnWatches(env) {
-  if (!env.CACHE || !env.EBUY_DB) return { checked: 0, changed: 0 }
+  if (!env.EBUY_DB) return { checked: 0, changed: 0 }
   const watches = await listWatches(env)
   let checked = 0
   let changed = 0
@@ -440,7 +442,7 @@ async function syncWatches(env, inputs, { replace = false } = {}) {
   }
   if (replace) {
     const removed = existing.filter((watch) => !incomingKeys.has(watch.key))
-    await Promise.all(removed.map((watch) => env.CACHE.delete(watch.key)))
+    await Promise.all(removed.map((watch) => deleteRuntimeState(env, watch.key)))
     if (env.EBUY_DB && await alertStorageReady(env.EBUY_DB)) {
       await Promise.all(removed.map(async (watch) => {
         const alert = await getOpportunityAlert(env.EBUY_DB, watch.opportunityId, 'rfi_follow_on')
@@ -521,7 +523,7 @@ async function syncFromWorkbook(env) {
 }
 
 export async function runRFIFollowUpMonitor(env) {
-  if (!env.CACHE) return { ok: false, skipped: true }
+  if (!env.EBUY_DB && !env.CACHE) return { ok: false, skipped: true }
   let source = 'browser-sync'
   let samNewTabRows = []
   try {
@@ -549,7 +551,7 @@ export async function runRFIFollowUpMonitor(env) {
 
 export async function handleRFIFollowUpMonitor(req, env) {
   const path = new URL(req.url).pathname
-  if (!env.CACHE) return json({ error: 'CACHE binding is not configured' }, 503)
+  if (!env.EBUY_DB && !env.CACHE) return json({ error: 'Background storage is not configured' }, 503)
   if (path === '/sam/follow-up-monitor/sync' && req.method === 'POST') {
     const body = await req.json()
     const watches = Array.isArray(body.watches) ? body.watches : []

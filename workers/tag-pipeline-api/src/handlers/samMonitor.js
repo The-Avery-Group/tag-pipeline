@@ -1,4 +1,10 @@
-import { putAutomationRun } from '../lib/automationHealth.js'
+import {
+  deleteRuntimeState,
+  getRuntimeState,
+  listRuntimeState,
+  putAutomationRun,
+  putRuntimeState,
+} from '../lib/automationHealth.js'
 import {
   acknowledgeOpportunityAlert,
   alertFingerprint,
@@ -165,18 +171,15 @@ function sameWatchSource(left, right) {
 }
 
 async function readWatch(env, key) {
-  const text = await env.CACHE.get(key)
-  try { return text ? JSON.parse(text) : null } catch { return null }
+  return getRuntimeState(env, key)
 }
 
 async function writeWatch(env, watch) {
-  await env.CACHE.put(watch.key, JSON.stringify(watch))
+  await putRuntimeState(env, watch.key, watch, { category: 'sam-monitor-watch' })
 }
 
 async function listWatches(env) {
-  const listed = await env.CACHE.list({ prefix: WATCH_PREFIX, limit: 1000 })
-  const watches = await Promise.all(listed.keys.map(({ name }) => readWatch(env, name)))
-  return watches.filter(Boolean)
+  return (await listRuntimeState(env, WATCH_PREFIX)).map((item) => item.value).filter(Boolean)
 }
 
 async function writeStatusSnapshot(env, watches) {
@@ -188,9 +191,7 @@ async function writeStatusSnapshot(env, watches) {
 
 async function readStatusSnapshot(env) {
   try {
-    const value = await env.CACHE.get(STATUS_SNAPSHOT_KEY)
-    if (!value) return null
-    const snapshot = JSON.parse(value)
+    const snapshot = await getRuntimeState(env, STATUS_SNAPSHOT_KEY)
     return Array.isArray(snapshot?.watches) ? snapshot : null
   } catch (error) {
     console.warn(JSON.stringify({
@@ -203,7 +204,7 @@ async function readStatusSnapshot(env) {
 
 async function persistStatusSnapshot(env, snapshot) {
   try {
-    await env.CACHE.put(STATUS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+    await putRuntimeState(env, STATUS_SNAPSHOT_KEY, snapshot, { category: 'sam-monitor-snapshot' })
     return true
   } catch (error) {
     console.warn(JSON.stringify({
@@ -216,7 +217,7 @@ async function persistStatusSnapshot(env, snapshot) {
 
 async function readRunStatus(env) {
   try {
-    return await env.CACHE.get(RUN_KEY, 'json')
+    return await getRuntimeState(env, RUN_KEY)
   } catch (error) {
     console.warn(JSON.stringify({
       event: 'sam_monitor_run_status_read_failed',
@@ -382,7 +383,7 @@ async function sync(req, env) {
   // delete its existing watch so it cannot be checked again by an autonomous
   // Worker batch or retain an outdated SAM-updated badge.
   const removed = currentWatches.filter((watch) => dismissedRowIndices.has(Number(watch.rowIndex)))
-  await Promise.all(removed.map((watch) => env.CACHE.delete(watch.key)))
+  await Promise.all(removed.map((watch) => deleteRuntimeState(env, watch.key)))
   const activeWatches = currentWatches.filter((watch) => !dismissedRowIndices.has(Number(watch.rowIndex)))
   let synchronized = 0
   let unchanged = 0

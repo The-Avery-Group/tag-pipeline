@@ -3,6 +3,8 @@
  * Worker owns Adaptive Card presentation and the webhook secret.
  */
 
+import { deleteRuntimeState, getRuntimeState, putRuntimeState } from '../lib/automationHealth.js'
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -23,15 +25,13 @@ export function taskSummaryDedupeKey(type, payload) {
 }
 
 async function reserveDedupeKey(env, key, expirationTtl = 172800) {
-  if (!key || !env.CACHE) return true
+  if (!key || (!env.EBUY_DB && !env.CACHE)) return true
   try {
-    if (await env.CACHE.get(key)) return false
-    // One small shared write, retained long enough to cover delayed browser
-    // sessions. All later sign-ins only read this key and do not post a card.
-    await env.CACHE.put(key, 'sent', { expirationTtl })
+    if (await getRuntimeState(env, key)) return false
+    await putRuntimeState(env, key, 'sent', { category: 'notification-dedupe', expirationTtl })
     return true
   } catch (error) {
-    // Notification delivery should remain available if KV has a transient
+    // Notification delivery should remain available if storage has a transient
     // problem. The existing workbook log remains a second, client-side gate.
     console.warn('[Notify] Could not reserve summary notification:', error.message)
     return true
@@ -39,9 +39,9 @@ async function reserveDedupeKey(env, key, expirationTtl = 172800) {
 }
 
 async function releaseDedupeKey(env, key) {
-  if (!key || !env.CACHE) return
+  if (!key || (!env.EBUY_DB && !env.CACHE)) return
   try {
-    await env.CACHE.delete(key)
+    await deleteRuntimeState(env, key)
   } catch (error) {
     console.warn('[Notify] Could not release summary notification:', error.message)
   }

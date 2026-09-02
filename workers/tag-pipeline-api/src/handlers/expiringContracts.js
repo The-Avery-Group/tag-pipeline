@@ -8,6 +8,12 @@ import {
   recordDate,
 } from './awards.js'
 import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
+import {
+  deleteRuntimeState,
+  getRuntimeState,
+  listRuntimeState,
+  putRuntimeState,
+} from '../lib/automationHealth.js'
 
 const AWARDS_BASE = 'https://api.sam.gov/contract-awards/v1/search'
 const OPPORTUNITIES_BASE = 'https://api.sam.gov/opportunities/v2/search'
@@ -15,7 +21,9 @@ const FEDERAL_HIERARCHY_BASE = 'https://api.sam.gov/prod/federalorganizations/v1
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const PAGE_SIZE = 100
 const MAX_PAGES_PER_AGENCY = 40
-const PAGES_PER_CHECKPOINT = 6
+// Keep each durable checkpoint comfortably below D1 row and Workflow CPU
+// limits. Large agencies continue in another resumable Workflow step.
+const PAGES_PER_CHECKPOINT = 3
 const MAX_WORKFLOW_CHECKPOINTS = 1000
 const CACHE_TTL_SECONDS = 100 * 24 * 60 * 60
 const STATUS_KEY = 'expiring_contracts:status:v1'
@@ -25,6 +33,7 @@ const RUN_RECORDS_PREFIX = 'expiring_contracts:run_records:v1:'
 const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
 const MODIFIER_CONTACT_PREFIX = 'expiring_contracts:modifier_contacts:v1:'
 const MODIFIER_CONTACT_TTL_SECONDS = 14 * 24 * 60 * 60
+const DETAIL_TTL_SECONDS = 30 * 24 * 60 * 60
 
 export const DEFAULT_EXPIRING_AGENCIES = [
   { id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' },
@@ -216,15 +225,15 @@ function resultCacheKey(agency) {
 }
 
 async function getStatus(env) {
-  return env.CACHE ? env.CACHE.get(STATUS_KEY, 'json') : null
+  return getRuntimeState(env, STATUS_KEY)
 }
 
 async function setStatus(env, status) {
-  if (env.CACHE) await env.CACHE.put(STATUS_KEY, JSON.stringify(status), { expirationTtl: CACHE_TTL_SECONDS })
+  await putRuntimeState(env, STATUS_KEY, status, { category: 'expiring-status', expirationTtl: CACHE_TTL_SECONDS })
 }
 
 async function agencyRegistry(env) {
-  const custom = env.CACHE ? await env.CACHE.get(AGENCY_REGISTRY_KEY, 'json') : []
+  const custom = await getRuntimeState(env, AGENCY_REGISTRY_KEY) || []
   const byId = new Map(DEFAULT_EXPIRING_AGENCIES.map((agency) => [agency.id, agency]))
   ;(Array.isArray(custom) ? custom : []).forEach((agency, index) => {
     const normalized = normalizeAgency(agency, index)
@@ -234,13 +243,12 @@ async function agencyRegistry(env) {
 }
 
 async function saveAgencyRegistry(env, agencies) {
-  if (!env.CACHE) return
   const persisted = agencies.filter((agency) => {
     const defaultAgency = DEFAULT_EXPIRING_AGENCIES.find((item) => item.id === agency.id)
     return agency.custom || !defaultAgency || agency.organizationId || agency.agencyCode ||
       agency.searchName !== defaultAgency.searchName || agency.tier !== defaultAgency.tier
   })
-  await env.CACHE.put(AGENCY_REGISTRY_KEY, JSON.stringify(persisted))
+  await putRuntimeState(env, AGENCY_REGISTRY_KEY, persisted, { category: 'expiring-config' })
 }
 
 export function normalizeExpiringAgency(value, index = 0) {
@@ -341,7 +349,7 @@ async function hydrateAgencyCodes(env, agencies) {
     }
 
     let official = null
-    const cached = env.CACHE ? await env.CACHE.get(resultCacheKey(agency), 'json') : null
+    const cached = await getRuntimeState(env, resultCacheKey(agency))
     if (cached?.official) {
       const code = agency.tier === 'department'
         ? cached.official.departmentCode
@@ -438,24 +446,16 @@ export function expiringHiddenKey(familyKey) {
 }
 
 async function listHiddenContractKeys(env) {
-  if (!env.CACHE || typeof env.CACHE.list !== 'function') return new Set()
-  const keys = new Set()
-  let cursor
-  do {
-    const page = await env.CACHE.list({ prefix: HIDDEN_PREFIX, limit: 1000, ...(cursor ? { cursor } : {}) })
-    ;(page.keys || []).forEach((item) => keys.add(item.name))
-    cursor = page.list_complete ? null : page.cursor
-  } while (cursor && keys.size < 10000)
-  return keys
+  return new Set((await listRuntimeState(env, HIDDEN_PREFIX)).map((item) => item.key))
 }
 
 async function setExpiringContractHidden(env, familyKey, hidden) {
-  if (!env.CACHE) throw new Error('Shared contract visibility storage is unavailable')
+  if (!env.EBUY_DB && !env.CACHE) throw new Error('Shared contract visibility storage is unavailable')
   const key = expiringHiddenKey(familyKey)
   if (hidden) {
-    await env.CACHE.put(key, JSON.stringify({ familyKey: clean(familyKey), hiddenAt: new Date().toISOString() }))
+    await putRuntimeState(env, key, { familyKey: clean(familyKey), hiddenAt: new Date().toISOString() }, { category: 'expiring-hidden' })
   } else {
-    await env.CACHE.delete(key)
+    await deleteRuntimeState(env, key)
   }
   return { familyKey: clean(familyKey), hidden: Boolean(hidden) }
 }
@@ -561,7 +561,7 @@ export async function saveAgencyResults(env, agency, records, fetchedAt = new Da
     ? { departmentCode: families[0].departmentCode, agencyCode: families[0].agencyCode, agencyName: families[0].agency, departmentName: families[0].department }
     : null
   const value = { agency, official, fetchedAt, contracts: families }
-  if (env.CACHE) await env.CACHE.put(resultCacheKey(agency), JSON.stringify(value), { expirationTtl: CACHE_TTL_SECONDS })
+  await putRuntimeState(env, resultCacheKey(agency), value, { category: 'expiring-results', expirationTtl: CACHE_TTL_SECONDS })
   return value
 }
 
@@ -575,7 +575,7 @@ function continuationInstanceId(runId, checkpoint) {
 }
 
 async function readCheckpointRecords(env, key, expectedCount = 0) {
-  const records = env.CACHE ? await env.CACHE.get(key, 'json') : null
+  const records = await getRuntimeState(env, key)
   const result = Array.isArray(records) ? records : []
   if (expectedCount && result.length < expectedCount) {
     throw new Error(`Expiring contract checkpoint data is not ready (${result.length} of ${expectedCount} records)`)
@@ -589,12 +589,12 @@ async function checkpointRecordMetadata(env, key, expectedCount = 0) {
 }
 
 async function writeCheckpointRecords(env, key, records) {
-  if (!env.CACHE) throw new Error('CACHE binding is unavailable for expiring contract checkpoints')
-  await env.CACHE.put(key, JSON.stringify(records), { expirationTtl: 24 * 60 * 60 })
+  if (!env.EBUY_DB && !env.CACHE) throw new Error('Background storage is unavailable for expiring contract checkpoints')
+  await putRuntimeState(env, key, records, { category: 'expiring-checkpoint', expirationTtl: 24 * 60 * 60 })
 }
 
 async function clearCheckpointRecords(env, key) {
-  if (env.CACHE) await env.CACHE.delete(key)
+  await deleteRuntimeState(env, key)
 }
 
 async function scheduleExpiringCheckpoint(env, step, { runId, agencies, checkpoint, continuation }) {
@@ -659,7 +659,7 @@ export async function runExpiringContractsRefresh(env, event, step) {
   const runId = payload.runId || event?.instanceId || crypto.randomUUID()
   const startedAt = continuation.startedAt || payload.startedAt || new Date().toISOString()
   try {
-    if (!env.CACHE) throw new Error('CACHE binding is unavailable for expiring contract checkpoints')
+    if (!env.EBUY_DB && !env.CACHE) throw new Error('Background storage is unavailable for expiring contract checkpoints')
     if (checkpoint > MAX_WORKFLOW_CHECKPOINTS) {
       throw new Error(`Expiring contract refresh exceeded ${MAX_WORKFLOW_CHECKPOINTS} checkpoints`)
     }
@@ -858,7 +858,7 @@ function inSelectedRange(contract, range, now = new Date()) {
 
 async function loadResults(env, agencies, range, includeHidden = false) {
   const selected = agencies.length ? agencies : await agencyRegistry(env)
-  const cached = await Promise.all(selected.map((agency) => env.CACHE?.get(resultCacheKey(normalizeAgency(agency)), 'json')))
+  const cached = await Promise.all(selected.map((agency) => getRuntimeState(env, resultCacheKey(normalizeAgency(agency)))))
   const available = cached.filter(Boolean).map((entry) => ({
     ...entry,
     contracts: (entry.contracts || []).filter((contract) => !isExcludedExpiringSetAside(contract.setAside)),
@@ -1091,7 +1091,7 @@ async function loadContractDetail(env, url) {
     const fallbackKey = `${MODIFIER_CONTACT_PREFIX}${encodeURIComponent(result.familyKey)}`
     let cached = null
     try {
-      cached = env.CACHE ? await env.CACHE.get(fallbackKey, 'json') : null
+      cached = await getRuntimeState(env, fallbackKey)
     } catch (error) {
       console.warn(JSON.stringify({ event: 'expiring_contract_modifier_contact_cache_read_failed', message: error.message }))
     }
@@ -1105,12 +1105,10 @@ async function loadContractDetail(env, url) {
       })
       const candidates = noticeContacts(agencyNotices, result.agency)
       fallbackContacts = matchingModifierContacts(candidates, result.modifications, result.agency)
-      if (env.CACHE) {
-        try {
-          await env.CACHE.put(fallbackKey, JSON.stringify(fallbackContacts), { expirationTtl: MODIFIER_CONTACT_TTL_SECONDS })
-        } catch (error) {
-          console.warn(JSON.stringify({ event: 'expiring_contract_modifier_contact_cache_write_failed', message: error.message }))
-        }
+      try {
+        await putRuntimeState(env, fallbackKey, fallbackContacts, { category: 'expiring-detail', expirationTtl: MODIFIER_CONTACT_TTL_SECONDS })
+      } catch (error) {
+        console.warn(JSON.stringify({ event: 'expiring_contract_modifier_contact_cache_write_failed', message: error.message }))
       }
     }
   }
@@ -1124,6 +1122,26 @@ async function loadContractDetail(env, url) {
       modifierResolution: resolveLastModifiedBy(modification.lastModifiedBy, result.agency, resolutionContacts),
     })),
   }
+}
+
+async function cachedContractDetail(env, url) {
+  const piid = clean(url.searchParams.get('piid'))
+  const uei = normalizeIdentifier(url.searchParams.get('uei'))
+  const force = url.searchParams.get('refresh') === '1'
+  const cacheKey = `expiring_contracts:detail:v1:${encodeURIComponent(`${piid}|${uei}`)}`
+  if (!force) {
+    const cached = await getRuntimeState(env, cacheKey)
+    if (cached?.detail) return { ...cached.detail, cache: { source: 'saved', fetchedAt: cached.fetchedAt } }
+  }
+  const detail = await loadContractDetail(env, url)
+  const fetchedAt = new Date().toISOString()
+  await putRuntimeState(env, cacheKey, { detail, fetchedAt }, {
+    category: 'expiring-detail',
+    expirationTtl: DETAIL_TTL_SECONDS,
+  }).catch((error) => {
+    console.warn(JSON.stringify({ event: 'expiring_contract_detail_cache_write_failed', message: error.message }))
+  })
+  return { ...detail, cache: { source: 'live', fetchedAt } }
 }
 
 export async function handleExpiringContracts(req, env) {
@@ -1167,7 +1185,7 @@ export async function handleExpiringContracts(req, env) {
       return json(await startExpiringContractsRefresh(env, { agencies: body.agencies, source: 'manual' }), 202)
     }
     if (url.pathname === '/sam/expiring-contracts/detail' && req.method === 'GET') {
-      return json(await loadContractDetail(env, url))
+      return json(await cachedContractDetail(env, url))
     }
     return json({ error: 'Not found' }, 404)
   } catch (error) {

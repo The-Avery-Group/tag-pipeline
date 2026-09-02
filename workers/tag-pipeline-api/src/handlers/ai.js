@@ -4,19 +4,19 @@
  * Handles:
  *   POST /ai/chat    — Send a message, get a response (conversational)
  *   POST /ai/people-search-queries — Generate bounded public-profile search queries
- *   GET  /ai/history — Fetch conversation history from KV
- *   DELETE /ai/history — Clear a conversation from KV
+ *   GET  /ai/history — Fetch conversation history from D1
+ *   DELETE /ai/history — Clear a conversation from D1
  *
  * Features:
  *   - Capabilities document fetched from SharePoint, cached in KV (30 days)
- *   - Conversation history stored in KV per conversationId (30 days TTL)
+ *   - Conversation history stored in D1 per conversationId (30 days TTL)
  *   - Rich system prompts tailored to GovCon context
  *   - Model fallback chain
  */
 
 import { strFromU8, unzipSync } from 'fflate'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
-import { enrichAutomationRun } from '../lib/automationHealth.js'
+import { deleteRuntimeState, enrichAutomationRun, getRuntimeState, putRuntimeState } from '../lib/automationHealth.js'
 
 const GROQ_BASE  = 'https://api.groq.com/openai/v1'
 // Versioned to bypass the legacy cache, which stored raw DOCX ZIP bytes as
@@ -1280,7 +1280,7 @@ function convKey(conversationId) {
 }
 
 async function getHistory(env, conversationId) {
-  return (await kvGet(env, convKey(conversationId))) || []
+  return (await getRuntimeState(env, convKey(conversationId))) || []
 }
 
 async function saveHistory(env, conversationId, messages) {
@@ -1294,7 +1294,10 @@ async function saveHistory(env, conversationId, messages) {
     trimmed.unshift(message)
     chars += size
   }
-  await kvSet(env, convKey(conversationId), trimmed, CONV_TTL)
+  await putRuntimeState(env, convKey(conversationId), trimmed, {
+    category: 'ai-conversation',
+    expirationTtl: CONV_TTL,
+  })
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────────
@@ -1595,6 +1598,6 @@ async function handleGetHistory(req, env, url) {
 async function handleDeleteHistory(req, env, url) {
   const conversationId = url.searchParams.get('conversationId')
   if (!conversationId) return json({ error: 'Missing conversationId' }, 400)
-  await kvDelete(env, convKey(conversationId))
+  await deleteRuntimeState(env, convKey(conversationId))
   return json({ ok: true, conversationId })
 }

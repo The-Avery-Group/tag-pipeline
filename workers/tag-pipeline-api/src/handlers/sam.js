@@ -28,7 +28,7 @@
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
 import { getAppOnlyGraphToken } from '../lib/graph.js'
-import { putAutomationRun } from '../lib/automationHealth.js'
+import { getRuntimeState, putAutomationRun, putRuntimeState } from '../lib/automationHealth.js'
 import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
 import { fetchSAMStructuredResources, isSAMApiUrl, normalizeSAMOpportunityDetail, samDescriptionText } from '../lib/samOpportunityDetail.js'
 import {
@@ -47,6 +47,8 @@ import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, sta
 const PAGE_SIZE = 10
 const PAGE_DELAY = 250   // ms between paginated follow-up requests
 const FOLLOW_UP_CACHE_TTL_SECONDS = 12 * 60 * 60
+const OPPORTUNITY_DETAIL_REFRESH_SECONDS = 12 * 60 * 60
+const OPPORTUNITY_DETAIL_RETENTION_SECONDS = 90 * 24 * 60 * 60
 const FOLLOW_UP_MAX_PAGES = 4
 const FOLLOW_ON_TITLE_MATCHER_VERSION = 2
 // SAM rejects a range whose endpoints are exactly a calendar year apart in
@@ -958,37 +960,33 @@ export async function findRFIFollowUps(env, source) {
   )
 }
 
-// ── KV helpers ────────────────────────────────────────────────────────────
+// ── Durable runtime-state helpers ─────────────────────────────────────────
 
 async function setKeyExpired(env, expired) {
-  if (!env.CACHE) return
-  const current = await env.CACHE.get('sam_key_expired', 'json')
+  const current = await getRuntimeState(env, 'sam_key_expired')
   if (current?.expired === expired) return
-  await env.CACHE.put('sam_key_expired', JSON.stringify({ expired }), {
-    expirationTtl: 60 * 60 * 24 * 100,
+  await putRuntimeState(env, 'sam_key_expired', { expired }, {
+    category: 'sam-status', expirationTtl: 60 * 60 * 24 * 100,
   })
 }
 
 async function getKeyExpired(env) {
-  if (!env.CACHE) return false
-  const val = await env.CACHE.get('sam_key_expired', 'json')
+  const val = await getRuntimeState(env, 'sam_key_expired')
   return val?.expired === true
 }
 
 async function setRunLog(env, log, { completed = false } = {}) {
-  if (!env.CACHE) return
   if (completed) {
     await putAutomationRun(env, 'sam_run_log', log)
     return
   }
-  await env.CACHE.put('sam_run_log', JSON.stringify(log), {
-    expirationTtl: 60 * 60 * 24 * 180,
+  await putRuntimeState(env, 'sam_run_log', log, {
+    category: 'sam-status', expirationTtl: 60 * 60 * 24 * 180,
   })
 }
 
 async function getRunLog(env) {
-  if (!env.CACHE) return null
-  return env.CACHE.get('sam_run_log', 'json')
+  return getRuntimeState(env, 'sam_run_log')
 }
 
 async function handleFollowUps(req, env) {
@@ -1565,8 +1563,13 @@ export async function handleSAM(req, env, ctx) {
     // cache versioned prevents an old generated link from returning when a
     // live SAM.gov lookup temporarily fails after this integrity fix.
     const cacheKey = `sam:opportunity-detail:v3:${normalizeNoticeId(url.searchParams.get('noticeId') || url.searchParams.get('solicitationNumber') || '')}`
-    const cached = cacheKey && await env.CACHE?.get(cacheKey, 'json')
-    try {
+    const forceRefresh = url.searchParams.get('refresh') === '1'
+    const stored = cacheKey ? await getRuntimeState(env, cacheKey) : null
+    const cached = stored?.opportunity || (stored && !stored.fetchedAt ? stored : null)
+    const fetchedAt = Date.parse(stored?.fetchedAt || '')
+    const stale = !Number.isFinite(fetchedAt) || Date.now() - fetchedAt >= OPPORTUNITY_DETAIL_REFRESH_SECONDS * 1000
+
+    const loadLive = async () => {
       const record = await fetchSAMOpportunityRecord(env, {
         noticeId: url.searchParams.get('noticeId') || '',
         solicitationNumber: url.searchParams.get('solicitationNumber') || '',
@@ -1578,10 +1581,25 @@ export async function handleSAM(req, env, ctx) {
         ? await findSAMArchive(env.EBUY_DB, detail)
         : null
       const opportunity = mergeSAMArchive(detail, archive)
-      if (JSON.stringify(cached) !== JSON.stringify(opportunity)) {
-        await env.CACHE?.put(cacheKey, JSON.stringify(opportunity), { expirationTtl: 90 * 24 * 60 * 60 })
+      const refreshedAt = new Date().toISOString()
+      await putRuntimeState(env, cacheKey, { opportunity, fetchedAt: refreshedAt }, {
+        category: 'sam-detail', expirationTtl: OPPORTUNITY_DETAIL_RETENTION_SECONDS,
+      }).catch((error) => {
+        console.warn(JSON.stringify({ event: 'sam_opportunity_detail_cache_write_failed', message: error.message }))
+      })
+      return { opportunity, fetchedAt: refreshedAt }
+    }
+
+    if (cached && !forceRefresh) {
+      if (stale && ctx?.waitUntil) {
+        ctx.waitUntil(loadLive().catch((error) => {
+          console.warn(JSON.stringify({ event: 'sam_opportunity_background_refresh_failed', message: error.message }))
+        }))
       }
-      return json({ opportunity })
+      return json({ opportunity: cached, cached: true, stale, fetchedAt: stored?.fetchedAt || null })
+    }
+    try {
+      return json(await loadLive())
     } catch (error) {
       if (cached) return json({ opportunity: cached, warning: error.message, stale: true })
       return json({ error: error.message, code: error.code || 'sam_opportunity_failed' }, error.status || 500)

@@ -3,6 +3,7 @@ import { findAwardNotice } from './awards.js'
 import { sendTeamsNotification } from './notify.js'
 import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from '../lib/graph.js'
 import { alertFingerprint, alertStorageReady, upsertOpportunityAlert } from '../lib/opportunityAlerts.js'
+import { getRuntimeState, putRuntimeState } from '../lib/automationHealth.js'
 
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const AWARD_MONITOR_LIMIT = 20
@@ -42,7 +43,7 @@ export async function runPendingAwardMonitor(env) {
   if (!env.SAM_API_KEY || !env.EBUY_DB || !(await alertStorageReady(env.EBUY_DB))) return { checked: 0, alerts: 0 }
   const { rows } = await workbookContext(env)
   const pending = rows.filter((row) => clean(row['TAG Opportunity Phase']) === 'Pending Award' && clean(row['Notice Type']).toUpperCase() === 'RFP')
-  const storedCursor = await env.CACHE?.get('pending_award_monitor:cursor')
+  const storedCursor = await getRuntimeState(env, 'pending_award_monitor:cursor')
   const cursor = Number(storedCursor || 0)
   const batch = pending.slice(cursor, cursor + AWARD_MONITOR_LIMIT)
   let alerts = 0
@@ -85,7 +86,7 @@ export async function runPendingAwardMonitor(env) {
   // the monitor completed at the same position (especially when there are no
   // Pending Award opportunities).
   if (String(nextCursor) !== String(storedCursor || 0)) {
-    await env.CACHE?.put('pending_award_monitor:cursor', String(nextCursor))
+    await putRuntimeState(env, 'pending_award_monitor:cursor', nextCursor, { category: 'monitor-cursor' })
   }
   return { checked: batch.length, alerts, remaining: Math.max(0, pending.length - nextCursor) }
 }
@@ -95,7 +96,7 @@ export async function runQuarterlyExpirationReconciliation(env, scheduledTime = 
   const date = new Date(scheduledTime)
   const quarterKey = `${date.getUTCFullYear()}-Q${Math.floor(date.getUTCMonth() / 3) + 1}`
   const stateKey = 'pipeline_expiration_reconciliation:state'
-  const state = await env.CACHE?.get(stateKey, 'json') || {}
+  const state = await getRuntimeState(env, stateKey) || {}
   if (state.quarterKey === quarterKey && state.complete) return { skipped: true, quarterKey }
   const { token, rows } = await workbookContext(env)
   const eligible = rows.filter((row) => clean(row['Expiring Contract Number ']) || clean(row['Contract Number / Notice ID']))
@@ -132,6 +133,6 @@ export async function runQuarterlyExpirationReconciliation(env, scheduledTime = 
   }
   const nextCursor = cursor + batch.length
   const complete = nextCursor >= eligible.length
-  await env.CACHE?.put(stateKey, JSON.stringify({ quarterKey, cursor: complete ? 0 : nextCursor, complete }))
+  await putRuntimeState(env, stateKey, { quarterKey, cursor: complete ? 0 : nextCursor, complete }, { category: 'quarterly-reconciliation' })
   return { quarterKey, checked: batch.length, updated, review, complete }
 }
