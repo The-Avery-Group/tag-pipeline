@@ -1,7 +1,39 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { addStructuredBriefEvidence, analyzeRelevantChunk, classifyAnalysisSection, consolidateBriefItems, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, OPPORTUNITY_BRIEF_CATEGORIES, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+import { activeDocumentAnalysisWorkflowStatus, addStructuredBriefEvidence, analyzeRelevantChunk, classifyAnalysisSection, consolidateBriefItems, consolidateReadyDocumentRows, criticalAnalysisStatus, DOCUMENT_ANALYSIS_VERSION, documentAnalysisCoverage, documentAnalysisWorkspace, extractCitedRequirements, extractCriticalSubmissionDetails, extractDocumentSections, groqRetryDelay, hasResumableAnalysisChunks, isSubmissionTemplateAttachment, manualAnalysisState, OPPORTUNITY_BRIEF_CATEGORIES, reconcileCriticalFindings, relevantAnalysisChunks, resumableAnalysisChunks, startDocumentAnalysisWorkflow, validateDocumentAnalysisResponse } from '../src/lib/documentAnalysis.js'
+
+function documentWorkflowDatabase(initialRow = null) {
+  let row = initialRow ? { ...initialRow } : null
+  return {
+    row: () => row,
+    prepare(sql) {
+      let values = []
+      return {
+        bind(...args) { values = args; return this },
+        async first() {
+          if (/SELECT status, source_service, workflow_instance_id/.test(sql)) return row ? { ...row } : null
+          return null
+        },
+        async run() {
+          if (/INSERT OR IGNORE INTO opportunity_analysis_jobs/.test(sql)) {
+            if (row) return { meta: { changes: 0 } }
+            row = { opportunity_key: values[0], source_service: values[1], status: 'queued', workflow_instance_id: null }
+            return { meta: { changes: 1 } }
+          }
+          if (/SET workflow_instance_id = \?/.test(sql)) {
+            const expected = values.length === 6 ? values[5] : null
+            if (!row || (expected ? row.workflow_instance_id !== expected : row.workflow_instance_id)) return { meta: { changes: 0 } }
+            row = { ...row, workflow_instance_id: values[0], source_service: values[1], status: 'queued' }
+            return { meta: { changes: 1 } }
+          }
+          return { meta: { changes: 1 } }
+        },
+      }
+    },
+    async batch() { return [] },
+  }
+}
 
 test('pipeline analysis is rooted in the opportunity RFI documents folder', () => {
   const scoped = documentAnalysisWorkspace({ rootFolderId: 'workspace-root', samFolderId: 'rfi-documents', title: 'Example' })
@@ -29,6 +61,65 @@ test('manual analysis never represents remaining work as an automatic queue', ()
   assert.deepEqual(manualAnalysisState({ remaining: 4, deferred: 1 }, { status: 'deferred' }, { background: true }), {
     completed: false, status: 'running', progressPhase: 'Processing documents',
   })
+})
+
+test('document analysis reuses an active workflow instance', async () => {
+  const db = documentWorkflowDatabase({
+    opportunity_key: 'example-1', source_service: 'sam', status: 'running', workflow_instance_id: 'existing-run',
+  })
+  let createCalls = 0
+  const result = await startDocumentAnalysisWorkflow({
+    EBUY_DB: db,
+    DOCUMENT_ANALYSIS_WORKFLOW: {
+      createBatch: async () => { createCalls++; return [] },
+      get: async (id) => ({ id, status: async () => ({ status: 'waiting' }) }),
+    },
+  }, { source: 'sam', opportunityKey: 'EXAMPLE-1' })
+
+  assert.equal(result.reused, true)
+  assert.equal(result.instanceId, 'existing-run')
+  assert.equal(result.status, 'waiting')
+  assert.equal(createCalls, 0)
+})
+
+test('legacy running document analysis suppresses a duplicate workflow', async () => {
+  const db = documentWorkflowDatabase({
+    opportunity_key: 'example-2', source_service: 'sam', status: 'running', workflow_instance_id: null,
+  })
+  let createCalls = 0
+  const result = await startDocumentAnalysisWorkflow({
+    EBUY_DB: db,
+    DOCUMENT_ANALYSIS_WORKFLOW: { createBatch: async () => { createCalls++; return [] } },
+  }, { source: 'sam', opportunityKey: 'EXAMPLE-2' })
+
+  assert.equal(result.reused, true)
+  assert.equal(result.legacy, true)
+  assert.equal(result.instanceId, null)
+  assert.equal(createCalls, 0)
+})
+
+test('document analysis atomically claims and starts a new workflow', async () => {
+  const db = documentWorkflowDatabase()
+  let created
+  const result = await startDocumentAnalysisWorkflow({
+    EBUY_DB: db,
+    DOCUMENT_ANALYSIS_WORKFLOW: {
+      get: async () => { throw new Error('not found') },
+      createBatch: async (batch) => { created = batch[0]; return [{ id: batch[0].id }] },
+    },
+  }, { source: 'pipeline', opportunityKey: 'EXAMPLE-3' })
+
+  assert.equal(result.started, true)
+  assert.equal(result.reused, undefined)
+  assert.equal(created.params.opportunityKey, 'example-3')
+  assert.equal(db.row().workflow_instance_id, result.instanceId)
+})
+
+test('document analysis workflow statuses distinguish active and terminal instances', () => {
+  for (const status of ['queued', 'running', 'waiting', 'paused', 'waitingForPause', 'rollingBack', 'unknown']) {
+    assert.equal(activeDocumentAnalysisWorkflowStatus(status), true)
+  }
+  for (const status of ['complete', 'errored', 'terminated']) assert.equal(activeDocumentAnalysisWorkflowStatus(status), false)
 })
 
 test('relevant analysis chunks cover late document evidence without truncating it', () => {
