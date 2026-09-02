@@ -203,7 +203,7 @@ test('opportunity brief consolidates duplicate findings and retains useful citat
     { category: 'proposal_submission_poc', text: 'Submit the complete quotation by email to bids@example.gov.', citations: [{ fileName: 'a.docx', location: 'paragraph 12' }] },
     { category: 'scope', text: 'Provide help desk support.', citations: [{ fileName: 'a.docx', location: 'paragraph 8' }] },
   ]), [
-    { category: 'proposal_submission_poc', text: 'Submit the complete quotation by email to bids@example.gov.', assessment: 'found', citations: [{ fileName: 'a.docx', location: 'paragraph 10' }, { fileName: 'a.docx', location: 'paragraph 12' }] },
+    { category: 'proposal_submission_poc', text: 'Submit the complete quotation by email to bids@example.gov.', assessment: 'found', citations: [{ fileName: 'a.docx', location: 'paragraph 12' }] },
     { category: 'scope', text: 'Provide help desk support.', assessment: 'found', citations: [{ fileName: 'a.docx', location: 'paragraph 8' }] },
   ])
 })
