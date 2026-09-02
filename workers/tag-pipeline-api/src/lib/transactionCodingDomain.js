@@ -76,8 +76,11 @@ export function categorizeTransaction(transaction, rules = []) {
   return result
 }
 
-export const COSTPOINT_HEADER_FIELD_COUNT = 40
-export const COSTPOINT_DETAIL_FIELD_COUNT = 164
+// Deltek's AOPUTLAP spreadsheet includes a guide-label column and formatted
+// blank columns that are not part of the CSV record. The Advanced CSV layouts
+// contain 37 header fields and 23 detail fields.
+export const COSTPOINT_HEADER_FIELD_COUNT = 37
+export const COSTPOINT_DETAIL_FIELD_COUNT = 23
 export const COSTPOINT_INVOICE_REFERENCE_LIMIT = 15
 
 function rowValue(row, snakeKey, camelKey = snakeKey) {
