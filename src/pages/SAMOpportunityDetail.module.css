@@ -44,6 +44,8 @@
 .resourceHeading > div { display: flex; flex-direction: column; gap: 2px; }
 .resourceHeading h3 { margin: 0; }
 .resourceHeading > a { font-size: 10px; }
+.resourceType { background: var(--blue-50); border: .5px solid var(--blue-200); border-radius: 999px; color: var(--blue-700) !important; display: inline-block; font-size: 8px !important; font-weight: 700; margin-right: 6px; padding: 1px 5px; text-transform: uppercase; }
+.resourceActions { align-items: center; flex-direction: row !important; flex: 0 0 auto; }
 .archiveProgress { background: var(--blue-50); border: .5px solid var(--blue-200); border-radius: var(--radius-md); margin-bottom: 8px; padding: 8px 10px; }
 .archiveProgress > div:first-child { color: var(--blue-700); display: flex; font-size: 10px; justify-content: space-between; margin-bottom: 6px; }
 .archiveProgress > div:last-child { background: var(--blue-100); border-radius: 999px; height: 4px; overflow: hidden; }
