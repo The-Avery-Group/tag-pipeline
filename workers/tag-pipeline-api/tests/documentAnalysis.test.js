@@ -47,6 +47,17 @@ test('relevant analysis chunks cover late document evidence without truncating i
   assert.match(combined, /\[S\d{4}\]/)
 })
 
+test('default fallback chunks preserve a long section across smaller requests', () => {
+  const marker = 'FINAL CONTRACT-SPECIFIC DELIVERY REQUIREMENT'
+  const chunks = relevantAnalysisChunks([{
+    location: 'pages 40–55',
+    text: `The contractor shall perform the required work. ${'context '.repeat(3_000)} ${marker}`,
+  }])
+  assert.ok(chunks.length > 1)
+  assert.match(chunks.map((chunk) => chunk.source).join('\n'), new RegExp(marker))
+  assert.equal(chunks.every((chunk) => chunk.source.length < 12_500), true)
+})
+
 test('Groq pacing honors reset headers without dropping below one minute', () => {
   const response = { headers: { get: (name) => name === 'retry-after' ? '43.275' : name === 'x-ratelimit-reset-tokens' ? '1m 12.5s' : null } }
   assert.equal(groqRetryDelay(response), 73)
@@ -83,8 +94,7 @@ test('document analysis uses Workers AI with the existing parser output', async 
   assert.equal(calls[0].model, '@cf/openai/gpt-oss-20b')
   assert.equal(calls[0].input.max_tokens, 2_000)
   assert.equal(calls[0].input.max_completion_tokens, undefined)
-  assert.equal(calls[0].input.response_format.type, 'json_schema')
-  assert.equal(calls[0].input.response_format.json_schema.type, 'object')
+  assert.equal(calls[0].input.response_format, undefined)
   assert.match(calls[0].input.messages[1].content, /S0001/)
 })
 
@@ -99,7 +109,7 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
       status: 200,
       headers: { get: () => null },
       json: async () => ({
-        model: 'openai/gpt-oss-20b',
+        model: 'openai/gpt-oss-120b',
         choices: [{ message: { content: JSON.stringify({
           documentType: 'supporting',
           sections: [],
@@ -121,9 +131,59 @@ test('Groq fallback uses strict structured output when Workers AI cannot complet
     assert.equal(result.provider, 'groq')
     assert.deepEqual(workersModels, ['@cf/openai/gpt-oss-20b', '@cf/openai/gpt-oss-120b'])
     assert.equal(requestBody.max_completion_tokens, 2_000)
+    assert.equal(requestBody.model, 'openai/gpt-oss-120b')
     assert.equal(requestBody.response_format.type, 'json_schema')
     assert.equal(requestBody.response_format.json_schema.strict, true)
     assert.equal(requestBody.response_format.json_schema.schema.type, 'object')
+    assert.equal(requestBody.response_format.json_schema.schema.properties.sections.items.properties.sectionIds.maxItems, undefined)
+    assert.deepEqual(result.providerDiagnostics.workersAi, [
+      '@cf/openai/gpt-oss-20b: Workers AI output was truncated',
+      '@cf/openai/gpt-oss-120b: Workers AI output was truncated',
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('Groq document analysis falls back from 120B to 20B', async () => {
+  const originalFetch = globalThis.fetch
+  const models = []
+  globalThis.fetch = async (_url, request) => {
+    const body = JSON.parse(request.body)
+    models.push(body.model)
+    if (body.model === 'openai/gpt-oss-120b') return {
+      ok: false,
+      status: 429,
+      headers: { get: (name) => name === 'retry-after' ? '90' : null },
+      json: async () => ({ error: { message: '120B rate limit reached' } }),
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        model: 'openai/gpt-oss-20b',
+        choices: [{ message: { content: JSON.stringify({
+          documentType: 'instructions',
+          sections: [{ category: 'scope', text: 'Provide support services.', assessment: 'found', sectionIds: ['S0001'] }],
+        }) } }],
+      }),
+    }
+  }
+  try {
+    const result = await analyzeRelevantChunk({
+      AI: { run: async () => { throw new Error('Workers AI quota exhausted') } },
+      GROQ_API_KEY: 'test-key',
+    }, {
+      source: '[S0001]\nThe contractor shall provide support services.',
+      references: { S0001: 'paragraph 1' },
+      locations: ['paragraph 1'],
+    }, 'solicitation.docx', {})
+
+    assert.equal(result.status, 'ready')
+    assert.equal(result.model, 'openai/gpt-oss-20b')
+    assert.deepEqual(models, ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'])
+    assert.equal(result.providerDiagnostics.groq[0].status, 429)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -179,6 +239,29 @@ test('document analysis discards unsupported citations without losing the valid 
   assert.deepEqual(result.briefSections, [{
     category: 'proposal_submission_poc', text: 'Supported instruction', assessment: 'found', locations: ['page 1'], citations: undefined,
   }])
+})
+
+test('document analysis ranks the strongest six distinct citations locally', () => {
+  const references = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`S000${index + 1}`, `page ${index + 1} · paragraph ${index + 10}`]))
+  const referenceTexts = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [
+    `S000${index + 1}`,
+    index === 6
+      ? 'Quoters shall email complete proposals to bids@example.gov no later than September 8, 2026.'
+      : `General background information number ${index + 1}.`,
+  ]))
+  const result = validateDocumentAnalysisResponse({
+    documentType: 'instructions',
+    sections: [{
+      category: 'proposal_submission_poc',
+      text: 'Complete proposals must be emailed to bids@example.gov by September 8, 2026.',
+      assessment: 'found',
+      sectionIds: Object.keys(references),
+    }],
+  }, { references, referenceTexts }, {})
+
+  assert.equal(result.briefSections[0].locations.length, 6)
+  assert.equal(result.briefSections[0].locations.includes('page 7 · paragraph 16'), true)
+  assert.equal(result.briefSections[0].locations.includes('page 6 · paragraph 15'), false)
 })
 
 test('AI vocabulary differences are normalized instead of failing the document review', () => {
