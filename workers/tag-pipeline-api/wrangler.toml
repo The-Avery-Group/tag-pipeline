@@ -77,14 +77,14 @@ ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 [triggers]
 # All cron schedules are UTC. 12:00 UTC is 1:00 PM Nigeria time (WAT).
 # - eBuy and SAM opportunity synchronization: 00:00, 06:00, 12:00, and
-#   18:00 UTC on weekdays only
-# - SAM change checks: 00:00 and 12:00 UTC every day
+#   18:00 UTC on weekdays only, with idempotent recovery 15 minutes later
+# - SAM change checks: every weekday pull slot and 00:00/12:00 UTC weekends
 # - Expiring contract refresh: first day of each calendar quarter at 00:00 UTC (1:00 AM WAT)
 # - RFI follow-up monitor: Monday, Wednesday, Friday at 1:00 PM WAT
 # - Capability document eTag checks: every day at 1:01 PM WAT
 # - Teams reminders: every day at 2:01 PM WAT, so weekend RFI response
 #   reminders remain active while the other reminder categories defer to Monday.
-crons = ["0 0,6,12,18 * * *", "1 12 * * *", "1 13 * * *"]
+crons = ["0 0,6,12,18 * * *", "15 0,6,12,18 * * *", "1 12 * * *", "1 13 * * *"]
 
 [observability]
 enabled = true
