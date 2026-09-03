@@ -545,7 +545,10 @@ export function deleteRow(tableName, rowIndex, options = {}) {
       targetRowIndex = current._rowIndex
     }
 
-    await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, {
+    // Microsoft Graph's delete API targets the table-row collection directly.
+    // Deleting the itemAt() range can make Excel attempt to shift worksheet
+    // cells through the table, which Excel rejects for permanent deletions.
+    await graphFetch(`/tables/${tableName}/rows/${targetRowIndex}`, {
       method: 'DELETE',
     })
     invalidate(tableName)
@@ -736,7 +739,7 @@ async function ensureOpportunityRelationshipsSchema() {
         method: 'PATCH',
         body: JSON.stringify({ name: OPPORTUNITY_RELATIONSHIPS_TABLE }),
       })
-      await graphFetch(`/tables/${OPPORTUNITY_RELATIONSHIPS_TABLE}/rows/itemAt(index=0)`, { method: 'DELETE' }).catch(() => {})
+      await graphFetch(`/tables/${OPPORTUNITY_RELATIONSHIPS_TABLE}/rows/0`, { method: 'DELETE' }).catch(() => {})
     } catch (error) {
       // Treat a duplicate-name/range race as success only when the canonical
       // table can now be read.
