@@ -101,6 +101,71 @@ test('vehicle rules resolve verified patterns and exact legacy rosters without a
   assert.equal(unknown.reason, 'No enabled workbook rule matched')
 })
 
+test('legacy and agency-specific IDVs resolve to useful researched names', () => {
+  const expected = new Map([
+    ['HHSN316201500053W', 'CIO-CS'],
+    ['47QTCA18D0081', 'GSA MAS'],
+    ['36C10A22D0003', 'National Dialysis EHR IDIQ'],
+    ['36C26324D0074', 'VISN 23 Project Support Services IDIQ'],
+    ['GS03F071DA', 'GSA MAS'],
+    ['VA11816D1001', 'T4NG'],
+    ['W912CH26D0017', 'PEO CSCSS Engineering Support IDIQ'],
+    ['HC105023D0004', 'JWCC'],
+    ['47QRAD20D8108', 'OASIS'],
+  ])
+  for (const [identifier, vehicle] of expected) {
+    assert.equal(resolveContractVehicle(identifier, DEFAULT_CONTRACT_VEHICLE_RULES).vehicleName, vehicle)
+  }
+})
+
+test('priority-agency cache families resolve through reusable cohort rules', () => {
+  const expected = new Map([
+    ['HHSN316201200025W', 'CIO-SP3'],
+    ['HHSN316201500041W', 'CIO-CS'],
+    ['GS35F0207P', 'GSA MAS'],
+    ['GS00F123DA', 'GSA MAS'],
+    ['GS00Q14OADU142', 'OASIS'],
+    ['47QRAD20D1207', 'OASIS'],
+    ['47QRAD20D8110', 'OASIS'],
+    ['VA11816D1015', 'T4NG'],
+    ['HC105023D0002', 'JWCC'],
+    ['HC105023D0005', 'JWCC'],
+  ])
+  for (const [identifier, vehicle] of expected) {
+    assert.equal(resolveContractVehicle(identifier, DEFAULT_CONTRACT_VEHICLE_RULES).vehicleName, vehicle)
+  }
+  assert.equal(resolveContractVehicle('GS00Q14OADU142', DEFAULT_CONTRACT_VEHICLE_RULES).vehicleVariant, 'Unrestricted')
+  assert.equal(resolveContractVehicle('47QRAD20D1207', DEFAULT_CONTRACT_VEHICLE_RULES).vehicleVariant, 'Small Business')
+  assert.equal(resolveContractVehicle('47QRAD20D8110', DEFAULT_CONTRACT_VEHICLE_RULES).vehicleVariant, '8(a)')
+})
+
+test('priority-agency named vehicle cohorts resolve without AI or runtime API calls', () => {
+  const expected = new Map([
+    ['75N98120D00149', 'CIO-SP3'],
+    ['75N95021D00012', 'NIH SOAR'],
+    ['75N93019D00026', 'NIAID Professional, Scientific, and Technical Support Services'],
+    ['75N99020D00008', 'NIH Architect-Engineering MATOC'],
+    ['DEAM3609GO29039', 'DOE ESPC Gen2'],
+    ['HS002120D0002', 'DCSA Administrative Support Services'],
+    ['HS002124DE001', 'DCSA Communication Operations Support'],
+    ['HT942523D0002', 'DHA MPASS'],
+    ['W912DQ21D3005', 'USACE Kansas City HTRW 2021 MATOC'],
+    ['W912QR21D0073', 'USACE AFRC Nationwide A/E MATOC'],
+    ['W912QR21D0026', 'USACE Army Reserve A/E IDIQ'],
+    ['80ARC018D0010', 'NASA Advanced Computing Services'],
+    ['80JSC021AA001', 'NASA COMPES II'],
+    ['80JSC025D0071', 'NASA SASS II'],
+    ['80NSSC23DA002', 'NASA Enterprise-wide Human Capital Support Services'],
+  ])
+  for (const [identifier, vehicle] of expected) {
+    assert.equal(resolveContractVehicle(identifier, DEFAULT_CONTRACT_VEHICLE_RULES).vehicleName, vehicle)
+  }
+
+  assert.equal(resolveContractVehicle('75N98120D00149', DEFAULT_CONTRACT_VEHICLE_RULES).resolutionMethod, 'FULL_PIID_PATTERN')
+  assert.equal(resolveContractVehicle('W912DQ21D3010', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
+  assert.equal(resolveContractVehicle('W912QR21D0074', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
+})
+
 test('specific vehicle rules take precedence over broad MAS fallback rules', () => {
   const result = resolveContractVehicle('47QSHA18D0005', DEFAULT_CONTRACT_VEHICLE_RULES)
   assert.equal(result.status, 'RESOLVED')
@@ -108,7 +173,7 @@ test('specific vehicle rules take precedence over broad MAS fallback rules', () 
 
   const mas = resolveContractVehicle('47QSHA18D000D', DEFAULT_CONTRACT_VEHICLE_RULES)
   assert.equal(mas.status, 'RESOLVED')
-  assert.equal(mas.vehicleName, 'Multiple Award Schedule')
+  assert.equal(mas.vehicleName, 'GSA MAS')
 
   const collisionSafeUnknown = resolveContractVehicle('47QSHA18D0040', DEFAULT_CONTRACT_VEHICLE_RULES)
   assert.equal(collisionSafeUnknown.status, 'UNRESOLVED')
