@@ -132,6 +132,16 @@ export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidd
     }
   }, [contracts, hiddenCount, includeHidden])
 
+  const saveVehicleRule = useCallback(async (rule) => {
+    const payload = await workerJson('/sam/expiring-contracts/vehicle-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rule }),
+    })
+    await loadResults()
+    return payload.rule
+  }, [loadResults])
+
   return {
     config,
     contracts,
@@ -147,5 +157,6 @@ export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidd
     saveAgency,
     removeAgency,
     setContractHidden,
+    saveVehicleRule,
   }
 }
