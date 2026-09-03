@@ -2,8 +2,10 @@ import {
   claimWorkspaceRun,
   ensureWorkspaceRequest,
   getWorkspace,
+  getWorkspaceGroup,
   linkWorkspaceMembers,
   completeWorkspaceGroup,
+  completeWorkspaceGroupSplit,
   workspaceRootIsShared,
   deleteWorkspaceRecord,
   resetWorkspaceForRebuild,
@@ -19,6 +21,7 @@ import {
   resolveWorkspaceFolderLink,
   deleteWorkspaceRoot,
   shareRelatedWorkspaceFolders,
+  splitRelatedWorkspaceFolders,
   updatePipelineFolderLink,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
@@ -120,6 +123,24 @@ export async function handleOpportunityWorkspaces(req, env) {
       await completeWorkspaceGroup(storage, group.groupId, folders, folders.members)
       await Promise.all([left, right].map((workspace) => updatePipelineFolderLink(env, workspace, folders.webUrl)))
       return json({ ok: true, groupId: group.groupId, workspaceUrl: folders.webUrl, members: folders.members })
+    }
+
+    if (path === '/opportunity-workspaces/unlink' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      const left = await getWorkspace(storage, body.leftOpportunityKey)
+      const right = await getWorkspace(storage, body.rightOpportunityKey)
+      if (!left || !right) return json({ ok: true, split: false, reason: 'An opportunity workspace was not found' })
+      const group = await getWorkspaceGroup(storage, left.opportunityKey)
+      if (!group || !group.members.some((member) => member.opportunityKey === right.opportunityKey)) {
+        return json({ ok: true, split: false, reason: 'The opportunity folders are not currently shared' })
+      }
+      const members = await splitRelatedWorkspaceFolders(env, group.members)
+      await Promise.all(members.map((member) => {
+        const workspace = group.members.find((candidate) => candidate.opportunityKey === member.opportunityKey)
+        return updatePipelineFolderLink(env, workspace, member.webUrl)
+      }))
+      await completeWorkspaceGroupSplit(storage, group.groupId, members)
+      return json({ ok: true, split: true, members })
     }
 
     const retryMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/retry$/)
