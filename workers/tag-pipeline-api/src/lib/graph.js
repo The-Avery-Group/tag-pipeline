@@ -45,7 +45,11 @@ export async function graphWorkbookFetch(env, driveId, token, path, options = {}
       throw new Error(response.ok ? 'Microsoft Graph returned invalid JSON' : `Microsoft Graph error ${response.status}: ${raw.slice(0, 160)}`)
     }
   }
-  if (!response.ok) throw new Error(body?.error?.message || `Microsoft Graph error ${response.status}`)
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `Microsoft Graph error ${response.status}`)
+    error.status = response.status
+    throw error
+  }
   return body
 }
 
