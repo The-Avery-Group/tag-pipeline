@@ -7,7 +7,7 @@ import {
   updateOpportunityRelationshipType,
 } from '@/services/graphService'
 import { forceRefreshCache, publishCacheUpdate } from '@/services/dataCache'
-import { shareRelatedOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
+import { shareRelatedOpportunityWorkspace, splitRelatedOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 
 export function useOpportunityRelationships(opportunityId = '', pipeline = [], enabled = true) {
   const [rows, setRows] = useState([])
@@ -77,17 +77,40 @@ export function useOpportunityRelationships(opportunityId = '', pipeline = [], e
   }, [opportunityId, pipeline])
 
   const unlink = useCallback(async (relationship) => {
-    await deleteOpportunityRelationship(relationship._rowIndex, relationship)
+    const current = pipeline.find((item) => String(item['Opportunity ID'] || '').trim() === opportunityId)
+    const related = relationship.opportunity
+    const leftKey = String(current?.['Contract Number / Notice ID'] || '').trim()
+    const rightKey = String(related?.['Contract Number / Notice ID'] || '').trim()
+    const splitFolders = relationship['Relationship Type'] === 'Follow-on' && leftKey && rightKey
+    if (splitFolders) await splitRelatedOpportunityWorkspace(leftKey, rightKey)
+    try {
+      await deleteOpportunityRelationship(relationship._rowIndex, relationship)
+    } catch (error) {
+      if (splitFolders) await shareRelatedOpportunityWorkspace(leftKey, rightKey, 'Follow-on').catch(() => {})
+      throw error
+    }
     await load()
     await publishCacheUpdate(['OpportunityRelationshipsTable'])
-  }, [load])
+  }, [load, opportunityId, pipeline])
 
   const updateType = useCallback(async (relationship, relationshipType) => {
-    await updateOpportunityRelationshipType(relationship._rowIndex, relationship, relationshipType)
+    const previousType = relationship['Relationship Type'] || 'Related only'
+    const current = pipeline.find((item) => String(item['Opportunity ID'] || '').trim() === opportunityId)
+    const related = relationship.opportunity
+    const leftKey = String(current?.['Contract Number / Notice ID'] || '').trim()
+    const rightKey = String(related?.['Contract Number / Notice ID'] || '').trim()
+    const splitFolders = previousType === 'Follow-on' && relationshipType !== 'Follow-on' && leftKey && rightKey
+    if (splitFolders) await splitRelatedOpportunityWorkspace(leftKey, rightKey)
+    try {
+      await updateOpportunityRelationshipType(relationship._rowIndex, relationship, relationshipType)
+    } catch (error) {
+      if (splitFolders) await shareRelatedOpportunityWorkspace(leftKey, rightKey, 'Follow-on').catch(() => {})
+      throw error
+    }
     await load()
     await publishCacheUpdate(['OpportunityRelationshipsTable'])
     if (relationshipType === 'Follow-on' && relationship.opportunity) await organizeWorkspace(relationship.opportunity)
-  }, [load, organizeWorkspace])
+  }, [load, opportunityId, organizeWorkspace, pipeline])
 
   return { relationships, loading, error, link, unlink, updateType, organizeWorkspace, refresh: load }
 }
