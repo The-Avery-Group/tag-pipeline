@@ -45,6 +45,8 @@ function seed(id, agency, vehicle, options = {}) {
 
 const SEWP_V_IDS = 'NNG15SC00B,NNG15SC01B,NNG15SC02B,NNG15SC03B,NNG15SC04B,NNG15SC05B,NNG15SC06B,NNG15SC07B,NNG15SC08B,NNG15SC09B,NNG15SC10B,NNG15SC11B,NNG15SC12B,NNG15SC13B,NNG15SC14B,NNG15SC15B,NNG15SC16B,NNG15SC17B,NNG15SC18B,NNG15SC19B,NNG15SC20B,NNG15SC21B,NNG15SC22B,NNG15SC23B,NNG15SC24B,NNG15SC25B,NNG15SC27B,NNG15SC28B,NNG15SC29B,NNG15SC30B,NNG15SC31B,NNG15SC33B,NNG15SC34B,NNG15SC35B,NNG15SC36B,NNG15SC37B,NNG15SC38B,NNG15SC39B,NNG15SC40B,NNG15SC41B,NNG15SC42B,NNG15SC43B,NNG15SC44B,NNG15SC45B,NNG15SC46B,NNG15SC47B,NNG15SC48B,NNG15SC49B,NNG15SC50B,NNG15SC51B,NNG15SC52B,NNG15SC53B,NNG15SC54B,NNG15SC55B,NNG15SC56B,NNG15SC57B,NNG15SC58B,NNG15SC59B,NNG15SC60B,NNG15SC61B,NNG15SC62B,NNG15SC63B,NNG15SC64B,NNG15SC65B,NNG15SC66B,NNG15SC67B,NNG15SC68B,NNG15SC69B,NNG15SC70B,NNG15SC71B,NNG15SC72B,NNG15SC73B,NNG15SC74B,NNG15SC75B,NNG15SC76B,NNG15SC77B,NNG15SC78B,NNG15SC79B,NNG15SC80B,NNG15SC81B,NNG15SC82B,NNG15SC83B,NNG15SC84B,NNG15SC85B,NNG15SC86B,NNG15SC87B,NNG15SC88B,NNG15SC89B,NNG15SC90B,NNG15SC91B,NNG15SC92B,NNG15SC93B,NNG15SC94B,NNG15SC95B,NNG15SC96B,NNG15SC97B,NNG15SC98B,NNG15SD00B,NNG15SD01B,NNG15SD02B,NNG15SD03B,NNG15SD04B,NNG15SD05B,NNG15SD06B,NNG15SD07B,NNG15SD08B,NNG15SD09B,NNG15SD10B,NNG15SD11B,NNG15SD12B,NNG15SD13B,NNG15SD18B,NNG15SD19B,NNG15SD20B,NNG15SD21B,NNG15SD22B,NNG15SD23B,NNG15SD24B,NNG15SD25B,NNG15SD26B,NNG15SD27B,NNG15SD28B,NNG15SD29B,NNG15SD30B,NNG15SD31B,NNG15SD32B,NNG15SD33B,NNG15SD34B,NNG15SD35B,NNG15SD36B,NNG15SD37B,NNG15SD38B,NNG15SD39B,NNG15SD41B,NNG15SD42B,NNG15SD43B,NNG15SD45B,NNG15SD46B,NNG15SD48B,NNG15SD49B,NNG15SD50B,NNG15SD51B,NNG15SD52B,NNG15SD53B,NNG15SD54B,NNG15SD55B,NNG15SD56B,NNG15SD57B,NNG15SD58B,NNG15SD59B,NNG15SD60B,NNG15SD61B,NNG15SD62B,NNG15SD63B,NNG15SD64B,NNG15SD65B,NNG15SD66B,NNG15SD67B,NNG15SD68B,NNG15SD69B,NNG15SD70B,NNG15SD71B,NNG15SD72B,NNG15SD73B,NNG15SD74B,NNG15SD76B,NNG15SD77B,NNG15SD78B,NNG15SD79B,NNG15SD80B,NNG15SD81B,NNG15SD82B,NNG15SD83B,NNG15SD84B,NNG15SD85B,NNG15SD86B,NNG15SD87B,NNG15SD88B,NNG15SD89B,NNG15SD90B,NNG15SD91B,NNG15SD92B,NNG15SD93B,NNG15SD94B,NNG15SE01B,NNG15SE02B,NNG15SE04B,NNG15SE05B,NNG15SE07B,NNG15SE08B,NNG15SE09B,NNG15SE10B,NNG15SE11B,NNG15SE12B,NNG15SE13B,NNG15SE14B,NNG15SE16B'
 
+const DOE_ESPC_GEN2_IDS = 'DEAM3609GO29029,DEAM3609GO29030,DEAM3609GO29031,DEAM3609GO29032,DEAM3609GO29033,DEAM3609GO29034,DEAM3609GO29035,DEAM3609GO29036,DEAM3609GO29037,DEAM3609GO29038,DEAM3609GO29039,DEAM3609GO29040,DEAM3609GO29041,DEAM3609GO29042,DEAM3609GO29043,DEAM3609GO29044'
+
 const EWAAC_21 = 'A002,A003,A004,A005,A006,A007,A008,A009,A010,A011,A013,A014,A015,A016,A017,A018,A019,A020,A021,A022,A023,A024,A025,A026,A027,A028,A029,A030,A031,A032,A033,A034,A035,A036,A037,A038,A039,A040,A041,A042,A043,A044,A045,A046,A047,A048,A049,A050,A053,A054,A055,A056,A057,A058,A059'
 const EWAAC_22 = 'A001,A002,A003,A004,A005,A006,A007,A008,A009,A010,A011,A012,A013,A014,A015,A016,A017,A018,A019,A020,A021,A022,A023,A024,A025,A026,A027,A028,A029,A030,A031,A032,A033,A034,A035,A036,A038,A039,A040,A042,A043,A044,A045,A046,A047,A048,A049,A050,A051,A052,A053,A054,A055,A056,A057,A058,A059,A060'
 const EWAAC_23 = 'A002,A003,A004,A005,A006,A007,A008,A009,A011,A012,A013,A015,A016,A017,A018,A019,A020,A021,A022,A023,A024,A025,A026,A027,A028,A029,A030,A031,A057,A058,A059,A060,A062,A063,A064,A065,A066,A067,A068,A069,A070,A071,A072,A073,A074,A076,A077,A079,A080,A081,A082,A083,A084,A085,A086,A087,A090,A091,A092,A093,A094,A095,A096'
@@ -144,8 +146,38 @@ const COMPONENT_RULES = [
 
 export const DEFAULT_CONTRACT_VEHICLE_RULES = [
   seed('nasa-sewp-v', 'NASA', 'NASA SEWP V', { matchMode: 'FULL_PIID', fullType: 'SET', full: SEWP_V_IDS, priority: 500, source: SOURCE.sewp }),
+  seed('doe-espc-gen2', 'DOE', 'DOE ESPC Gen2', { matchMode: 'FULL_PIID', fullType: 'SET', full: DOE_ESPC_GEN2_IDS, priority: 500, source: 'https://www.energy.gov/cmei/femp/2008-doe-idiq-espc-energy-service-companies', notes: 'Complete official roster for the 2008 DOE IDIQ ESPC cohort.' }),
+  seed('nitaac-cio-sp3-family', 'NIH', 'CIO-SP3', { matchMode: 'FULL_PIID', fullType: 'PREFIX', full: 'HHSN3162012', priority: 450, source: 'https://nitaac.nih.gov/gwacs/cio-sp3' }),
+  seed('nitaac-cio-sp3-sb-ramp-on-family', 'NIH', 'CIO-SP3', { variant: 'Small Business Ramp-On', matchMode: 'FULL_PIID', fullType: 'PREFIX', full: '75N98120D', priority: 450, source: 'https://nitaac.nih.gov/resources/announcements/cio-sp3-small-business-sb-ramp-solicitation-number-nihjt2016015-award', notes: 'NITAAC FY2020 CIO-SP3 Small Business ramp-on award family.' }),
+  seed('nitaac-cio-cs-family', 'NIH', 'CIO-CS', { matchMode: 'FULL_PIID', fullType: 'PREFIX', full: 'HHSN3162015', priority: 450, source: 'https://nitaac.nih.gov/gwacs/cio-cs' }),
+  seed('nih-soar-2021-cohort', 'NIH', 'NIH SOAR', { aac: '75N950', fy: '21', instrument: 'D', serialType: 'SET', serial: '00010,00011,00012,00013,00019', priority: 500, source: 'https://sam.gov/opp/1cc85de296814d4094fa5561d20f3901/view', notes: 'Scientific, Operations, and Administrative Resources award cohort verified against cached SAM work and public award records.' }),
+  seed('niaid-pstss-2019-cohort', 'NIH', 'NIAID Professional, Scientific, and Technical Support Services', { aac: '75N930', fy: '19', instrument: 'D', serialType: 'RANGE', serial: '00023:00027', priority: 500, source: 'https://www.nih.gov/sites/default/files/institutes/foia/20211214-foia-log-2021.pdf', notes: 'Five-award cohort issued under solicitation NIHAO201800006.' }),
+  seed('nih-ae-matoc-2020-cache-cohort', 'NIH', 'NIH Architect-Engineering MATOC', { aac: '75N990', fy: '20', instrument: 'D', serialType: 'SET', serial: '00005,00008,00010', priority: 500, source: 'https://sam.gov/opp/a55bdd976cbf459dbd62b92888be1e61/view', notes: 'Verified members present in the priority-agency cache; intentionally not widened to unverified serials.' }),
+  seed('gsa-legacy-schedule-families', 'GSA', 'GSA MAS', { matchMode: 'FULL_PIID', fullType: 'PREFIX', full: 'GS00F,GS02F,GS03F,GS07F,GS10F,GS35F', priority: 350, confidence: 'ASSUMED_HIGH', source: SOURCE.gsa, notes: 'Legacy Federal Supply Schedule families observed in the priority-agency cache; excludes GS00Q vehicle families.' }),
+  seed('gsa-oasis-unrestricted-legacy', 'GSA', 'OASIS', { variant: 'Unrestricted', matchMode: 'FULL_PIID', fullType: 'PREFIX', full: 'GS00Q14OADU', priority: 450, source: 'https://www.gsa.gov/oasis' }),
+  seed('gsa-oasis-sb-2020-family', 'GSA', 'OASIS', { variant: 'Small Business', aac: '47QRAD', fy: '20', instrument: 'D', serialType: 'PREFIX', serial: '1', priority: 350, source: 'https://www.gsa.gov/oasis' }),
+  seed('gsa-oasis-8a-2020-family', 'GSA', 'OASIS', { variant: '8(a)', aac: '47QRAD', fy: '20', instrument: 'D', serialType: 'PREFIX', serial: '8', priority: 350, source: 'https://www.gsa.gov/oasis' }),
+  seed('va-t4ng-family', 'VA', 'T4NG', { matchMode: 'FULL_PIID', fullType: 'PREFIX', full: 'VA11816D10', priority: 450, source: 'https://department.va.gov/procurement-acquisition-and-logistics/technology-acquisition-center/' }),
+  seed('disa-jwcc-family', 'DISA', 'JWCC', { aac: 'HC1050', fy: '23', instrument: 'D', serialType: 'RANGE', serial: '0002:0005', priority: 450, source: 'https://www.disa.mil/NewsandEvents/2022/JWCC-Contract-Award' }),
+  seed('dcsa-administrative-support-hs002120d0002', 'DCSA', 'DCSA Administrative Support Services', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: 'HS002120D0002', priority: 500, source: 'https://www.defense.gov/News/Contracts/Contract/Article/2011286/', notes: 'Single-award DCSA IDIQ; exact matching prevents collision with unrelated DCSA contracts.' }),
+  seed('dcsa-communications-support-hs002124de001', 'DCSA', 'DCSA Communication Operations Support', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: 'HS002124DE001', priority: 500, source: SOURCE.research, notes: 'Single-award DCSA IDIQ; exact matching is required.' }),
+  seed('dha-mpass-ht942523d0002', 'DHA', 'DHA MPASS', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: 'HT942523D0002', priority: 500, source: 'https://www.defense.gov/News/Contracts/Contract/Article/3254268/', notes: 'Meeting, Programmatic, and Administrative Support Services single-award IDIQ.' }),
+  seed('army-usace-nwk-htrw-2021', 'Army', 'USACE Kansas City HTRW 2021 MATOC', { aac: 'W912DQ', fy: '21', instrument: 'D', serialType: 'RANGE', serial: '3000:3009', priority: 500, source: 'https://www.nwk.usace.army.mil/Business-With-Us/Small-Business/MATOC-SATOC/', notes: 'Official Kansas City District roster.' }),
+  seed('army-usace-lrl-afrc-ae-2021-cache-cohort', 'Army', 'USACE AFRC Nationwide A/E MATOC', { aac: 'W912QR', fy: '21', instrument: 'D', serialType: 'SET', serial: '0070,0073', priority: 500, source: 'https://www.federalcompass.com/fed-contract-award/W912QR21D0073', notes: 'Verified unrestricted-pool members present in the cached expiring-contract population; not widened across adjacent small-business pools.' }),
+  seed('army-usace-lrl-army-reserve-ae-w912qr21d0026', 'Army', 'USACE Army Reserve A/E IDIQ', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: 'W912QR21D0026', priority: 500, source: 'https://www.federalcompass.com/award-contract-detail/W912QR21D0026', notes: 'Exact member currently present in the cache; adjacent serials can represent different Louisville District pools.' }),
+  seed('nasa-nacs-80arc018d0010', 'NASA', 'NASA Advanced Computing Services', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: '80ARC018D0010', priority: 500, source: SOURCE.research }),
+  seed('nasa-compes-ii-80jsc021aa001', 'NASA', 'NASA COMPES II', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: '80JSC021AA001', priority: 500, source: SOURCE.research }),
+  seed('nasa-sass-ii-80jsc025d0071', 'NASA', 'NASA SASS II', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: '80JSC025D0071', priority: 500, source: SOURCE.research }),
+  seed('nasa-nehcss-80nssc23da002', 'NASA', 'NASA Enterprise-wide Human Capital Support Services', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: '80NSSC23DA002', priority: 500, source: SOURCE.research }),
+  seed('va-national-dialysis-ehr-36c10a22d0003', 'VA', 'National Dialysis EHR IDIQ', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: '36C10A22D0003', priority: 500, source: SOURCE.research, notes: 'Agency-specific VA IDIQ; not a governmentwide vehicle.' }),
+  seed('va-visn23-project-support-36c26324d0074', 'VA', 'VISN 23 Project Support Services IDIQ', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: '36C26324D0074', priority: 500, source: SOURCE.research, notes: 'Agency-specific VA IDIQ; not a governmentwide vehicle.' }),
+  seed('army-peo-cscss-engineering-w912ch26d0017', 'Army', 'PEO CSCSS Engineering Support IDIQ', { matchMode: 'FULL_PIID', fullType: 'EXACT', full: 'W912CH26D0017', priority: 500, source: SOURCE.research, notes: 'Agency-specific single-award Army IDIQ.' }),
   ...COMPONENT_RULES.map(([id, agency, vehicle, options]) => seed(id, agency, vehicle, options)),
 ]
+
+function canonicalVehicleName(value) {
+  return String(value || '').trim() === 'Multiple Award Schedule' ? 'GSA MAS' : String(value || '').trim()
+}
 
 export function normalizeVehicleIdentifier(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
@@ -222,7 +254,7 @@ export function resolveContractVehicle(identifier, rules = []) {
   if (!matches.length) return { status: 'UNRESOLVED', referencedIdvPiid: parsed.normalized, parsed, reason: 'No enabled workbook rule matched' }
   const best = matches[0]
   const tied = matches.filter((match) => match.specificity === best.specificity && match.priority === best.priority)
-  const vehicles = new Set(tied.map((match) => `${match.rule.VEHICLE_NAME}|${match.rule.VEHICLE_VARIANT || ''}`))
+  const vehicles = new Set(tied.map((match) => `${canonicalVehicleName(match.rule.VEHICLE_NAME)}|${match.rule.VEHICLE_VARIANT || ''}`))
   if (vehicles.size > 1) {
     return {
       status: 'UNRESOLVED_CONFLICT', referencedIdvPiid: parsed.normalized, parsed,
@@ -232,10 +264,12 @@ export function resolveContractVehicle(identifier, rules = []) {
   }
   return {
     status: 'RESOLVED', referencedIdvPiid: parsed.normalized, parsed,
-    vehicleName: best.rule.VEHICLE_NAME,
+    vehicleName: canonicalVehicleName(best.rule.VEHICLE_NAME),
     vehicleVariant: best.rule.VEHICLE_VARIANT || '',
     confidence: best.rule.CONFIDENCE || '',
-    resolutionMethod: best.rule.MATCH_MODE === 'FULL_PIID' ? 'EXACT_ROSTER' : 'PATTERN',
+    resolutionMethod: best.rule.MATCH_MODE === 'FULL_PIID'
+      ? (['EXACT', 'SET'].includes(String(best.rule.FULL_PIID_RULE_TYPE || '').toUpperCase()) ? 'EXACT_ROSTER' : 'FULL_PIID_PATTERN')
+      : 'PATTERN',
     ruleId: best.rule.RULE_ID,
     source: best.rule.SOURCE || '',
     lastVerified: best.rule.LAST_VERIFIED || '',
