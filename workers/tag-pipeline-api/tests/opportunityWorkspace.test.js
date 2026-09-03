@@ -8,7 +8,7 @@ import {
   workspaceCalendarYear,
 } from '../src/lib/opportunityWorkspaceDomain.js'
 import { resetWorkspaceForRebuild } from '../src/lib/opportunityWorkspaceRepository.js'
-import { opportunityUploadValidation } from '../src/lib/opportunityWorkspaceSharePoint.js'
+import { opportunityUploadValidation, workspaceSplitPlan } from '../src/lib/opportunityWorkspaceSharePoint.js'
 
 test('opportunity workspace uses known agency abbreviations and a safe title', () => {
   assert.equal(agencyAbbreviation('Department of Defense Education Activity'), 'DODEA')
@@ -81,4 +81,25 @@ test('opportunity reference uploads sanitize names and reject executable files',
   })
   assert.equal(opportunityUploadValidation('run.cmd', 10).valid, false)
   assert.equal(opportunityUploadValidation('empty.docx', 0).valid, false)
+})
+
+test('workspace split restores the original root owner and detaches the other notice type', () => {
+  const rfi = {
+    opportunityKey: 'RFI-1', agency: 'Department of Veterans Affairs', title: 'Health Support',
+    typeFolderId: 'rfi-folder', samFolderId: 'rfi-documents',
+  }
+  const rfp = {
+    opportunityKey: 'RFP-1', agency: 'Department of Veterans Affairs', title: 'Health Support Follow-on',
+    typeFolderId: 'rfp-folder', samFolderId: 'rfp-documents',
+  }
+  const plan = workspaceSplitPlan({ folder: {}, name: 'VA_Health Support' }, [rfi, rfp])
+  assert.equal(plan.owner.opportunityKey, 'RFI-1')
+  assert.equal(plan.detached.opportunityKey, 'RFP-1')
+})
+
+test('workspace split refuses indistinguishable same-type folders', () => {
+  assert.throws(() => workspaceSplitPlan({ folder: {}, name: 'Shared' }, [
+    { opportunityKey: 'RFI-1', typeFolderId: 'same-folder' },
+    { opportunityKey: 'RFI-2', typeFolderId: 'same-folder' },
+  ]), /same notice-type folder/)
 })
