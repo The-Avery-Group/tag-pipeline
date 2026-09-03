@@ -1,5 +1,5 @@
 import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
-import { organizationFolderKey, safeSharePointSegment, workspaceType } from './opportunityWorkspaceDomain.js'
+import { opportunityWorkspaceFolderName, organizationFolderKey, safeSharePointSegment, workspaceType } from './opportunityWorkspaceDomain.js'
 
 export const DEFAULT_WORKSPACE_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 export const WORKSPACE_ROOT_NAME = 'RFI Pipeline and Responses'
@@ -577,6 +577,92 @@ export async function shareRelatedWorkspaceFolders(env, canonicalWorkspace, rela
     })
   }
   return { driveId, rootFolderId: canonicalRoot.id, webUrl: canonicalRoot.webUrl || '', members }
+}
+
+export function workspaceSplitPlan(sharedRoot, workspaces) {
+  if (!sharedRoot?.folder) throw Object.assign(new Error('The shared SharePoint workspace is unavailable'), { status: 409 })
+  if (workspaces.length !== 2) {
+    throw Object.assign(new Error('This shared workspace contains more than two opportunities and needs a reviewed split'), { status: 409 })
+  }
+  if (workspaces.some((workspace) => !workspace.typeFolderId)) {
+    throw Object.assign(new Error('The shared workspace is missing an opportunity-type folder'), { status: 409 })
+  }
+  if (workspaces[0].typeFolderId === workspaces[1].typeFolderId) {
+    throw Object.assign(new Error('Both opportunities share the same notice-type folder, so their files cannot be separated automatically'), { status: 409 })
+  }
+  const matchingOwner = workspaces.find((workspace) => (
+    opportunityWorkspaceFolderName({ agency: workspace.agency, title: workspace.title }) === sharedRoot.name
+  ))
+  const owner = matchingOwner || workspaces[0]
+  return { owner, detached: workspaces.find((workspace) => workspace !== owner) }
+}
+
+export async function splitRelatedWorkspaceFolders(env, workspaces) {
+  const driveIds = [...new Set(workspaces.map((workspace) => workspace.sharePointDriveId).filter(Boolean))]
+  if (driveIds.length !== 1) {
+    throw Object.assign(new Error('The shared workspace does not have one consistent SharePoint library'), { status: 409 })
+  }
+  const driveId = driveIds[0]
+  const rootIds = [...new Set(workspaces.map((workspace) => workspace.rootFolderId).filter(Boolean))]
+  if (rootIds.length !== 1) {
+    throw Object.assign(new Error('The opportunities do not currently share one SharePoint workspace'), { status: 409 })
+  }
+  const token = await getAppOnlyGraphToken(env)
+  const sharedRoot = await getItem(env, token, driveId, rootIds[0])
+  const { owner, detached } = workspaceSplitPlan(sharedRoot, workspaces)
+  const detachedTypeFolder = await getItem(env, token, driveId, detached.typeFolderId)
+  if (!detachedTypeFolder?.folder) throw Object.assign(new Error('The related opportunity folder is unavailable'), { status: 409 })
+
+  let detachedName = opportunityWorkspaceFolderName({ agency: detached.agency, title: detached.title })
+  let destination = await resolveWorkspaceDestination(env, detached, detachedName)
+  if (destination.existingFolder?.id === sharedRoot.id) {
+    detachedName = safeSharePointSegment(`${detachedName}_${detached.opportunityKey}`, detachedName)
+    destination = await resolveWorkspaceDestination(env, detached, detachedName)
+  }
+  let detachedRoot
+  if (detachedTypeFolder.parentReference?.id !== sharedRoot.id) {
+    detachedRoot = detachedTypeFolder
+  } else if (destination.existingFolder) {
+    await mergeFolderContents(env, token, driveId, detachedTypeFolder.id, destination.existingFolder.id, detached.opportunityKey)
+    const remaining = await listAllChildren(token, driveId, detachedTypeFolder.id)
+    if (remaining.length) throw new Error('Some related-opportunity files could not be moved into the restored workspace')
+    await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(detachedTypeFolder.id)}`, token, { method: 'DELETE' })
+    detachedRoot = await getItem(env, token, driveId, destination.existingFolder.id)
+  } else {
+    detachedRoot = await moveItem(token, driveId, detachedTypeFolder, destination.destinationParentId, detachedName)
+  }
+
+  let ownerTypeFolder = null
+  try { ownerTypeFolder = await getItem(env, token, driveId, owner.typeFolderId) } catch (error) {
+    if (error.status !== 404) throw error
+  }
+  if (ownerTypeFolder) {
+    if (!ownerTypeFolder.folder || ownerTypeFolder.parentReference?.id !== sharedRoot.id) {
+      throw Object.assign(new Error('The primary opportunity folder is no longer inside the shared workspace'), { status: 409 })
+    }
+    await mergeFolderContents(env, token, driveId, ownerTypeFolder.id, sharedRoot.id, owner.opportunityKey)
+    const ownerRemaining = await listAllChildren(token, driveId, ownerTypeFolder.id)
+    if (ownerRemaining.length) throw new Error('Some primary-opportunity files could not be restored to their workspace')
+    await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(ownerTypeFolder.id)}`, token, { method: 'DELETE' })
+  }
+  const restoredOwnerRoot = await getItem(env, token, driveId, sharedRoot.id)
+
+  return [
+    {
+      opportunityKey: owner.opportunityKey,
+      driveId,
+      rootFolderId: restoredOwnerRoot.id,
+      samFolderId: owner.samFolderId,
+      webUrl: restoredOwnerRoot.webUrl || '',
+    },
+    {
+      opportunityKey: detached.opportunityKey,
+      driveId,
+      rootFolderId: detachedRoot.id,
+      samFolderId: detached.samFolderId,
+      webUrl: detachedRoot.webUrl || '',
+    },
+  ]
 }
 
 export async function uploadSAMAttachment(env, { driveId, folderId, fileName, contentType, body }) {
