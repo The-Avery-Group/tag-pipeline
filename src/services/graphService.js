@@ -355,14 +355,17 @@ export async function getSheetRows(tableName) {
       getTableHeaders(tableName),
     ])
     const rows = (data.value || []).map((row) => {
+      const rawValues = Array.isArray(row.values?.[0]) ? row.values[0] : []
+      const empty = rawValues.every((value) => value === null || value === undefined || String(value).trim() === '')
+      if (empty) return null
       const obj = {}
       headers.forEach((h, i) => {
-        const raw = row.values[0][i]
+        const raw = rawValues[i]
         obj[h] = DATE_COLUMNS.has(h) ? excelDateToISO(raw) : raw
       })
       obj._rowIndex = row.index
       return obj
-    })
+    }).filter(Boolean)
     cache.set(tableName, rows)
     return rows
   })()
@@ -532,9 +535,7 @@ export function deleteRow(tableName, rowIndex, options = {}) {
     const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
     let targetRowIndex = rowIndex
 
-    // A delete changes every following row index. Resolve the target by its
-    // stable identity immediately before deleting, then rebuild the table
-    // cache before the next queued mutation is allowed to begin.
+    // Resolve the target by stable identity immediately before deleting it.
     if (identity) {
       invalidate(tableName)
       const currentRows = await getSheetRows(tableName)
@@ -545,10 +546,10 @@ export function deleteRow(tableName, rowIndex, options = {}) {
       targetRowIndex = current._rowIndex
     }
 
-    // Microsoft Graph's delete API targets the table-row collection directly.
-    // Deleting the itemAt() range can make Excel attempt to shift worksheet
-    // cells through the table, which Excel rejects for permanent deletions.
-    await graphFetch(`/tables/${tableName}/rows/${targetRowIndex}`, {
+    // The Excel collection function requires the /$/ segment. Without it,
+    // Graph can interpret the request as a range operation and try to shift
+    // worksheet cells instead of deleting the table row itself.
+    await graphFetch(`/tables/${tableName}/rows/$/itemAt(index=${targetRowIndex})`, {
       method: 'DELETE',
     })
     invalidate(tableName)
@@ -739,7 +740,7 @@ async function ensureOpportunityRelationshipsSchema() {
         method: 'PATCH',
         body: JSON.stringify({ name: OPPORTUNITY_RELATIONSHIPS_TABLE }),
       })
-      await graphFetch(`/tables/${OPPORTUNITY_RELATIONSHIPS_TABLE}/rows/0`, { method: 'DELETE' }).catch(() => {})
+      await graphFetch(`/tables/${OPPORTUNITY_RELATIONSHIPS_TABLE}/rows/$/itemAt(index=0)`, { method: 'DELETE' }).catch(() => {})
     } catch (error) {
       // Treat a duplicate-name/range race as success only when the canonical
       // table can now be read.
