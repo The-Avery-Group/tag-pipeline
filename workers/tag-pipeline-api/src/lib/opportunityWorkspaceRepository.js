@@ -93,6 +93,28 @@ export async function getWorkspaceMember(db, opportunityKey) {
   return row || null
 }
 
+export async function getWorkspaceGroup(db, opportunityKey) {
+  const member = await getWorkspaceMember(db, opportunityKey)
+  if (!member?.group_id) return null
+  const result = await db.prepare(`SELECT w.*, m.workspace_type, m.type_folder_id, m.type_folder_web_url,
+      m.joined_at, g.group_id, g.canonical_opportunity_key,
+      g.sharepoint_drive_id AS group_drive_id, g.root_folder_id AS group_root_folder_id,
+      g.sharepoint_web_url AS group_web_url
+    FROM opportunity_workspace_members m
+    JOIN opportunity_workspaces w ON w.opportunity_key = m.opportunity_key
+    JOIN opportunity_workspace_groups g ON g.group_id = m.group_id
+    WHERE m.group_id = ?
+    ORDER BY m.joined_at, m.opportunity_key`).bind(member.group_id).all()
+  return {
+    groupId: member.group_id,
+    canonicalOpportunityKey: member.canonical_opportunity_key,
+    driveId: member.group_drive_id,
+    rootFolderId: member.group_root_folder_id,
+    webUrl: member.group_web_url,
+    members: (result.results || []).map(publicWorkspace),
+  }
+}
+
 export async function workspaceRootIsShared(db, opportunityKey) {
   const member = await getWorkspaceMember(db, opportunityKey)
   if (!member?.group_id) return false
@@ -150,6 +172,20 @@ export async function completeWorkspaceGroup(db, groupId, folders, members) {
       .bind(folders.driveId, folders.rootFolderId, member.samFolderId, folders.webUrl, now, normalizeWorkspaceKey(member.opportunityKey)))
   }
   await db.batch(statements)
+}
+
+export async function completeWorkspaceGroupSplit(db, groupId, members) {
+  const now = new Date().toISOString()
+  const statements = []
+  for (const member of members) {
+    statements.push(db.prepare(`UPDATE opportunity_workspaces SET sharepoint_drive_id = ?, root_folder_id = ?,
+        sam_folder_id = ?, sharepoint_web_url = ?, updated_at = ? WHERE opportunity_key = ?`)
+      .bind(member.driveId, member.rootFolderId, member.samFolderId, member.webUrl, now, normalizeWorkspaceKey(member.opportunityKey)))
+  }
+  statements.push(db.prepare('DELETE FROM opportunity_workspace_members WHERE group_id = ?').bind(groupId))
+  statements.push(db.prepare('DELETE FROM opportunity_workspace_groups WHERE group_id = ?').bind(groupId))
+  await db.batch(statements)
+  return { split: true, members: members.length }
 }
 
 export async function deleteWorkspaceRecord(db, opportunityKey) {
