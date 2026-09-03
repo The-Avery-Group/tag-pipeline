@@ -24,6 +24,7 @@ const C = {
   classification: 'Contract Classification*',
   solicitation: 'Solicitation Number',
   vehicleNumber: 'Contract Vehicle Number',
+  vehicle: 'Contract Vehicle',
   fiscalYear: 'Fiscal Year',
   setAside: 'Set- Aside*',
   priority: 'Priority',
@@ -170,6 +171,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
   const [modifierChoices, setModifierChoices] = useState({})
   const [refreshStarting, setRefreshStarting] = useState(false)
   const [visibilityKey, setVisibilityKey] = useState('')
+  const [vehicleRuleSaving, setVehicleRuleSaving] = useState('')
   const refreshStartingRef = useRef(false)
   const agencyControlRef = useRef(null)
   const {
@@ -185,6 +187,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
     saveAgency,
     removeAgency,
     setContractHidden,
+    saveVehicleRule,
   } = useExpiringContracts(range, selectedAgencyIds, showHidden)
 
   const agencies = config.agencies || []
@@ -351,6 +354,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
         [C.classification]: contract.awardType || '',
         [C.solicitation]: contract.solicitationNumber || '',
         [C.vehicleNumber]: contract.referencedIdvPiid || '',
+        [C.vehicle]: contract.vehicleResolution?.status === 'RESOLVED' ? contract.vehicleResolution.vehicleName : '',
         [C.fiscalYear]: contract.fiscalYear || '',
         [C.setAside]: contract.setAside || '-',
         [C.priority]: 'Warm',
@@ -362,6 +366,33 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
       toast?.error(`Could not add contract: ${nextError.message}`)
     } finally {
       setAddingKey('')
+    }
+  }
+
+  const addExactVehicleRule = async (contract) => {
+    const identifier = contract.vehicleResolution?.referencedIdvPiid || contract.referencedIdvPiid
+    if (!identifier || vehicleRuleSaving) return
+    const vehicleName = window.prompt(`Contract vehicle name for ${identifier}`)?.trim()
+    if (!vehicleName) return
+    setVehicleRuleSaving(contract.familyKey)
+    try {
+      await saveVehicleRule({
+        AGENCY: contract.department || contract.agency || '',
+        VEHICLE_NAME: vehicleName,
+        MATCH_MODE: 'FULL_PIID',
+        FULL_PIID_RULE_TYPE: 'EXACT',
+        FULL_PIID_RULE: identifier,
+        PRIORITY: 500,
+        CONFIDENCE: 'MANUAL',
+        ENABLED: 'Yes',
+        SOURCE: 'CRM user review',
+        NOTES: `Added while reviewing expiring contract ${contract.piid || ''}`,
+      })
+      toast?.success(`${identifier} will resolve as ${vehicleName}`)
+    } catch (nextError) {
+      toast?.error(`Vehicle rule could not be saved: ${nextError.message}`)
+    } finally {
+      setVehicleRuleSaving('')
     }
   }
 
@@ -510,7 +541,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
               <div className={styles.tableScroll}>
                 <table className="data-table">
                   <thead><tr>
-                    <th>Contract</th><th>Agency and office</th><th>Incumbent</th><th>NAICS</th><th>Ultimate completion</th><th>Total value</th><th>Actions</th><th aria-label="Contract details" />
+                    <th>Contract</th><th>Agency and office</th><th>Incumbent</th><th>NAICS / PSC</th><th>Contract vehicle</th><th>Ultimate completion</th><th>Total value</th><th>Actions</th><th aria-label="Contract details" />
                   </tr></thead>
                   <tbody>
                     {visibleContracts.map((contract) => {
@@ -522,7 +553,23 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                           <td><strong>{contract.title || contract.piid}</strong><small><CopyValue value={contract.piid} label="PIID">{contract.piid}</CopyValue></small>{contract.hidden && <small className={styles.hiddenLabel}>Hidden from normal results</small>}</td>
                           <td><span>{contract.agency || 'Not available'}</span><small>{contract.office || contract.department || ''}</small></td>
                           <td><span>{contract.incumbentName || 'Not available'}</span><small>{contract.incumbentUEI && <CopyValue value={contract.incumbentUEI} label="UEI">{contract.incumbentUEI}</CopyValue>}</small></td>
-                          <td>{contract.naicsCode || 'Not available'}</td>
+                          <td><span>{contract.naicsCode || 'Not available'}</span>{contract.pscCode && <small>PSC {contract.pscCode}</small>}</td>
+                          <td>
+                            {contract.vehicleResolution?.status === 'RESOLVED' ? (
+                              <span>
+                                <strong>{contract.vehicleResolution.vehicleName}</strong>
+                                <small>{[contract.vehicleResolution.vehicleVariant, contract.vehicleResolution.confidence].filter(Boolean).join(' · ')}</small>
+                              </span>
+                            ) : contract.referencedIdvPiid ? (
+                              <span>
+                                <strong>Needs review</strong>
+                                <small>{contract.referencedIdvPiid}</small>
+                                <button type="button" className={styles.inlineRuleButton} disabled={vehicleRuleSaving === contract.familyKey} onClick={() => addExactVehicleRule(contract)}>
+                                  {vehicleRuleSaving === contract.familyKey ? 'Saving…' : 'Add vehicle rule'}
+                                </button>
+                              </span>
+                            ) : 'No referenced IDV'}
+                          </td>
                           <td>{contract.ultimateCompletionDate ? formatDate(contract.ultimateCompletionDate) : 'Not available'}</td>
                           <td title={fullMoney(contract.totalContractValue)}>{compactMoney(contract.totalContractValue)}</td>
                           <td>
@@ -536,7 +583,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                           </td>
                           <td><button type="button" className={styles.expandButton} title={isOpen ? 'Collapse contract details' : 'Expand contract details'} aria-expanded={isOpen} onClick={() => toggleDetails(contract)}>{isOpen ? '⌃' : '⌄'}</button></td>
                         </tr>,
-                        isOpen && <tr key={`${contract.familyKey}-detail`} className={styles.detailRow}><td colSpan="8">
+                        isOpen && <tr key={`${contract.familyKey}-detail`} className={styles.detailRow}><td colSpan="9">
                           {detailLoading.has(contract.familyKey) ? <div className={styles.loading}>Loading award family and public contacts…</div> : (
                             <div className={styles.detailPanel}>
                               <section><h4>Contract identity</h4><div className={styles.detailGrid}>
@@ -544,12 +591,15 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                                 <DetailField label="Contract classification" value={detail.awardType} />
                                 <DetailField label="Solicitation number" value={detail.solicitationNumber} />
                                 <DetailField label="Referenced IDV" value={detail.referencedIdvPiid} />
+                                <DetailField label="Resolved contract vehicle" value={detail.vehicleResolution?.status === 'RESOLVED' ? [detail.vehicleResolution.vehicleName, detail.vehicleResolution.vehicleVariant].filter(Boolean).join(' · ') : null} />
+                                <DetailField label="Resolution confidence" value={detail.vehicleResolution?.status === 'RESOLVED' ? detail.vehicleResolution.confidence : null} />
                               </div></section>
                               <section><h4>Agency and scope</h4><div className={styles.detailGrid}>
                                 <DetailField label="Department" value={detail.department} />
                                 <DetailField label="Agency" value={detail.agency} />
                                 <DetailField label="Contracting office" value={detail.office} />
                                 <DetailField label="NAICS" value={detail.naicsCode} />
+                                <DetailField label="Product Service Code" value={detail.pscCode} />
                                 <DetailField label="Description" value={detail.description} />
                               </div></section>
                               <section><h4>Incumbent and value</h4><div className={styles.detailGrid}>
