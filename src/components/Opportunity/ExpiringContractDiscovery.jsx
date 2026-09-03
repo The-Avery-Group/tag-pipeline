@@ -556,10 +556,10 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                           <td><span>{contract.naicsCode || 'Not available'}</span>{contract.pscCode && <small>PSC {contract.pscCode}</small>}</td>
                           <td>
                             {contract.vehicleResolution?.status === 'RESOLVED' ? (
-                              <span>
-                                <strong>{contract.vehicleResolution.vehicleName}</strong>
+                              <div className={styles.vehicleValue}>
+                                <span>{contract.vehicleResolution.vehicleName}</span>
                                 {contract.vehicleResolution.vehicleVariant && <small>{contract.vehicleResolution.vehicleVariant}</small>}
-                              </span>
+                              </div>
                             ) : contract.referencedIdvPiid ? (
                               <span>
                                 <strong>Needs review</strong>
