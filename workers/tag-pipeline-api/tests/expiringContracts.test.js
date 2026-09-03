@@ -17,6 +17,11 @@ import {
   summarizeAwardFamily,
 } from '../src/handlers/expiringContracts.js'
 import { solicitationFamily } from '../src/handlers/sam.js'
+import {
+  DEFAULT_CONTRACT_VEHICLE_RULES,
+  parseVehicleIdentifier,
+  resolveContractVehicle,
+} from '../src/lib/contractVehicleResolver.js'
 
 function award({
   modificationNumber = '0',
@@ -63,6 +68,65 @@ function award({
     },
   }
 }
+
+test('contract vehicle identifiers normalize modern PIID components', () => {
+  assert.deepEqual(parseVehicleIdentifier('47QTCK-18-D-0047'), {
+    normalized: '47QTCK18D0047',
+    legacy: false,
+    aac: '47QTCK',
+    fiscalYear: '18',
+    instrument: 'D',
+    serial: '0047',
+  })
+})
+
+test('vehicle rules resolve verified patterns and exact legacy rosters without an API fallback', () => {
+  const alliant = resolveContractVehicle('47QTCK18D0047', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(alliant.status, 'RESOLVED')
+  assert.equal(alliant.vehicleName, 'Alliant 2')
+  assert.equal(alliant.resolutionMethod, 'PATTERN')
+
+  const sewp = resolveContractVehicle('NNG15SD19B', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(sewp.status, 'RESOLVED')
+  assert.equal(sewp.vehicleName, 'NASA SEWP V')
+  assert.equal(sewp.resolutionMethod, 'EXACT_ROSTER')
+
+  const shield = resolveContractVehicle('HQ085926DG111', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(shield.status, 'RESOLVED')
+  assert.equal(shield.vehicleName, 'SHIELD')
+  assert.equal(shield.confidence, 'ASSUMED_HIGH')
+
+  const unknown = resolveContractVehicle('W52P1J26D9999', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(unknown.status, 'UNRESOLVED')
+  assert.equal(unknown.reason, 'No enabled workbook rule matched')
+})
+
+test('specific vehicle rules take precedence over broad MAS fallback rules', () => {
+  const result = resolveContractVehicle('47QSHA18D0005', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(result.status, 'RESOLVED')
+  assert.equal(result.vehicleName, 'BMO Unrestricted Phase 2')
+
+  const mas = resolveContractVehicle('47QSHA18D000D', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(mas.status, 'RESOLVED')
+  assert.equal(mas.vehicleName, 'Multiple Award Schedule')
+
+  const collisionSafeUnknown = resolveContractVehicle('47QSHA18D0040', DEFAULT_CONTRACT_VEHICLE_RULES)
+  assert.equal(collisionSafeUnknown.status, 'UNRESOLVED')
+})
+
+test('equal-strength conflicting rules stay unresolved instead of guessing', () => {
+  const base = {
+    MATCH_MODE: 'COMPONENTS', AAC: 'ABCDEF', FY_RULE_TYPE: 'EXACT', FY_RULE: '26',
+    INSTRUMENT_CODE: 'D', SERIAL_RULE_TYPE: 'ANY', SERIAL_RULE: '', PRIORITY: 100,
+    ENABLED: 'Yes', CONFIDENCE: 'MANUAL',
+  }
+  const result = resolveContractVehicle('ABCDEF26D0001', [
+    { ...base, RULE_ID: 'one', VEHICLE_NAME: 'Vehicle One' },
+    { ...base, RULE_ID: 'two', VEHICLE_NAME: 'Vehicle Two' },
+  ])
+  assert.equal(result.status, 'UNRESOLVED_CONFLICT')
+  assert.equal(result.matches.length, 2)
+})
 
 test('a later option exercise clears an earlier termination lifecycle flag', () => {
   const records = [
