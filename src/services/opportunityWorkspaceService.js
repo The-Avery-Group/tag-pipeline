@@ -44,6 +44,14 @@ export function shareRelatedOpportunityWorkspace(leftOpportunityKey, rightOpport
   })
 }
 
+export function splitRelatedOpportunityWorkspace(leftOpportunityKey, rightOpportunityKey) {
+  return workerJson('/opportunity-workspaces/unlink', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leftOpportunityKey, rightOpportunityKey }),
+  })
+}
+
 export function deleteOpportunityWorkspace(opportunityKey, { deleteSharePoint = false } = {}) {
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}`, {
     method: 'DELETE',
