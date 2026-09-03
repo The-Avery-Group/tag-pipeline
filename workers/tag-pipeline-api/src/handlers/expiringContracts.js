@@ -7,7 +7,14 @@ import {
   normalizedIdentifier,
   recordDate,
 } from './awards.js'
-import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
+import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from '../lib/graph.js'
+import {
+  CONTRACT_VEHICLE_RULE_HEADERS,
+  DEFAULT_CONTRACT_VEHICLE_RULES,
+  normalizeVehicleIdentifier,
+  resolveContractVehicle,
+  resolveContractVehicles,
+} from '../lib/contractVehicleResolver.js'
 import {
   deleteRuntimeState,
   getRuntimeState,
@@ -34,6 +41,12 @@ const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
 const MODIFIER_CONTACT_PREFIX = 'expiring_contracts:modifier_contacts:v1:'
 const MODIFIER_CONTACT_TTL_SECONDS = 14 * 24 * 60 * 60
 const DETAIL_TTL_SECONDS = 30 * 24 * 60 * 60
+const VEHICLE_RULES_TABLE = 'ContractVehicleRulesTable'
+const VEHICLE_RULES_SHEET = 'Contract Vehicle Rules'
+const PSC_TABLE = 'SAMProductServiceCodesTable'
+const PSC_SHEET = 'SAM Product Service Codes'
+const VEHICLE_RULE_CACHE_MS = 5 * 60 * 1000
+let vehicleRuleCache = { expiresAt: 0, rules: null }
 
 export const DEFAULT_EXPIRING_AGENCIES = [
   { id: 'cdc', label: 'CDC', searchName: 'CENTERS FOR DISEASE CONTROL AND PREVENTION', tier: 'subtier' },
@@ -204,6 +217,7 @@ export function summarizeAwardFamily(records, now = new Date()) {
     incumbentName: latest(sorted, (record) => record?.awardDetails?.awardeeData?.awardeeHeader?.awardeeName),
     incumbentUEI: latest(sorted, (record) => record?.awardDetails?.awardeeData?.awardeeUEIInformation?.uniqueEntityId),
     naicsCode: latest(sorted, (record) => record?.coreData?.productOrServiceInformation?.principalNaics?.[0]?.code),
+    pscCode: latest(sorted, (record) => record?.coreData?.productOrServiceInformation?.productOrService?.code),
     ultimateCompletionDate: latest(sorted, (record) => record?.awardDetails?.dates?.ultimateCompletionDate),
     currentCompletionDate: latest(sorted, (record) => record?.awardDetails?.dates?.currentCompletionDate),
     periodOfPerformanceStartDate: latest(sorted, (record) => record?.awardDetails?.dates?.periodOfPerformanceStartDate),
@@ -466,6 +480,174 @@ export async function readExpiringNAICS(env) {
   return [...new Set(rows.map((row) => clean(row['NAICS Code'] || row.NAICS || row.Code)).filter(Boolean))].slice(0, 100)
 }
 
+function columnLetter(index) {
+  let value = index + 1
+  let result = ''
+  while (value > 0) {
+    value -= 1
+    result = String.fromCharCode(65 + (value % 26)) + result
+    value = Math.floor(value / 26)
+  }
+  return result
+}
+
+async function ensureWorkbookLookupTable(env, token, { tableName, sheetName, headers, seedRows = [] }) {
+  let rows = null
+  try {
+    rows = await readWorkbookTable(env, DRIVE_ID, token, tableName, { pageSize: 250 })
+  } catch (tableError) {
+    if (tableError?.status && ![400, 404].includes(tableError.status)) throw tableError
+    let worksheet
+    try {
+      worksheet = await graphWorkbookFetch(env, DRIVE_ID, token, `/worksheets/${encodeURIComponent(sheetName)}`)
+    } catch (worksheetError) {
+      if (worksheetError?.status && worksheetError.status !== 404) throw worksheetError
+      worksheet = await graphWorkbookFetch(env, DRIVE_ID, token, '/worksheets/add', {
+        method: 'POST',
+        body: JSON.stringify({ name: sheetName }),
+      }).catch(async (error) => {
+        return graphWorkbookFetch(env, DRIVE_ID, token, `/worksheets/${encodeURIComponent(sheetName)}`).catch(() => { throw error })
+      })
+    }
+    const worksheetKey = encodeURIComponent(worksheet?.id || sheetName)
+    const range = `A1:${columnLetter(headers.length - 1)}2`
+    await graphWorkbookFetch(env, DRIVE_ID, token, `/worksheets/${worksheetKey}/range(address='${range}')`, {
+      method: 'PATCH',
+      body: JSON.stringify({ values: [headers, headers.map(() => '')] }),
+    })
+    try {
+      const created = await graphWorkbookFetch(env, DRIVE_ID, token, `/worksheets/${worksheetKey}/tables/add`, {
+        method: 'POST',
+        body: JSON.stringify({ address: range, hasHeaders: true }),
+      })
+      await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${encodeURIComponent(created.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: tableName }),
+      })
+      await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${tableName}/rows/$/itemAt(index=0)`, { method: 'DELETE' }).catch(() => {})
+    } catch (error) {
+      await readWorkbookTable(env, DRIVE_ID, token, tableName).catch(() => { throw error })
+    }
+    rows = await readWorkbookTable(env, DRIVE_ID, token, tableName)
+  }
+
+  if (seedRows.length) {
+    const existingIds = new Set(rows.map((row) => clean(row.RULE_ID)))
+    const missing = seedRows.filter((row) => !existingIds.has(clean(row.RULE_ID)))
+    for (let index = 0; index < missing.length; index += 20) {
+      const values = missing.slice(index, index + 20).map((row) => headers.map((header) => row[header] ?? ''))
+      await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${tableName}/rows/add`, {
+        method: 'POST',
+        body: JSON.stringify({ index: null, values }),
+      })
+    }
+    if (missing.length) rows = await readWorkbookTable(env, DRIVE_ID, token, tableName)
+  }
+  return rows
+}
+
+export async function readExpiringPSCs(env) {
+  const token = await getAppOnlyGraphToken(env)
+  const rows = await ensureWorkbookLookupTable(env, token, {
+    tableName: PSC_TABLE,
+    sheetName: PSC_SHEET,
+    headers: ['PSC', 'Description', 'Enabled'],
+  })
+  return [...new Set(rows
+    .filter((row) => !row.Enabled || ['Y', 'YES', 'TRUE', '1'].includes(clean(row.Enabled).toUpperCase()))
+    .map((row) => clean(row.PSC || row.Code).toUpperCase())
+    .filter((value) => /^[A-Z0-9]{4}$/.test(value))
+  )].slice(0, 100)
+}
+
+export async function readContractVehicleRules(env, { force = false } = {}) {
+  if (!force && vehicleRuleCache.rules && vehicleRuleCache.expiresAt > Date.now()) return vehicleRuleCache.rules
+  const token = await getAppOnlyGraphToken(env)
+  const rules = await ensureWorkbookLookupTable(env, token, {
+    tableName: VEHICLE_RULES_TABLE,
+    sheetName: VEHICLE_RULES_SHEET,
+    headers: CONTRACT_VEHICLE_RULE_HEADERS,
+    seedRows: DEFAULT_CONTRACT_VEHICLE_RULES,
+  })
+  vehicleRuleCache = { rules, expiresAt: Date.now() + VEHICLE_RULE_CACHE_MS }
+  return rules
+}
+
+async function availableContractVehicleRules(env) {
+  return readContractVehicleRules(env).catch((error) => {
+    console.warn(JSON.stringify({ event: 'contract_vehicle_rules_fallback', message: error.message }))
+    return DEFAULT_CONTRACT_VEHICLE_RULES
+  })
+}
+
+async function saveContractVehicleRule(env, input) {
+  const token = await getAppOnlyGraphToken(env)
+  const rules = await readContractVehicleRules(env, { force: true })
+  const ruleId = clean(input.RULE_ID || input.ruleId) || `manual-${crypto.randomUUID()}`
+  const record = Object.fromEntries(CONTRACT_VEHICLE_RULE_HEADERS.map((header) => [header, input[header] ?? '']))
+  Object.assign(record, {
+    RULE_ID: ruleId,
+    AGENCY: clean(record.AGENCY),
+    VEHICLE_NAME: clean(record.VEHICLE_NAME),
+    MATCH_MODE: clean(record.MATCH_MODE || 'FULL_PIID').toUpperCase(),
+    PRIORITY: Number(record.PRIORITY || 100),
+    CONFIDENCE: clean(record.CONFIDENCE || 'MANUAL').toUpperCase(),
+    ENABLED: record.ENABLED === false ? 'No' : clean(record.ENABLED || 'Yes'),
+    RULE_ORIGIN: 'MANUAL',
+    LAST_VERIFIED: clean(record.LAST_VERIFIED || new Date().toISOString().slice(0, 10)),
+  })
+  if (!record.VEHICLE_NAME) throw new Error('Vehicle name is required')
+  if (record.MATCH_MODE === 'FULL_PIID') {
+    record.FULL_PIID_RULE_TYPE = clean(record.FULL_PIID_RULE_TYPE || 'EXACT').toUpperCase()
+    record.FULL_PIID_RULE = clean(record.FULL_PIID_RULE)
+    if (!record.FULL_PIID_RULE) throw new Error('Referenced IDV PIID is required')
+  }
+  const existing = rules.find((rule) => clean(rule.RULE_ID) === ruleId)
+  const values = CONTRACT_VEHICLE_RULE_HEADERS.map((header) => record[header] ?? '')
+  if (existing) {
+    await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${VEHICLE_RULES_TABLE}/rows/itemAt(index=${existing._rowIndex})`, {
+      method: 'PATCH', body: JSON.stringify({ values: [values] }),
+    })
+  } else {
+    await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${VEHICLE_RULES_TABLE}/rows/add`, {
+      method: 'POST', body: JSON.stringify({ index: null, values: [values] }),
+    })
+  }
+  vehicleRuleCache = { expiresAt: 0, rules: null }
+  await backfillPipelineVehicleNames(env, [record]).catch((error) => {
+    console.warn(JSON.stringify({ event: 'pipeline_vehicle_rule_backfill_failed', message: error.message }))
+  })
+  return record
+}
+
+export async function backfillPipelineVehicleNames(env, rules = null, limit = 40) {
+  const token = await getAppOnlyGraphToken(env)
+  const [pipeline, columns, activeRules] = await Promise.all([
+    readWorkbookTable(env, DRIVE_ID, token, 'PipelineTable', { pageSize: 250 }),
+    graphWorkbookFetch(env, DRIVE_ID, token, '/tables/PipelineTable/columns'),
+    rules ? Promise.resolve(rules) : readContractVehicleRules(env),
+  ])
+  const headers = (columns.value || []).map((column) => column.name)
+  const vehicleIndex = headers.indexOf('Contract Vehicle')
+  if (vehicleIndex < 0) return { updated: 0, remaining: 0 }
+  const candidates = pipeline.filter((row) =>
+    !clean(row['Contract Vehicle']) && clean(row['Contract Vehicle Number'])
+  )
+  let updated = 0
+  for (const row of candidates.slice(0, limit)) {
+    const resolution = resolveContractVehicle(row['Contract Vehicle Number'], activeRules)
+    if (resolution.status !== 'RESOLVED') continue
+    const values = [...row._values]
+    while (values.length < headers.length) values.push('')
+    values[vehicleIndex] = resolution.vehicleName
+    await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
+      method: 'PATCH', body: JSON.stringify({ values: [values] }),
+    })
+    updated += 1
+  }
+  return { updated, remaining: Math.max(0, candidates.length - updated) }
+}
+
 function compactAwardRecord(record) {
   return {
     contractId: {
@@ -487,6 +669,7 @@ function compactAwardRecord(record) {
       },
       productOrServiceInformation: {
         principalNaics: record?.coreData?.productOrServiceInformation?.principalNaics || null,
+        productOrService: record?.coreData?.productOrServiceInformation?.productOrService || null,
       },
       competitionInformation: {
         typeOfSetAside: record?.coreData?.competitionInformation?.typeOfSetAside || null,
@@ -508,7 +691,7 @@ function compactAwardRecord(record) {
   }
 }
 
-export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset = 0, now = new Date() }) {
+export async function fetchExpiringAwardsPage(env, { agency, naicsCodes = [], pscCodes = [], offset = 0, now = new Date() }) {
   if (!env.SAM_API_KEY) throw new Error('SAM_API_KEY is not configured')
   const from = addMonths(now, 6)
   const to = addMonths(now, 24)
@@ -520,11 +703,14 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
     awardOrIDV: 'Award',
     closedStatus: 'No',
     ultimateCompletionDate: `[${formatSamDate(from)},${formatSamDate(to)}]`,
-    naicsCode: naicsCodes.join('~'),
   }
 
-  const requestPage = async (filterKey, filterValue) => {
-    const params = new URLSearchParams({ ...baseParams, [filterKey]: filterValue })
+  const requestPage = async (agencyFilterKey, agencyFilterValue, discoveryFilterKey, discoveryFilterValue) => {
+    const params = new URLSearchParams({
+      ...baseParams,
+      [agencyFilterKey]: agencyFilterValue,
+      [discoveryFilterKey]: discoveryFilterValue,
+    })
     const response = await fetch(`${AWARDS_BASE}?${params}`)
     if (response.status === 204) return { records: [], total: 0, nextOffset: offset, hasMore: false }
     if (!response.ok) {
@@ -543,19 +729,41 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes, offset 
 
   const codeFilter = normalizedAgency.tier === 'department' ? 'contractingDepartmentCode' : 'contractingSubtierCode'
   const nameFilter = normalizedAgency.tier === 'department' ? 'contractingDepartmentName' : 'contractingSubtierName'
+  const criteria = [
+    naicsCodes.length ? ['naicsCode', naicsCodes.join('~')] : null,
+    pscCodes.length ? ['productOrServiceCode', pscCodes.join('~')] : null,
+  ].filter(Boolean)
+  if (!criteria.length) throw new Error('Configure at least one NAICS or Product Service Code')
+
+  const requestForAgency = async (agencyFilterKey, agencyFilterValue) => {
+    const pages = await Promise.all(criteria.map(([key, value]) => requestPage(agencyFilterKey, agencyFilterValue, key, value)))
+    const records = dedupeRecords(pages.flatMap((page) => page.records))
+    const total = Math.max(...pages.map((page) => page.total), 0)
+    return {
+      records,
+      total,
+      nextOffset: criteria.length === 1 ? pages[0].nextOffset : offset + PAGE_SIZE,
+      hasMore: pages.some((page) => page.hasMore),
+    }
+  }
   if (normalizedAgency.agencyCode) {
-    const byCode = await requestPage(codeFilter, normalizedAgency.agencyCode)
+    const byCode = await requestForAgency(codeFilter, normalizedAgency.agencyCode)
     if (byCode.total || offset > 0) return { ...byCode, filter: 'code' }
-    const byName = await requestPage(nameFilter, normalizedAgency.searchName)
+    const byName = await requestForAgency(nameFilter, normalizedAgency.searchName)
     return { ...byName, filter: byName.total ? 'name-fallback' : 'code' }
   }
-  return { ...(await requestPage(nameFilter, normalizedAgency.searchName)), filter: 'name' }
+  return { ...(await requestForAgency(nameFilter, normalizedAgency.searchName)), filter: 'name' }
 }
 
 export async function saveAgencyResults(env, agency, records, fetchedAt = new Date().toISOString()) {
+  const vehicleRules = await availableContractVehicleRules(env)
   const families = groupByAwardFamily(dedupeRecords(records))
     .map((family) => summarizeAwardFamily(family))
     .filter((result) => result.eligibility.eligible && !isExcludedExpiringSetAside(result.setAside))
+    .map((result) => ({
+      ...result,
+      vehicleResolution: resolveContractVehicle(result.referencedIdvPiid, vehicleRules),
+    }))
     .sort((left, right) => clean(left.ultimateCompletionDate).localeCompare(clean(right.ultimateCompletionDate)))
   const official = families[0]
     ? { departmentCode: families[0].departmentCode, agencyCode: families[0].agencyCode, agencyName: families[0].agency, departmentName: families[0].department }
@@ -646,6 +854,10 @@ async function completeExpiringRefresh(env, step, {
         : null,
   }
   await step.do('Complete expiring contract refresh', () => setStatus(env, complete))
+  await step.do('Resolve pipeline contract vehicle names', () => backfillPipelineVehicleNames(env).catch((error) => {
+    console.warn(JSON.stringify({ event: 'pipeline_vehicle_backfill_skipped', message: error.message }))
+    return { updated: 0, skipped: true }
+  }))
   return complete
 }
 
@@ -664,10 +876,14 @@ export async function runExpiringContractsRefresh(env, event, step) {
       throw new Error(`Expiring contract refresh exceeded ${MAX_WORKFLOW_CHECKPOINTS} checkpoints`)
     }
 
-    const naicsCodes = continuation.naicsCodes?.length
-      ? continuation.naicsCodes
-      : await step.do('Read configured NAICS codes', () => readExpiringNAICS(env))
-    if (!naicsCodes.length) throw new Error('SAMNAICSTable does not contain any NAICS codes')
+    const discoveryCodes = continuation.naicsCodes || continuation.pscCodes
+      ? { naicsCodes: continuation.naicsCodes || [], pscCodes: continuation.pscCodes || [] }
+      : await step.do('Read configured discovery codes', async () => ({
+          naicsCodes: await readExpiringNAICS(env),
+          pscCodes: await readExpiringPSCs(env),
+        }))
+    const { naicsCodes, pscCodes } = discoveryCodes
+    if (!naicsCodes.length && !pscCodes.length) throw new Error('Configure at least one NAICS or Product Service Code')
     const agencyIndex = Math.max(0, Number(continuation.agencyIndex) || 0)
     const totalContracts = Math.max(0, Number(continuation.totalContracts) || 0)
     const agencyErrors = Array.isArray(continuation.agencyErrors) ? continuation.agencyErrors : []
@@ -709,7 +925,7 @@ export async function runExpiringContractsRefresh(env, event, step) {
         const page = await step.do(
           `Fetch ${agency.id} awards page ${currentPageNumber + 1}`,
           { retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' }, timeout: '5 minutes' },
-          () => fetchExpiringAwardsPage(env, { agency, naicsCodes, offset: currentOffset }),
+          () => fetchExpiringAwardsPage(env, { agency, naicsCodes, pscCodes, offset: currentOffset }),
         )
         batchRecords.push(...page.records)
         currentOffset = page.nextOffset
@@ -723,7 +939,7 @@ export async function runExpiringContractsRefresh(env, event, step) {
         await step.do(`Store ${agency.id} checkpoint records ${checkpoint}`, () => writeCheckpointRecords(env, recordsKey, records))
         const nextContinuation = {
           startedAt,
-          naicsCodes,
+          naicsCodes, pscCodes,
           agencyIndex,
           offset: currentOffset,
           pageNumber: currentPageNumber,
@@ -764,7 +980,7 @@ export async function runExpiringContractsRefresh(env, event, step) {
         agencies,
         checkpoint: checkpoint + 1,
         continuation: {
-          startedAt, naicsCodes, agencyIndex: nextAgencyIndex, offset: 0, pageNumber: 0,
+          startedAt, naicsCodes, pscCodes, agencyIndex: nextAgencyIndex, offset: 0, pageNumber: 0,
           currentPages: null, storedRecordCount: 0, totalContracts: nextTotalContracts, agencyErrors,
         },
       })
@@ -789,7 +1005,7 @@ export async function runExpiringContractsRefresh(env, event, step) {
         agencies,
         checkpoint: checkpoint + 1,
         continuation: {
-          startedAt, naicsCodes, agencyIndex: nextAgencyIndex, offset: 0, pageNumber: 0,
+          startedAt, naicsCodes, pscCodes, agencyIndex: nextAgencyIndex, offset: 0, pageNumber: 0,
           currentPages: null, storedRecordCount: 0, totalContracts, agencyErrors: nextAgencyErrors,
         },
       })
@@ -857,6 +1073,7 @@ function inSelectedRange(contract, range, now = new Date()) {
 }
 
 async function loadResults(env, agencies, range, includeHidden = false) {
+  const vehicleRules = await availableContractVehicleRules(env)
   const selected = agencies.length ? agencies : await agencyRegistry(env)
   const cached = await Promise.all(selected.map((agency) => getRuntimeState(env, resultCacheKey(normalizeAgency(agency)))))
   const available = cached.filter(Boolean).map((entry) => ({
@@ -870,6 +1087,7 @@ async function loadResults(env, agencies, range, includeHidden = false) {
   const hiddenKeys = await listHiddenContractKeys(env)
   const allContracts = [...contractsByFamily.values()].map((contract) => ({
     ...contract,
+    vehicleResolution: resolveContractVehicle(contract.referencedIdvPiid, vehicleRules),
     hidden: hiddenKeys.has(expiringHiddenKey(contract.familyKey)),
   }))
   const hiddenCount = allContracts.filter((contract) => contract.hidden).length
@@ -1129,11 +1347,17 @@ async function cachedContractDetail(env, url) {
   const uei = normalizeIdentifier(url.searchParams.get('uei'))
   const force = url.searchParams.get('refresh') === '1'
   const cacheKey = `expiring_contracts:detail:v1:${encodeURIComponent(`${piid}|${uei}`)}`
+  const vehicleRules = await availableContractVehicleRules(env)
   if (!force) {
     const cached = await getRuntimeState(env, cacheKey)
-    if (cached?.detail) return { ...cached.detail, cache: { source: 'saved', fetchedAt: cached.fetchedAt } }
+    if (cached?.detail) return {
+      ...cached.detail,
+      vehicleResolution: resolveContractVehicle(cached.detail.referencedIdvPiid, vehicleRules),
+      cache: { source: 'saved', fetchedAt: cached.fetchedAt },
+    }
   }
   const detail = await loadContractDetail(env, url)
+  detail.vehicleResolution = resolveContractVehicle(detail.referencedIdvPiid, vehicleRules)
   const fetchedAt = new Date().toISOString()
   await putRuntimeState(env, cacheKey, { detail, fetchedAt }, {
     category: 'expiring-detail',
@@ -1162,7 +1386,30 @@ export async function handleExpiringContracts(req, env) {
       return json(await setExpiringContractHidden(env, body.familyKey, body.hidden))
     }
     if (url.pathname === '/sam/expiring-contracts/config' && req.method === 'GET') {
-      return json({ agencies: await agencyRegistry(env), ranges: ['6-12', '12-18', '18-24'] })
+      const [rules, pscCodes] = await Promise.all([readContractVehicleRules(env), readExpiringPSCs(env)])
+      return json({
+        agencies: await agencyRegistry(env),
+        ranges: ['6-12', '12-18', '18-24'],
+        vehicleRules: {
+          total: rules.length,
+          enabled: rules.filter((rule) => ['Y', 'YES', 'TRUE', '1'].includes(clean(rule.ENABLED).toUpperCase())).length,
+        },
+        pscCodes,
+      })
+    }
+    if (url.pathname === '/sam/expiring-contracts/vehicle-rules' && req.method === 'GET') {
+      const rules = await readContractVehicleRules(env, { force: url.searchParams.get('refresh') === '1' })
+      return json({ rules })
+    }
+    if (url.pathname === '/sam/expiring-contracts/vehicle-rules' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      const rule = await saveContractVehicleRule(env, body.rule || body)
+      return json({ rule }, 201)
+    }
+    if (url.pathname === '/sam/expiring-contracts/vehicle-resolve' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      const rules = await readContractVehicleRules(env, { force: Boolean(body.refreshRules) })
+      return json({ resolutions: resolveContractVehicles(body.identifiers || [body.identifier], rules) })
     }
     if (url.pathname === '/sam/expiring-contracts/status' && req.method === 'GET') {
       return json((await getStatus(env)) || { status: 'idle' })
