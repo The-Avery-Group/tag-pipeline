@@ -558,7 +558,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                             {contract.vehicleResolution?.status === 'RESOLVED' ? (
                               <span>
                                 <strong>{contract.vehicleResolution.vehicleName}</strong>
-                                <small>{[contract.vehicleResolution.vehicleVariant, contract.vehicleResolution.confidence].filter(Boolean).join(' · ')}</small>
+                                {contract.vehicleResolution.vehicleVariant && <small>{contract.vehicleResolution.vehicleVariant}</small>}
                               </span>
                             ) : contract.referencedIdvPiid ? (
                               <span>
@@ -568,7 +568,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                                   {vehicleRuleSaving === contract.familyKey ? 'Saving…' : 'Add vehicle rule'}
                                 </button>
                               </span>
-                            ) : 'No referenced IDV'}
+                            ) : ''}
                           </td>
                           <td>{contract.ultimateCompletionDate ? formatDate(contract.ultimateCompletionDate) : 'Not available'}</td>
                           <td title={fullMoney(contract.totalContractValue)}>{compactMoney(contract.totalContractValue)}</td>
@@ -591,8 +591,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
                                 <DetailField label="Contract classification" value={detail.awardType} />
                                 <DetailField label="Solicitation number" value={detail.solicitationNumber} />
                                 <DetailField label="Referenced IDV" value={detail.referencedIdvPiid} />
-                                <DetailField label="Resolved contract vehicle" value={detail.vehicleResolution?.status === 'RESOLVED' ? [detail.vehicleResolution.vehicleName, detail.vehicleResolution.vehicleVariant].filter(Boolean).join(' · ') : null} />
-                                <DetailField label="Resolution confidence" value={detail.vehicleResolution?.status === 'RESOLVED' ? detail.vehicleResolution.confidence : null} />
+                                <DetailField label="Contract vehicle" value={detail.vehicleResolution?.status === 'RESOLVED' ? [detail.vehicleResolution.vehicleName, detail.vehicleResolution.vehicleVariant].filter(Boolean).join(' · ') : null} />
                               </div></section>
                               <section><h4>Agency and scope</h4><div className={styles.detailGrid}>
                                 <DetailField label="Department" value={detail.department} />
