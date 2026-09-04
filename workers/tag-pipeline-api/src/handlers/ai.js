@@ -1,5 +1,5 @@
 /**
- * ai.js — Groq AI proxy
+ * ai.js — CRM AI provider orchestration
  *
  * Handles:
  *   POST /ai/chat    — Send a message, get a response (conversational)
@@ -80,7 +80,7 @@ const PEOPLE_SEARCH_RESPONSE_SCHEMA = {
   additionalProperties: false,
 }
 
-function peopleSearchResponseFormat(model) {
+function groqPeopleSearchResponseFormat(model) {
   if (model === 'openai/gpt-oss-120b' || model === 'openai/gpt-oss-20b') {
     return {
       type: 'json_schema',
@@ -99,10 +99,14 @@ function peopleSearchResponseFormat(model) {
 // the item ID alone does not identify a file across a SharePoint site.
 const DEFAULT_SHAREPOINT_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 
-const MODEL_PRIORITY = [
+const GROQ_MODEL_PRIORITY = [
   'openai/gpt-oss-120b',
-  'qwen/qwen3.6-27b',
   'openai/gpt-oss-20b',
+]
+
+const WORKERS_AI_MODEL_PRIORITY = [
+  '@cf/openai/gpt-oss-120b',
+  '@cf/openai/gpt-oss-20b',
 ]
 
 // Maximum tool-calling round trips per user turn, so a pathological loop
@@ -113,8 +117,8 @@ const MAX_TOOL_ROUNDS = 5
 // Custom tools are EXECUTED ON THE FRONTEND, not here — the pipeline/tasks/
 // contacts data already lives in memory on the client (usePipeline/useTasks/
 // useContacts, warmed by dataCache.js) via the user's own delegated Graph
-// auth. The Worker only orchestrates: send the tool schemas to Groq, and if
-// Groq wants to call one, hand that request back to the frontend instead of
+// auth. The Worker only orchestrates: send the tool schemas to the AI provider,
+// and if the model wants to call one, hand that request back to the frontend instead of
 // executing it itself. This avoids needing any new Azure AD app permissions
 // for the Worker to read the workbook directly.
 //
@@ -809,9 +813,20 @@ Answer questions about TAG's pipeline, opportunities, contracts, capture plannin
 
 // ── Groq call ──────────────────────────────────────────────────────────────
 
-function modelOrder(preferredModel) {
-  if (!MODEL_PRIORITY.includes(preferredModel)) return MODEL_PRIORITY
-  return [preferredModel, ...MODEL_PRIORITY.filter((model) => model !== preferredModel)]
+function modelOrder(preferredModel, priority) {
+  if (!priority.includes(preferredModel)) return priority
+  return [preferredModel, ...priority.filter((model) => model !== preferredModel)]
+}
+
+function workersPreferredModel(preferredModel) {
+  if (WORKERS_AI_MODEL_PRIORITY.includes(preferredModel)) return preferredModel
+  const mapped = preferredModel ? `@cf/${String(preferredModel).replace(/^@cf\//, '')}` : ''
+  return WORKERS_AI_MODEL_PRIORITY.includes(mapped) ? mapped : null
+}
+
+function groqPreferredModel(preferredModel) {
+  const mapped = String(preferredModel || '').replace(/^@cf\//, '')
+  return GROQ_MODEL_PRIORITY.includes(mapped) ? mapped : null
 }
 
 function normalizeResponseContent(content) {
@@ -1104,7 +1119,7 @@ function peopleSearchReference(body) {
 async function callGroq(messages, apiKey, tools = null, preferredModel = null, options = {}) {
   let lastError = null
   const retryAfterSeconds = []
-  for (const model of modelOrder(preferredModel)) {
+  for (const model of modelOrder(preferredModel, GROQ_MODEL_PRIORITY)) {
     try {
       const body = {
         model,
@@ -1205,6 +1220,84 @@ async function callGroq(messages, apiKey, tools = null, preferredModel = null, o
   throw lastError || new Error('All Groq models failed')
 }
 
+function workersAITools(tools) {
+  return tools?.map((tool) => tool.function || tool).filter((tool) => tool?.name) || null
+}
+
+function normalizeWorkersAIToolCalls(toolCalls) {
+  if (!Array.isArray(toolCalls)) return null
+  const normalized = toolCalls.map((call) => {
+    const fn = call?.function || call
+    const name = fn?.name || call?.name
+    if (!name) return null
+    const args = fn?.arguments ?? call?.arguments ?? {}
+    return {
+      id: call?.id || `call_${crypto.randomUUID()}`,
+      type: 'function',
+      function: {
+        name,
+        arguments: typeof args === 'string' ? args : JSON.stringify(args),
+      },
+    }
+  }).filter(Boolean)
+  return normalized.length ? normalized : null
+}
+
+function workersAIContent(result) {
+  const value = result?.response ?? result?.result?.response
+  if (typeof value === 'string') return normalizeResponseContent(value)
+  return value && typeof value === 'object' ? JSON.stringify(value) : ''
+}
+
+async function callWorkersAI(env, messages, tools = null, preferredModel = null, options = {}) {
+  if (!env.AI?.run) throw new Error('Workers AI is not configured')
+  let lastError = null
+  for (const model of modelOrder(workersPreferredModel(preferredModel), WORKERS_AI_MODEL_PRIORITY)) {
+    try {
+      const input = {
+        messages,
+        max_tokens: options.maxTokens || 1000,
+      }
+      const providerTools = workersAITools(tools)
+      if (providerTools) input.tools = providerTools
+      if (options.workersResponseFormat) input.response_format = options.workersResponseFormat
+      if (Number.isFinite(options.temperature)) input.temperature = options.temperature
+
+      const result = await env.AI.run(model, input)
+      const content = workersAIContent(result)
+      const toolCalls = normalizeWorkersAIToolCalls(result?.tool_calls ?? result?.result?.tool_calls)
+      if (!content && !toolCalls?.length) throw new Error(`${model} returned no usable response`)
+      if (options.validateContent && !toolCalls?.length) options.validateContent(content)
+      return { content, toolCalls, finishReason: result?.finish_reason, model }
+    } catch (error) {
+      lastError = error
+      console.warn('[AI] Workers AI model failed; trying the next provider option:', {
+        model,
+        message: error.message,
+      })
+    }
+  }
+  throw lastError || new Error('All Workers AI models failed')
+}
+
+async function callAI(env, messages, tools = null, preferredModel = null, options = {}) {
+  let workersError = null
+  if (env.AI?.run) {
+    try {
+      return await callWorkersAI(env, messages, tools, preferredModel, options)
+    } catch (error) {
+      workersError = error
+    }
+  }
+  if (env.GROQ_API_KEY) {
+    return callGroq(messages, env.GROQ_API_KEY, tools, groqPreferredModel(preferredModel), {
+      ...options,
+      responseFormat: options.groqResponseFormat || options.responseFormat,
+    })
+  }
+  throw workersError || new Error('AI not configured')
+}
+
 // ── Context block builder ──────────────────────────────────────────────────
 
 export function buildContextBlock(context) {
@@ -1303,7 +1396,7 @@ async function saveHistory(env, conversationId, messages) {
 // ── Handlers ───────────────────────────────────────────────────────────────
 
 export async function handlePeopleSearchQueries(req, env) {
-  if (!env.GROQ_API_KEY) return json({ error: 'AI not configured' }, 503)
+  if (!env.AI?.run && !env.GROQ_API_KEY) return json({ error: 'AI not configured' }, 503)
 
   let body
   try { body = await req.json() }
@@ -1386,8 +1479,9 @@ Do not include markdown or commentary.`
   ]
 
   try {
-    const result = await callGroq(messages, env.GROQ_API_KEY, null, null, {
-      responseFormat: peopleSearchResponseFormat,
+    const result = await callAI(env, messages, null, '@cf/openai/gpt-oss-20b', {
+      workersResponseFormat: { type: 'json_schema', json_schema: PEOPLE_SEARCH_RESPONSE_SCHEMA },
+      groqResponseFormat: groqPeopleSearchResponseFormat,
       temperature: 0.2,
       retryInvalidOutput: true,
       validateContent: (content) => {
@@ -1418,7 +1512,7 @@ Do not include markdown or commentary.`
 }
 
 export async function handleAIChat(req, env) {
-  if (!env.GROQ_API_KEY) return json({ error: 'AI not configured' }, 503)
+  if (!env.AI?.run && !env.GROQ_API_KEY) return json({ error: 'AI not configured' }, 503)
 
   // Handle sub-routes: GET /ai/history, DELETE /ai/history
   const url = new URL(req.url)
@@ -1549,13 +1643,12 @@ export async function handleAIChat(req, env) {
     : 'auto'
 
   try {
-    const result = await callGroq(messages, env.GROQ_API_KEY, toolsForThisCall, preferredModel, { toolChoice })
+    const result = await callAI(env, messages, toolsForThisCall, preferredModel, { toolChoice })
     const historyBase = [...existingHistory, ...turnMessages]
 
     if (result.toolCalls?.length > 0) {
-      // Groq wants to call one or more CUSTOM (client-executed) tools —
-      // browser_search wouldn't show up here, Groq resolves that internally
-      // and just returns a normal completion. Persist the assistant's own
+      // The model wants to call one or more custom client-executed tools.
+      // Persist the assistant's own
       // tool_calls message so the follow-up request can reconstruct the
       // conversation correctly, and hand the requests to the frontend.
       if (conversationId) {
@@ -1580,7 +1673,7 @@ export async function handleAIChat(req, env) {
 
     return json({ type: 'final', content: result.content, model: result.model, conversationId })
   } catch (err) {
-    console.error('[AI] Groq call failed:', err)
+    console.error('[AI] Provider call failed:', err)
     return json(
       { error: err.message, retryAfterSeconds: err.retryAfterSeconds || undefined },
       err.status === 429 ? 429 : 502
