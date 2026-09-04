@@ -49,11 +49,14 @@ export async function runPendingAwardMonitor(env) {
   let alerts = 0
   for (const opportunity of batch) {
     const solicitationNumber = clean(opportunity['Solicitation Number'])
-    if (!solicitationNumber) continue
     const notice = await findAwardNotice(env, {
       piid: clean(opportunity['Contract Number / Notice ID']),
       solicitationNumber,
-      originalSignedDate: normalizedDate(opportunity['Anticipated year for Award (MM/DD/YYYY)*']) || normalizedDate(opportunity['Submission Date (Response Date)*']) || new Date().toISOString(),
+      submissionDate: normalizedDate(opportunity['Submission Date (Response Date)*']),
+      originalSignedDate: normalizedDate(opportunity['Submission Date (Response Date)*']) || new Date().toISOString(),
+      title: clean(opportunity['Project Title / Description*']),
+      agency: clean(opportunity['Agency*']),
+      department: clean(opportunity['Department*']),
       awardeeName: '',
     })
     if (!notice?.noticeId) continue
