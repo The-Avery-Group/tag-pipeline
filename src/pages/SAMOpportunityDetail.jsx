@@ -299,7 +299,10 @@ export default function SAMOpportunityDetail({ toast }) {
     try {
       if (dismissed) await undismiss(row._rowIndex, linkedPipeline ? 'added_to_pipeline' : 'new')
       else await dismiss(row._rowIndex)
-      updateSAMOpportunityArchiveReview(identifier, dismissed ? 'new' : 'dismissed').catch(() => {})
+      updateSAMOpportunityArchiveReview({
+        ...identifier,
+        responseDate: detail?.responseDeadline || row?.['Response Date'],
+      }, dismissed ? 'new' : 'dismissed').catch(() => {})
       toast?.success(dismissed ? 'Opportunity restored' : 'Opportunity dismissed')
       if (!dismissed) setDismissedPrompt(true)
     } catch (error) { toast?.error(error.message) }
