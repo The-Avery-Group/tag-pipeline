@@ -240,8 +240,10 @@ export default function Opportunities({ toast }) {
   const discoverySource = searchParams.get('source') === 'ebuy' ? 'ebuy' : 'sam'
   const requestedExpiringView = searchParams.get('expiringView')
   const expiringView = ['pipeline', 'discover', 'intelligence'].includes(requestedExpiringView) ? requestedExpiringView : 'pipeline'
+  const marketIntelligenceActive = activeTab === 'Expiring' && !showArchived && expiringView === 'intelligence'
   const search    = searchParams.get('search') || ''
   const [ebuyCount, setEbuyCount] = useState(0)
+  const [marketContractCount, setMarketContractCount] = useState(0)
   const [showDismissedEbuy, setShowDismissedEbuy] = useState(false)
   const rfiFollowUpIds = useMemo(() => {
     try {
@@ -1623,8 +1625,8 @@ export default function Opportunities({ toast }) {
     <>
       <Topbar
         title="Opportunities"
-        subtitle1={`${activeTab === 'New' ? (discoverySource === 'ebuy' ? ebuyCount : visibleSAMOpps.length) : filtered.length} shown`}
-        showFilter={activeTab !== 'New'}
+        subtitle1={`${marketIntelligenceActive ? marketContractCount : activeTab === 'New' ? (discoverySource === 'ebuy' ? ebuyCount : visibleSAMOpps.length) : filtered.length} shown`}
+        showFilter={activeTab !== 'New' && !marketIntelligenceActive}
         showNew={true}
         newLabel="New opportunity"
         onNew={() => setShowAdd(true)}
@@ -1657,7 +1659,9 @@ export default function Opportunities({ toast }) {
             </span>
             <input
               className={styles.searchInput}
-              placeholder={activeTab === 'New'
+              placeholder={marketIntelligenceActive
+                ? 'Search cached expiring contracts…'
+                : activeTab === 'New'
                 ? discoverySource === 'ebuy' ? 'Search all archived eBuy opportunity fields…' : 'Search all SAM opportunity fields…'
                 : 'Search all opportunity fields and linked notes…'}
               value={search}
@@ -1694,7 +1698,7 @@ export default function Opportunities({ toast }) {
                 <span className={styles.visibilityLabel}>{showHiddenResponses ? 'Hide hidden' : `Show hidden (${hiddenResponseCount})`}</span>
               </button>
             )}
-            {activeTab !== 'New' && archivedPipeline.length > 0 && (
+            {activeTab !== 'New' && !marketIntelligenceActive && archivedPipeline.length > 0 && (
               <button
                 type="button"
                 className={`${styles.searchVisibilityButton} ${showArchived ? styles.searchVisibilityActive : ''}`}
@@ -1709,7 +1713,7 @@ export default function Opportunities({ toast }) {
         </div>
 
         {/* ── Advanced filter panel ── */}
-        {showFilter && activeTab !== 'New' && (
+        {showFilter && activeTab !== 'New' && !marketIntelligenceActive && (
           <div className={styles.filterPanel}>
             <div className={styles.filterGrid}>
               <div className="form-field">
@@ -1853,7 +1857,7 @@ export default function Opportunities({ toast }) {
         )}
 
         {/* Active filter chips */}
-        {activeFilterCount > 0 && activeTab !== 'New' && (
+        {activeFilterCount > 0 && activeTab !== 'New' && !marketIntelligenceActive && (
           <div className="filter-chips" style={{ marginBottom: 8 }}>
             {rfiFollowUpIds.size > 0 && (
               <button className="filter-chip active" onClick={() => updateParams({ rfiFollowUps: '' })}>
@@ -1911,6 +1915,7 @@ export default function Opportunities({ toast }) {
             toast={toast}
             view={expiringView}
             onViewChange={(nextView) => updateParams({ expiringView: nextView === 'pipeline' ? '' : nextView })}
+            onMarketCountChange={setMarketContractCount}
             pipelineView={(
               <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                 {loading
