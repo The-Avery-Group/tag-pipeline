@@ -12,11 +12,12 @@ import {
   alignTransactionRuleValues,
   deleteTransactionRuleFromWorkbook,
   ensureTransactionCodingWorkspace,
+  readTransactionCodingSettings,
   RULE_HEADERS,
   saveTransactionRuleToWorkbook,
 } from '../src/lib/transactionCodingSharePoint.js'
 import { attemptTransactionRuleSync, transactionCodingAccess, TRANSACTION_CODING_HTTP_METHODS } from '../src/handlers/transactionCoding.js'
-import { TRANSACTION_CODING_RETENTION_DAYS, transactionCodingStorageReady, transactionsForExport } from '../src/lib/transactionCodingRepository.js'
+import { normalizeTransactionCodingRetentionDays, TRANSACTION_CODING_RETENTION_DAYS, transactionCodingStorageReady, transactionsForExport } from '../src/lib/transactionCodingRepository.js'
 
 test('categorizes a statement row with the highest-priority matching rule', () => {
   const row = categorizeTransaction({ rawDescription: 'SCRIBD *662092010', amountCents: 1299 }, [
@@ -38,8 +39,32 @@ test('transaction coding routes allow rule deletion', () => {
   assert.equal(TRANSACTION_CODING_HTTP_METHODS.includes('DELETE'), true)
 })
 
-test('transaction coding retains in-app statement data for ten days', () => {
+test('transaction coding defaults retention to ten days and validates workbook values', () => {
   assert.equal(TRANSACTION_CODING_RETENTION_DAYS, 10)
+  assert.equal(normalizeTransactionCodingRetentionDays('30'), 30)
+  assert.equal(normalizeTransactionCodingRetentionDays('10.5'), 10)
+  assert.equal(normalizeTransactionCodingRetentionDays('0'), 10)
+})
+
+test('transaction coding reads retention from the workbook settings table', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const target = String(url)
+    if (target.endsWith('/tables/TransactionCodingSettingsTable')) {
+      return Response.json({ id: 'settings-table' })
+    }
+    if (target.endsWith('/tables/settings-table/columns')) {
+      return Response.json({ value: [{ name: 'Setting' }, { name: 'Value' }, { name: 'Description' }] })
+    }
+    if (target.endsWith('/tables/settings-table/rows?$top=100')) {
+      return Response.json({ value: [
+        { values: [['Retention Days', 21, 'Keep data for three weeks']] },
+        { values: [['Archive Exports', 'Yes', '']] },
+      ] })
+    }
+    return Response.json({ error: { message: `Unexpected request: ${target}` } }, { status: 500 })
+  })
+  const settings = await readTransactionCodingSettings({ driveId: 'drive', workbookItemId: 'book', token: 'token' })
+  assert.deepEqual(settings, { retentionDays: 21 })
 })
 
 test('transaction coding access is fail-closed and accepts approved Entra IDs or user principal names', () => {
