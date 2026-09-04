@@ -6,6 +6,7 @@ import {
   fetchAgencyModifierNotices,
   fetchExpiringAwardsPage,
   isExcludedExpiringSetAside,
+  inSelectedRange,
   matchingModifierContacts,
   modifierNoticeWindows,
   noticeContacts,
@@ -54,7 +55,7 @@ function award({
         contractingSubtier: { code: '7523', name: 'CENTERS FOR DISEASE CONTROL AND PREVENTION' },
         contractingOffice: { code: '75D301', name: 'CDC OFFICE OF ACQUISITION SERVICES' },
       } },
-      productOrServiceInformation: { principalNaics: [{ code: '541611' }] },
+      productOrServiceInformation: { principalNaics: [{ code: '541611' }], productOrService: { code: 'R499', name: 'SUPPORT SERVICES' } },
       competitionInformation: { typeOfSetAside: setAside ? { name: setAside } : null },
     },
     awardDetails: {
@@ -273,6 +274,14 @@ test('award family summary uses ultimate completion and total base plus all opti
   assert.equal(summary.totalContractValue, 5000000)
   assert.equal(summary.piid, '75D30126C00001')
   assert.equal(summary.agencyCode, '7523')
+  assert.equal(summary.pscCode, 'R499')
+  assert.equal(summary.pscDescription, 'SUPPORT SERVICES')
+})
+
+test('market intelligence range includes contracts expiring before six months', () => {
+  const now = new Date('2026-09-04T00:00:00Z')
+  assert.equal(inSelectedRange({ ultimateCompletionDate: '2026-10-01' }, '0-60', now), true)
+  assert.equal(inSelectedRange({ ultimateCompletionDate: '2031-10-01' }, '0-60', now), false)
 })
 
 test('women-owned and HUBZone set-asides are excluded from expiring discovery', () => {
