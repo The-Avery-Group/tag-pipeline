@@ -1221,6 +1221,11 @@ export function inSelectedRange(contract, range, now = new Date()) {
   return date && date >= addMonths(now, minimumMonths) && date <= addMonths(now, maximumMonths)
 }
 
+export function isTagOwnedContract(contract, tagUei) {
+  const configured = clean(tagUei).toUpperCase()
+  return Boolean(configured) && clean(contract?.incumbentUEI).toUpperCase() === configured
+}
+
 async function loadResults(env, agencies, range, includeHidden = false) {
   const vehicleRules = await availableContractVehicleRules(env)
   const selected = agencies.length ? agencies : await agencyRegistry(env)
@@ -1236,6 +1241,7 @@ async function loadResults(env, agencies, range, includeHidden = false) {
   const hiddenKeys = await listHiddenContractKeys(env)
   const allContracts = [...contractsByFamily.values()].map((contract) => ({
     ...contract,
+    isTagContract: isTagOwnedContract(contract, env.TAG_UEI),
     vehicleResolution: resolveContractVehicle(contract.referencedIdvPiid, vehicleRules),
     hidden: hiddenKeys.has(expiringHiddenKey(contract.familyKey)),
   }))
