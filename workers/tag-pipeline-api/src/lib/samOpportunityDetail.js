@@ -376,6 +376,13 @@ export function normalizeSAMOpportunityDetail(raw = {}) {
     organization,
     setAside: clean(raw.typeOfSetAsideDescription || raw.setAsideDescription || raw.typeOfSetAside || raw.setAside),
     setAsideCode: clean(raw.typeOfSetAside || raw.setAsideCode),
+    award: raw.award ? {
+      number: clean(raw.award.number),
+      date: clean(raw.award.date),
+      amount: Number(raw.award.amount || 0) || null,
+      awardeeName: clean(raw.award.awardee?.name),
+      awardeeUEI: clean(raw.award.awardee?.ueiSAM || raw.award.awardee?.uei),
+    } : null,
     productServiceCode: clean(raw.classificationCode),
     naicsCode: clean(raw.naicsCode),
     placeOfPerformance: placeText(raw.placeOfPerformance),
