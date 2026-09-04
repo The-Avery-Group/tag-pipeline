@@ -351,7 +351,7 @@ function normalizeSetAside(value) {
   }
   if (eBuyProgramLabels[compact]) return eBuyProgramLabels[compact]
   if (['Y', 'YES', 'TRUE', '1', 'S', 'SB', 'SBA', 'SMALL', 'SMALLBUSINESS', 'SMALLBUSINESSCONCERN'].includes(compact)) return 'Small Business Set-Aside'
-  if (['N', 'NO', 'FALSE', '0', 'NONE', 'UNRESTRICTED', 'FULLANDOPEN'].includes(compact)) return 'Unrestricted'
+  if (['N', 'NO', 'FALSE', '0', 'NONE', 'UNRESTRICTED', 'FULLANDOPEN', 'LARGE', 'LARGEBUSINESS', 'OTHERTHANSMALLBUSINESS'].includes(compact)) return 'Unrestricted'
   const known = [
     [/8\(?A\)?|EIGHTA/, '8(a) Set-Aside'],
     [/SDVOSB|SERVICEDISABLEDVETERAN/, 'Service-Disabled Veteran-Owned Small Business Set-Aside'],
@@ -378,14 +378,22 @@ function resolveEbuyProgramSetAside(...sources) {
             : [raw]
       for (const program of programs) {
         const normalized = normalizeSetAside(program)
-        if (/^SA-(?:SB|WOSB|HUB|DVOSB|A8B|EDWOSB)$/i.test(sourceLabel(program))) return normalized
+        if (/^SA-[A-Z0-9]+$/i.test(sourceLabel(program))) return normalized
       }
     }
   }
   return ''
 }
 
-function resolveSetAside(...sources) {
+function hasAuthoritativeSetAsideContext(sources) {
+  return sources.some((source) => source && typeof source === 'object' && (
+    Object.prototype.hasOwnProperty.call(source, 'rfqProgramsList') ||
+    Object.prototype.hasOwnProperty.call(source, 'setAsideBusinessIndicator') ||
+    Object.prototype.hasOwnProperty.call(source, 'rfqProgramSelected')
+  ))
+}
+
+export function resolveEbuySetAside(...sources) {
   // eBuy stores the actual RFQ set-aside as a program code rather than in a
   // conventional setAside field. Decode that authoritative value first.
   const programSetAside = resolveEbuyProgramSetAside(...sources)
@@ -417,7 +425,15 @@ function resolveSetAside(...sources) {
     }
     return score(right) - score(left)
   })
-  return normalizeSetAside(candidates[0]?.label)
+  const resolved = normalizeSetAside(candidates[0]?.label)
+  if (resolved) return resolved
+
+  // eBuy's buyer workflow defaults the set-aside selection to "No" and only
+  // emits an SA-* program when a request is actually restricted. Once a full
+  // detail response exposes those authoritative fields, an empty program list
+  // therefore means unrestricted rather than unknown. Summary-only fallbacks
+  // do not contain this context and correctly remain blank until enriched.
+  return hasAuthoritativeSetAsideContext(sources) ? 'Unrestricted' : ''
 }
 
 function attachmentFileName(attachment, fallback = 'Attachment') {
@@ -583,7 +599,7 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     buyerName: String(props.userName || summary.userName || additional.ocoName || ''),
     buyerEmail: String(props.userEmail || additional.ocoEmail || detailRecord.userEmail || summaryDetail.userEmail || summary.userEmail || ''),
     buyerPhone: String(props.userPhone || additional.ocoPhone || detailRecord.userPhone || summaryDetail.userPhone || summary.userPhone || ''),
-    setAsideType: resolveSetAside(info, props, additional, detailRecord, summaryDetail, summary),
+    setAsideType: resolveEbuySetAside(info, props, additional, detailRecord, summaryDetail, summary),
     contractType: String(additional.contractType || props.contractType || info.contractType || ''),
     awardMethod: String(additional.awardMethod || props.awardMethod || info.awardMethod || ''),
     placeOfPerformanceRaw: locationText(detailRecord.rfqDefaultAddress || summaryDetail.rfqDefaultAddress || addresses.find((item) => item.defaultAddress) || addresses[0]),
