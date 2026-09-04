@@ -341,7 +341,30 @@ export function mergeContractVehicleRules(workbookRules = [], builtInRules = DEF
   let anonymousIndex = 0
   for (const rule of Array.isArray(workbookRules) ? workbookRules : []) {
     const ruleId = String(rule?.RULE_ID || '').trim()
-    merged.set(ruleId || `__workbook_rule_${anonymousIndex++}`, rule)
+    const builtIn = ruleId ? merged.get(ruleId) : null
+    if (!builtIn) {
+      merged.set(ruleId || `__workbook_rule_${anonymousIndex++}`, rule)
+      continue
+    }
+
+    // Excel may coerce leading-zero serials or retain an older partial seed
+    // row. Stable researched matching fields therefore come from the deployed
+    // baseline. Workbook display metadata remains editable, and an explicit
+    // No/False value can still disable a baseline rule.
+    const workbookEnabled = String(rule?.ENABLED ?? '').trim()
+    merged.set(ruleId, {
+      ...builtIn,
+      VEHICLE_NAME: String(rule?.VEHICLE_NAME || '').trim() || builtIn.VEHICLE_NAME,
+      VEHICLE_VARIANT: rule?.VEHICLE_VARIANT ?? builtIn.VEHICLE_VARIANT,
+      PRIORITY: String(rule?.PRIORITY ?? '').trim() || builtIn.PRIORITY,
+      CONFIDENCE: String(rule?.CONFIDENCE || '').trim() || builtIn.CONFIDENCE,
+      ENABLED: workbookEnabled || builtIn.ENABLED,
+      SOURCE: String(rule?.SOURCE || '').trim() || builtIn.SOURCE,
+      LAST_VERIFIED: String(rule?.LAST_VERIFIED || '').trim() || builtIn.LAST_VERIFIED,
+      NOTES: String(rule?.NOTES || '').trim() || builtIn.NOTES,
+      _rowIndex: rule?._rowIndex,
+      _values: rule?._values,
+    })
   }
   return [...merged.values()]
 }
