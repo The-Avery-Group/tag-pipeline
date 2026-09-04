@@ -186,17 +186,36 @@ test('official solicitation rosters resolve target-agency IDVs beyond the curren
 })
 
 test('an incomplete workbook cannot suppress verified built-in vehicle rules', () => {
-  const workbookRules = [{
-    RULE_ID: 'manual-example', VEHICLE_NAME: 'Example Vehicle', MATCH_MODE: 'FULL_PIID',
-    FULL_PIID_RULE_TYPE: 'EXACT', FULL_PIID_RULE: 'ABCDEF26D0001',
-    PRIORITY: 900, CONFIDENCE: 'MANUAL', ENABLED: 'Yes',
-  }]
+  const workbookRules = [
+    {
+      RULE_ID: 'gsa-mas-47qraa', VEHICLE_NAME: 'GSA MAS', MATCH_MODE: '', AAC: '',
+      FY_RULE_TYPE: '', FY_RULE: '', INSTRUMENT_CODE: '', SERIAL_RULE_TYPE: '',
+      SERIAL_RULE: '', PRIORITY: '', CONFIDENCE: '', ENABLED: '',
+    },
+    {
+      RULE_ID: 'nih-soar-2021-cohort', VEHICLE_NAME: 'NIH SOAR', MATCH_MODE: 'COMPONENTS',
+      AAC: '75N950', FY_RULE_TYPE: 'EXACT', FY_RULE: 21, INSTRUMENT_CODE: 'D',
+      SERIAL_RULE_TYPE: 'SET', SERIAL_RULE: 12, PRIORITY: 500, ENABLED: 'Yes',
+    },
+    {
+      RULE_ID: 'manual-example', VEHICLE_NAME: 'Example Vehicle', MATCH_MODE: 'FULL_PIID',
+      FULL_PIID_RULE_TYPE: 'EXACT', FULL_PIID_RULE: 'ABCDEF26D0001',
+      PRIORITY: 900, CONFIDENCE: 'MANUAL', ENABLED: 'Yes',
+    },
+  ]
   const effectiveRules = mergeContractVehicleRules(workbookRules)
 
   assert.equal(resolveContractVehicle('47QRAA20D0068', effectiveRules).vehicleName, 'GSA MAS')
   assert.equal(resolveContractVehicle('75N95021D00012', effectiveRules).vehicleName, 'NIH SOAR')
   assert.equal(resolveContractVehicle('W912QR21D0073', effectiveRules).vehicleName, 'USACE AFRC Nationwide A/E MATOC')
   assert.equal(resolveContractVehicle('ABCDEF26D0001', effectiveRules).vehicleName, 'Example Vehicle')
+})
+
+test('the workbook can explicitly disable a verified built-in vehicle rule', () => {
+  const effectiveRules = mergeContractVehicleRules([{
+    RULE_ID: 'gsa-mas-47qraa', VEHICLE_NAME: 'GSA MAS', ENABLED: 'No',
+  }])
+  assert.equal(resolveContractVehicle('47QRAA18D006J', effectiveRules).status, 'UNRESOLVED')
 })
 
 test('specific vehicle rules take precedence over broad MAS fallback rules', () => {
