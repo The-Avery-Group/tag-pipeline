@@ -162,14 +162,40 @@ function MarketTooltip({ active, payload, metric = 'count', noun = 'contracts' }
   return <div className={styles.marketTooltip}><strong>{item.fullLabel || item.label}</strong><span>{metric === 'value' ? fullMoney(item.value) : `${item.count.toLocaleString()} ${noun}`}</span></div>
 }
 
+function marketAxisLines(value, maximumLength = 30) {
+  const words = String(value || '').trim().split(/\s+/).filter(Boolean)
+  if (!words.length) return ['']
+  const lines = []
+  words.forEach((word) => {
+    const current = lines[lines.length - 1]
+    if (!current || `${current} ${word}`.length > maximumLength) lines.push(word)
+    else lines[lines.length - 1] = `${current} ${word}`
+  })
+  return lines
+}
+
+function MarketCategoryTick({ x, y, payload }) {
+  const lines = marketAxisLines(payload?.value)
+  const lineHeight = 11
+  const firstLineOffset = -((lines.length - 1) * lineHeight) / 2
+  return (
+    <text x={x} y={y} textAnchor="end" fill="var(--gray-600)" fontSize={10}>
+      {lines.map((line, index) => (
+        <tspan key={`${line}-${index}`} x={x} dy={index === 0 ? firstLineOffset : lineHeight}>{line}</tspan>
+      ))}
+    </text>
+  )
+}
+
 function MarketBarChart({ data, metric, horizontal = false, onSelect, noun }) {
   if (!data.length) return <div className={styles.chartEmpty}>No contracts match these filters.</div>
   const valueFormatter = (value) => metric === 'value' ? compactMoney(value) : Number(value).toLocaleString()
+  const horizontalRowHeight = Math.max(34, ...data.map((item) => marketAxisLines(item.label).length * 13 + 16))
   return (
-    <ResponsiveContainer width="100%" height={horizontal ? Math.max(230, data.length * 34) : 280}>
-      <BarChart data={data} layout={horizontal ? 'vertical' : 'horizontal'} margin={horizontal ? { top: 6, right: 42, bottom: 4, left: 8 } : { top: 12, right: 18, bottom: 12, left: 8 }}>
+    <ResponsiveContainer width="100%" height={horizontal ? Math.max(230, data.length * horizontalRowHeight) : 280}>
+      <BarChart data={data} layout={horizontal ? 'vertical' : 'horizontal'} margin={horizontal ? { top: 8, right: 46, bottom: 8, left: 14 } : { top: 12, right: 22, bottom: 20, left: 14 }}>
         <CartesianGrid stroke="var(--gray-100)" vertical={!horizontal} horizontal={horizontal} />
-        {horizontal ? <><XAxis type="number" tickFormatter={valueFormatter} tick={{ fontSize: 10, fill: 'var(--gray-500)' }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="label" width={148} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} tickFormatter={(value) => value.length > 24 ? `${value.slice(0, 22)}…` : value} /></> : <><XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} interval="preserveStartEnd" /><YAxis tickFormatter={valueFormatter} tick={{ fontSize: 10, fill: 'var(--gray-500)' }} axisLine={false} tickLine={false} allowDecimals={metric === 'value'} /></>}
+        {horizontal ? <><XAxis type="number" tickFormatter={valueFormatter} tick={{ fontSize: 10, fill: 'var(--gray-500)' }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="label" width={212} tick={<MarketCategoryTick />} axisLine={false} tickLine={false} interval={0} /></> : <><XAxis dataKey="label" height={38} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} interval="preserveStartEnd" /><YAxis width={58} tickFormatter={valueFormatter} tick={{ fontSize: 10, fill: 'var(--gray-500)' }} axisLine={false} tickLine={false} allowDecimals={metric === 'value'} /></>}
         <Tooltip cursor={{ fill: 'var(--gray-50)' }} content={<MarketTooltip metric={metric} noun={noun} />} />
         <Bar dataKey={metric} fill="var(--blue-600)" radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]} maxBarSize={horizontal ? 22 : 38} cursor={onSelect ? 'pointer' : 'default'} onClick={(entry) => onSelect?.(entry?.payload || entry)} />
       </BarChart>
@@ -189,6 +215,8 @@ function ChartMetricToggle({ value, onChange }) {
 function MarketIntelligenceView({ contracts, loading, error, search, expanded, detailLoading, details, toggleDetails, onCountChange }) {
   const [filters, setFilters] = useState({ band: 'all', from: '', to: '', basis: 'fiscal', grouping: 'quarter', year: '', quarter: 'all', agency: 'all', vehicle: 'all', setAside: 'all', value: 'all', focus: '' })
   const [metrics, setMetrics] = useState({ timeline: 'count', vehicle: 'count', agency: 'count', setAside: 'count' })
+  const expirationFilterRef = useRef(null)
+  const secondaryFiltersRef = useRef(null)
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value, ...(key !== 'focus' ? { focus: '' } : {}) }))
   const updateMetric = (chart, value) => setMetrics((current) => ({ ...current, [chart]: value }))
   const now = useMemo(() => { const date = new Date(); date.setHours(0, 0, 0, 0); return date }, [])
@@ -259,13 +287,24 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
       ? `${filters.basis === 'fiscal' ? 'FY' : ''}${filters.year}${filters.quarter !== 'all' ? ` Q${filters.quarter}` : ''}`
       : filters.band === 'all' ? 'All five years' : `${filters.band} months`
 
+  useEffect(() => {
+    const closeOpenFilters = (event) => {
+      ;[expirationFilterRef, secondaryFiltersRef].forEach((filterRef) => {
+        const element = filterRef.current
+        if (element?.open && !element.contains(event.target)) element.removeAttribute('open')
+      })
+    }
+    document.addEventListener('pointerdown', closeOpenFilters)
+    return () => document.removeEventListener('pointerdown', closeOpenFilters)
+  }, [])
+
   useEffect(() => onCountChange?.(visibleContracts.length), [onCountChange, visibleContracts.length])
 
   return (
     <div className={styles.marketWorkspace}>
       <div className={styles.marketHeading}><div><h2>Market intelligence</h2><p>Acquisition outlook based on TAG’s quarterly SAM.gov expiring-contract dataset.</p></div></div>
       <div className={styles.compactFilters}>
-        <details className={styles.expirationFilter}>
+        <details ref={expirationFilterRef} className={styles.expirationFilter}>
           <summary>Expiration <strong>{expirationLabel}</strong><span>⌄</span></summary>
           <div className={styles.expirationPanel}>
             <div className={styles.bandPicker}>
@@ -282,7 +321,7 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
         </details>
         <label className={styles.compactSelect}><span>Agency</span><select value={filters.agency} onChange={(event) => updateFilter('agency', event.target.value)}><option value="all">All agencies</option>{agencyOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className={styles.compactSelect}><span>Vehicle</span><select value={filters.vehicle} onChange={(event) => updateFilter('vehicle', event.target.value)}><option value="all">All contract vehicles</option>{vehicleOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        <details className={styles.secondaryFilters}><summary>More <span>⌄</span></summary><div><label><span>Set-aside</span><select value={filters.setAside} onChange={(event) => updateFilter('setAside', event.target.value)}><option value="all">All set-asides</option><option value="__not_specified__">Not specified</option>{setAsideOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Contract value</span><select value={filters.value} onChange={(event) => updateFilter('value', event.target.value)}><option value="all">Any value</option><option value="under1m">Under $1M</option><option value="1m10m">$1M–$10M</option><option value="10m100m">$10M–$100M</option><option value="over100m">$100M+</option></select></label></div></details>
+        <details ref={secondaryFiltersRef} className={styles.secondaryFilters}><summary>More <span>⌄</span></summary><div><label><span>Set-aside</span><select value={filters.setAside} onChange={(event) => updateFilter('setAside', event.target.value)}><option value="all">All set-asides</option><option value="__not_specified__">Not specified</option>{setAsideOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Contract value</span><select value={filters.value} onChange={(event) => updateFilter('value', event.target.value)}><option value="all">Any value</option><option value="under1m">Under $1M</option><option value="1m10m">$1M–$10M</option><option value="10m100m">$10M–$100M</option><option value="over100m">$100M+</option></select></label></div></details>
         <button type="button" className={styles.clearMarketFilters} onClick={clearFilters}>Reset</button>
       </div>
       {loading ? <div className={styles.loading}>Loading market intelligence…</div> : error ? <div className={styles.errorCallout}><span>{error}</span></div> : <>
