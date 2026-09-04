@@ -1,9 +1,16 @@
 import { categorizeTransaction, cleanText, publicRule, transactionStatus } from './transactionCodingDomain.js'
 
 export const TRANSACTION_CODING_RETENTION_DAYS = 10
+const MAX_TRANSACTION_CODING_RETENTION_DAYS = 3650
 
-function expiresAt(from = new Date()) {
-  return new Date(from.getTime() + TRANSACTION_CODING_RETENTION_DAYS * 86_400_000).toISOString()
+export function normalizeTransactionCodingRetentionDays(value, fallback = TRANSACTION_CODING_RETENTION_DAYS) {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TRANSACTION_CODING_RETENTION_DAYS) return fallback
+  return parsed
+}
+
+function expiresAt(from = new Date(), retentionDays = TRANSACTION_CODING_RETENTION_DAYS) {
+  return new Date(from.getTime() + normalizeTransactionCodingRetentionDays(retentionDays) * 86_400_000).toISOString()
 }
 
 function publicBatch(row) {
@@ -98,6 +105,31 @@ export async function saveTransactionCodingWorkspace(db, workspace) {
       exports_folder_id = excluded.exports_folder_id,
       updated_at = excluded.updated_at`)
     .bind(workspace.driveId, workspace.folderId, workspace.folderUrl, workspace.workbookItemId, workspace.workbookUrl, workspace.exportsFolderId, now).run()
+}
+
+export async function getTransactionCodingSettings(db) {
+  const row = await db.prepare('SELECT retention_days, workbook_settings_synced_at FROM transaction_coding_settings WHERE id = 1').first()
+  return {
+    retentionDays: normalizeTransactionCodingRetentionDays(row?.retention_days),
+    syncedAt: row?.workbook_settings_synced_at || null,
+  }
+}
+
+export async function saveTransactionCodingSettings(db, settings) {
+  const retentionDays = normalizeTransactionCodingRetentionDays(settings?.retentionDays, null)
+  if (retentionDays === null) throw new Error('Retention Days must be a whole number from 1 to 3650.')
+  const now = new Date().toISOString()
+  await db.prepare(`INSERT INTO transaction_coding_settings (id, retention_days, workbook_settings_synced_at, updated_at)
+    VALUES (1, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET retention_days=excluded.retention_days,
+      workbook_settings_synced_at=excluded.workbook_settings_synced_at, updated_at=excluded.updated_at`)
+    .bind(retentionDays, now, now).run()
+  const modifier = `+${retentionDays} days`
+  await db.batch([
+    db.prepare("UPDATE transaction_coding_batches SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', datetime(created_at, ?))").bind(modifier),
+    db.prepare("UPDATE transaction_coding_exports SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', datetime(created_at, ?))").bind(modifier),
+  ])
+  return { retentionDays, syncedAt: now }
 }
 
 export async function replaceTransactionCodingRules(db, workbookRules, actor = '') {
@@ -212,6 +244,7 @@ export async function importTransactionBatch(db, input, actor = '') {
   }
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
+  const { retentionDays } = await getTransactionCodingSettings(db)
   const rules = await listTransactionCodingRules(db)
   const sourceHashes = new Set()
   const rows = (Array.isArray(input.rows) ? input.rows : []).slice(0, 5000).map((source, index) => {
@@ -235,7 +268,7 @@ export async function importTransactionBatch(db, input, actor = '') {
 
   try {
     await db.prepare(`INSERT INTO transaction_coding_batches (id, file_name, file_hash, imported_by, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(id, cleanText(input.fileName) || 'Statement', fileHash, actor, expiresAt(), now, now).run()
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(id, cleanText(input.fileName) || 'Statement', fileHash, actor, expiresAt(new Date(), retentionDays), now, now).run()
     for (let offset = 0; offset < rows.length; offset += 100) {
       await db.batch(rows.slice(offset, offset + 100).map((row) => db.prepare(`INSERT OR IGNORE INTO transaction_coding_transactions (
         id, batch_id, source_row, source_hash, transaction_date, raw_description, location, city,
@@ -314,7 +347,8 @@ export async function createTransactionCodingExport(db, { batchId, transactionId
   if (!selected.length) throw new Error('There are no selected transactions available to export')
   const id = crypto.randomUUID()
   const now = new Date().toISOString()
-  const expiry = expiresAt()
+  const { retentionDays } = await getTransactionCodingSettings(db)
+  const expiry = expiresAt(new Date(), retentionDays)
   const total = selected.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0)
   // Export state is independent from coding state. Ready and deliberately
   // selected incomplete rows keep their coding status; exported_at keeps each
@@ -360,12 +394,12 @@ export async function getTransactionCodingExport(db, exportId) {
 }
 
 export async function purgeExpiredTransactionCodingData(db) {
-  const now = new Date().toISOString()
-  const cutoff = new Date(Date.now() - TRANSACTION_CODING_RETENTION_DAYS * 86_400_000).toISOString()
-  // created_at also catches records imported before retention changed from
-  // 60 days, whose stored expires_at value is now too far in the future.
-  const due = await db.prepare('SELECT id FROM transaction_coding_batches WHERE expires_at <= ? OR created_at <= ?')
-    .bind(now, cutoff).all()
+  const { retentionDays } = await getTransactionCodingSettings(db)
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString()
+  // Retention always follows the current workbook setting, including records
+  // created before that setting changed.
+  const due = await db.prepare('SELECT id FROM transaction_coding_batches WHERE created_at <= ?')
+    .bind(cutoff).all()
   const batchIds = (due.results || []).map((row) => row.id).filter(Boolean)
   let transactions = 0
   let exports = 0
@@ -380,12 +414,13 @@ export async function purgeExpiredTransactionCodingData(db) {
     transactions += Number(transactionResult?.meta?.changes || 0)
     batches += Number(batchResult?.meta?.changes || 0)
   }
-  const orphanedExports = await db.prepare('DELETE FROM transaction_coding_exports WHERE expires_at <= ? OR created_at <= ?')
-    .bind(now, cutoff).run()
+  const orphanedExports = await db.prepare('DELETE FROM transaction_coding_exports WHERE created_at <= ?')
+    .bind(cutoff).run()
   exports += Number(orphanedExports?.meta?.changes || 0)
   return {
     exports,
     transactions,
     batches,
+    retentionDays,
   }
 }
