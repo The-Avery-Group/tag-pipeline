@@ -166,6 +166,24 @@ test('priority-agency named vehicle cohorts resolve without AI or runtime API ca
   assert.equal(resolveContractVehicle('W912QR21D0074', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
 })
 
+test('official solicitation rosters resolve target-agency IDVs beyond the current cache', () => {
+  const expected = new Map([
+    ['36C10B21D1029', 'T4NG'],
+    ['36C10X23D0042', 'VECTOR'],
+    ['36C10F23D0014', 'CFM National Region A/E IDIQ'],
+    ['36C77625D0026', 'VA National A/E IDIQ MATOC'],
+    ['80NSSC23DA001', 'NASA Enterprise-wide Human Capital Support Services'],
+    ['80JSC025D0065', 'NASA Open Innovation Services 3'],
+    ['W900KK24D0022', 'Mission Training Complex Capabilities Support II'],
+  ])
+  for (const [identifier, vehicle] of expected) {
+    assert.equal(resolveContractVehicle(identifier, DEFAULT_CONTRACT_VEHICLE_RULES).vehicleName, vehicle)
+  }
+
+  assert.equal(resolveContractVehicle('36C10X23D0043', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
+  assert.equal(resolveContractVehicle('80JSC025D0068', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
+})
+
 test('specific vehicle rules take precedence over broad MAS fallback rules', () => {
   const result = resolveContractVehicle('47QSHA18D0005', DEFAULT_CONTRACT_VEHICLE_RULES)
   assert.equal(result.status, 'RESOLVED')
