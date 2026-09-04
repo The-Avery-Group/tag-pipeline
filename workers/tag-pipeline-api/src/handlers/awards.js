@@ -320,12 +320,15 @@ function formatSamDate(date) {
 }
 
 function dateWindow(dateValue) {
-  const center = new Date(dateValue)
-  if (Number.isNaN(center.getTime())) return null
-  const from = new Date(Date.UTC(center.getUTCFullYear(), center.getUTCMonth(), center.getUTCDate()))
-  const to = new Date(from)
-  from.setUTCDate(from.getUTCDate() - 182)
-  to.setUTCDate(to.getUTCDate() + 181)
+  const submitted = new Date(dateValue)
+  if (Number.isNaN(submitted.getTime())) return null
+  const to = new Date()
+  const from = new Date(Date.UTC(submitted.getUTCFullYear(), submitted.getUTCMonth(), submitted.getUTCDate()))
+  // SAM limits one Opportunities API search to one year. Pending awards older
+  // than that use the most recent year rather than searching before submission.
+  const earliest = new Date(to)
+  earliest.setUTCDate(earliest.getUTCDate() - 364)
+  if (from < earliest) from.setTime(earliest.getTime())
   return { from: formatSamDate(from), to: formatSamDate(to) }
 }
 
@@ -339,16 +342,18 @@ export function noticeLink(notice) {
   return value && value !== 'null' ? value : null
 }
 
-export async function searchAwardNotices(env, solicitationNumber, window) {
+export async function searchAwardNotices(env, criteria, window) {
+  const search = typeof criteria === 'string' ? { solicitationNumber: criteria } : criteria || {}
   const query = new URLSearchParams({
     api_key: env.SAM_API_KEY,
     ptype: 'a',
-    solnum: solicitationNumber,
     postedFrom: window.from,
     postedTo: window.to,
     limit: '10',
     offset: '0',
   })
+  if (search.solicitationNumber) query.set('solnum', search.solicitationNumber)
+  else if (search.title) query.set('title', search.title)
   const response = await fetch(`${OPPORTUNITIES_BASE}?${query}`)
   if (response.status === 204) return []
   if (!response.ok) {
@@ -360,26 +365,52 @@ export async function searchAwardNotices(env, solicitationNumber, window) {
   return data.opportunitiesData || data.data || []
 }
 
-export async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDate, awardeeName }) {
-  const window = dateWindow(originalSignedDate)
-  if (!solicitationNumber || !window) {
-    return { status: 'No Award Notice search available because this award has no solicitation number or signed date.' }
+function normalizedWords(value) {
+  return new Set(String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter((word) => word.length > 2))
+}
+
+function titleAgreement(left, right) {
+  const a = normalizedWords(left)
+  const b = normalizedWords(right)
+  if (!a.size || !b.size) return 0
+  const shared = [...a].filter((word) => b.has(word)).length
+  return shared / Math.min(a.size, b.size)
+}
+
+function organizationAgreement(notice, values) {
+  const hierarchy = String(notice?.fullParentPathName || '').toLowerCase()
+  const expected = values.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+  if (!expected.length) return true
+  if (!hierarchy) return false
+  return expected.some((value) => hierarchy.includes(value) || value.includes(hierarchy))
+}
+
+export async function findAwardNotice(env, { piid, solicitationNumber, originalSignedDate, submissionDate, awardeeName, title = '', agency = '', department = '' }) {
+  const window = dateWindow(submissionDate || originalSignedDate)
+  if (!window || (!solicitationNumber && !title)) {
+    return { status: 'No Award Notice search is available because this opportunity has no submission date, solicitation number, or title.' }
   }
 
-  // Award Notices are found exclusively by solicitation number. Try the
-  // source value first, then retry without dashes when the exact form has no
-  // result. PIID is used only to corroborate a returned notice, never to
-  // drive this Opportunities API search.
+  // Try the source solicitation first, then its dashless form. If neither
+  // finds a notice, use title plus organization evidence because agencies can
+  // publish the award under a changed solicitation number.
   const sourceSolicitationNumber = String(solicitationNumber).trim()
   const dashlessSolicitationNumber = sourceSolicitationNumber.replace(/-/g, '')
-  let notices = await searchAwardNotices(env, sourceSolicitationNumber, window)
+  let notices = sourceSolicitationNumber ? await searchAwardNotices(env, { solicitationNumber: sourceSolicitationNumber }, window) : []
   if (notices === null) return { status: 'Award Notice lookup unavailable.' }
 
   let usedDashlessSolicitation = false
   if (notices.length === 0 && dashlessSolicitationNumber && dashlessSolicitationNumber !== sourceSolicitationNumber) {
-    notices = await searchAwardNotices(env, dashlessSolicitationNumber, window)
+    notices = await searchAwardNotices(env, { solicitationNumber: dashlessSolicitationNumber }, window)
     usedDashlessSolicitation = true
     if (notices === null) return { status: 'Award Notice lookup unavailable.' }
+  }
+  let usedTitleFallback = false
+  if (!notices.length && title) {
+    const titleMatches = await searchAwardNotices(env, { title }, window)
+    if (titleMatches === null) return { status: 'Award Notice lookup unavailable.' }
+    notices = titleMatches.filter((notice) => titleAgreement(title, notice?.title) >= 0.55 && organizationAgreement(notice, [agency, department]))
+    usedTitleFallback = notices.length > 0
   }
   if (!notices.length) return { status: 'No matching Award Notice found.' }
 
@@ -388,10 +419,11 @@ export async function findAwardNotice(env, { piid, solicitationNumber, originalS
   const ranked = [...notices].sort((a, b) => {
     const score = (notice) => {
       const awardNumber = normalizedIdentifier(notice?.award?.number)
-      if (awardNumber && normalizedIdentifier(piid) === awardNumber) return 4
-      if (awardNumber && normalizedIdentifier(notice?.award?.number) === normalizedPiid) return 4
-      if (normalizedAwardee && String(notice?.award?.awardee?.name || '').trim().toLowerCase() === normalizedAwardee) return 2
-      return 1
+      let value = Math.round(titleAgreement(title, notice?.title) * 4)
+      if (organizationAgreement(notice, [agency, department])) value += 3
+      if (normalizedAwardee && String(notice?.award?.awardee?.name || '').trim().toLowerCase() === normalizedAwardee) value += 2
+      if (awardNumber && (normalizedIdentifier(piid) === awardNumber || awardNumber === normalizedPiid)) value += 1
+      return value
     }
     return score(b) - score(a)
   })
@@ -399,9 +431,9 @@ export async function findAwardNotice(env, { piid, solicitationNumber, originalS
   const exactAwardNumber = normalizedIdentifier(notice?.award?.number) === normalizedIdentifier(piid) ||
     normalizedIdentifier(notice?.award?.number) === normalizedPiid
   return {
-    status: exactAwardNumber
-      ? `Located by solicitation number${usedDashlessSolicitation ? ' (without dashes)' : ''}; the Award Notice number agrees with the PIID.`
-      : `Located by solicitation number${usedDashlessSolicitation ? ' (without dashes)' : ''}. Verify the Award Notice number before relying on this notice.`,
+    status: usedTitleFallback
+      ? 'Located by opportunity title and organization after no solicitation-number match was found. Verify before relying on this notice.'
+      : `Located by solicitation number${usedDashlessSolicitation ? ' (without dashes)' : ''}${exactAwardNumber ? '; the Award Notice number also agrees with the stored identifier' : ''}.`,
     noticeId: notice?.noticeId || null,
     title: notice?.title || null,
     awardNumber: notice?.award?.number || null,
