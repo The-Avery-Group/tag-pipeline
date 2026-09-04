@@ -7,7 +7,7 @@ import {
   updateSAMArchive,
 } from '../lib/samArchiveRepository.js'
 import { archiveSAMFile, ensureSAMArchiveFolder } from '../lib/sharepointArchive.js'
-import { attachmentRecordId, fetchSAMAttachment, fetchWorkspaceSAMNotice } from '../lib/opportunityWorkspaceSam.js'
+import { attachmentRecordId, attachmentSourceName, fetchSAMAttachment, fetchWorkspaceSAMNotice } from '../lib/opportunityWorkspaceSam.js'
 
 export const SAM_ARCHIVE_FILES_PER_CHECKPOINT = 4
 
@@ -109,7 +109,7 @@ export async function runSAMArchiveWorkflow(env, event, step) {
           })
         } catch (error) {
           await recordSAMArchiveFile(env.EBUY_DB, {
-            id, opportunityKey, sourceUrl, fileName: `SAM attachment ${index + 1}`,
+            id, opportunityKey, sourceUrl, fileName: attachmentSourceName(sourceUrl, `SAM attachment ${index + 1}`),
             archiveStatus: 'failed', errorMessage: error.message,
           })
         }
