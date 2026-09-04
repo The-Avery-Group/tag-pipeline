@@ -16,7 +16,7 @@ import {
   saveTransactionRuleToWorkbook,
 } from '../src/lib/transactionCodingSharePoint.js'
 import { attemptTransactionRuleSync, transactionCodingAccess, TRANSACTION_CODING_HTTP_METHODS } from '../src/handlers/transactionCoding.js'
-import { transactionCodingStorageReady, transactionsForExport } from '../src/lib/transactionCodingRepository.js'
+import { TRANSACTION_CODING_RETENTION_DAYS, transactionCodingStorageReady, transactionsForExport } from '../src/lib/transactionCodingRepository.js'
 
 test('categorizes a statement row with the highest-priority matching rule', () => {
   const row = categorizeTransaction({ rawDescription: 'SCRIBD *662092010', amountCents: 1299 }, [
@@ -36,6 +36,10 @@ test('whole-word rules match standalone phrases without matching embedded text',
 
 test('transaction coding routes allow rule deletion', () => {
   assert.equal(TRANSACTION_CODING_HTTP_METHODS.includes('DELETE'), true)
+})
+
+test('transaction coding retains in-app statement data for ten days', () => {
+  assert.equal(TRANSACTION_CODING_RETENTION_DAYS, 10)
 })
 
 test('transaction coding access is fail-closed and accepts approved Entra IDs or user principal names', () => {
