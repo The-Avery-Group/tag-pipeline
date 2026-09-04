@@ -293,6 +293,9 @@ export default {
         ctx.waitUntil(purgeDocumentAnalysisData(env.EBUY_DB).catch((error) => {
           console.error(JSON.stringify({ event: 'document_analysis_retention_failed', message: error.message }))
         }))
+        ctx.waitUntil(purgeExpiredTransactionCodingData(env.EBUY_DB).catch((error) => {
+          console.error(JSON.stringify({ event: 'transaction_coding_retention_failed', message: error.message }))
+        }))
       }
       // Retention is intentionally modest and only runs once each Monday.
       // Protected records remain until a user explicitly changes their state.
@@ -311,9 +314,6 @@ export default {
           deleteFolder: (driveId, opportunityKey) => deleteEmptySAMArchiveFolder(env, driveId, opportunityKey),
         }).catch((error) => {
           console.error(JSON.stringify({ event: 'sam_archive_retention_failed', message: error.message }))
-        }))
-        ctx.waitUntil(purgeExpiredTransactionCodingData(env.EBUY_DB).catch((error) => {
-          console.error(JSON.stringify({ event: 'transaction_coding_retention_failed', message: error.message }))
         }))
       }
     }
