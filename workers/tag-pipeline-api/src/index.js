@@ -16,7 +16,7 @@ import {
   manuallyRefreshCapabilities,
   refreshCapabilitiesIfChanged,
 } from './handlers/ai.js'
-import { handleSAM, startScheduledSAMPull } from './handlers/sam.js'
+import { deleteDismissedSAMDiscoveryRows, handleSAM, startScheduledSAMPull } from './handlers/sam.js'
 import { handleAwards } from './handlers/awards.js'
 import { handleExpiringContracts, startExpiringContractsRefresh } from './handlers/expiringContracts.js'
 import { handleEntityEightA } from './handlers/entities.js'
@@ -296,6 +296,13 @@ export default {
         ctx.waitUntil(purgeExpiredTransactionCodingData(env.EBUY_DB).catch((error) => {
           console.error(JSON.stringify({ event: 'transaction_coding_retention_failed', message: error.message }))
         }))
+        ctx.waitUntil(purgeDismissedSAMArchives(env.EBUY_DB, {
+          deleteFile: (driveId, itemId) => deleteArchivedEbuyFile(env, driveId, itemId),
+          deleteFolder: (driveId, opportunityKey) => deleteEmptySAMArchiveFolder(env, driveId, opportunityKey),
+          deleteDiscoveryRows: (archives) => deleteDismissedSAMDiscoveryRows(env, archives),
+        }).catch((error) => {
+          console.error(JSON.stringify({ event: 'sam_archive_retention_failed', message: error.message }))
+        }))
       }
       // Retention is intentionally modest and only runs once each Monday.
       // Protected records remain until a user explicitly changes their state.
@@ -308,12 +315,6 @@ export default {
         }))
         ctx.waitUntil(purgeOldOpportunityAlertEvents(env.EBUY_DB).catch((error) => {
           console.error(JSON.stringify({ event: 'opportunity_alert_retention_failed', message: error.message }))
-        }))
-        ctx.waitUntil(purgeDismissedSAMArchives(env.EBUY_DB, {
-          deleteFile: (driveId, itemId) => deleteArchivedEbuyFile(env, driveId, itemId),
-          deleteFolder: (driveId, opportunityKey) => deleteEmptySAMArchiveFolder(env, driveId, opportunityKey),
-        }).catch((error) => {
-          console.error(JSON.stringify({ event: 'sam_archive_retention_failed', message: error.message }))
         }))
       }
     }
