@@ -140,22 +140,78 @@ export async function updateSAMArchiveFileLocation(db, id, moved) {
     .bind(moved.driveId, moved.itemId, moved.webUrl, moved.fileName || null, Number(moved.byteSize || 0) || null, new Date().toISOString(), id).run()
 }
 
-export async function markSAMArchiveReviewState(db, opportunityKey, reviewState) {
+function normalizedDeadline(value) {
+  const text = clean(value)
+  if (!text) return null
+  const parsed = Date.parse(text)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
+export async function markSAMArchiveReviewState(db, opportunityKey, reviewState, { responseDate } = {}) {
   const normalized = clean(reviewState).toLowerCase() || 'new'
+  const archive = await db.prepare('SELECT notice_id, solicitation_number FROM sam_archives WHERE opportunity_key = ?')
+    .bind(key(opportunityKey)).first()
+  const now = new Date().toISOString()
   const purgeAfter = normalized === 'dismissed'
     ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
     : null
+  if (normalized === 'dismissed') {
+    await db.prepare(`INSERT INTO sam_dismissal_tombstones (
+        opportunity_key, notice_id, solicitation_number, dismissed_at, purged_at, expires_at
+      ) VALUES (?, ?, ?, ?, NULL, ?)
+      ON CONFLICT(opportunity_key) DO UPDATE SET
+        notice_id = excluded.notice_id,
+        solicitation_number = excluded.solicitation_number,
+        dismissed_at = excluded.dismissed_at,
+        purged_at = NULL,
+        expires_at = COALESCE(excluded.expires_at, sam_dismissal_tombstones.expires_at)`)
+      .bind(key(opportunityKey), key(archive?.notice_id), key(archive?.solicitation_number), now, normalizedDeadline(responseDate)).run()
+  } else {
+    await db.prepare('DELETE FROM sam_dismissal_tombstones WHERE opportunity_key = ?')
+      .bind(key(opportunityKey)).run()
+  }
   return updateSAMArchive(db, opportunityKey, { reviewState: normalized, purgeAfter })
 }
 
-export async function purgeDismissedSAMArchives(db, { limit = 10, deleteFile, deleteFolder } = {}) {
+export async function getSAMDismissalTombstones(db) {
+  if (!db) return []
+  const ready = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sam_dismissal_tombstones'").first()
+  if (!ready) return []
+  const rows = await db.prepare(`SELECT opportunity_key, notice_id, solicitation_number
+    FROM sam_dismissal_tombstones
+    WHERE expires_at IS NULL OR expires_at > ?`).bind(new Date().toISOString()).all()
+  return rows.results || []
+}
+
+export async function purgeDismissedSAMArchives(db, { limit = 10, deleteFile, deleteFolder, deleteDiscoveryRows } = {}) {
   if (!(await samArchiveStorageReady(db))) return { deleted: 0, filesDeleted: 0, failures: [] }
-  const rows = await db.prepare(`SELECT opportunity_key FROM sam_archives WHERE review_state = 'dismissed' AND archive_status != 'moved' AND purge_after IS NOT NULL AND purge_after <= ? ORDER BY purge_after LIMIT ?`)
+  const rows = await db.prepare(`SELECT opportunity_key, notice_id, solicitation_number FROM sam_archives WHERE review_state = 'dismissed' AND archive_status != 'moved' AND purge_after IS NOT NULL AND purge_after <= ? ORDER BY purge_after LIMIT ?`)
     .bind(new Date().toISOString(), Math.min(25, Math.max(1, Number(limit || 10)))).all()
+  const due = rows.results || []
   let deleted = 0
   let filesDeleted = 0
   const failures = []
-  for (const row of rows.results || []) {
+  let workbookFailures = new Map()
+  if (due.length && deleteDiscoveryRows) {
+    try {
+      const result = await deleteDiscoveryRows(due)
+      workbookFailures = new Map((result?.failures || []).map((failure) => [key(failure.opportunityKey), failure.message]))
+      for (const item of result?.removed || []) {
+        const expiresAt = normalizedDeadline(item.responseDate)
+        if (!expiresAt) continue
+        await db.prepare('UPDATE sam_dismissal_tombstones SET expires_at = ? WHERE opportunity_key = ?')
+          .bind(expiresAt, key(item.opportunityKey)).run()
+      }
+    } catch (error) {
+      workbookFailures = new Map(due.map((row) => [key(row.opportunity_key), error.message]))
+    }
+  }
+  for (const row of due) {
+    const workbookError = workbookFailures.get(key(row.opportunity_key))
+    if (workbookError) {
+      failures.push({ opportunityKey: row.opportunity_key, message: `New Opportunities cleanup failed: ${workbookError}` })
+      continue
+    }
     const archive = await getSAMArchive(db, row.opportunity_key)
     try {
       for (const file of archive?.files || []) {
@@ -167,6 +223,15 @@ export async function purgeDismissedSAMArchives(db, { limit = 10, deleteFile, de
         await deleteFolder(archive.sharePointDriveId, archive.opportunityKey)
       }
       await db.batch([
+        db.prepare(`INSERT INTO sam_dismissal_tombstones (
+            opportunity_key, notice_id, solicitation_number, dismissed_at, purged_at, expires_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(opportunity_key) DO UPDATE SET
+            notice_id = excluded.notice_id,
+            solicitation_number = excluded.solicitation_number,
+            purged_at = excluded.purged_at,
+            expires_at = COALESCE(excluded.expires_at, sam_dismissal_tombstones.expires_at)`)
+          .bind(row.opportunity_key, key(row.notice_id), key(row.solicitation_number), archive?.updatedAt || new Date().toISOString(), new Date().toISOString(), null),
         db.prepare('DELETE FROM opportunity_analysis_reviews WHERE opportunity_key = ?').bind(row.opportunity_key),
         db.prepare('DELETE FROM opportunity_past_performance_matches WHERE opportunity_key = ?').bind(row.opportunity_key),
         db.prepare('DELETE FROM opportunity_document_analysis WHERE opportunity_key = ?').bind(row.opportunity_key),
@@ -178,5 +243,7 @@ export async function purgeDismissedSAMArchives(db, { limit = 10, deleteFile, de
       failures.push({ opportunityKey: row.opportunity_key, message: error.message })
     }
   }
+  await db.prepare('DELETE FROM sam_dismissal_tombstones WHERE expires_at IS NOT NULL AND expires_at <= ?')
+    .bind(new Date().toISOString()).run()
   return { deleted, filesDeleted, failures }
 }
