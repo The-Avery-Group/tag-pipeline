@@ -114,13 +114,18 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
 .metricToggle button { background: transparent; border: 0; border-radius: calc(var(--radius-md) - 2px); color: var(--gray-500); cursor: pointer; font: 600 10px var(--font); padding: 6px 9px; }
 .metricToggle .metricActive { background: var(--surface); box-shadow: var(--shadow-sm); color: var(--blue-700); }
 .compactFilters { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; }
-.expirationFilter, .secondaryFilters { position: relative; }
-.expirationFilter > summary, .secondaryFilters > summary { align-items: center; background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-md); color: var(--gray-500); cursor: pointer; display: flex; font: 600 10px var(--font); gap: 6px; height: 34px; list-style: none; padding: 0 10px; white-space: nowrap; }
-.expirationFilter > summary::-webkit-details-marker, .secondaryFilters > summary::-webkit-details-marker, .contractRegisterSummary::-webkit-details-marker { display: none; }
-.expirationFilter > summary strong { color: var(--gray-800); font-weight: 650; }
-.expirationFilter > summary span, .secondaryFilters > summary span { color: var(--gray-400); margin-left: 3px; }
-.expirationPanel, .secondaryFilters > div { background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); left: 0; padding: 12px; position: absolute; top: calc(100% + 5px); z-index: 25; }
+.expirationFilter, .agencyFilter, .secondaryFilters { position: relative; }
+.expirationFilter > summary, .agencyFilter > summary, .secondaryFilters > summary { align-items: center; background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-md); color: var(--gray-500); cursor: pointer; display: flex; font: 600 10px var(--font); gap: 6px; height: 34px; list-style: none; padding: 0 10px; white-space: nowrap; }
+.expirationFilter > summary::-webkit-details-marker, .agencyFilter > summary::-webkit-details-marker, .secondaryFilters > summary::-webkit-details-marker, .contractRegisterSummary::-webkit-details-marker { display: none; }
+.expirationFilter > summary strong, .agencyFilter > summary strong { color: var(--gray-800); font-weight: 650; }
+.agencyFilter > summary strong { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.expirationFilter > summary span, .agencyFilter > summary span, .secondaryFilters > summary span { color: var(--gray-400); margin-left: 3px; }
+.expirationPanel, .agencyPanel, .secondaryFilters > div { background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); left: 0; padding: 12px; position: absolute; top: calc(100% + 5px); z-index: 25; }
 .expirationPanel { min-width: min(620px, calc(100vw - 72px)); }
+.agencyPanel { display: flex; flex-direction: column; gap: 2px; max-height: 320px; min-width: 280px; overflow-y: auto; }
+.agencyOption { align-items: flex-start; border-radius: var(--radius-md); color: var(--gray-700); cursor: pointer; display: flex; font-size: 10px; gap: 8px; line-height: 1.35; padding: 7px 8px; }
+.agencyOption:hover { background: var(--gray-50); }
+.agencyOption input { flex: 0 0 auto; margin: 1px 0 0; }
 .bandPicker { display: flex; flex-wrap: wrap; gap: 5px; }
 .bandPicker button { background: var(--gray-50); border: 0.5px solid var(--gray-200); border-radius: 99px; color: var(--gray-600); cursor: pointer; font: 600 9px var(--font); padding: 5px 8px; }
 .bandPicker button:hover { border-color: var(--blue-300); color: var(--blue-700); }
@@ -205,6 +210,6 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
   .compactFilters { align-items: stretch; flex-direction: column; }
   .compactSelect { justify-content: space-between; }
   .compactSelect select { max-width: none; width: 100%; }
-  .expirationPanel, .secondaryFilters > div { left: 0; min-width: 0; position: static; right: auto; width: auto; }
+  .expirationPanel, .agencyPanel, .secondaryFilters > div { left: 0; min-width: 0; position: static; right: auto; width: auto; }
   .exactDateRow, .periodFilterRow, .secondaryFilters > div { grid-template-columns: 1fr; }
 }
