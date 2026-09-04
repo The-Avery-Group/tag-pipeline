@@ -15,7 +15,7 @@ export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidd
     const params = new URLSearchParams({ range })
     if (agencyIds.length) params.set('agencies', agencyIds.join(','))
     if (includeHidden) params.set('includeHidden', '1')
-    const payload = await workerJson(`/sam/expiring-contracts/results?${params}`)
+    const payload = await workerJson(`/sam/expiring-contracts/results?${params}`, { cache: 'no-store' })
     setContracts(payload.contracts || [])
     setAgencyStatus(payload.agencies || [])
     setHiddenCount(Number(payload.hiddenCount || 0))
@@ -32,7 +32,7 @@ export function useExpiringContracts(range = '6-12', agencyIds = [], includeHidd
     let active = true
     setLoading(true)
     Promise.all([
-      workerJson('/sam/expiring-contracts/config'),
+      workerJson('/sam/expiring-contracts/config', { cache: 'no-store' }),
       loadResults(),
       loadStatus(),
     ]).then(([nextConfig]) => {
