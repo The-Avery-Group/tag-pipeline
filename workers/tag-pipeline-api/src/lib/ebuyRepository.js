@@ -5,6 +5,7 @@ import {
   normalizeEbuyOpportunity,
   retentionDeadline,
 } from './ebuyDomain.js'
+import { resolveEbuySetAside } from './ebuyClient.js'
 import { alertFingerprint, alertStorageReady, getOpportunityAlert, upsertOpportunityAlert } from './opportunityAlerts.js'
 
 function encode(value) { return JSON.stringify(value ?? null) }
@@ -49,6 +50,11 @@ function publicOpportunity(row) {
   const sourceAdditional = raw?.sourceDetails?.rfqAdditionalInfo || {}
   const sourceDepartment = String(sourceProps.userAgency || '').trim()
   const sourceAgency = String(sourceProps.userBureau || sourceAdditional.ocoAgency || '').trim()
+  const setAsideType = String(row.set_aside_type || '').trim() || resolveEbuySetAside(
+    raw?.sourceDetails?.rfqInfo,
+    sourceProps,
+    sourceAdditional,
+  )
   return {
     ...raw,
     id: row.source_id,
@@ -64,7 +70,7 @@ function publicOpportunity(row) {
     buyerName: row.buyer_name,
     buyerEmail: row.buyer_email,
     buyerPhone: row.buyer_phone,
-    setAsideType: row.set_aside_type,
+    setAsideType,
     contractType: row.contract_type,
     awardMethod: row.award_method,
     placeOfPerformanceRaw: row.place_of_performance,
