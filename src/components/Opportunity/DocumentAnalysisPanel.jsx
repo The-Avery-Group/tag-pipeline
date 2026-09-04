@@ -149,7 +149,7 @@ export default function DocumentAnalysisPanel({ load, run, pollKey = 'current', 
   return <section className={styles.panel}>
     <header>
       <button type="button" className={styles.heading} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span><small>OPPORTUNITY BRIEF</small><strong>What the opportunity requires and where to verify it</strong></span>
+        <span><strong>Opportunity brief</strong><small>What the opportunity requires and where to verify it</small></span>
         <span className={styles.headerRight}><em data-status={status}>{STATUS_LABELS[status] || status}</em><b aria-hidden="true">{open ? '⌃' : '⌄'}</b></span>
       </button>
     </header>
