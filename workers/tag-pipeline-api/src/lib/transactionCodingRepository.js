@@ -1,9 +1,9 @@
 import { categorizeTransaction, cleanText, publicRule, transactionStatus } from './transactionCodingDomain.js'
 
-const RETENTION_DAYS = 60
+export const TRANSACTION_CODING_RETENTION_DAYS = 10
 
 function expiresAt(from = new Date()) {
-  return new Date(from.getTime() + RETENTION_DAYS * 86_400_000).toISOString()
+  return new Date(from.getTime() + TRANSACTION_CODING_RETENTION_DAYS * 86_400_000).toISOString()
 }
 
 function publicBatch(row) {
@@ -262,6 +262,21 @@ export async function listTransactionCodingBatches(db) {
   return (result.results || []).map(publicBatch)
 }
 
+export async function deleteTransactionCodingBatch(db, batchId) {
+  const id = cleanText(batchId)
+  if (!id) return false
+  const existing = await db.prepare('SELECT id FROM transaction_coding_batches WHERE id = ?').bind(id).first()
+  if (!existing) return false
+  // Delete children explicitly because older D1 connections may not have
+  // foreign-key enforcement enabled.
+  await db.batch([
+    db.prepare('DELETE FROM transaction_coding_exports WHERE batch_id = ?').bind(id),
+    db.prepare('DELETE FROM transaction_coding_transactions WHERE batch_id = ?').bind(id),
+    db.prepare('DELETE FROM transaction_coding_batches WHERE id = ?').bind(id),
+  ])
+  return true
+}
+
 export async function listTransactionCodingTransactions(db, { batchId = '', status = '', search = '' } = {}) {
   const conditions = []
   const bindings = []
@@ -346,10 +361,31 @@ export async function getTransactionCodingExport(db, exportId) {
 
 export async function purgeExpiredTransactionCodingData(db) {
   const now = new Date().toISOString()
-  const exportsResult = await db.prepare('DELETE FROM transaction_coding_exports WHERE expires_at <= ?').bind(now).run()
-  const batchResult = await db.prepare('DELETE FROM transaction_coding_batches WHERE expires_at <= ?').bind(now).run()
+  const cutoff = new Date(Date.now() - TRANSACTION_CODING_RETENTION_DAYS * 86_400_000).toISOString()
+  // created_at also catches records imported before retention changed from
+  // 60 days, whose stored expires_at value is now too far in the future.
+  const due = await db.prepare('SELECT id FROM transaction_coding_batches WHERE expires_at <= ? OR created_at <= ?')
+    .bind(now, cutoff).all()
+  const batchIds = (due.results || []).map((row) => row.id).filter(Boolean)
+  let transactions = 0
+  let exports = 0
+  let batches = 0
+  for (let offset = 0; offset < batchIds.length; offset += 40) {
+    const ids = batchIds.slice(offset, offset + 40)
+    const placeholders = ids.map(() => '?').join(',')
+    const exportResult = await db.prepare(`DELETE FROM transaction_coding_exports WHERE batch_id IN (${placeholders})`).bind(...ids).run()
+    const transactionResult = await db.prepare(`DELETE FROM transaction_coding_transactions WHERE batch_id IN (${placeholders})`).bind(...ids).run()
+    const batchResult = await db.prepare(`DELETE FROM transaction_coding_batches WHERE id IN (${placeholders})`).bind(...ids).run()
+    exports += Number(exportResult?.meta?.changes || 0)
+    transactions += Number(transactionResult?.meta?.changes || 0)
+    batches += Number(batchResult?.meta?.changes || 0)
+  }
+  const orphanedExports = await db.prepare('DELETE FROM transaction_coding_exports WHERE expires_at <= ? OR created_at <= ?')
+    .bind(now, cutoff).run()
+  exports += Number(orphanedExports?.meta?.changes || 0)
   return {
-    exports: Number(exportsResult?.meta?.changes || 0),
-    batches: Number(batchResult?.meta?.changes || 0),
+    exports,
+    transactions,
+    batches,
   }
 }
