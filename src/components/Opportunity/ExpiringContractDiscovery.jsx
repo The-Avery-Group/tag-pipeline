@@ -212,15 +212,23 @@ function ChartMetricToggle({ value, onChange }) {
 }
 
 function MarketIntelligenceView({ contracts, loading, error, search, expanded, detailLoading, details, toggleDetails, onCountChange }) {
-  const [filters, setFilters] = useState({ band: 'all', from: '', to: '', basis: 'fiscal', grouping: 'quarter', year: '', quarter: 'all', agency: 'all', vehicle: 'all', setAside: 'all', value: 'all', focus: '' })
+  const [filters, setFilters] = useState({ band: 'all', from: '', to: '', basis: 'fiscal', grouping: 'quarter', year: '', quarter: 'all', agency: [], vehicle: 'all', setAside: 'all', value: 'all', focus: '' })
   const [metrics, setMetrics] = useState({ timeline: 'count', vehicle: 'count', agency: 'count', setAside: 'count' })
   const expirationFilterRef = useRef(null)
+  const agencyFilterRef = useRef(null)
   const secondaryFiltersRef = useRef(null)
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value, ...(key !== 'focus' ? { focus: '' } : {}) }))
   const toggleChartFilter = (key, value, clearedValue = 'all') => setFilters((current) => ({
     ...current,
     [key]: current[key] === value ? clearedValue : value,
     ...(key !== 'focus' ? { focus: '' } : {}),
+  }))
+  const toggleAgencyFilter = (agency) => setFilters((current) => ({
+    ...current,
+    agency: current.agency.includes(agency)
+      ? current.agency.filter((value) => value !== agency)
+      : [...current.agency, agency],
+    focus: '',
   }))
   const updateMetric = (chart, value) => setMetrics((current) => ({ ...current, [chart]: value }))
   const now = useMemo(() => { const date = new Date(); date.setHours(0, 0, 0, 0); return date }, [])
@@ -239,7 +247,7 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
       const period = periodForDate(end, filters.basis)
       if (filters.year && period?.year !== Number(filters.year)) return false
       if (filters.quarter !== 'all' && period?.quarter !== Number(filters.quarter)) return false
-      if (filters.agency !== 'all' && (contract.agency || contract.department) !== filters.agency) return false
+      if (filters.agency.length && !filters.agency.includes(contract.agency || contract.department)) return false
       if (filters.vehicle !== 'all' && vehicleName(contract) !== filters.vehicle) return false
       if (filters.setAside === '__not_specified__' && String(contract.setAside || '').trim()) return false
       if (!['all', '__not_specified__'].includes(filters.setAside) && String(contract.setAside || '') !== filters.setAside) return false
@@ -284,7 +292,10 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
   const vehicleData = groupMarketContracts(visibleContracts.filter((contract) => contract.referencedIdvPiid && vehicleName(contract)), vehicleName, 12, metrics.vehicle)
   const agencyData = groupMarketContracts(visibleContracts, (contract) => contract.agency || contract.department, 12, metrics.agency)
   const setAsideData = groupMarketContracts(visibleContracts, (contract) => contract.setAside || 'Not specified', 10, metrics.setAside)
-  const clearFilters = () => setFilters({ band: 'all', from: '', to: '', basis: 'fiscal', grouping: 'quarter', year: '', quarter: 'all', agency: 'all', vehicle: 'all', setAside: 'all', value: 'all', focus: '' })
+  const clearFilters = () => setFilters({ band: 'all', from: '', to: '', basis: 'fiscal', grouping: 'quarter', year: '', quarter: 'all', agency: [], vehicle: 'all', setAside: 'all', value: 'all', focus: '' })
+  const agencyFilterLabel = !filters.agency.length
+    ? 'All agencies'
+    : filters.agency.length === 1 ? filters.agency[0] : `${filters.agency.length} selected`
   const expirationLabel = filters.from || filters.to
     ? `${filters.from || 'Today'} – ${filters.to || '5 years'}`
     : filters.year
@@ -293,7 +304,7 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
 
   useEffect(() => {
     const closeOpenFilters = (event) => {
-      ;[expirationFilterRef, secondaryFiltersRef].forEach((filterRef) => {
+      ;[expirationFilterRef, agencyFilterRef, secondaryFiltersRef].forEach((filterRef) => {
         const element = filterRef.current
         if (element?.open && !element.contains(event.target)) element.removeAttribute('open')
       })
@@ -323,7 +334,13 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
             </div>
           </div>
         </details>
-        <label className={styles.compactSelect}><span>Agency</span><select value={filters.agency} onChange={(event) => updateFilter('agency', event.target.value)}><option value="all">All agencies</option>{agencyOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <details ref={agencyFilterRef} className={styles.agencyFilter}>
+          <summary><span>Agency</span><strong title={agencyFilterLabel}>{agencyFilterLabel}</strong><span>⌄</span></summary>
+          <div className={styles.agencyPanel}>
+            <label className={styles.agencyOption}><input type="checkbox" checked={!filters.agency.length} onChange={() => updateFilter('agency', [])} /><span>All agencies</span></label>
+            {agencyOptions.map((agency) => <label key={agency} className={styles.agencyOption}><input type="checkbox" checked={filters.agency.includes(agency)} onChange={() => toggleAgencyFilter(agency)} /><span>{agency}</span></label>)}
+          </div>
+        </details>
         <label className={styles.compactSelect}><span>Vehicle</span><select value={filters.vehicle} onChange={(event) => updateFilter('vehicle', event.target.value)}><option value="all">All contract vehicles</option>{vehicleOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <details ref={secondaryFiltersRef} className={styles.secondaryFilters}><summary>More <span>⌄</span></summary><div><label><span>Set-aside</span><select value={filters.setAside} onChange={(event) => updateFilter('setAside', event.target.value)}><option value="all">All set-asides</option><option value="__not_specified__">Not specified</option>{setAsideOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span>Contract value</span><select value={filters.value} onChange={(event) => updateFilter('value', event.target.value)}><option value="all">Any value</option><option value="under1m">Under $1M</option><option value="1m10m">$1M–$10M</option><option value="10m100m">$10M–$100M</option><option value="over100m">$100M+</option></select></label></div></details>
         <button type="button" className={styles.clearMarketFilters} onClick={clearFilters}>Reset</button>
@@ -334,7 +351,7 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
         {unresolvedContracts.length > 0 && <div className={styles.warningCallout}><div><strong>{new Set(unresolvedContracts.map((contract) => contract.referencedIdvPiid)).size} referenced IDVs need a vehicle rule</strong><span>These contracts remain in totals but are excluded from named vehicle usage.</span></div></div>}
         <section className={`${styles.marketCard} ${styles.timelineCard}`}><div className={styles.marketCardHeader}><div><h3>Expiring contracts outlook</h3><p>{filters.grouping === 'quarter' ? 'Quarterly' : 'Yearly'} view · click a bar to filter the page</p></div><ChartMetricToggle value={metrics.timeline} onChange={(value) => updateMetric('timeline', value)} /></div><MarketBarChart data={timeline} metric={metrics.timeline} onSelect={(item) => toggleChartFilter('focus', item.key, '')} /></section>
         <section className={styles.marketCard}><div className={styles.marketCardHeader}><div><h3>Contract vehicle usage</h3><p>Resolved vehicles from contracts with a referenced IDV PIID</p></div><ChartMetricToggle value={metrics.vehicle} onChange={(value) => updateMetric('vehicle', value)} /></div><MarketBarChart data={vehicleData} metric={metrics.vehicle} horizontal noun="contracts" onSelect={(item) => toggleChartFilter('vehicle', item.label)} /></section>
-        <section className={styles.marketCard}><div className={styles.marketCardHeader}><div><h3>Agency outlook</h3><p>{filters.basis === 'fiscal' ? 'Federal fiscal' : 'Calendar'} {filters.grouping} view</p></div><ChartMetricToggle value={metrics.agency} onChange={(value) => updateMetric('agency', value)} /></div><MarketBarChart data={agencyData} metric={metrics.agency} horizontal noun="contracts" onSelect={(item) => toggleChartFilter('agency', item.label)} /></section>
+        <section className={styles.marketCard}><div className={styles.marketCardHeader}><div><h3>Agency outlook</h3><p>{filters.basis === 'fiscal' ? 'Federal fiscal' : 'Calendar'} {filters.grouping} view</p></div><ChartMetricToggle value={metrics.agency} onChange={(value) => updateMetric('agency', value)} /></div><MarketBarChart data={agencyData} metric={metrics.agency} horizontal noun="contracts" onSelect={(item) => toggleAgencyFilter(item.label)} /></section>
         <section className={styles.marketCard}><div className={styles.marketCardHeader}><div><h3>Set-aside distribution</h3><p>Acquisition restrictions represented in the current view</p></div><ChartMetricToggle value={metrics.setAside} onChange={(value) => updateMetric('setAside', value)} /></div><MarketBarChart data={setAsideData} metric={metrics.setAside} horizontal noun="contracts" onSelect={(item) => toggleChartFilter('setAside', item.label === 'Not specified' ? '__not_specified__' : item.label)} /></section>
         <details className={styles.marketTableCard}><summary className={styles.contractRegisterSummary}><div><h3>Underlying contracts</h3><p>Open the filtered contract register</p></div><strong>{visibleContracts.length.toLocaleString()} contract{visibleContracts.length === 1 ? '' : 's'}</strong><span>⌄</span></summary>{!visibleContracts.length ? <div className={styles.empty}>No contracts match the selected market filters.</div> : <div className={styles.marketTableScroll}><table className="data-table"><thead><tr><th>Contract</th><th>Agency / office</th><th>Incumbent</th><th>Expiration</th><th>Value</th><th>Vehicle</th><th>PSC / NAICS</th><th>Set-aside</th><th aria-label="Contract details" /></tr></thead><tbody>{visibleContracts.map((contract) => {
           const isOpen = expanded.has(contract.familyKey)
