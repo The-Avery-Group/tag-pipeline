@@ -647,7 +647,7 @@ export default function ExpiringContractDiscovery({ pipeline, contacts = [], add
         [C.agency]: contract.agency || '',
         [C.office]: contract.office || '',
         [C.value]: contract.totalContractValue ?? '',
-        [C.phase]: 'Identified',
+        [C.phase]: contract.isTagContract ? 'Qualified' : 'Identified',
         [C.outlook]: 'Expiring',
         [C.naics]: contract.naicsCode || '',
         [C.endDate]: String(contract.ultimateCompletionDate || '').slice(0, 10),
