@@ -7,6 +7,7 @@ import {
   fetchExpiringAwardsPage,
   isExcludedExpiringSetAside,
   inSelectedRange,
+  isTagOwnedContract,
   meetsExpiringContractValue,
   matchingModifierContacts,
   modifierNoticeWindows,
@@ -82,6 +83,12 @@ test('contract vehicle identifiers normalize modern PIID components', () => {
     instrument: 'D',
     serial: '0047',
   })
+})
+
+test('TAG-owned expiring contracts are identified by the configured UEI', () => {
+  assert.equal(isTagOwnedContract({ incumbentUEI: ' abcdefghijkl ' }, 'ABCDEFGHIJKL'), true)
+  assert.equal(isTagOwnedContract({ incumbentUEI: 'OTHERUEI1234' }, 'ABCDEFGHIJKL'), false)
+  assert.equal(isTagOwnedContract({ incumbentUEI: 'ABCDEFGHIJKL' }, ''), false)
 })
 
 test('PSC suggestions require an exact NAICS crosswalk match and exclude retired codes', () => {
