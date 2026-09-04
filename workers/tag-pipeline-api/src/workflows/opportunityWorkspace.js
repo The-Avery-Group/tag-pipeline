@@ -23,8 +23,12 @@ import {
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import {
   attachmentRecordId,
+  attachmentSourceName,
   fetchSAMAttachment,
   fetchWorkspaceSAMNotice,
+  portalSourceMetadata,
+  portalSourceScope,
+  stablePortalSourceSignature,
 } from '../lib/opportunityWorkspaceSam.js'
 import {
   deleteEmptyEbuyArchiveFolder,
@@ -307,8 +311,12 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
     const changedFiles = []
     const priorRecords = await step.do('Load archived attachment records', () => listWorkspaceFileRecords(env.EBUY_DB, opportunityKey))
     const currentSources = new Set(notice.resourceLinks)
+    const unavailablePortalScopes = new Set(notice.resourceLinks
+      .filter((sourceUrl) => portalSourceMetadata(sourceUrl)?.issue)
+      .map(portalSourceScope))
     const removedFiles = syncAttachments
-      ? priorRecords.filter((record) => record.archive_status === 'archived' && !currentSources.has(record.source_url))
+      ? priorRecords.filter((record) => record.archive_status === 'archived' && !currentSources.has(record.source_url) &&
+        !unavailablePortalScopes.has(portalSourceScope(record.source_url)))
       : []
     for (let index = 0; index < notice.resourceLinks.length; index += 1) {
       const sourceUrl = notice.resourceLinks[index]
@@ -321,6 +329,10 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
         }, async () => {
           const prior = await getWorkspaceFile(env.EBUY_DB, opportunityKey, sourceUrl)
           if (!syncAttachments && prior?.archive_status === 'archived' && prior.sharepoint_item_id) return { ok: true, reused: true }
+          const stablePortalSignature = stablePortalSourceSignature(sourceUrl)
+          if (stablePortalSignature && prior?.archive_status === 'archived' && prior.sharepoint_item_id && prior.source_signature === stablePortalSignature) {
+            return { ok: true, reused: true }
+          }
           const attachment = await fetchSAMAttachment(env, sourceUrl, index)
           if (
             prior?.archive_status === 'archived' && prior.sharepoint_item_id &&
@@ -360,7 +372,7 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
             opportunityKey,
             sourceNoticeId: notice.noticeId,
             sourceUrl,
-            fileName: `SAM attachment ${index + 1}`,
+            fileName: attachmentSourceName(sourceUrl, `SAM attachment ${index + 1}`),
             archiveStatus: 'failed',
             errorMessage: error.message,
           }))
