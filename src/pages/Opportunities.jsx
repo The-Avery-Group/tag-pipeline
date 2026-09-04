@@ -238,6 +238,8 @@ export default function Opportunities({ toast }) {
   // shows real, dismissible filter chips exactly as if applied manually).
   const { activeTab, showArchived } = resolveOpportunityListView(searchParams)
   const discoverySource = searchParams.get('source') === 'ebuy' ? 'ebuy' : 'sam'
+  const requestedExpiringView = searchParams.get('expiringView')
+  const expiringView = ['pipeline', 'discover', 'intelligence'].includes(requestedExpiringView) ? requestedExpiringView : 'pipeline'
   const search    = searchParams.get('search') || ''
   const [ebuyCount, setEbuyCount] = useState(0)
   const [showDismissedEbuy, setShowDismissedEbuy] = useState(false)
@@ -1907,6 +1909,8 @@ export default function Opportunities({ toast }) {
             openOpportunity={openOpportunity}
             search={search}
             toast={toast}
+            view={expiringView}
+            onViewChange={(nextView) => updateParams({ expiringView: nextView === 'pipeline' ? '' : nextView })}
             pipelineView={(
               <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                 {loading
