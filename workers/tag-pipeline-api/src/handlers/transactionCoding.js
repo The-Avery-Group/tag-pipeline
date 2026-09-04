@@ -1,5 +1,6 @@
 import {
   createTransactionCodingExport,
+  deleteTransactionCodingBatch,
   deleteTransactionCodingRule,
   getTransactionCodingExport,
   importTransactionBatch,
@@ -8,10 +9,12 @@ import {
   listTransactionCodingExportCsv,
   listTransactionCodingRules,
   listTransactionCodingTransactions,
+  purgeExpiredTransactionCodingData,
   transactionsForExport,
   recategorizeOpenTransactions,
   replaceTransactionCodingRules,
   saveTransactionCodingWorkspace,
+  TRANSACTION_CODING_RETENTION_DAYS,
   transactionCodingStorageReady,
   updateTransactionCodingTransaction,
   upsertTransactionCodingRule,
@@ -121,12 +124,12 @@ export async function handleTransactionCoding(req, env, identity) {
   if (path === '/transaction-coding/status' && req.method === 'GET') {
     try {
       const workspace = await provision(env, graphToken)
-      return json({ ready: true, retentionDays: 60, workspace: {
+      return json({ ready: true, retentionDays: TRANSACTION_CODING_RETENTION_DAYS, workspace: {
         folderUrl: workspace.folderUrl,
         workbookUrl: workspace.workbookUrl,
       } })
     } catch (error) {
-      return json({ ready: false, retentionDays: 60, error: error.message }, 502)
+      return json({ ready: false, retentionDays: TRANSACTION_CODING_RETENTION_DAYS, error: error.message }, 502)
     }
   }
 
@@ -136,7 +139,14 @@ export async function handleTransactionCoding(req, env, identity) {
   }
 
   if (path === '/transaction-coding/batches' && req.method === 'GET') {
+    await purgeExpiredTransactionCodingData(env.EBUY_DB)
     return json({ batches: await listTransactionCodingBatches(env.EBUY_DB) })
+  }
+
+  const batchMatch = path.match(/^\/transaction-coding\/batches\/([^/]+)$/)
+  if (batchMatch && req.method === 'DELETE') {
+    const deleted = await deleteTransactionCodingBatch(env.EBUY_DB, decodeURIComponent(batchMatch[1]))
+    return deleted ? json({ ok: true, deleted: true }) : json({ error: 'Statement not found.' }, 404)
   }
 
   if (path === '/transaction-coding/imports' && req.method === 'POST') {
