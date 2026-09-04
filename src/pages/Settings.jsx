@@ -7,7 +7,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { useValidationLists } from '@/hooks/useValidationLists'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { useTheme } from '@/theme/ThemeContext'
-import { startAdaptivePolling, WORKER_URL, workerFetch } from '@/services/workerClient'
+import { startAdaptivePolling, WORKER_URL, workerFetch, workerJson } from '@/services/workerClient'
 import {
   connectEbuyAccount,
   disconnectEbuyAccount,
@@ -142,6 +142,9 @@ export default function Settings({ toast }) {
 
   // ── SAM config state ─────────────────────────────────────────────────
   const [naicsCodes,    setNaicsCodes]    = useState([])
+  const [pscCodes,      setPscCodes]      = useState([])
+  const [pscIssue,      setPscIssue]      = useState('')
+  const [importingPSCs, setImportingPSCs] = useState(false)
   const [skipDays,      setSkipDays]      = useState(3)
   const [windowDays,    setWindowDays]    = useState(90)
   const [rfiFollowUp,   setRfiFollowUp]   = useState({
@@ -308,8 +311,16 @@ export default function Settings({ toast }) {
   }
 
   useEffect(() => {
-    Promise.all([getSAMNAICS(), getSAMSettings()]).then(([codes, settings]) => {
+    Promise.all([
+      getSAMNAICS(),
+      getSAMSettings(),
+      workerJson('/sam/expiring-contracts/pscs').catch((error) => ({ pscs: [], error: error.message })),
+    ]).then(([codes, settings, pscConfig]) => {
       setNaicsCodes(codes)
+      setPscCodes(Array.isArray(pscConfig.pscs) ? pscConfig.pscs : [])
+      setPscIssue(pscConfig.error || (pscConfig.failedNaics?.length
+        ? `Could not check ${pscConfig.failedNaics.length} NAICS code${pscConfig.failedNaics.length === 1 ? '' : 's'}.`
+        : ''))
       setSkipDays(settings.skipDays)
       setWindowDays(settings.windowDays)
       setRfiFollowUp({ ...settings.rfiFollowUp, noticeTypes: 'RFP, RFQ' })
@@ -341,17 +352,55 @@ export default function Settings({ toast }) {
     setSavedSAM(false)
     try {
       const cleanedCodes = naicsCodes.map((c) => String(c).trim()).filter(Boolean)
+      const invalidPSC = pscCodes.find((item) => !/^[A-Z0-9]{4}$/.test(String(item.code || '').trim().toUpperCase()))
+      if (invalidPSC) throw new Error('Each PSC must be a four-character code')
+      const cleanedPSCs = pscCodes.map((item) => ({
+        code: String(item.code || '').trim().toUpperCase(),
+        description: String(item.description || '').trim(),
+      }))
       await Promise.all([
         updateSAMNAICS(cleanedCodes),
         updateSAMSettings(Number(skipDays), Number(windowDays), { ...rfiFollowUp, noticeTypes: 'RFP, RFQ' }),
+        workerJson('/sam/expiring-contracts/pscs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pscs: cleanedPSCs }),
+        }),
       ])
       setNaicsCodes(cleanedCodes)
+      setPscCodes(cleanedPSCs)
+      setPscIssue('')
       setSavedSAM(true)
       toast?.success('Discovery settings saved')
     } catch (err) {
       toast?.error(`Failed to save: ${err.message}`)
     } finally {
       setSavingSAM(false)
+    }
+  }
+
+  const handleImportPSCs = async () => {
+    setImportingPSCs(true)
+    setSavedSAM(false)
+    setPscIssue('')
+    try {
+      const cleanedCodes = naicsCodes.map((code) => String(code).trim()).filter(Boolean)
+      if (!cleanedCodes.length) throw new Error('Add at least one TAG NAICS code first')
+      await updateSAMNAICS(cleanedCodes)
+      const result = await workerJson('/sam/expiring-contracts/pscs/import', { method: 'POST' })
+      setNaicsCodes(cleanedCodes)
+      setPscCodes(Array.isArray(result.pscs) ? result.pscs : [])
+      if (result.failedNaics?.length) {
+        setPscIssue(`Could not check ${result.failedNaics.length} NAICS code${result.failedNaics.length === 1 ? '' : 's'}. Existing PSCs were kept.`)
+      }
+      toast?.success(result.imported
+        ? `${result.imported} PSC${result.imported === 1 ? '' : 's'} added from TAG's NAICS codes`
+        : 'PSC list is already up to date')
+    } catch (err) {
+      setPscIssue(err.message)
+      toast?.error(`Could not refresh PSCs: ${err.message}`)
+    } finally {
+      setImportingPSCs(false)
     }
   }
 
@@ -833,6 +882,78 @@ export default function Settings({ toast }) {
                         <button className={styles.addBtn}
                           onClick={() => { setNaicsCodes([...naicsCodes, '']); setSavedSAM(false) }}>
                           + Add NAICS code
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Product and Service Codes */}
+                <div className="card">
+                  <button
+                    type="button"
+                    onClick={() => pscCodes.length > LONG_LIST_THRESHOLD && toggleList('pscs')}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      width: '100%', background: 'none', border: 'none', padding: 0,
+                      cursor: pscCodes.length > LONG_LIST_THRESHOLD ? 'pointer' : 'default', font: 'inherit', textAlign: 'left',
+                    }}
+                  >
+                    <div className={styles.sectionLabel} style={{ marginBottom: 0 }}>
+                      Product and Service Codes {pscCodes.length > LONG_LIST_THRESHOLD && <span className="text-xs text-muted">({pscCodes.length})</span>}
+                    </div>
+                    {pscCodes.length > LONG_LIST_THRESHOLD && (
+                      <span className={`${styles.chevron} ${(openLists.pscs ?? false) ? styles.chevronOpen : ''}`}>›</span>
+                    )}
+                  </button>
+                  {(pscCodes.length <= LONG_LIST_THRESHOLD || (openLists.pscs ?? false)) && (
+                    <>
+                      <p className="text-xs text-muted" style={{ margin: '8px 0 10px' }}>
+                        Used with TAG's NAICS codes when discovering expiring contracts.
+                      </p>
+                      <div className={styles.itemList}>
+                        {pscCodes.map((item, i) => (
+                          <div key={`${item.code}-${i}`} className={styles.itemRow}>
+                            <input
+                              className={`form-input ${styles.pscCodeInput}`}
+                              value={item.code}
+                              maxLength={4}
+                              aria-label={`PSC code ${i + 1}`}
+                              onChange={(event) => {
+                                const next = [...pscCodes]
+                                next[i] = { ...item, code: event.target.value.toUpperCase() }
+                                setPscCodes(next)
+                                setSavedSAM(false)
+                              }}
+                            />
+                            <input
+                              className="form-input"
+                              value={item.description}
+                              placeholder="Description"
+                              aria-label={`PSC description ${i + 1}`}
+                              onChange={(event) => {
+                                const next = [...pscCodes]
+                                next[i] = { ...item, description: event.target.value }
+                                setPscCodes(next)
+                                setSavedSAM(false)
+                              }}
+                            />
+                            <button
+                              className="btn btn-ghost btn-icon"
+                              onClick={() => { setPscCodes(pscCodes.filter((_, index) => index !== i)); setSavedSAM(false) }}
+                              aria-label="Remove"
+                            >✕</button>
+                          </div>
+                        ))}
+                      </div>
+                      {pscIssue && <p className="text-xs" style={{ color: 'var(--red-600)', margin: '6px 0' }}>{pscIssue}</p>}
+                      <div className={styles.saveRow}>
+                        <button className={styles.addBtn}
+                          onClick={() => { setPscCodes([...pscCodes, { code: '', description: '' }]); setSavedSAM(false) }}>
+                          + Add PSC
+                        </button>
+                        <button className={styles.addBtn} style={{ marginLeft: 'auto' }} onClick={handleImportPSCs} disabled={importingPSCs}>
+                          {importingPSCs ? 'Refreshing…' : 'Refresh from TAG NAICS'}
                         </button>
                       </div>
                     </>
