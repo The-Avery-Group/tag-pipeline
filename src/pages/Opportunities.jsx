@@ -803,6 +803,7 @@ export default function Opportunities({ toast }) {
       await dismiss(row._rowIndex)
       updateSAMOpportunityArchiveReview({
         noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
+        responseDate: row['Response Date'],
       }, 'dismissed').catch(() => {})
     } catch (err) {
       toast?.error('Could not dismiss. Use Retry save on this row.')
@@ -831,6 +832,7 @@ export default function Opportunities({ toast }) {
           await dismiss(row._rowIndex)
           updateSAMOpportunityArchiveReview({
             noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
+            responseDate: row['Response Date'],
           }, 'dismissed').catch(() => {})
         }
         else await addToPipeline(row, kind === 'track' ? 'Tracking' : 'New')
