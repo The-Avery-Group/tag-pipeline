@@ -29,11 +29,14 @@
 .normalizedPreview th { background: var(--gray-50); color: var(--gray-500); position: sticky; top: 0; }
 .previewActions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 12px; }
 .workspace { min-height: 430px; display: flex; flex-direction: column; overflow: hidden; }
-.controls { padding: 10px 12px; border-bottom: .5px solid var(--gray-200); display: grid; grid-template-columns: minmax(210px, 1fr) minmax(220px, 1.5fr) 150px 32px; gap: 8px; }
+.controls { padding: 10px 12px; border-bottom: .5px solid var(--gray-200); display: grid; grid-template-columns: minmax(210px, 1fr) minmax(220px, 1.5fr) 150px 32px auto; gap: 8px; }
 .controls input, .controls select, .formGrid input, .formGrid select, .ruleInline input, .ruleInline select { width: 100%; min-height: 32px; border: .5px solid var(--gray-200); border-radius: 7px; background: var(--surface-raised); color: var(--gray-900); padding: 6px 9px; font: 12px var(--font); }
 .refreshTransactions { align-items: center; background: var(--blue-50); border: .5px solid var(--blue-200); border-radius: 7px; color: var(--blue-800); cursor: pointer; display: inline-flex; font: 700 17px/1 var(--font); height: 32px; justify-content: center; width: 32px; }
 .refreshTransactions:hover:not(:disabled) { border-color: var(--blue-600); }
 .refreshTransactions:disabled { cursor: default; opacity: .45; }
+.deleteStatement { background: transparent; border: .5px solid var(--gray-200); border-radius: 7px; color: var(--red-600); cursor: pointer; font: 600 11px var(--font); min-height: 32px; padding: 5px 9px; white-space: nowrap; }
+.deleteStatement:hover:not(:disabled) { background: var(--red-50); border-color: var(--error-border); }
+.deleteStatement:disabled { cursor: default; opacity: .45; }
 .summary { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); border-bottom: .5px solid var(--gray-200); }
 .summary div { padding: 9px 12px; border-right: .5px solid var(--gray-200); }
 .summary div:last-child { border-right: 0; }
@@ -102,5 +105,5 @@
 .referenceInput small { color: var(--gray-400); display: block; font-size: 8px; margin-top: 2px; text-align: right; }
 .exportReviewTable .voucherInput { min-width: 118px; }
 .exportNote { margin: 9px 0 0; }
-@media (max-width: 900px) { .controls { grid-template-columns: 1fr 1fr; }.summary { grid-template-columns: repeat(3, 1fr); }.summary div { border-bottom: .5px solid var(--gray-200); }.formGrid { grid-template-columns: 1fr; }.mappingGrid { grid-template-columns: repeat(2, 1fr); }.refreshTransactions { justify-self: end; } }
-@media (max-width: 620px) { .content { padding: 12px; }.importCard, .previewTitle, .panelHeader, .exportBar, .compactSuggestion { align-items: stretch; flex-direction: column; }.controls { grid-template-columns: minmax(0, 1fr) 32px; }.controls > select:first-child, .controls > input { grid-column: 1 / -1; }.statusFilter { grid-column: 1; }.summary, .exportSummary { grid-template-columns: repeat(2, 1fr); }.exportSummary div { border-bottom: .5px solid var(--gray-200); }.exportBar label { margin-right: 0; }.tabRow { overflow-x: auto; }.tabRow button { white-space: nowrap; }.mappingGrid, .sequenceOptions { grid-template-columns: 1fr; }.headerSelector { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .controls { grid-template-columns: 1fr 1fr; }.summary { grid-template-columns: repeat(3, 1fr); }.summary div { border-bottom: .5px solid var(--gray-200); }.formGrid { grid-template-columns: 1fr; }.mappingGrid { grid-template-columns: repeat(2, 1fr); }.refreshTransactions { justify-self: end; }.deleteStatement { justify-self: start; } }
+@media (max-width: 620px) { .content { padding: 12px; }.importCard, .previewTitle, .panelHeader, .exportBar, .compactSuggestion { align-items: stretch; flex-direction: column; }.controls { grid-template-columns: minmax(0, 1fr) 32px; }.controls > select:first-child, .controls > input { grid-column: 1 / -1; }.statusFilter { grid-column: 1; }.deleteStatement { grid-column: 1 / -1; justify-self: stretch; }.summary, .exportSummary { grid-template-columns: repeat(2, 1fr); }.exportSummary div { border-bottom: .5px solid var(--gray-200); }.exportBar label { margin-right: 0; }.tabRow { overflow-x: auto; }.tabRow button { white-space: nowrap; }.mappingGrid, .sequenceOptions { grid-template-columns: 1fr; }.headerSelector { grid-template-columns: 1fr; } }
