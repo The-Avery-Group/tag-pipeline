@@ -7,9 +7,8 @@ import { WORKER_URL, workerFetch } from '@/services/workerClient'
 import { createCrmRelationshipQuery, queryCrmRelationships } from '@/services/crmRelationshipQuery'
 
 export const AI_MODELS = [
-  { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', description: 'Best strategy and reasoning' },
-  { id: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B', description: 'Long-context reasoning and tool use' },
-  { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', description: 'Fast fallback for focused requests' },
+  { id: '@cf/openai/gpt-oss-120b', label: 'GPT-OSS 120B', description: 'Best strategy and reasoning' },
+  { id: '@cf/openai/gpt-oss-20b', label: 'GPT-OSS 20B', description: 'Fast for focused requests' },
 ]
 
 // ── Core chat function ─────────────────────────────────────────────────────
@@ -52,7 +51,7 @@ export async function sendAIMessage({
 }
 
 /**
- * Fetch conversation history from KV.
+ * Fetch conversation history from the Worker's durable runtime store.
  */
 export async function getConversationHistory(conversationId) {
   if (!WORKER_URL || !conversationId) return []
@@ -73,12 +72,11 @@ export async function clearConversation(conversationId) {
 }
 
 // ── Client-side tool executors ─────────────────────────────────────────────
-// Implements the CUSTOM tools Groq can call (see CLIENT_TOOLS in the
+// Implements the custom tools the configured AI provider can call (see CLIENT_TOOLS in the
 // Worker's ai.js) against data already loaded in memory — pipeline/tasks/
 // contacts are already warmed by dataCache.js via usePipeline/useTasks/
 // useContacts, so these run instantly with no extra Graph API call and no
-// new Azure AD permissions. (Groq's built-in browser_search tool is
-// different — it never reaches here, Groq resolves it entirely server-side.)
+// new Azure AD permissions.
 
 const C_TITLE    = 'Project Title / Description*'
 const C_CN       = 'Contract Number / Notice ID'
