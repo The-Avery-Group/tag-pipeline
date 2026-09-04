@@ -19,6 +19,7 @@ import {
 import { solicitationFamily } from '../src/handlers/sam.js'
 import {
   DEFAULT_CONTRACT_VEHICLE_RULES,
+  mergeContractVehicleRules,
   parseVehicleIdentifier,
   resolveContractVehicle,
 } from '../src/lib/contractVehicleResolver.js'
@@ -182,6 +183,20 @@ test('official solicitation rosters resolve target-agency IDVs beyond the curren
 
   assert.equal(resolveContractVehicle('36C10X23D0043', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
   assert.equal(resolveContractVehicle('80JSC025D0068', DEFAULT_CONTRACT_VEHICLE_RULES).status, 'UNRESOLVED')
+})
+
+test('an incomplete workbook cannot suppress verified built-in vehicle rules', () => {
+  const workbookRules = [{
+    RULE_ID: 'manual-example', VEHICLE_NAME: 'Example Vehicle', MATCH_MODE: 'FULL_PIID',
+    FULL_PIID_RULE_TYPE: 'EXACT', FULL_PIID_RULE: 'ABCDEF26D0001',
+    PRIORITY: 900, CONFIDENCE: 'MANUAL', ENABLED: 'Yes',
+  }]
+  const effectiveRules = mergeContractVehicleRules(workbookRules)
+
+  assert.equal(resolveContractVehicle('47QRAA20D0068', effectiveRules).vehicleName, 'GSA MAS')
+  assert.equal(resolveContractVehicle('75N95021D00012', effectiveRules).vehicleName, 'NIH SOAR')
+  assert.equal(resolveContractVehicle('W912QR21D0073', effectiveRules).vehicleName, 'USACE AFRC Nationwide A/E MATOC')
+  assert.equal(resolveContractVehicle('ABCDEF26D0001', effectiveRules).vehicleName, 'Example Vehicle')
 })
 
 test('specific vehicle rules take precedence over broad MAS fallback rules', () => {
