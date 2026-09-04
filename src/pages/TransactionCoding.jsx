@@ -71,14 +71,18 @@ export default function TransactionCoding({ toast }) {
 
   const loadBase = useCallback(async () => {
     try {
-      const [nextStatus, nextBatches, nextExports, nextRules] = await Promise.all([
-        getTransactionCodingStatus(), getTransactionBatches(), getTransactionExports(), getTransactionRules(),
+      // Status synchronizes the workbook-managed retention setting before the
+      // batch request performs cleanup.
+      const nextStatus = await getTransactionCodingStatus()
+      const [nextBatches, nextExports, nextRules] = await Promise.all([
+        getTransactionBatches(), getTransactionExports(), getTransactionRules(),
       ])
       setStatus(nextStatus); setBatches(nextBatches); setExports(nextExports); setRules(nextRules)
       setSelectedBatch((current) => current || nextBatches[0]?.id || '')
       setError(nextStatus.ready ? '' : nextStatus.error || 'Transaction Coding is unavailable.')
+      if (nextStatus.warning) notify(toast, nextStatus.warning, 'warning')
     } catch (loadError) { setError(loadError.message) }
-  }, [])
+  }, [toast])
 
   const loadRows = useCallback(async () => {
     if (!selectedBatch) { setTransactions([]); setSelectedTransactionIds([]); return }
