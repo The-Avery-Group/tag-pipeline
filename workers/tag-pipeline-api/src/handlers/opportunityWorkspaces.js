@@ -29,7 +29,7 @@ import {
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
 import { getDocumentAnalysis, reviewDocumentFinding, startDocumentAnalysisWorkflow } from '../lib/documentAnalysis.js'
-import { attachmentRecordId, fetchSAMAttachment, fetchWorkspaceSAMNotice } from '../lib/opportunityWorkspaceSam.js'
+import { attachmentRecordId, attachmentSourceName, fetchSAMAttachment, fetchWorkspaceSAMNotice } from '../lib/opportunityWorkspaceSam.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -134,7 +134,7 @@ async function archiveAwardNoticeFiles(env, workspace, noticeId) {
         opportunityKey: workspace.opportunityKey,
         sourceNoticeId: notice.noticeId,
         sourceUrl,
-        fileName: `Award document ${index + 1}`,
+        fileName: attachmentSourceName(sourceUrl, `Award document ${index + 1}`),
         archiveStatus: 'failed',
         errorMessage: error.message,
       })
