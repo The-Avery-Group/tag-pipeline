@@ -91,7 +91,7 @@ test('offers approved DoDEA and DoWEA aliases only when notes establish that age
   assert.equal(matchingPeopleSearchAliases([{ text: 'Research points to a Pacific regional office.' }]).length, 0)
 })
 
-test('requires schema-valid JSON from Groq for notes-based query generation', async () => {
+test('requires schema-valid JSON from Groq fallback for notes-based query generation', async () => {
   const originalFetch = globalThis.fetch
   let requestBody
   globalThis.fetch = async (_url, options) => {
@@ -142,7 +142,7 @@ test('requires schema-valid JSON from Groq for notes-based query generation', as
   }
 })
 
-test('falls back to the next model when Groq rejects structured query generation', async () => {
+test('falls back to the next Groq model when structured query generation is rejected', async () => {
   const originalFetch = globalThis.fetch
   const requestedModels = []
   globalThis.fetch = async (_url, options) => {
@@ -193,11 +193,60 @@ test('falls back to the next model when Groq rejects structured query generation
     }), { GROQ_API_KEY: 'test-key' })
 
     assert.equal(response.status, 200)
-    assert.deepEqual(requestedModels.slice(0, 2), ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b'])
+    assert.deepEqual(requestedModels.slice(0, 2), ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'])
     const payload = await response.json()
     assert.match(payload.query, /DoDEA/)
     assert.match(payload.query, /Pacific Region/)
     assert.match(payload.query, /"Program Manager"/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('uses Workers AI first for people search without calling Groq', async () => {
+  const originalFetch = globalThis.fetch
+  let fetchCalled = false
+  globalThis.fetch = async () => {
+    fetchCalled = true
+    throw new Error('Groq should not be called after Workers AI succeeds')
+  }
+  const calls = []
+  const env = {
+    GROQ_API_KEY: 'fallback-key',
+    AI: {
+      run: async (model, input) => {
+        calls.push({ model, input })
+        return {
+          response: JSON.stringify({
+            summary: 'Find acquisition personnel.',
+            concepts: {
+              organization: ['DoDEA'],
+              officeOrProgram: ['Pacific Region'],
+              roles: ['Program Manager'],
+              keywords: ['Esports'],
+            },
+          }),
+        }
+      },
+    },
+  }
+
+  try {
+    const response = await handlePeopleSearchQueries(new Request('https://worker.test/ai/people-search-queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceMode: 'opportunity-notes',
+        context: { notes: [{ text: 'DoDEA Pacific Region esports program research.' }] },
+      }),
+    }), env)
+
+    assert.equal(response.status, 200)
+    assert.equal(fetchCalled, false)
+    assert.equal(calls[0].model, '@cf/openai/gpt-oss-20b')
+    assert.equal(calls[0].input.response_format.type, 'json_schema')
+    const payload = await response.json()
+    assert.equal(payload.model, '@cf/openai/gpt-oss-20b')
   } finally {
     globalThis.fetch = originalFetch
   }
