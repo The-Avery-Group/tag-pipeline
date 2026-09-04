@@ -3,6 +3,7 @@ const WORKSPACE_NAME = 'Transaction Coding'
 const WORKBOOK_NAME = 'Transaction Coding.xlsx'
 const EXPORTS_NAME = 'Exports'
 const RULE_TABLE_NAME = 'TransactionMappingsTable'
+const SETTINGS_TABLE_NAME = 'TransactionCodingSettingsTable'
 
 export const RULE_HEADERS = [
   'Rule ID', 'Active', 'Priority', 'Match Type', 'Match Pattern', 'Vendor', 'Vendor ID',
@@ -126,6 +127,34 @@ async function readTransactionRuleTable(workspace) {
 
 export async function readTransactionRules(workspace) {
   return (await readTransactionRuleTable(workspace)).rows
+}
+
+export async function readTransactionCodingSettings(workspace) {
+  let tableKey
+  try {
+    const table = await workbookJson(workspace, workbookTablePath(SETTINGS_TABLE_NAME), { retryNotFound: false })
+    tableKey = table?.id || table?.name || SETTINGS_TABLE_NAME
+  } catch (error) {
+    if (error.status === 404) {
+      throw new Error('TransactionCodingSettingsTable was not found in Transaction Coding.xlsx.')
+    }
+    throw error
+  }
+  const [columns, rows] = await Promise.all([
+    workbookJson(workspace, workbookTablePath(tableKey, '/columns')),
+    workbookJson(workspace, workbookTablePath(tableKey, '/rows?$top=100')),
+  ])
+  const headers = (columns?.value || []).map((column) => column.name)
+  const settingIndex = headers.findIndex((header) => String(header).trim().toLowerCase() === 'setting')
+  const valueIndex = headers.findIndex((header) => String(header).trim().toLowerCase() === 'value')
+  if (settingIndex < 0 || valueIndex < 0) {
+    throw new Error('TransactionCodingSettingsTable must contain Setting and Value columns.')
+  }
+  const values = Object.fromEntries((rows?.value || []).map((row) => {
+    const cells = row.values?.[0] || []
+    return [String(cells[settingIndex] || '').trim().toLowerCase(), cells[valueIndex]]
+  }).filter(([setting]) => setting))
+  return { retentionDays: values['retention days'] }
 }
 
 export function alignTransactionRuleValues(headers, values) {
