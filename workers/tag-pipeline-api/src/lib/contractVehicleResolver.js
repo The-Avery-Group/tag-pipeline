@@ -328,6 +328,24 @@ export const DEFAULT_CONTRACT_VEHICLE_RULES = [
   ...COMPONENT_RULES.map(([id, agency, vehicle, options]) => seed(id, agency, vehicle, options)),
 ]
 
+// The workbook is the editable rule source, but it may temporarily lag behind
+// a deployment while newly researched seed rows are being appended. Preserve
+// every verified built-in rule that is genuinely absent, while allowing an
+// existing workbook row with the same stable RULE_ID to override or disable it.
+export function mergeContractVehicleRules(workbookRules = [], builtInRules = DEFAULT_CONTRACT_VEHICLE_RULES) {
+  const merged = new Map()
+  for (const rule of Array.isArray(builtInRules) ? builtInRules : []) {
+    const ruleId = String(rule?.RULE_ID || '').trim()
+    if (ruleId) merged.set(ruleId, rule)
+  }
+  let anonymousIndex = 0
+  for (const rule of Array.isArray(workbookRules) ? workbookRules : []) {
+    const ruleId = String(rule?.RULE_ID || '').trim()
+    merged.set(ruleId || `__workbook_rule_${anonymousIndex++}`, rule)
+  }
+  return [...merged.values()]
+}
+
 function canonicalVehicleName(value) {
   return String(value || '').trim() === 'Multiple Award Schedule' ? 'GSA MAS' : String(value || '').trim()
 }
