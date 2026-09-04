@@ -68,6 +68,14 @@ export function retryOpportunityWorkspace(opportunityKey, opportunity = null) {
   })
 }
 
+export function archiveOpportunityAwardEvidence(opportunityKey, noticeId) {
+  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/award-evidence`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ noticeId }),
+  })
+}
+
 export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
   const query = parentId ? `?parentId=${encodeURIComponent(parentId)}` : ''
   return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/files${query}`)
