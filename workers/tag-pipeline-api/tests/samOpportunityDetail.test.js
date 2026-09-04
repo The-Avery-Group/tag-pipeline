@@ -53,6 +53,21 @@ test('SAM detail separates external links, attachments, contacts, and formatted 
   assert.match(detail.description, /\n\nSee https:\/\//)
 })
 
+test('SAM Award Notice details retain the fields needed by the outcome workflow', () => {
+  const detail = normalizeSAMOpportunityDetail({
+    noticeId: 'award-notice-id',
+    type: 'Award Notice',
+    award: {
+      number: 'W91-AWARD-001', date: '2026-09-04', amount: '2500000',
+      awardee: { name: 'The Avery Group, LLC', ueiSAM: 'TESTUEI12345' },
+    },
+  })
+  assert.deepEqual(detail.award, {
+    number: 'W91-AWARD-001', date: '2026-09-04', amount: 2500000,
+    awardeeName: 'The Avery Group, LLC', awardeeUEI: 'TESTUEI12345',
+  })
+})
+
 test('new SAM discovery rows carry enough identity to start attachment archiving', () => {
   assert.deepEqual(samArchiveInputForDiscoveryRow({
     'Notice ID': 'abc-123',
