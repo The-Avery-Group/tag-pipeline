@@ -1,6 +1,7 @@
 import {
   claimWorkspaceRun,
   ensureWorkspaceRequest,
+  getWorkspaceFile,
   getWorkspace,
   getWorkspaceGroup,
   linkWorkspaceMembers,
@@ -9,6 +10,7 @@ import {
   workspaceRootIsShared,
   deleteWorkspaceRecord,
   resetWorkspaceForRebuild,
+  recordWorkspaceFile,
   updateWorkspace,
   workspaceStorageStatus,
 } from '../lib/opportunityWorkspaceRepository.js'
@@ -23,9 +25,11 @@ import {
   shareRelatedWorkspaceFolders,
   splitRelatedWorkspaceFolders,
   updatePipelineFolderLink,
+  uploadSAMAttachment,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import { applyLegacyFolderLinks, scanLegacyOpportunityFolders } from '../lib/legacyFolderMigration.js'
 import { getDocumentAnalysis, reviewDocumentFinding, startDocumentAnalysisWorkflow } from '../lib/documentAnalysis.js'
+import { attachmentRecordId, fetchSAMAttachment, fetchWorkspaceSAMNotice } from '../lib/opportunityWorkspaceSam.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -77,6 +81,66 @@ async function adoptExistingFolderIfAvailable(env, storage, workspace, folderLin
     errorMessage: null,
     completedAt: null,
   })
+}
+
+async function archiveAwardNoticeFiles(env, workspace, noticeId) {
+  if (!workspace?.sharePointDriveId || !(workspace.samFolderId || workspace.typeFolderId || workspace.rootFolderId)) {
+    throw Object.assign(new Error('Set up the opportunity SharePoint workspace before saving award documents'), { status: 409 })
+  }
+  const notice = await fetchWorkspaceSAMNotice(env, { ...workspace, noticeId, solicitationNumber: '' })
+  if (!notice.noticeId || String(notice.noticeId).toLowerCase() !== String(noticeId).toLowerCase()) {
+    throw Object.assign(new Error('The SAM.gov Award Notice could not be verified'), { status: 404 })
+  }
+  const links = notice.resourceLinks.slice(0, 20)
+  const saved = []
+  const issues = []
+  for (let index = 0; index < links.length; index += 1) {
+    const sourceUrl = links[index]
+    const id = await attachmentRecordId(workspace.opportunityKey, sourceUrl)
+    const prior = await getWorkspaceFile(env.EBUY_DB, workspace.opportunityKey, sourceUrl)
+    if (prior?.archive_status === 'archived' && prior.sharepoint_item_id) {
+      saved.push({ fileName: prior.file_name, webUrl: prior.sharepoint_web_url, reused: true })
+      continue
+    }
+    try {
+      const attachment = await fetchSAMAttachment(env, sourceUrl, index)
+      const uploaded = await uploadSAMAttachment(env, {
+        driveId: workspace.sharePointDriveId,
+        folderId: workspace.samFolderId || workspace.typeFolderId || workspace.rootFolderId,
+        fileName: `Award - ${attachment.fileName}`,
+        contentType: attachment.contentType,
+        body: attachment.response.body,
+      })
+      await recordWorkspaceFile(env.EBUY_DB, {
+        id,
+        opportunityKey: workspace.opportunityKey,
+        sourceNoticeId: notice.noticeId,
+        sourceUrl,
+        fileName: uploaded.name || attachment.fileName,
+        contentType: attachment.contentType,
+        byteSize: uploaded.size || attachment.byteSize,
+        sourceSignature: attachment.sourceSignature,
+        archiveStatus: 'archived',
+        driveId: workspace.sharePointDriveId,
+        itemId: uploaded.itemId,
+        webUrl: uploaded.webUrl,
+        archivedAt: new Date().toISOString(),
+      })
+      saved.push({ fileName: uploaded.name || attachment.fileName, webUrl: uploaded.webUrl })
+    } catch (error) {
+      issues.push({ sourceUrl, error: error.message })
+      await recordWorkspaceFile(env.EBUY_DB, {
+        id,
+        opportunityKey: workspace.opportunityKey,
+        sourceNoticeId: notice.noticeId,
+        sourceUrl,
+        fileName: `Award document ${index + 1}`,
+        archiveStatus: 'failed',
+        errorMessage: error.message,
+      })
+    }
+  }
+  return { noticeId: notice.noticeId, attachmentTotal: links.length, saved, issues }
 }
 
 export async function handleOpportunityWorkspaces(req, env) {
@@ -179,6 +243,16 @@ export async function handleOpportunityWorkspaces(req, env) {
       if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
       const body = await req.json().catch(() => ({}))
       return json({ ok: true, ...(await removeReferenceMaterialUploads(env, workspace, body.itemIds || [])) })
+    }
+
+    const awardEvidenceMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/award-evidence$/)
+    if (awardEvidenceMatch && req.method === 'POST') {
+      const workspace = await getWorkspace(storage, decodeURIComponent(awardEvidenceMatch[1]))
+      if (!workspace) return json({ error: 'Opportunity workspace not found' }, 404)
+      const body = await req.json().catch(() => ({}))
+      const noticeId = String(body.noticeId || '').trim()
+      if (!noticeId) return json({ error: 'A SAM.gov Award Notice ID is required.' }, 400)
+      return json({ ok: true, ...(await archiveAwardNoticeFiles(env, workspace, noticeId)) })
     }
 
     const analysisMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/analysis$/)
