@@ -36,6 +36,7 @@ import {
   ensureSAMArchive,
   findSAMArchive,
   getSAMArchive,
+  getSAMDismissalTombstones,
   markSAMArchiveReviewState,
   samArchiveStorageReady,
   updateSAMArchive,
@@ -193,6 +194,17 @@ function normalizeNoticeId(s) {
   return String(s || '').trim().toUpperCase()
 }
 
+export function samDiscoveryRowMatchesArchive(row, archive) {
+  const rowNoticeId = normalizeNoticeId(row?.['Notice ID'])
+  const rowSolicitation = normalizeSolNum(row?.['Solicitation Number'])
+  const archiveNoticeId = normalizeNoticeId(archive?.notice_id ?? archive?.noticeId)
+  const archiveSolicitation = normalizeSolNum(archive?.solicitation_number ?? archive?.solicitationNumber)
+  return Boolean(
+    (rowNoticeId && archiveNoticeId && rowNoticeId === archiveNoticeId) ||
+    (rowSolicitation && archiveSolicitation && rowSolicitation === archiveSolicitation)
+  )
+}
+
 // True if `a` is strictly more recent than `b`. Both are already normalized
 // to 'YYYY-MM-DD' by parseResponseDate, so a plain string compare works.
 // An empty/missing date sorts as "oldest", so a record with a real posted
@@ -270,6 +282,45 @@ async function getTableData(env, token, tableName) {
 
 async function getTableRows(env, token, tableName) {
   return (await getTableData(env, token, tableName)).rows
+}
+
+export async function deleteDismissedSAMDiscoveryRows(env, archives = []) {
+  if (!archives.length) return { deleted: 0, failures: [] }
+  const token = await getAppOnlyGraphToken(env)
+  const { rows } = await getTableData(env, token, 'NewOpportunitiesTable')
+  const targets = []
+  const matchedKeys = new Set()
+  for (const row of rows) {
+    if (String(row.Status || '').trim().toLowerCase() !== 'dismissed') continue
+    const archive = archives.find((candidate) => samDiscoveryRowMatchesArchive(row, candidate))
+    if (!archive) continue
+    targets.push({ rowIndex: row._rowIndex, opportunityKey: archive.opportunity_key, responseDate: row['Response Date'] })
+    matchedKeys.add(keyForLog(archive.opportunity_key))
+  }
+
+  const failures = []
+  let deleted = 0
+  for (const target of targets.sort((a, b) => b.rowIndex - a.rowIndex)) {
+    try {
+      await graphFetch(env, token, `/tables/NewOpportunitiesTable/rows/itemAt(index=${target.rowIndex})`, { method: 'DELETE' })
+      deleted++
+    } catch (error) {
+      failures.push({ opportunityKey: target.opportunityKey, message: error.message })
+    }
+  }
+  const failedKeys = new Set(failures.map((failure) => keyForLog(failure.opportunityKey)))
+  return {
+    deleted,
+    matched: matchedKeys.size,
+    removed: targets
+      .filter((target) => !failedKeys.has(keyForLog(target.opportunityKey)))
+      .map(({ opportunityKey, responseDate }) => ({ opportunityKey, responseDate })),
+    failures,
+  }
+}
+
+function keyForLog(value) {
+  return String(value || '').trim().toLowerCase()
 }
 
 export function isFlaggedSAMOpportunity(row) {
@@ -1169,6 +1220,19 @@ async function runSAMPull(
     if (noticeId) dismissedNoticeIds.add(noticeId)
     if (family) dismissedSolicitationFamilies.add(family)
   })
+  if (env.EBUY_DB) {
+    try {
+      const tombstones = await getSAMDismissalTombstones(env.EBUY_DB)
+      tombstones.forEach((row) => {
+        const noticeId = normalizeNoticeId(row.notice_id)
+        const family = solicitationFamily(row.solicitation_number)
+        if (noticeId) dismissedNoticeIds.add(noticeId)
+        if (family) dismissedSolicitationFamilies.add(family)
+      })
+    } catch (error) {
+      console.warn(JSON.stringify({ event: 'sam_dismissal_tombstones_unavailable', message: error.message }))
+    }
+  }
 
   // Solicitation Number -> the most-recent variant we currently know about
   // (either already in the sheet, or a candidate fetched earlier this run).
@@ -1672,7 +1736,9 @@ export async function handleSAM(req, env, ctx) {
         solicitationNumber: body.solicitationNumber,
       })
     }
-    const updated = await markSAMArchiveReviewState(env.EBUY_DB, archive.opportunityKey, body.reviewState)
+    const updated = await markSAMArchiveReviewState(env.EBUY_DB, archive.opportunityKey, body.reviewState, {
+      responseDate: body.responseDate,
+    })
     if (String(body.reviewState || '').toLowerCase() === 'dismissed') {
       await cancelDocumentAnalysis(env.EBUY_DB, archive.opportunityKey)
     }
