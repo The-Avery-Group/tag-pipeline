@@ -7,6 +7,10 @@ on:
       - 'workers/**'
   workflow_dispatch:
 
+concurrency:
+  group: cloudflare-worker-production
+  cancel-in-progress: true
+
 jobs:
   deploy-worker:
     runs-on: ubuntu-latest
@@ -24,11 +28,11 @@ jobs:
 
       - name: Install Wrangler
         working-directory: workers/tag-pipeline-api
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit --fund=false
 
       - name: Verify Worker
         working-directory: workers/tag-pipeline-api
-        run: npm run check
+        run: npm run verify
 
       - name: Apply D1 migrations
         working-directory: workers/tag-pipeline-api
