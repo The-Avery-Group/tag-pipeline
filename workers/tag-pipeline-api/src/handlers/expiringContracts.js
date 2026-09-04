@@ -219,6 +219,7 @@ export function summarizeAwardFamily(records, now = new Date()) {
     incumbentUEI: latest(sorted, (record) => record?.awardDetails?.awardeeData?.awardeeUEIInformation?.uniqueEntityId),
     naicsCode: latest(sorted, (record) => record?.coreData?.productOrServiceInformation?.principalNaics?.[0]?.code),
     pscCode: latest(sorted, (record) => record?.coreData?.productOrServiceInformation?.productOrService?.code),
+    pscDescription: latest(sorted, (record) => record?.coreData?.productOrServiceInformation?.productOrService?.name),
     ultimateCompletionDate: latest(sorted, (record) => record?.awardDetails?.dates?.ultimateCompletionDate),
     currentCompletionDate: latest(sorted, (record) => record?.awardDetails?.dates?.currentCompletionDate),
     periodOfPerformanceStartDate: latest(sorted, (record) => record?.awardDetails?.dates?.periodOfPerformanceStartDate),
@@ -1068,10 +1069,12 @@ export async function startExpiringContractsRefresh(env, { agencies, scheduledTi
   }
 }
 
-function inSelectedRange(contract, range, now = new Date()) {
+export function inSelectedRange(contract, range, now = new Date()) {
   const [minimum, maximum] = clean(range || '6-12').split('-').map(Number)
   const date = dateValue(contract.ultimateCompletionDate)
-  return date && date >= addMonths(now, minimum || 6) && date <= addMonths(now, maximum || 12)
+  const minimumMonths = Number.isFinite(minimum) ? minimum : 6
+  const maximumMonths = Number.isFinite(maximum) ? maximum : 12
+  return date && date >= addMonths(now, minimumMonths) && date <= addMonths(now, maximumMonths)
 }
 
 async function loadResults(env, agencies, range, includeHidden = false) {
