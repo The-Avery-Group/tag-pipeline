@@ -13,7 +13,7 @@ jobs:
         with:
           node-version: 20.19.0
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --fund=false
       - run: npm run check
 
   worker:
@@ -26,7 +26,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: workers/tag-pipeline-api/package-lock.json
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --fund=false
         working-directory: workers/tag-pipeline-api
       - run: npm run check
         working-directory: workers/tag-pipeline-api
