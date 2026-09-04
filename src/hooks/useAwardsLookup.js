@@ -70,6 +70,7 @@ export function useAwardsLookup({ piid: autoPiid, auto = false } = {}) {
           truncated: data.truncated === true,
         })
         setSearched(true)
+        return data
       } catch (err) {
         if (err.name === 'AbortError' || requestSequence !== requestSequenceRef.current) return
         setError(err.message)
