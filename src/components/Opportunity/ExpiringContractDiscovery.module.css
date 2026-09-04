@@ -113,6 +113,29 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
 .metricToggle { align-items: center; background: var(--gray-100); border-radius: var(--radius-md); display: flex; flex: 0 0 auto; gap: 2px; padding: 3px; }
 .metricToggle button { background: transparent; border: 0; border-radius: calc(var(--radius-md) - 2px); color: var(--gray-500); cursor: pointer; font: 600 10px var(--font); padding: 6px 9px; }
 .metricToggle .metricActive { background: var(--surface); box-shadow: var(--shadow-sm); color: var(--blue-700); }
+.compactFilters { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; }
+.expirationFilter, .secondaryFilters { position: relative; }
+.expirationFilter > summary, .secondaryFilters > summary { align-items: center; background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-md); color: var(--gray-500); cursor: pointer; display: flex; font: 600 10px var(--font); gap: 6px; height: 34px; list-style: none; padding: 0 10px; white-space: nowrap; }
+.expirationFilter > summary::-webkit-details-marker, .secondaryFilters > summary::-webkit-details-marker, .contractRegisterSummary::-webkit-details-marker { display: none; }
+.expirationFilter > summary strong { color: var(--gray-800); font-weight: 650; }
+.expirationFilter > summary span, .secondaryFilters > summary span { color: var(--gray-400); margin-left: 3px; }
+.expirationPanel, .secondaryFilters > div { background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); left: 0; padding: 12px; position: absolute; top: calc(100% + 5px); z-index: 25; }
+.expirationPanel { min-width: min(620px, calc(100vw - 72px)); }
+.bandPicker { display: flex; flex-wrap: wrap; gap: 5px; }
+.bandPicker button { background: var(--gray-50); border: 0.5px solid var(--gray-200); border-radius: 99px; color: var(--gray-600); cursor: pointer; font: 600 9px var(--font); padding: 5px 8px; }
+.bandPicker button:hover { border-color: var(--blue-300); color: var(--blue-700); }
+.bandPicker .bandActive { background: var(--blue-50); border-color: var(--blue-300); color: var(--blue-700); }
+.exactDateRow, .periodFilterRow { border-top: 0.5px solid var(--gray-200); display: grid; gap: 9px; margin-top: 10px; padding-top: 10px; }
+.exactDateRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.periodFilterRow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.expirationPanel label, .secondaryFilters label, .compactSelect { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.expirationPanel label > span, .secondaryFilters label > span { color: var(--gray-500); font-size: 8px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.expirationPanel input, .expirationPanel select, .secondaryFilters select, .compactSelect select { background: var(--surface); border: 0.5px solid var(--gray-300); border-radius: var(--radius-md); color: var(--gray-800); font: 500 10px var(--font); height: 32px; min-width: 0; padding: 5px 7px; }
+.compactSelect { align-items: center; border: 0.5px solid var(--gray-300); border-radius: var(--radius-md); flex-direction: row; gap: 5px; height: 34px; padding-left: 9px; }
+.compactSelect > span { color: var(--gray-400); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.compactSelect select { border: 0; height: 31px; max-width: 210px; padding-left: 2px; }
+.secondaryFilters > div { display: grid; gap: 9px; grid-template-columns: repeat(2, 180px); left: auto; right: 0; }
+.compactFilters > .clearMarketFilters { height: 34px; }
 .marketFilters { align-items: end; background: var(--surface); border: 0.5px solid var(--gray-200); border-radius: var(--radius-lg); display: grid; gap: 9px; grid-template-columns: repeat(4, minmax(120px, 1fr)); padding: 12px; }
 .marketFilters label, .moreFilters label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .marketFilters label > span, .moreFilters label > span { color: var(--gray-500); font-size: 9px; font-weight: 700; letter-spacing: .035em; text-transform: uppercase; }
@@ -140,7 +163,14 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
 .marketTooltip span { color: var(--gray-600); font-size: 10px; margin-top: 3px; }
 .chartEmpty { align-items: center; color: var(--gray-400); display: flex; font-size: 11px; height: 230px; justify-content: center; text-align: center; }
 .marketTableCard { padding: 0; }
-.marketTableCard > .marketCardHeader { padding: 13px 13px 6px; }
+.contractRegisterSummary { align-items: center; cursor: pointer; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto; list-style: none; padding: 13px; }
+.contractRegisterSummary:hover { background: var(--gray-50); }
+.contractRegisterSummary h3 { color: var(--gray-900); font-size: 12px; font-weight: 650; margin: 0; }
+.contractRegisterSummary p { color: var(--gray-500); font-size: 10px; margin: 3px 0 0; }
+.contractRegisterSummary > strong { background: var(--blue-50); border-radius: 99px; color: var(--blue-700); font-size: 10px; padding: 5px 9px; }
+.contractRegisterSummary > span { color: var(--gray-400); font-size: 15px; transition: transform 150ms ease; }
+.marketTableCard[open] .contractRegisterSummary { border-bottom: 0.5px solid var(--gray-200); }
+.marketTableCard[open] .contractRegisterSummary > span { transform: rotate(180deg); }
 .marketTableScroll { overflow: auto; }
 .marketTableScroll table { min-width: 1180px; }
 .marketTableScroll td { vertical-align: middle; }
@@ -160,6 +190,7 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
   .marketFilters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .marketKpis, .marketGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .marketDetailGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .periodFilterRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
   .controls { grid-template-columns: 1fr; }
@@ -171,4 +202,9 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
   .marketHeading { flex-direction: column; }
   .marketFilters, .marketKpis, .marketGrid, .marketDetailGrid, .moreFilters > div { grid-template-columns: 1fr; }
   .moreFilters { grid-column: 1; }
+  .compactFilters { align-items: stretch; flex-direction: column; }
+  .compactSelect { justify-content: space-between; }
+  .compactSelect select { max-width: none; width: 100%; }
+  .expirationPanel, .secondaryFilters > div { left: 0; min-width: 0; position: static; right: auto; width: auto; }
+  .exactDateRow, .periodFilterRow, .secondaryFilters > div { grid-template-columns: 1fr; }
 }
