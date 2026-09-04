@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useExpiringContracts } from '@/hooks/useExpiringContracts'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import CopyValue from '@/components/Common/CopyValue'
@@ -194,7 +194,6 @@ function MarketBarChart({ data, metric, horizontal = false, onSelect, noun }) {
   return (
     <ResponsiveContainer width="100%" height={horizontal ? Math.max(230, data.length * horizontalRowHeight) : 280}>
       <BarChart data={data} layout={horizontal ? 'vertical' : 'horizontal'} margin={horizontal ? { top: 8, right: 46, bottom: 8, left: 14 } : { top: 12, right: 22, bottom: 20, left: 14 }}>
-        <CartesianGrid stroke="var(--gray-100)" vertical={!horizontal} horizontal={horizontal} />
         {horizontal ? <><XAxis type="number" tickFormatter={valueFormatter} tick={{ fontSize: 10, fill: 'var(--gray-500)' }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="label" width={212} tick={<MarketCategoryTick />} axisLine={false} tickLine={false} interval={0} /></> : <><XAxis dataKey="label" height={38} tick={{ fontSize: 10, fill: 'var(--gray-600)' }} axisLine={false} tickLine={false} interval="preserveStartEnd" /><YAxis width={58} tickFormatter={valueFormatter} tick={{ fontSize: 10, fill: 'var(--gray-500)' }} axisLine={false} tickLine={false} allowDecimals={metric === 'value'} /></>}
         <Tooltip cursor={{ fill: 'var(--gray-50)' }} content={<MarketTooltip metric={metric} noun={noun} />} />
         <Bar dataKey={metric} fill="var(--blue-600)" radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]} maxBarSize={horizontal ? 22 : 38} cursor={onSelect ? 'pointer' : 'default'} onClick={(entry) => onSelect?.(entry?.payload || entry)} />
