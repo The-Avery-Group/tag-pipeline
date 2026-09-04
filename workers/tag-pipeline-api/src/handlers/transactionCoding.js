@@ -3,6 +3,7 @@ import {
   deleteTransactionCodingBatch,
   deleteTransactionCodingRule,
   getTransactionCodingExport,
+  getTransactionCodingSettings,
   importTransactionBatch,
   listTransactionCodingBatches,
   listTransactionCodingExports,
@@ -14,7 +15,7 @@ import {
   recategorizeOpenTransactions,
   replaceTransactionCodingRules,
   saveTransactionCodingWorkspace,
-  TRANSACTION_CODING_RETENTION_DAYS,
+  saveTransactionCodingSettings,
   transactionCodingStorageReady,
   updateTransactionCodingTransaction,
   upsertTransactionCodingRule,
@@ -24,6 +25,7 @@ import {
   appendTransactionExportHistory,
   deleteTransactionRuleFromWorkbook,
   ensureTransactionCodingWorkspace,
+  readTransactionCodingSettings,
   readTransactionRules,
   saveExportToSharePoint,
   saveTransactionRuleToWorkbook,
@@ -68,9 +70,17 @@ async function provision(env, graphToken = '') {
   return workspace
 }
 
+async function syncSettings(env, workspace) {
+  const workbookSettings = await readTransactionCodingSettings(workspace)
+  return saveTransactionCodingSettings(env.EBUY_DB, workbookSettings)
+}
+
 async function syncRules(env, identity, graphToken = '', { recategorize = true } = {}) {
   const workspace = await provision(env, graphToken)
-  const workbookRules = await readTransactionRules(workspace)
+  const [workbookRules, settings] = await Promise.all([
+    readTransactionRules(workspace),
+    syncSettings(env, workspace),
+  ])
   await replaceTransactionCodingRules(env.EBUY_DB, workbookRules, identity?.name || '')
   const pendingRules = (await listTransactionCodingRules(env.EBUY_DB)).filter((rule) => rule.source === 'crm_pending')
   for (const pendingRule of pendingRules) {
@@ -79,7 +89,7 @@ async function syncRules(env, identity, graphToken = '', { recategorize = true }
   }
   const rules = await listTransactionCodingRules(env.EBUY_DB)
   if (recategorize) await recategorizeOpenTransactions(env.EBUY_DB)
-  return { workspace, rules }
+  return { workspace, rules, settings }
 }
 
 export async function attemptTransactionRuleSync(operation) {
@@ -124,12 +134,21 @@ export async function handleTransactionCoding(req, env, identity) {
   if (path === '/transaction-coding/status' && req.method === 'GET') {
     try {
       const workspace = await provision(env, graphToken)
-      return json({ ready: true, retentionDays: TRANSACTION_CODING_RETENTION_DAYS, workspace: {
+      let settings
+      let warning = ''
+      try {
+        settings = await syncSettings(env, workspace)
+      } catch (error) {
+        settings = await getTransactionCodingSettings(env.EBUY_DB)
+        warning = `Workbook retention could not refresh. Using the last saved value: ${error.message}`
+      }
+      return json({ ready: true, retentionDays: settings.retentionDays, warning, workspace: {
         folderUrl: workspace.folderUrl,
         workbookUrl: workspace.workbookUrl,
       } })
     } catch (error) {
-      return json({ ready: false, retentionDays: TRANSACTION_CODING_RETENTION_DAYS, error: error.message }, 502)
+      const settings = await getTransactionCodingSettings(env.EBUY_DB).catch(() => ({ retentionDays: 10 }))
+      return json({ ready: false, retentionDays: settings.retentionDays, error: error.message }, 502)
     }
   }
 
