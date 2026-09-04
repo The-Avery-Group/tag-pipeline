@@ -1,11 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, parsePOC, startScheduledSAMPull } from '../src/handlers/sam.js'
+import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, parsePOC, samDiscoveryRowMatchesArchive, startScheduledSAMPull } from '../src/handlers/sam.js'
 import { runSAMPullWorkflowCheckpoint } from '../src/workflows/samPullChain.js'
 
 test('shared SAM flags are recognized for cleanup protection', () => {
   assert.equal(isFlaggedSAMOpportunity({ Flagged: 'Yes' }), true)
   assert.equal(isFlaggedSAMOpportunity({ Flagged: '' }), false)
+})
+
+test('dismissed discovery cleanup resolves workbook rows by notice or solicitation identifier', () => {
+  assert.equal(samDiscoveryRowMatchesArchive(
+    { 'Notice ID': 'ABC123', 'Solicitation Number': 'OLD' },
+    { notice_id: 'abc123', solicitation_number: 'NEW' },
+  ), true)
+  assert.equal(samDiscoveryRowMatchesArchive(
+    { 'Notice ID': '', 'Solicitation Number': 'W912-26-R-0001' },
+    { notice_id: '', solicitation_number: 'w912-26-r-0001' },
+  ), true)
+  assert.equal(samDiscoveryRowMatchesArchive(
+    { 'Notice ID': 'ABC123', 'Solicitation Number': 'W912-26-R-0001' },
+    { notice_id: 'different', solicitation_number: 'different' },
+  ), false)
 })
 
 test('scheduled SAM pulls create one idempotent workflow instance per six-hour slot', async () => {
