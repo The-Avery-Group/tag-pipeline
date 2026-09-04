@@ -26,6 +26,7 @@ import {
 const AWARDS_BASE = 'https://api.sam.gov/contract-awards/v1/search'
 const OPPORTUNITIES_BASE = 'https://api.sam.gov/opportunities/v2/search'
 const FEDERAL_HIERARCHY_BASE = 'https://api.sam.gov/prod/federalorganizations/v1/orgs'
+const PSC_SELECTION_BASE = 'https://psctool.us/api/v2'
 const DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
 const PAGE_SIZE = 100
 const MAX_PAGES_PER_AGENCY = 40
@@ -42,10 +43,13 @@ const HIDDEN_PREFIX = 'expiring_contracts:hidden:v1:'
 const MODIFIER_CONTACT_PREFIX = 'expiring_contracts:modifier_contacts:v1:'
 const MODIFIER_CONTACT_TTL_SECONDS = 14 * 24 * 60 * 60
 const DETAIL_TTL_SECONDS = 30 * 24 * 60 * 60
+export const MIN_EXPIRING_CONTRACT_VALUE = 250_000
+const MAX_EXPIRING_CONTRACT_VALUE = 999_999_999_999_999
 const VEHICLE_RULES_TABLE = 'ContractVehicleRulesTable'
 const VEHICLE_RULES_SHEET = 'Contract Vehicle Rules'
 const PSC_TABLE = 'SAMProductServiceCodesTable'
 const PSC_SHEET = 'SAM Product Service Codes'
+const PSC_HEADERS = ['PSC', 'Description', 'Enabled']
 const VEHICLE_RULE_CACHE_MS = 5 * 60 * 1000
 let vehicleRuleCache = { expiresAt: 0, rules: null }
 
@@ -188,6 +192,11 @@ export function isExcludedExpiringSetAside(value) {
   return /\bHUB\s*ZONE\b/.test(normalized) ||
     /\bWOM(?:AN|EN)\s+OWNED\b/.test(normalized) ||
     /\b(?:ED)?WOSB\b/.test(normalized)
+}
+
+export function meetsExpiringContractValue(value) {
+  const amount = Number(value)
+  return Number.isFinite(amount) && amount >= MIN_EXPIRING_CONTRACT_VALUE
 }
 
 function recordSetAside(record) {
@@ -493,7 +502,13 @@ function columnLetter(index) {
   return result
 }
 
-async function ensureWorkbookLookupTable(env, token, { tableName, sheetName, headers, seedRows = [] }) {
+async function ensureWorkbookLookupTable(env, token, {
+  tableName,
+  sheetName,
+  headers,
+  seedRows = [],
+  seedKey = 'RULE_ID',
+}) {
   let rows = null
   try {
     rows = await readWorkbookTable(env, DRIVE_ID, token, tableName, { pageSize: 250 })
@@ -534,8 +549,8 @@ async function ensureWorkbookLookupTable(env, token, { tableName, sheetName, hea
   }
 
   if (seedRows.length) {
-    const existingIds = new Set(rows.map((row) => clean(row.RULE_ID)))
-    const missing = seedRows.filter((row) => !existingIds.has(clean(row.RULE_ID)))
+    const existingIds = new Set(rows.map((row) => clean(row[seedKey])))
+    const missing = seedRows.filter((row) => !existingIds.has(clean(row[seedKey])))
     for (let index = 0; index < missing.length; index += 20) {
       const values = missing.slice(index, index + 20).map((row) => headers.map((header) => row[header] ?? ''))
       await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${tableName}/rows/add`, {
@@ -548,15 +563,143 @@ async function ensureWorkbookLookupTable(env, token, { tableName, sheetName, hea
   return rows
 }
 
-export async function readExpiringPSCs(env) {
-  const token = await getAppOnlyGraphToken(env)
-  const rows = await ensureWorkbookLookupTable(env, token, {
+function isEnabledLookupRow(row) {
+  return !row.Enabled || ['Y', 'YES', 'TRUE', '1'].includes(clean(row.Enabled).toUpperCase())
+}
+
+function normalizePSCEntry(value) {
+  const code = clean(value?.code || value?.PSC || value?.psc).toUpperCase()
+  if (!/^[A-Z0-9]{4}$/.test(code)) return null
+  return {
+    code,
+    description: clean(value?.description || value?.Description),
+  }
+}
+
+export function pscSuggestionsForNAICS(records, naicsCodes) {
+  const requested = new Set((naicsCodes || []).map((code) => clean(code)).filter(Boolean))
+  const byCode = new Map()
+  ;(Array.isArray(records) ? records : []).forEach((record) => {
+    const code = clean(record?.psc_code).toUpperCase()
+    const related = Array.isArray(record?.naics) ? record.naics.map((value) => clean(value)) : []
+    if (!/^[A-Z0-9]{4}$/.test(code) || !related.some((value) => requested.has(value))) return
+    if (clean(record?.psc_code_end_date)) return
+    if (!byCode.has(code)) {
+      byCode.set(code, {
+        code,
+        description: clean(record?.psc_code_long_name || record?.psc_code_short_name) || code,
+      })
+    }
+  })
+  return [...byCode.values()].sort((left, right) => left.code.localeCompare(right.code))
+}
+
+async function readExpiringPSCRows(env, token = null) {
+  const graphToken = token || await getAppOnlyGraphToken(env)
+  return ensureWorkbookLookupTable(env, graphToken, {
     tableName: PSC_TABLE,
     sheetName: PSC_SHEET,
-    headers: ['PSC', 'Description', 'Enabled'],
+    headers: PSC_HEADERS,
   })
+}
+
+function activePSCEntries(rows) {
+  const byCode = new Map()
+  ;(rows || []).filter(isEnabledLookupRow).forEach((row) => {
+    const entry = normalizePSCEntry(row)
+    if (entry) byCode.set(entry.code, entry)
+  })
+  return [...byCode.values()].sort((left, right) => left.code.localeCompare(right.code))
+}
+
+async function writeExpiringPSCEntries(env, entries) {
+  const token = await getAppOnlyGraphToken(env)
+  const rows = await readExpiringPSCRows(env, token)
+  const active = new Map((entries || []).map(normalizePSCEntry).filter(Boolean).map((entry) => [entry.code, entry]))
+  const output = []
+  const seen = new Set()
+
+  rows.forEach((row) => {
+    const existing = normalizePSCEntry(row)
+    if (!existing || seen.has(existing.code)) return
+    seen.add(existing.code)
+    const selected = active.get(existing.code)
+    output.push({
+      PSC: existing.code,
+      Description: selected?.description || existing.description,
+      Enabled: selected ? 'Yes' : 'No',
+    })
+  })
+  active.forEach((entry, code) => {
+    if (seen.has(code)) return
+    output.push({ PSC: code, Description: entry.description, Enabled: 'Yes' })
+  })
+
+  const additional = Math.max(0, output.length - rows.length)
+  for (let index = 0; index < additional; index += 20) {
+    const count = Math.min(20, additional - index)
+    await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${PSC_TABLE}/rows/add`, {
+      method: 'POST',
+      body: JSON.stringify({ index: null, values: Array.from({ length: count }, () => PSC_HEADERS.map(() => '')) }),
+    })
+  }
+  if (output.length) {
+    const range = `A2:${columnLetter(PSC_HEADERS.length - 1)}${output.length + 1}`
+    await graphWorkbookFetch(env, DRIVE_ID, token, `/worksheets/${encodeURIComponent(PSC_SHEET)}/range(address='${range}')`, {
+      method: 'PATCH',
+      body: JSON.stringify({ values: output.map((row) => PSC_HEADERS.map((header) => row[header] ?? '')) }),
+    })
+  }
+  return activePSCEntries(output)
+}
+
+async function fetchPSCSuggestions(env, naicsCodes) {
+  if (!env.SAM_API_KEY) throw new Error('SAM_API_KEY is required to retrieve the federal PSC crosswalk')
+  const codes = [...new Set((naicsCodes || []).map((code) => clean(code)).filter(Boolean))]
+  if (codes.length > 45) throw new Error('PSC import supports up to 45 NAICS codes at a time')
+  const records = []
+  const failedNaics = []
+  for (let index = 0; index < codes.length; index += 6) {
+    const group = codes.slice(index, index + 6)
+    const results = await Promise.all(group.map(async (code) => {
+      const params = new URLSearchParams({ api_key: env.SAM_API_KEY, size: '500', page: '0' })
+      const response = await fetch(`${PSC_SELECTION_BASE}/naics/${encodeURIComponent(code)}?${params}`)
+      if (response.status === 404) return { code, records: [] }
+      if (!response.ok) return { code, records: [], failed: true }
+      const payload = await response.json().catch(() => ({}))
+      return { code, records: Array.isArray(payload.psc) ? payload.psc : [] }
+    }))
+    results.forEach((result) => {
+      if (result.failed) failedNaics.push(result.code)
+      records.push(...result.records)
+    })
+  }
+  return { suggestions: pscSuggestionsForNAICS(records, codes), failedNaics }
+}
+
+async function importExpiringPSCs(env) {
+  const token = await getAppOnlyGraphToken(env)
+  const [naicsCodes, rows] = await Promise.all([readExpiringNAICS(env), readExpiringPSCRows(env, token)])
+  const { suggestions, failedNaics } = await fetchPSCSuggestions(env, naicsCodes)
+  const existing = activePSCEntries(rows)
+  const disabled = new Set(rows.filter((row) => !isEnabledLookupRow(row)).map((row) => normalizePSCEntry(row)?.code).filter(Boolean))
+  const merged = new Map(existing.map((entry) => [entry.code, entry]))
+  suggestions.forEach((entry) => {
+    if (!disabled.has(entry.code)) merged.set(entry.code, entry)
+  })
+  const pscs = await writeExpiringPSCEntries(env, [...merged.values()])
+  return {
+    pscs,
+    imported: pscs.length - existing.length,
+    source: 'DPCAP PSC Selection Tool',
+    failedNaics,
+  }
+}
+
+export async function readExpiringPSCs(env) {
+  const rows = await readExpiringPSCRows(env)
   return [...new Set(rows
-    .filter((row) => !row.Enabled || ['Y', 'YES', 'TRUE', '1'].includes(clean(row.Enabled).toUpperCase()))
+    .filter(isEnabledLookupRow)
     .map((row) => clean(row.PSC || row.Code).toUpperCase())
     .filter((value) => /^[A-Z0-9]{4}$/.test(value))
   )].slice(0, 100)
@@ -696,8 +839,8 @@ function compactAwardRecord(record) {
 
 export async function fetchExpiringAwardsPage(env, { agency, naicsCodes = [], pscCodes = [], offset = 0, now = new Date() }) {
   if (!env.SAM_API_KEY) throw new Error('SAM_API_KEY is not configured')
-  const from = addMonths(now, 6)
-  const to = addMonths(now, 24)
+  const from = addMonths(now, 0)
+  const to = addMonths(now, 60)
   const normalizedAgency = normalizeAgency(agency)
   const baseParams = {
     api_key: env.SAM_API_KEY,
@@ -706,6 +849,7 @@ export async function fetchExpiringAwardsPage(env, { agency, naicsCodes = [], ps
     awardOrIDV: 'Award',
     closedStatus: 'No',
     ultimateCompletionDate: `[${formatSamDate(from)},${formatSamDate(to)}]`,
+    totalUltimateContractValue: `[${MIN_EXPIRING_CONTRACT_VALUE},${MAX_EXPIRING_CONTRACT_VALUE}]`,
   }
 
   const requestPage = async (agencyFilterKey, agencyFilterValue, discoveryFilterKey, discoveryFilterValue) => {
@@ -762,7 +906,7 @@ export async function saveAgencyResults(env, agency, records, fetchedAt = new Da
   const vehicleRules = await availableContractVehicleRules(env)
   const families = groupByAwardFamily(dedupeRecords(records))
     .map((family) => summarizeAwardFamily(family))
-    .filter((result) => result.eligibility.eligible && !isExcludedExpiringSetAside(result.setAside))
+    .filter((result) => result.eligibility.eligible && !isExcludedExpiringSetAside(result.setAside) && meetsExpiringContractValue(result.totalContractValue))
     .map((result) => ({
       ...result,
       vehicleResolution: resolveContractVehicle(result.referencedIdvPiid, vehicleRules),
@@ -1083,7 +1227,7 @@ async function loadResults(env, agencies, range, includeHidden = false) {
   const cached = await Promise.all(selected.map((agency) => getRuntimeState(env, resultCacheKey(normalizeAgency(agency)))))
   const available = cached.filter(Boolean).map((entry) => ({
     ...entry,
-    contracts: (entry.contracts || []).filter((contract) => !isExcludedExpiringSetAside(contract.setAside)),
+    contracts: (entry.contracts || []).filter((contract) => !isExcludedExpiringSetAside(contract.setAside) && meetsExpiringContractValue(contract.totalContractValue)),
   }))
   const contractsByFamily = new Map()
   available.flatMap((entry) => entry.contracts).forEach((contract) => {
@@ -1401,6 +1545,22 @@ export async function handleExpiringContracts(req, env) {
         },
         pscCodes,
       })
+    }
+    if (url.pathname === '/sam/expiring-contracts/pscs' && req.method === 'GET') {
+      const rows = await readExpiringPSCRows(env)
+      const configured = rows.some((row) => normalizePSCEntry(row))
+      if (!configured) {
+        const imported = await importExpiringPSCs(env)
+        return json({ ...imported, initialized: true })
+      }
+      return json({ pscs: activePSCEntries(rows), initialized: false })
+    }
+    if (url.pathname === '/sam/expiring-contracts/pscs' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      return json({ pscs: await writeExpiringPSCEntries(env, body.pscs) })
+    }
+    if (url.pathname === '/sam/expiring-contracts/pscs/import' && req.method === 'POST') {
+      return json(await importExpiringPSCs(env))
     }
     if (url.pathname === '/sam/expiring-contracts/vehicle-rules' && req.method === 'GET') {
       const rules = await readContractVehicleRules(env, { force: url.searchParams.get('refresh') === '1' })
