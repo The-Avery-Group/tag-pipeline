@@ -7,10 +7,12 @@ import {
   fetchExpiringAwardsPage,
   isExcludedExpiringSetAside,
   inSelectedRange,
+  meetsExpiringContractValue,
   matchingModifierContacts,
   modifierNoticeWindows,
   noticeContacts,
   normalizeExpiringAgency,
+  pscSuggestionsForNAICS,
   resolveExpiringAgencies,
   resolveLastModifiedBy,
   runExpiringContractsRefresh,
@@ -80,6 +82,17 @@ test('contract vehicle identifiers normalize modern PIID components', () => {
     instrument: 'D',
     serial: '0047',
   })
+})
+
+test('PSC suggestions require an exact NAICS crosswalk match and exclude retired codes', () => {
+  const suggestions = pscSuggestionsForNAICS([
+    { psc_code: 'R799', psc_code_long_name: 'Other Management Support Services', naics: ['541611'] },
+    { psc_code: 'R499', psc_code_long_name: 'Other Professional Services', naics: ['561499'] },
+    { psc_code: 'R408', psc_code_long_name: 'Program Management Support', naics: ['541611'], psc_code_end_date: '2020-09-30' },
+    { psc_code: 'r799', psc_code_short_name: 'Duplicate', naics: ['541611'] },
+  ], ['541611'])
+
+  assert.deepEqual(suggestions, [{ code: 'R799', description: 'Other Management Support Services' }])
 })
 
 test('vehicle rules resolve verified patterns and exact legacy rosters without an API fallback', () => {
@@ -284,6 +297,13 @@ test('market intelligence range includes contracts expiring before six months', 
   assert.equal(inSelectedRange({ ultimateCompletionDate: '2031-10-01' }, '0-60', now), false)
 })
 
+test('expiring discovery retains only contracts worth at least $250,000', () => {
+  assert.equal(meetsExpiringContractValue(250000), true)
+  assert.equal(meetsExpiringContractValue('5000000'), true)
+  assert.equal(meetsExpiringContractValue(249999.99), false)
+  assert.equal(meetsExpiringContractValue(null), false)
+})
+
 test('women-owned and HUBZone set-asides are excluded from expiring discovery', () => {
   assert.equal(isExcludedExpiringSetAside('Women-Owned Small Business (WOSB) Program Set-Aside'), true)
   assert.equal(isExcludedExpiringSetAside('Economically Disadvantaged Women-Owned Small Business (EDWOSB)'), true)
@@ -385,6 +405,8 @@ test('award discovery filters official subagencies by code instead of a guessed 
     assert.equal(params.get('contractingSubtierCode'), '9700')
     assert.equal(params.has('contractingSubtierName'), false)
     assert.equal(params.has('typeOfSetAsideCode'), false)
+    assert.equal(params.get('ultimateCompletionDate'), '[08/12/2026,08/12/2031]')
+    assert.equal(params.get('totalUltimateContractValue'), '[250000,999999999999999]')
   } finally {
     globalThis.fetch = previousFetch
   }
