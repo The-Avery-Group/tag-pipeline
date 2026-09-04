@@ -3,7 +3,7 @@
  *
  * Routes:
  *   POST /notify      → Teams webhook proxy
- *   POST /ai/chat     → Groq AI proxy with context assembly
+ *   POST /ai/chat     → Workers AI-first provider orchestration with context assembly
  *   GET  /sam/search  → Databank/SAM API proxy (stubbed, ready for implementation)
  *   GET  /health      → Health check
  */
