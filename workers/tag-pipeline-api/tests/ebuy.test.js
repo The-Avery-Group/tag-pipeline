@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EBUY_FIXTURE_OPPORTUNITIES } from '../src/fixtures/ebuyOpportunities.js'
 import { changedEbuyFields, hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportunity, retentionDeadline } from '../src/lib/ebuyDomain.js'
-import { normalizeLiveEbuyOpportunity } from '../src/lib/ebuyClient.js'
+import { normalizeLiveEbuyOpportunity, resolveEbuySetAside } from '../src/lib/ebuyClient.js'
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
 import {
@@ -300,6 +300,29 @@ test('eBuy RFQ program codes are decoded into their published set-asides', () =>
 
     assert.equal(record.setAsideType, expected)
   }
+})
+
+test('a complete eBuy detail with no set-aside program is unrestricted', () => {
+  assert.equal(resolveEbuySetAside(
+    { rfqProgramsList: [] },
+    { setAsideBusinessIndicator: null, rfqProgramSelected: null },
+  ), 'Unrestricted')
+  assert.equal(resolveEbuySetAside(
+    { rfqProgramsList: ['DR'] },
+    { setAsideBusinessIndicator: null },
+  ), 'Unrestricted')
+})
+
+test('summary-only eBuy data remains unknown until detail enrichment', () => {
+  assert.equal(resolveEbuySetAside({ rfqId: 'RFQ-SUMMARY', title: 'Summary only' }), '')
+})
+
+test('eBuy large-business wording resolves as unrestricted', () => {
+  assert.equal(resolveEbuySetAside({ businessSize: 'Large Business' }), 'Unrestricted')
+})
+
+test('an unfamiliar eBuy SA program remains visible instead of being mislabeled', () => {
+  assert.equal(resolveEbuySetAside({ rfqProgramsList: ['SA-NEW'] }), 'SA-NEW')
 })
 
 test('stale eBuy synchronization runs are detected and changed into resumable errors', async () => {
