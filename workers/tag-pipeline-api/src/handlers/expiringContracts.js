@@ -11,6 +11,7 @@ import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from '../
 import {
   CONTRACT_VEHICLE_RULE_HEADERS,
   DEFAULT_CONTRACT_VEHICLE_RULES,
+  mergeContractVehicleRules,
   normalizeVehicleIdentifier,
   resolveContractVehicle,
   resolveContractVehicles,
@@ -569,8 +570,9 @@ export async function readContractVehicleRules(env, { force = false } = {}) {
     headers: CONTRACT_VEHICLE_RULE_HEADERS,
     seedRows: DEFAULT_CONTRACT_VEHICLE_RULES,
   })
-  vehicleRuleCache = { rules, expiresAt: Date.now() + VEHICLE_RULE_CACHE_MS }
-  return rules
+  const effectiveRules = mergeContractVehicleRules(rules)
+  vehicleRuleCache = { rules: effectiveRules, expiresAt: Date.now() + VEHICLE_RULE_CACHE_MS }
+  return effectiveRules
 }
 
 async function availableContractVehicleRules(env) {
