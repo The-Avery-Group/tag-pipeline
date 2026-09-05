@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeSAMOpportunityDetail, normalizeSAMStructuredResources, samDescriptionText, samOrganizationHierarchy } from '../src/lib/samOpportunityDetail.js'
-import { samArchiveInputForDiscoveryRow } from '../src/handlers/sam.js'
+import { mergeSAMArchive, samArchiveInputForDiscoveryRow } from '../src/handlers/sam.js'
+
+test('portal files absent from the SAM API appear after archiving and remain deduplicated', () => {
+  const file = { sourceUrl: 'https://www.fedconnect.net/file', fileName: 'Corrected RFI.pdf', webUrl: 'https://example.sharepoint.com/file' }
+  const detail = { attachments: [], links: [{ url: 'https://www.fedconnect.net/opportunity' }] }
+  const archive = { files: [file], archiveStatus: 'ready' }
+  const merged = mergeSAMArchive(detail, archive)
+  assert.deepEqual(merged.attachments, [file])
+  assert.deepEqual(merged.links, detail.links)
+  assert.deepEqual(mergeSAMArchive(merged, archive).attachments, [file])
+})
 
 test('SAM detail keeps every organization level without inventing an additional section', () => {
   assert.deepEqual(
