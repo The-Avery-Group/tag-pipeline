@@ -28,6 +28,7 @@ import {
   fetchWorkspaceSAMNotice,
   portalSourceMetadata,
   portalSourceScope,
+  portalFileIdentity,
   stablePortalSourceSignature,
 } from '../lib/opportunityWorkspaceSam.js'
 import {
@@ -47,6 +48,7 @@ const COPY_POLL_LIMIT = 30
 export async function runOpportunityWorkspaceWorkflow(env, event, step) {
   const opportunityKey = event.payload?.opportunityKey
   const syncAttachments = event.payload?.syncAttachments === true
+  const portalOnly = event.payload?.portalOnly === true
   const sourceRevision = String(event.payload?.sourceRevision || '')
   if (!env.EBUY_DB || !opportunityKey) return { ok: false, error: 'Opportunity workspace metadata is unavailable' }
 
@@ -310,17 +312,17 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
     let failedCount = 0
     const changedFiles = []
     const priorRecords = await step.do('Load archived attachment records', () => listWorkspaceFileRecords(env.EBUY_DB, opportunityKey))
-    const currentSources = new Set(notice.resourceLinks)
+    const currentSources = new Set(notice.resourceLinks.map(portalFileIdentity))
     const unavailablePortalScopes = new Set(notice.resourceLinks
       .filter((sourceUrl) => portalSourceMetadata(sourceUrl)?.issue)
       .map(portalSourceScope))
     const removedFiles = syncAttachments
-      ? priorRecords.filter((record) => record.archive_status === 'archived' && !currentSources.has(record.source_url) &&
+      ? priorRecords.filter((record) => (!portalOnly || portalSourceMetadata(record.source_url)) && record.archive_status === 'archived' && !currentSources.has(portalFileIdentity(record.source_url)) &&
         !unavailablePortalScopes.has(portalSourceScope(record.source_url)))
       : []
     for (let index = 0; index < notice.resourceLinks.length; index += 1) {
       const sourceUrl = notice.resourceLinks[index]
-      const id = await attachmentRecordId(opportunityKey, sourceUrl)
+      const id = await attachmentRecordId(opportunityKey, portalFileIdentity(sourceUrl))
       let result
       try {
         result = await step.do(`Archive SAM attachment ${index + 1}`, {
@@ -328,6 +330,8 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
           timeout: '5 minutes',
         }, async () => {
           const prior = await getWorkspaceFile(env.EBUY_DB, opportunityKey, sourceUrl)
+            || priorRecords.find((file) => portalFileIdentity(file.source_url) === portalFileIdentity(sourceUrl))
+          if (portalOnly && !portalSourceMetadata(sourceUrl)) return { ok: true, reused: true }
           if (!syncAttachments && prior?.archive_status === 'archived' && prior.sharepoint_item_id) return { ok: true, reused: true }
           const stablePortalSignature = stablePortalSourceSignature(sourceUrl)
           if (stablePortalSignature && prior?.archive_status === 'archived' && prior.sharepoint_item_id && prior.source_signature === stablePortalSignature) {
