@@ -83,6 +83,7 @@ export function portalSourceMetadata(value) {
       id: params.get('id') || '',
       target: params.get('target') || '',
       name: params.get('name') || '',
+      revision: params.get('revision') || '',
       message: params.get('message') || '',
     }
   } catch {
@@ -99,10 +100,20 @@ export function portalSourceScope(sourceUrl) {
   return metadata ? `${metadata.provider}|${metadata.portalUrl}` : ''
 }
 
+export function portalFileIdentity(sourceUrl) {
+  const metadata = portalSourceMetadata(sourceUrl)
+  if (!metadata || metadata.issue || !metadata.revision) return sourceUrl
+  const url = new URL(sourceUrl)
+  const params = new URLSearchParams(decodeURIComponent(url.hash.slice(url.hash.indexOf('=') + 1)))
+  params.delete('revision')
+  url.hash = `${PORTAL_FILE_MARKER}=${encodeURIComponent(params.toString())}`
+  return url.toString()
+}
+
 export function stablePortalSourceSignature(sourceUrl) {
   const metadata = portalSourceMetadata(sourceUrl)
   return metadata && !metadata.issue
-    ? `${metadata.provider}|${metadata.id}|${metadata.name}`
+    ? `${metadata.provider}|${metadata.id}|${metadata.name}${metadata.revision ? `|${metadata.revision}` : ''}`
     : ''
 }
 
@@ -180,6 +191,9 @@ function anchors(html) {
     id: attribute(match[1], 'id'),
     href: attribute(match[1], 'href'),
     onclick: attribute(match[1], 'onclick'),
+    // Only explicit per-file metadata, never a page-wide date or guessed text.
+    revision: ['data-version', 'data-last-modified', 'data-etag', 'data-file-size']
+      .map((key) => attribute(match[1], key)).join('|').replace(/^\|+|\|+$/g, ''),
   }))
 }
 
@@ -192,11 +206,12 @@ function fedConnectAttachments(html, portalUrl) {
     const id = postback[2].replace(/\\\\/g, '\\')
     const key = `${target}\n${id}`
     const current = documents.get(key)
-    if (!current || (!current.name && anchor.label)) documents.set(key, { target, id, name: anchor.label || current?.name || '' })
+    if (!current || (!current.name && anchor.label)) documents.set(key, { target, id, name: anchor.label || current?.name || '', revision: anchor.revision })
   })
   return [...documents.values()].map((document, index) => portalSourceUrl(portalUrl, {
     provider: 'fedconnect', target: document.target, id: document.id,
     name: document.name || `FedConnect document ${index + 1}`,
+    revision: document.revision,
   }))
 }
 
@@ -210,7 +225,7 @@ function pieeAttachments(html, portalUrl) {
     if (seen.has(id)) return
     seen.add(id)
     results.push(portalSourceUrl(portalUrl, {
-      provider: 'piee', id, name,
+      provider: 'piee', id, name, revision: anchor.revision,
     }))
   })
   return results
@@ -425,7 +440,7 @@ export async function fetchSAMAttachment(env, sourceUrl, index = 0) {
   return {
     response,
     fileName: portalMetadata && !portalMetadata.message
-      ? `${(clean(portalMetadata.name).replace(/\.[a-z0-9]{1,8}$/i, '') || 'Portal attachment').slice(0, 120)} - ${(await attachmentRecordId('portal', sourceUrl)).slice(0, 12)}${attachmentName(response, sourceUrl, index, portalMetadata.name).match(/\.[a-z0-9]{1,8}$/i)?.[0] || ''}`
+      ? `${(clean(portalMetadata.name).replace(/\.[a-z0-9]{1,8}$/i, '') || 'Portal attachment').slice(0, 120)} - ${(await attachmentRecordId('portal', portalFileIdentity(sourceUrl))).slice(0, 12)}${attachmentName(response, sourceUrl, index, portalMetadata.name).match(/\.[a-z0-9]{1,8}$/i)?.[0] || ''}`
       : attachmentName(response, sourceUrl, index, portalMetadata?.name),
     contentType: response.headers.get('Content-Type') || 'application/octet-stream',
     byteSize: length || null,
