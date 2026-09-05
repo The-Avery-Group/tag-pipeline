@@ -424,7 +424,9 @@ export async function fetchSAMAttachment(env, sourceUrl, index = 0) {
   if (length > 250 * 1024 * 1024) throw new Error('The SAM.gov attachment is larger than the supported SharePoint upload size')
   return {
     response,
-    fileName: attachmentName(response, sourceUrl, index, portalMetadata?.name),
+    fileName: portalMetadata && !portalMetadata.message
+      ? `${(clean(portalMetadata.name).replace(/\.[a-z0-9]{1,8}$/i, '') || 'Portal attachment').slice(0, 120)} - ${(await attachmentRecordId('portal', sourceUrl)).slice(0, 12)}${attachmentName(response, sourceUrl, index, portalMetadata.name).match(/\.[a-z0-9]{1,8}$/i)?.[0] || ''}`
+      : attachmentName(response, sourceUrl, index, portalMetadata?.name),
     contentType: response.headers.get('Content-Type') || 'application/octet-stream',
     byteSize: length || null,
     sourceSignature: stablePortalSourceSignature(sourceUrl) ||
