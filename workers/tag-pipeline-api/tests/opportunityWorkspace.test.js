@@ -169,7 +169,7 @@ test('FedConnect public attachments are downloaded through the portal session', 
   try {
     const [source] = await discoverPortalAttachments(portal)
     const attachment = await fetchSAMAttachment({}, source)
-    assert.equal(attachment.fileName, 'SOW.pdf')
+    assert.match(attachment.fileName, /^Statement of Work - [a-f0-9]{12}\.pdf$/)
     assert.match(attachment.sourceSignature, /^fedconnect\|/)
     assert.equal(requests.length, 3)
     const posted = requests.at(-1)
@@ -205,7 +205,7 @@ test('PIEE public JSF attachment actions are enumerated and downloaded', async (
     const [source] = await discoverPortalAttachments(portal)
     assert.equal(attachmentSourceName(source), 'Performance_Work_Statement.pdf')
     const attachment = await fetchSAMAttachment({}, source)
-    assert.equal(attachment.fileName, 'Performance_Work_Statement.pdf')
+    assert.match(attachment.fileName, /^Performance_Work_Statement - [a-f0-9]{12}\.pdf$/)
     const posted = requests.at(-1)
     assert.equal(posted.options.method, 'POST')
     assert.match(posted.options.headers.Cookie, /JSESSIONID=piee-session/)
