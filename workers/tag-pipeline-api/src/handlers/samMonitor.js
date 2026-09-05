@@ -15,8 +15,42 @@ import {
 import {
   claimWorkspaceRun,
   findWorkspaceBySource,
+  listWorkspaceFileRecords,
   updateWorkspace,
 } from '../lib/opportunityWorkspaceRepository.js'
+import { fetchSAMStructuredResources } from '../lib/samOpportunityDetail.js'
+import { discoverPortalAttachments, isSupportedPortalOpportunityUrl, portalSourceMetadata } from '../lib/opportunityWorkspaceSam.js'
+
+export function portalFilesNeedingRefresh(sources, saved) {
+  return sources.filter((url) => {
+    const metadata = portalSourceMetadata(url)
+    if (!metadata || metadata.issue) return false
+    return !saved.some((file) => file.source_url === url && file.archive_status === 'archived' && file.sharepoint_item_id)
+  })
+}
+
+export async function checkPortalFiles(env, watch, record, manifests) {
+  if (!env.EBUY_DB || !env.OPPORTUNITY_WORKSPACE_WORKFLOW?.createBatch) return
+  const workspace = await findWorkspaceBySource(env.EBUY_DB, watch)
+  if (!workspace?.rootFolderId) return
+  const saved = await listWorkspaceFileRecords(env.EBUY_DB, workspace.opportunityKey)
+  const enriched = await fetchSAMStructuredResources(record)
+  const portals = [...new Set([
+    enriched?.additionalInfoLink,
+    ...(enriched?.resourceLinks || []),
+    ...(enriched?.structuredResources || []).map((resource) => resource.url),
+    ...saved.map((file) => portalSourceMetadata(file.source_url)?.portalUrl),
+  ].filter(isSupportedPortalOpportunityUrl))].slice(0, 4)
+  const sources = []
+  for (const portal of portals) {
+    // Request-scoped sharing plus the existing short-lived Cache API cache.
+    if (!manifests.has(portal)) manifests.set(portal, await discoverPortalAttachments(portal))
+    sources.push(...manifests.get(portal))
+  }
+  if (portalFilesNeedingRefresh(sources, saved).length) {
+    await startAttachmentRefresh(env, watch, `portal-${alertFingerprint(sources)}`, { portalOnly: true })
+  }
+}
 
 /**
  * Lightweight, checkpointed monitor for opportunities already saved in
@@ -338,8 +372,8 @@ async function recordDurableSAMChange(env, watch) {
   return fingerprint
 }
 
-async function startAttachmentRefresh(env, watch, revision) {
-  if (!env.EBUY_DB || !env.OPPORTUNITY_WORKSPACE_WORKFLOW?.createBatch || !revision || watch.attachmentSyncRevision === revision) return false
+async function startAttachmentRefresh(env, watch, revision, { portalOnly = false } = {}) {
+  if (!env.EBUY_DB || !env.OPPORTUNITY_WORKSPACE_WORKFLOW?.createBatch || !revision || (!portalOnly && watch.attachmentSyncRevision === revision)) return false
   const workspace = await findWorkspaceBySource(env.EBUY_DB, {
     noticeId: watch.noticeId,
     solicitationNumber: watch.solicitationNumber,
@@ -354,11 +388,12 @@ async function startAttachmentRefresh(env, watch, revision) {
       params: {
         opportunityKey: workspace.opportunityKey,
         syncAttachments: true,
+        portalOnly,
         sourceRevision: revision,
       },
       retention: { successRetention: '7 days', errorRetention: '14 days' },
     }])
-    watch.attachmentSyncRevision = revision
+    if (!portalOnly) watch.attachmentSyncRevision = revision
     return true
   } catch (error) {
     await updateWorkspace(env.EBUY_DB, workspace.opportunityKey, {
@@ -445,6 +480,7 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
   }
   console.info(JSON.stringify({ event: 'sam_monitor_started', cursor, batchSize: batch.length, total: watches.length }))
   const errors = []
+  const portalManifests = new Map()
   let checked = 0
   for (const watch of batch) {
     try {
@@ -518,6 +554,9 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
           })
         }
       }
+      if (record) await checkPortalFiles(env, watch, record, portalManifests).catch((error) => {
+        errors.push({ noticeId: watch.noticeId, error: `Portal check: ${error.message}` })
+      })
       await writeWatch(env, watch)
       checked++
     } catch (error) {
