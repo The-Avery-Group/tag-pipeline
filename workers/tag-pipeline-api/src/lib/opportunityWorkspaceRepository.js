@@ -281,6 +281,7 @@ export async function recordWorkspaceFile(db, input) {
       sharepoint_item_id, sharepoint_web_url, archived_at, error_message, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
+      source_url = excluded.source_url,
       file_name = excluded.file_name, content_type = excluded.content_type,
       byte_size = excluded.byte_size, source_signature = excluded.source_signature,
       archive_status = excluded.archive_status, sharepoint_drive_id = excluded.sharepoint_drive_id,
