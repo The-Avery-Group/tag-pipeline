@@ -87,7 +87,10 @@ function mergeArchive(detail, archive) {
   const files = new Map((archive.files || []).map((file) => [file.sourceUrl, file]))
   return {
     ...detail,
-    attachments: (detail.attachments || []).map((attachment) => ({ ...attachment, ...(files.get(attachment.sourceUrl) || {}) })),
+    attachments: [...new Map([
+      ...(detail.attachments || []).map((attachment) => [attachment.sourceUrl, { ...attachment, ...(files.get(attachment.sourceUrl) || {}) }]),
+      ...files,
+    ]).values()],
     archive: {
       opportunityKey: archive.opportunityKey,
       archiveStatus: archive.archiveStatus,
@@ -259,11 +262,11 @@ export default function SAMOpportunityDetail({ toast }) {
   }, [addToPipeline, identifier, linkedPipeline, loadDetail, pipeline, retryingDetail, row, toast, updatePipeline])
 
   useEffect(() => {
-    if (!detail?.attachments?.length || archiveStartedRef.current) return
+    if (!(detail?.attachments?.length || detail?.links?.some((link) => link.resourceType === 'opportunity_portal')) || archiveStartedRef.current || row?.Status === 'dismissed') return
     if (detail.archive && !['new'].includes(detail.archive.archiveStatus)) return
     archiveStartedRef.current = true
     startArchive()
-  }, [detail, startArchive])
+  }, [detail, row?.Status, startArchive])
 
   useEffect(() => {
     if (!opportunityKey || detail?.archive?.archiveStatus !== 'running') return undefined
@@ -419,6 +422,11 @@ export default function SAMOpportunityDetail({ toast }) {
       </Card>
 
       {(detail.links?.length > 0 || detail.attachments?.length > 0) && <Card eyebrow="Resources" title="Attachments and links" count={(detail.links?.length || 0) + (detail.attachments?.length || 0)}>
+        <div className={styles.resourceHeading}>
+          <span>{archiveRunning || archiving ? (detail.archive?.progressPhase || 'Retrieving files…') : ''}</span>
+          <button className="btn" disabled={archiveRunning || archiving || row?.Status === 'dismissed'} onClick={() => startArchive({ force: true })}>{archiveRunning || archiving ? 'Refreshing files…' : 'Refresh files'}</button>
+        </div>
+        {!detail.attachments?.length && ['partial', 'error'].includes(detail.archive?.archiveStatus) && <p className={styles.fileError}>{detail.archive.errorMessage || 'Files could not be retrieved. Try Refresh files.'}</p>}
         {detail.attachments?.length > 0 && <div className={styles.resourceGroup}>
           <div className={styles.resourceHeading}><div><h3>Attachments</h3><span>{filesReady} of {detail.attachments.length} preserved in SharePoint</span></div>{detail.archive?.webUrl && <a href={detail.archive.webUrl} target="_blank" rel="noreferrer">Open archive folder</a>}</div>
           {(archiveRunning || archiving) && <div className={styles.archiveProgress}><div><span>{detail.archive?.progressPhase || 'Preparing SAM.gov archive'}</span><strong>{filesReady}/{detail.attachments.length}</strong></div><div><span style={{ width: `${Math.round((filesReady / Math.max(1, detail.attachments.length)) * 100)}%` }} /></div></div>}
