@@ -568,15 +568,15 @@ export async function resolveSAMOpportunityDescription(env, record) {
   }
 }
 
-function mergeSAMArchive(detail, archive) {
+export function mergeSAMArchive(detail, archive) {
   if (!archive) return { ...detail, archive: null }
   const files = new Map(archive.files.map((file) => [file.sourceUrl, file]))
   return {
     ...detail,
-    attachments: detail.attachments.map((attachment) => ({
-      ...attachment,
-      ...(files.get(attachment.sourceUrl) || {}),
-    })),
+    attachments: [...new Map([
+      ...detail.attachments.map((attachment) => [attachment.sourceUrl, { ...attachment, ...(files.get(attachment.sourceUrl) || {}) }]),
+      ...files,
+    ]).values()],
     archive: {
       opportunityKey: archive.opportunityKey,
       archiveStatus: archive.archiveStatus,
@@ -1660,7 +1660,8 @@ export async function handleSAM(req, env, ctx) {
           console.warn(JSON.stringify({ event: 'sam_opportunity_background_refresh_failed', message: error.message }))
         }))
       }
-      return json({ opportunity: cached, cached: true, stale, fetchedAt: stored?.fetchedAt || null })
+      const archive = env.EBUY_DB ? await findSAMArchive(env.EBUY_DB, cached) : null
+      return json({ opportunity: archive ? mergeSAMArchive(cached, archive) : cached, cached: true, stale, fetchedAt: stored?.fetchedAt || null })
     }
     try {
       return json(await loadLive())
