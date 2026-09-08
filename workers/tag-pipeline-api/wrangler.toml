@@ -41,6 +41,12 @@ migrations_dir = "migrations"
 [ai]
 binding = "AI"
 
+# Render the public, JavaScript-driven GSA MRAS survey only long enough to
+# discover its public attachment links. Files are still downloaded and stored
+# by the regular eBuy archive workflow.
+[browser]
+binding = "BROWSER"
+
 [[workflows]]
 name = "sam-opportunity-pull"
 binding = "SAM_PULL_WORKFLOW"
