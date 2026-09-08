@@ -297,6 +297,60 @@ function locationText(address) {
 const DOCUMENT_EXTENSION = 'pdf|docx?|xlsx?|pptx?|txt|rtf|csv|zip|7z|xml|json|jpg|jpeg|png|gif|tiff?'
 const DOCUMENT_URL_RE = new RegExp(`(?:https?:\\/\\/[^\\s<>"']+|\\/ebuy_upload\\/[^\\s<>"']+|\\/[^\\s<>"']+)\\.(?:${DOCUMENT_EXTENSION})(?:[?#][^\\s<>"']*)?`, 'gi')
 const DOCUMENT_NAME_RE = new RegExp(`(?:^|[\\s("'])(([\\w][\\w .,&'()+-]{0,100})\\.(?:${DOCUMENT_EXTENSION}))(?=$|[\\s)"',;:])`, 'gi')
+const MRAS_SURVEY_URL_RE = /^https:\/\/feedback\.gsa\.gov\/jfe\/form\/(SV_[A-Za-z0-9]+)\/?(?:[?#].*)?$/i
+
+export function isMrasSurveyUrl(value) {
+  return MRAS_SURVEY_URL_RE.test(String(value || '').trim())
+}
+
+export function isMrasFileUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim())
+    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'feedback.gsa.gov' &&
+      /^\/(?:CP|WRQualtricsSurveyEngine)\/File\.php$/i.test(url.pathname) &&
+      /^F_[A-Za-z0-9]+$/i.test(url.searchParams.get('F') || '')
+  } catch { return false }
+}
+
+export function mrasFileAttachment(url) {
+  const sourceUrl = String(url || '').trim()
+  const fileId = new URL(sourceUrl).searchParams.get('F')
+  return {
+    docPath: sourceUrl,
+    docName: `MRAS attachment ${fileId}`,
+    sourceUrl,
+    mrasSurveyAttachment: true,
+  }
+}
+
+export function mrasSurveyUrls(description) {
+  return [...new Set((String(description || '').match(/https:\/\/feedback\.gsa\.gov\/jfe\/form\/SV_[A-Za-z0-9]+\/?(?:\?[^\s<>"']*)?/gi) || [])
+    .map((value) => value.replace(/[.,;)]+$/, '')))].filter(isMrasSurveyUrl)
+}
+
+export async function discoverMrasSurveyAttachments(browser, surveyUrl) {
+  if (!isMrasSurveyUrl(surveyUrl)) throw connectorError('The MRAS survey link is not a supported public GSA survey', 'mras_survey_url_invalid', 422)
+  if (!browser?.quickAction) throw connectorError('MRAS survey retrieval is not configured', 'mras_browser_unavailable', 503)
+  const response = await browser.quickAction('links', {
+    url: surveyUrl,
+    visibleLinksOnly: true,
+    gotoOptions: { waitUntil: 'networkidle2', timeout: 30_000 },
+    waitForTimeout: 1_000,
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || payload?.success === false) throw connectorError(payload?.errors?.[0]?.message || `MRAS survey could not be read (${response.status})`, 'mras_survey_unavailable', response.status || 502)
+  const links = Array.isArray(payload?.result) ? payload.result : []
+  return [...new Map(links.filter(isMrasFileUrl).map((url) => [url, mrasFileAttachment(url)])).values()]
+}
+
+export function downloadedFileName(response, fallback) {
+  const disposition = String(response?.headers?.get('Content-Disposition') || '')
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  const candidate = encoded || plain
+  if (!candidate) return fallback
+  try { return decodeURIComponent(candidate).replace(/[\\/\\\\]/g, '-').trim() || fallback } catch { return candidate.replace(/[\\/\\\\]/g, '-').trim() || fallback }
+}
 
 function sourceRecord(value) {
   return value?.rfq && typeof value.rfq === 'object' ? value.rfq : value || {}
@@ -498,7 +552,12 @@ function descriptionAttachmentEvidence(description, attachments) {
   const text = String(description || '')
   const mentioned = /\battach(?:ed|ment|ments)?\b/i.test(text)
   const linked = [...text.matchAll(DOCUMENT_URL_RE)].map((match) => match[0].replace(/[.,;)]+$/, ''))
-  const linkedAttachments = linked.map((docPath) => ({ docPath, docName: attachmentFileName({ docPath }) }))
+  const mrasLinks = [...new Set((text.match(/https:\/\/feedback\.gsa\.gov\/(?:CP|WRQualtricsSurveyEngine)\/File\.php\?[^\s<>"']+/gi) || [])
+    .map((value) => value.replace(/[.,;)]+$/, '')))].filter(isMrasFileUrl)
+  const linkedAttachments = [
+    ...linked.map((docPath) => ({ docPath, docName: attachmentFileName({ docPath }) })),
+    ...mrasLinks.map(mrasFileAttachment),
+  ]
   const knownNames = new Set([...attachments, ...linkedAttachments].map((attachment) => attachmentFileName(attachment).toLowerCase()))
   const missing = [...text.matchAll(DOCUMENT_NAME_RE)]
     .map((match) => String(match[1] || '').trim()
