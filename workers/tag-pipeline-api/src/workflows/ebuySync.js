@@ -1,8 +1,11 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers'
 import {
   downloadEbuyAttachment,
+  discoverMrasSurveyAttachments,
+  downloadedFileName,
   getEbuyContractToken,
   getEbuyOpportunityDetail,
+  mrasSurveyUrls,
   listActiveEbuyOpportunities,
   normalizeLiveEbuyOpportunity,
 } from '../lib/ebuyClient.js'
@@ -17,6 +20,7 @@ import {
   finishEbuySyncCandidate,
   finishEbuySyncRun,
   getEbuyAttachmentArchiveProgress,
+  getEbuyOpportunity,
   getEbuySyncCandidateFailures,
   nextPendingEbuyAttachment,
   nextEbuySyncCandidateBatch,
@@ -129,12 +133,13 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
   try {
     const downloaded = await downloadPendingAttachment(env, encryptedTokens, pending)
     const contentType = downloaded.headers.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
+    const fileName = downloadedFileName(downloaded, pending.attachment.fileName)
     const archiveLocation = await ensureEbuyArchiveFolder(env, pending.requestId, {
       fastLookup: pending.archiveFolderReady,
     })
     const archived = await archiveEbuyFile(env, {
       requestId: pending.requestId,
-      fileName: pending.attachment.fileName,
+      fileName,
       contentType,
       body: downloaded.body,
       archiveLocation,
@@ -142,7 +147,7 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
     await recordArchivedEbuyAttachment(env.EBUY_DB, {
       id: pending.id,
       requestId: pending.requestId,
-      fileName: pending.attachment.fileName,
+      fileName,
       contentType,
       byteSize: archived.size || Number(downloaded.headers.get('Content-Length') || 0),
       sourceHash: null,
@@ -159,7 +164,7 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
           itemId: archived.itemId,
           targetDriveId: workspace.sharePointDriveId,
           targetFolderId: workspace.samFolderId,
-          fileName: pending.attachment.fileName,
+          fileName,
         })
         await updateEbuyAttachmentLocation(env.EBUY_DB, pending.id, finalLocation)
         try {
@@ -194,6 +199,42 @@ function canUseDiscoveryFallback(summary, requestId, error) {
   return Boolean((summary?.rfq?.rfqInfo?.rfqId || summary?.rfqId || requestId) && (summary?.title || summary?.rfq?.rfqInfo?.title))
 }
 
+function mergeMrasAttachments(record, attachments) {
+  const known = new Set((record.attachments || []).map((attachment) => String(attachment.sourceUrl || attachment.docPath || '').toLowerCase()))
+  for (const attachment of attachments) {
+    if (known.has(attachment.sourceUrl.toLowerCase())) continue
+    record.attachments.push({
+      ...attachment,
+      id: `${record.requestId}:mras:${attachment.sourceUrl}`,
+      contentType: 'application/octet-stream',
+      amendmentId: '',
+    })
+  }
+}
+
+async function enrichMrasSurveyAttachments(env, record, existing) {
+  if (record.requestType !== 'MRAS') return null
+  const surveys = mrasSurveyUrls(record.description)
+  if (!surveys.length) return null
+  const prior = existing?.sourceDetails?.mrasSurvey || {}
+  // A survey is rendered only when first encountered or when eBuy changes the
+  // link. This keeps Browser Run well within its free-plan daily allowance.
+  if (prior.url === surveys[0] && prior.status === 'ready') return null
+  try {
+    const attachments = await discoverMrasSurveyAttachments(env.BROWSER, surveys[0])
+    mergeMrasAttachments(record, attachments)
+    record.sourceDetails.mrasSurvey = { url: surveys[0], status: 'ready', fileCount: attachments.length, checkedAt: new Date().toISOString() }
+    return attachments.length ? null : {
+      requestId: record.requestId,
+      code: 'mras_survey_no_files',
+      message: 'The MRAS survey was available but did not expose any downloadable opportunity files',
+    }
+  } catch (error) {
+    record.sourceDetails.mrasSurvey = { url: surveys[0], status: 'needs_attention', checkedAt: new Date().toISOString(), error: error.message }
+    return { requestId: record.requestId, code: error.code || 'mras_survey_unavailable', message: `MRAS survey attachments could not be retrieved: ${error.message}` }
+  }
+}
+
 async function processCandidateWithToken(env, runId, candidate, jwt) {
   const summary = JSON.parse(candidate.summary_json || '{}')
   let detail
@@ -213,6 +254,9 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
 
   try {
     let record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
+    const existing = await getEbuyOpportunity(env.EBUY_DB, candidate.request_id)
+    const mrasWarning = await enrichMrasSurveyAttachments(env, record, existing)
+    if (mrasWarning) candidateWarning = candidateWarning || mrasWarning
     // The detail request above is authoritative for this pass. Repeating the
     // same request immediately when a description mentions a missing file
     // doubles upstream traffic without producing different data and can hold
