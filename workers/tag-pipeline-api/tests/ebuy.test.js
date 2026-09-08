@@ -2,7 +2,54 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EBUY_FIXTURE_OPPORTUNITIES } from '../src/fixtures/ebuyOpportunities.js'
 import { changedEbuyFields, hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportunity, retentionDeadline } from '../src/lib/ebuyDomain.js'
-import { normalizeLiveEbuyOpportunity, resolveEbuySetAside } from '../src/lib/ebuyClient.js'
+import { discoverMrasSurveyAttachments, downloadedFileName, isMrasFileUrl, isMrasSurveyUrl, mrasSurveyUrls, normalizeLiveEbuyOpportunity, resolveEbuySetAside } from '../src/lib/ebuyClient.js'
+
+test('MRAS public survey and file links are strictly recognized', () => {
+  const survey = 'https://feedback.gsa.gov/jfe/form/SV_4GG3TzARCjkjb0O'
+  const rfi = 'https://feedback.gsa.gov/CP/File.php?F=F_9Zfyhp5i1yxRlki'
+  const requirements = 'https://feedback.gsa.gov/WRQualtricsSurveyEngine/File.php?F=F_cBmhyUPBlBNxOzY&download=1'
+  assert.equal(isMrasSurveyUrl(survey), true)
+  assert.equal(isMrasFileUrl(rfi), true)
+  assert.equal(isMrasFileUrl(requirements), true)
+  assert.equal(isMrasFileUrl('https://example.gov/CP/File.php?F=F_9Zfyhp5i1yxRlki'), false)
+  assert.deepEqual(mrasSurveyUrls(`Read ${survey}. Not https://feedback.gsa.gov/jfe/form/not-a-survey.`), [survey])
+})
+
+test('MRAS Browser Run results retain only public GSA opportunity files', async () => {
+  const survey = 'https://feedback.gsa.gov/jfe/form/SV_4GG3TzARCjkjb0O'
+  const browser = { quickAction: async (action, options) => {
+    assert.equal(action, 'links')
+    assert.equal(options.url, survey)
+    return new Response(JSON.stringify({ success: true, result: [
+      'https://feedback.gsa.gov/CP/File.php?F=F_9Zfyhp5i1yxRlki',
+      'https://feedback.gsa.gov/WRQualtricsSurveyEngine/File.php?F=F_cBmhyUPBlBNxOzY&download=1',
+      'https://www.gsaelibrary.gsa.gov/ElibMain/home.do',
+      'https://feedback.gsa.gov/CP/File.php?F=not-valid',
+    ] }), { status: 200 })
+  } }
+  const attachments = await discoverMrasSurveyAttachments(browser, survey)
+  assert.equal(attachments.length, 2)
+  assert.deepEqual(attachments.map((item) => item.docPath), [
+    'https://feedback.gsa.gov/CP/File.php?F=F_9Zfyhp5i1yxRlki',
+    'https://feedback.gsa.gov/WRQualtricsSurveyEngine/File.php?F=F_cBmhyUPBlBNxOzY&download=1',
+  ])
+  assert.equal(downloadedFileName(new Response(null, { headers: { 'Content-Disposition': "attachment; filename*=utf-8''Draft%20Requirements.pdf" } }), 'fallback.pdf'), 'Draft Requirements.pdf')
+})
+
+test('MRAS file links in an eBuy description become archive-ready attachments', () => {
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFI-MRAS-1',
+    title: 'MRAS sample',
+    rfq: { rfqInfo: {
+      rfqId: 'RFI-MRAS-1', title: 'MRAS sample', requestTypeString: 'MRAS',
+      description: 'Download requirements https://feedback.gsa.gov/WRQualtricsSurveyEngine/File.php?F=F_cBmhyUPBlBNxOzY&download=1',
+    } },
+  }, {}, '47QTCA24D0001')
+  assert.equal(record.requestType, 'MRAS')
+  assert.equal(record.attachments.length, 1)
+  assert.equal(record.attachments[0].sourceUrl, 'https://feedback.gsa.gov/WRQualtricsSurveyEngine/File.php?F=F_cBmhyUPBlBNxOzY&download=1')
+  assert.match(record.attachments[0].fileName, /^MRAS attachment F_cBmhyUPBlBNxOzY$/)
+})
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
 import {
