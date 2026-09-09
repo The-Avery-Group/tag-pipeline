@@ -346,6 +346,13 @@ export async function discoverMrasSurveyAttachments(browser, surveyUrl) {
     waitForTimeout: 1_000,
   })
   const payload = await response.json().catch(() => null)
+  if (response.status === 429) {
+    throw connectorError(
+      payload?.errors?.[0]?.message || 'GSA MRAS document discovery is temporarily rate limited',
+      'mras_survey_rate_limited',
+      429,
+    )
+  }
   if (!response.ok || payload?.success === false) throw connectorError(payload?.errors?.[0]?.message || `MRAS survey could not be read (${response.status})`, 'mras_survey_unavailable', response.status || 502)
   const links = Array.isArray(payload?.result) ? payload.result : []
   return [...new Map(links.filter(isMrasFileUrl).map((url) => [url, mrasFileAttachment(url)])).values()]
