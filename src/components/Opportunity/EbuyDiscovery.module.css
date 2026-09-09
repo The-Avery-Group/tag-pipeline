@@ -7,6 +7,7 @@
 .table { border-collapse: separate; border-spacing: 0; min-width: 1380px; width: 100%; }
 .table th { background: var(--gray-50); box-shadow: 0 1px 0 var(--gray-200); position: sticky; top: 0; z-index: 2; }
 .table th, .table td { vertical-align: middle; }
+.dismissedRow { opacity: 0.55; }
 .titleCell { align-items: center; display: flex; gap: 6px; max-width: 360px; min-width: 285px; }
 .title { background: none; border: 0; color: var(--gray-900); cursor: pointer; font: 600 12px var(--font); padding: 0; text-align: left; }
 .title:hover { color: var(--blue-700); text-decoration: underline; }
