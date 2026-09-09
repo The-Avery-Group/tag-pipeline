@@ -36,6 +36,7 @@ import {
   updateEbuySyncRunProgress,
 } from '../lib/ebuyRepository.js'
 import { getWorkspace } from '../lib/opportunityWorkspaceRepository.js'
+import { discoverPortalAttachments, fetchSAMAttachment, isSupportedPortalOpportunityUrl, portalSourceMetadata } from '../lib/opportunityWorkspaceSam.js'
 import { archiveEbuyFile, deleteEmptyEbuyArchiveFolder, ensureEbuyArchiveFolder, moveArchivedEbuyFile } from '../lib/sharepointArchive.js'
 import {
   EBUY_ARCHIVE_FILES_PER_CHECKPOINT,
@@ -100,6 +101,12 @@ async function contractToken(env, encryptedTokens, contractNumber) {
 }
 
 async function downloadPendingAttachment(env, encryptedTokens, pending) {
+  // FedConnect and PIEE entries are discovered as external opportunity links.
+  // Their actual public files use the same constrained retriever as SAM and
+  // do not need an eBuy seller-session token.
+  if (portalSourceMetadata(pending.attachment.sourceUrl)) {
+    return fetchSAMAttachment(env, pending.attachment.sourceUrl)
+  }
   const jwt = await contractToken(env, encryptedTokens, pending.contractNumber)
   try {
     return await downloadEbuyAttachment(pending.requestId, pending.attachment, jwt)
@@ -131,9 +138,10 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
   const pending = await nextPendingEbuyAttachment(env.EBUY_DB, runStartedAt)
   if (!pending) return { processed: 0, archivedFiles: 0 }
   try {
-    const downloaded = await downloadPendingAttachment(env, encryptedTokens, pending)
-    const contentType = downloaded.headers.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
-    const fileName = downloadedFileName(downloaded, pending.attachment.fileName)
+    const download = await downloadPendingAttachment(env, encryptedTokens, pending)
+    const downloaded = download.response || download
+    const contentType = download.contentType || downloaded.headers.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
+    const fileName = download.fileName || downloadedFileName(downloaded, pending.attachment.fileName)
     const archiveLocation = await ensureEbuyArchiveFolder(env, pending.requestId, {
       fastLookup: pending.archiveFolderReady,
     })
@@ -149,7 +157,7 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
       requestId: pending.requestId,
       fileName,
       contentType,
-      byteSize: archived.size || Number(downloaded.headers.get('Content-Length') || 0),
+      byteSize: download.byteSize || archived.size || Number(downloaded.headers.get('Content-Length') || 0),
       sourceHash: null,
       driveId: archived.driveId,
       itemId: archived.itemId,
@@ -199,13 +207,14 @@ function canUseDiscoveryFallback(summary, requestId, error) {
   return Boolean((summary?.rfq?.rfqInfo?.rfqId || summary?.rfqId || requestId) && (summary?.title || summary?.rfq?.rfqInfo?.title))
 }
 
-function mergeMrasAttachments(record, attachments) {
+function mergeExternalAttachments(record, attachments, source = 'external') {
   const known = new Set((record.attachments || []).map((attachment) => String(attachment.sourceUrl || attachment.docPath || '').toLowerCase()))
   for (const attachment of attachments) {
-    if (known.has(attachment.sourceUrl.toLowerCase())) continue
+    const sourceUrl = String(attachment.sourceUrl || attachment.docPath || '')
+    if (!sourceUrl || known.has(sourceUrl.toLowerCase())) continue
     record.attachments.push({
       ...attachment,
-      id: `${record.requestId}:mras:${attachment.sourceUrl}`,
+      id: `${record.requestId}:${source}:${sourceUrl}`,
       contentType: 'application/octet-stream',
       amendmentId: '',
     })
@@ -222,7 +231,7 @@ async function enrichMrasSurveyAttachments(env, record, existing) {
   if (prior.url === surveys[0] && prior.status === 'ready') return null
   try {
     const attachments = await discoverMrasSurveyAttachments(env.BROWSER, surveys[0])
-    mergeMrasAttachments(record, attachments)
+    mergeExternalAttachments(record, attachments, 'mras')
     record.sourceDetails.mrasSurvey = { url: surveys[0], status: 'ready', fileCount: attachments.length, checkedAt: new Date().toISOString() }
     return attachments.length ? null : {
       requestId: record.requestId,
@@ -233,6 +242,44 @@ async function enrichMrasSurveyAttachments(env, record, existing) {
     record.sourceDetails.mrasSurvey = { url: surveys[0], status: 'needs_attention', checkedAt: new Date().toISOString(), error: error.message }
     return { requestId: record.requestId, code: error.code || 'mras_survey_unavailable', message: `MRAS survey attachments could not be retrieved: ${error.message}` }
   }
+}
+
+async function enrichExternalPortalAttachments(record, existing) {
+  const portalUrls = [...new Set((record.externalLinks || [])
+    .map((link) => link?.url)
+    .filter(isSupportedPortalOpportunityUrl))]
+  if (!portalUrls.length) return null
+
+  // Keep previously discovered portal files when eBuy later returns only its
+  // own attachment list. A live manifest is still checked on each sync so
+  // new or revised FedConnect/PIEE files can be archived automatically.
+  const previous = Array.isArray(existing?.attachments) ? existing.attachments : []
+  mergeExternalAttachments(record, previous.filter((attachment) => portalSourceMetadata(attachment.sourceUrl)), 'portal')
+
+  const outcomes = await Promise.all(portalUrls.map(async (portalUrl) => {
+    const discovered = await discoverPortalAttachments(portalUrl)
+    const issues = discovered.map(portalSourceMetadata).filter((metadata) => metadata?.issue)
+    const files = discovered.flatMap((sourceUrl, index) => {
+      const metadata = portalSourceMetadata(sourceUrl)
+      return metadata && !metadata.issue ? [{
+        sourceUrl,
+        docPath: sourceUrl,
+        docName: metadata.name || `Portal document ${index + 1}`,
+      }] : []
+    })
+    mergeExternalAttachments(record, files, 'portal')
+    return { portalUrl, fileCount: files.length, issues: issues.map((item) => item.message).filter(Boolean) }
+  }))
+  record.sourceDetails.externalPortalDocuments = {
+    checkedAt: new Date().toISOString(),
+    portals: outcomes.map(({ portalUrl, fileCount }) => ({ url: portalUrl, fileCount })),
+  }
+  const messages = outcomes.flatMap((outcome) => outcome.issues)
+  return messages.length ? {
+    requestId: record.requestId,
+    code: 'ebuy_portal_documents_unavailable',
+    message: messages[0],
+  } : null
 }
 
 async function processCandidateWithToken(env, runId, candidate, jwt) {
@@ -255,8 +302,9 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
   try {
     let record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
     const existing = await getEbuyOpportunity(env.EBUY_DB, candidate.request_id)
+    const portalWarning = await enrichExternalPortalAttachments(record, existing)
     const mrasWarning = await enrichMrasSurveyAttachments(env, record, existing)
-    if (mrasWarning) candidateWarning = candidateWarning || mrasWarning
+    if (portalWarning || mrasWarning) candidateWarning = candidateWarning || portalWarning || mrasWarning
     // The detail request above is authoritative for this pass. Repeating the
     // same request immediately when a description mentions a missing file
     // doubles upstream traffic without producing different data and can hold
