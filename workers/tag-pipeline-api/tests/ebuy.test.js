@@ -36,6 +36,16 @@ test('MRAS Browser Run results retain only public GSA opportunity files', async 
   assert.equal(downloadedFileName(new Response(null, { headers: { 'Content-Disposition': "attachment; filename*=utf-8''Draft%20Requirements.pdf" } }), 'fallback.pdf'), 'Draft Requirements.pdf')
 })
 
+test('MRAS Browser Run rate limits remain identifiable for the next automatic sync', async () => {
+  const browser = { quickAction: async () => new Response(JSON.stringify({
+    errors: [{ message: 'Rate limit exceeded' }],
+  }), { status: 429 }) }
+  await assert.rejects(
+    () => discoverMrasSurveyAttachments(browser, 'https://feedback.gsa.gov/jfe/form/SV_4GG3TzARCjkjb0O'),
+    (error) => error.code === 'mras_survey_rate_limited' && error.status === 429,
+  )
+})
+
 test('MRAS file links in an eBuy description become archive-ready attachments', () => {
   const record = normalizeLiveEbuyOpportunity({
     rfqId: 'RFI-MRAS-1',
