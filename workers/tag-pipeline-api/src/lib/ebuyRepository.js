@@ -607,7 +607,10 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
     // Discovery summaries arrive before the slower detail request. Preserve
     // known file and amendment metadata until the detail pass replaces it so
     // a transient eBuy failure cannot erase the information needed to retry.
-    if (!record.attachments.length && Array.isArray(previousRecord.attachments)) record.attachments = previousRecord.attachments
+    const retainedPreviousAttachments = Array.isArray(previousRecord.attachments)
+      ? previousRecord.attachments.filter((attachment) => !isSupportedPortalOpportunityUrl(attachment.sourceUrl || attachment.docPath))
+      : []
+    if (!record.attachments.length && retainedPreviousAttachments.length) record.attachments = retainedPreviousAttachments
     if (!record.externalLinks?.length && Array.isArray(previousRecord.externalLinks)) record.externalLinks = previousRecord.externalLinks
     if (!record.amendments.length && Array.isArray(previousRecord.amendments)) record.amendments = previousRecord.amendments
     // Discovery summaries and intermittent detail fallbacks are intentionally
