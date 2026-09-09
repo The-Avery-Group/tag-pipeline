@@ -1,5 +1,6 @@
 import { generateTotp } from './ebuyTotp.js'
 import { normalizeNoticeType } from './noticeTypes.js'
+import { isSupportedPortalOpportunityUrl } from './opportunityWorkspaceSam.js'
 
 const EBUY_ORIGIN = 'https://www.ebuy.gsa.gov'
 const EBUY_API = `${EBUY_ORIGIN}/ebuy/api/services/ebuyservices`
@@ -297,6 +298,8 @@ function locationText(address) {
 const DOCUMENT_EXTENSION = 'pdf|docx?|xlsx?|pptx?|txt|rtf|csv|zip|7z|xml|json|jpg|jpeg|png|gif|tiff?'
 const DOCUMENT_URL_RE = new RegExp(`(?:https?:\\/\\/[^\\s<>"']+|\\/ebuy_upload\\/[^\\s<>"']+|\\/[^\\s<>"']+)\\.(?:${DOCUMENT_EXTENSION})(?:[?#][^\\s<>"']*)?`, 'gi')
 const DOCUMENT_NAME_RE = new RegExp(`(?:^|[\\s("'])(([\\w][\\w .,&'()+-]{0,100})\\.(?:${DOCUMENT_EXTENSION}))(?=$|[\\s)"',;:])`, 'gi')
+const EXTERNAL_URL_RE = /https?:\/\/[^\s<>"']+/gi
+const DOCUMENT_FILE_RE = new RegExp(`\\.(?:${DOCUMENT_EXTENSION})(?:[?#].*)?$`, 'i')
 const MRAS_SURVEY_URL_RE = /^https:\/\/feedback\.gsa\.gov\/jfe\/form\/(SV_[A-Za-z0-9]+)\/?(?:[?#].*)?$/i
 
 export function isMrasSurveyUrl(value) {
@@ -507,6 +510,53 @@ function attachmentPath(attachment) {
     || attachment?.downloadUrl || attachment?.url || attachment?.href || attachment?.path || '').trim()
 }
 
+function absoluteUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim())
+    return /^https?:$/i.test(url.protocol) ? url : null
+  } catch { return null }
+}
+
+function isExternalEbuyUrl(value) {
+  const url = absoluteUrl(value)
+  return Boolean(url && url.origin !== EBUY_ORIGIN)
+}
+
+function isExternalDocument(attachment) {
+  const sourceUrl = attachmentPath(attachment)
+  if (!isExternalEbuyUrl(sourceUrl)) return false
+  return isMrasFileUrl(sourceUrl)
+    || DOCUMENT_FILE_RE.test(new URL(sourceUrl).pathname)
+    || DOCUMENT_FILE_RE.test(attachmentFileName(attachment, ''))
+}
+
+function externalLinkLabel(url, label = '') {
+  const preferred = String(label || '').replace(/\s+/g, ' ').trim()
+  if (preferred && !/^https?:\/\//i.test(preferred)) return preferred
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '')
+    if (host.endsWith('fedconnect.net')) return 'FedConnect opportunity'
+    if (host.endsWith('piee.eb.mil')) return 'PIEE opportunity'
+    return host
+  } catch { return 'External opportunity link' }
+}
+
+function externalLinksFrom(description, attachments) {
+  const links = new Map()
+  const add = (value, label = '') => {
+    const url = absoluteUrl(value)
+    if (!url || url.origin === EBUY_ORIGIN || isExternalDocument({ docPath: url.toString(), docName: label })) return
+    const href = url.toString()
+    if (!links.has(href)) links.set(href, { url: href, label: externalLinkLabel(href, label) })
+  }
+  for (const value of String(description || '').match(EXTERNAL_URL_RE) || []) add(value.replace(/[.,;)]+$/, ''))
+  for (const attachment of attachments) {
+    const sourceUrl = attachmentPath(attachment)
+    if (isExternalEbuyUrl(sourceUrl)) add(sourceUrl, attachmentFileName(attachment, ''))
+  }
+  return [...links.values()]
+}
+
 function collectAttachmentDtos(...roots) {
   const found = []
   const add = (attachment, amendmentId = '') => {
@@ -571,10 +621,16 @@ function descriptionAttachmentEvidence(description, attachments) {
 function normalizeAttachments(roots, requestId, description) {
   const source = collectAttachmentDtos(...roots)
   const evidence = descriptionAttachmentEvidence(description, source)
+  const externalLinks = externalLinksFrom(description, [...source, ...evidence.linkedAttachments])
   const deduped = new Map()
   for (const attachment of [...source, ...evidence.linkedAttachments]) {
     const fileName = attachmentFileName(attachment)
     const docPath = attachmentPath(attachment)
+    // eBuy sometimes represents a public opportunity page (for example,
+    // FedConnect) as an attachment DTO. It is a link, not a downloadable
+    // file. Keep it visible to users and let the sync discover the actual
+    // portal documents separately.
+    if (isSupportedPortalOpportunityUrl(docPath)) continue
     const amendmentId = String(attachment.amendmentId || '').trim()
     const identity = String(attachment.docSeqNum ?? attachment.seqNum ?? '').trim()
       || docPath.toLowerCase()
@@ -597,6 +653,7 @@ function normalizeAttachments(roots, requestId, description) {
   }
   return {
     attachments: [...deduped.values()],
+    externalLinks,
     references: {
       mentioned: evidence.mentioned,
       missing: evidence.missing,
@@ -672,6 +729,7 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
     isFollowOn: String(additional.followOnRequirement || '').toLowerCase() === 'yes',
     amendments,
     attachments: normalizedAttachmentData.attachments,
+    externalLinks: normalizedAttachmentData.externalLinks,
     attachmentReferences: normalizedAttachmentData.references,
     sourceDetails: { contractNumber, rfqInfo: safeInfo, rfqAdditionalInfo: additional, rfqProps: props, rfqCategories: safeCategories, rfqLineItems: detailRecord.rfqLineItems || summaryDetail.rfqLineItems || [], rfqAddresses: addresses },
   }
