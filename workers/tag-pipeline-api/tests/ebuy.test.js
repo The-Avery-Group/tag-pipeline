@@ -442,6 +442,18 @@ test('live eBuy normalization preserves the MRAS classification over an RFI requ
   assert.equal(record.requestType, 'MRAS')
 })
 
+test('a public GSA MRAS survey classifies a truncated eBuy title as MRAS', () => {
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFI7654322', title: 'Market research support for',
+  }, {
+    rfqInfo: {
+      rfqId: 'RFI7654322', title: 'Market research support for', requestTypeString: 'RFI',
+      description: 'Download the RFI from https://feedback.gsa.gov/jfe/form/SV_4GG3TzARCjkjb0O.',
+    },
+  }, '47QRAA22D0001')
+  assert.equal(record.requestType, 'MRAS')
+})
+
 test('live eBuy normalization discovers amendment and description-linked files and reports missing references', () => {
   const record = normalizeLiveEbuyOpportunity({ rfqId: 'RFI900' }, {
     rfqInfo: {
