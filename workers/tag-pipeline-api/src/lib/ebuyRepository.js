@@ -7,6 +7,7 @@ import {
 } from './ebuyDomain.js'
 import { resolveEbuySetAside } from './ebuyClient.js'
 import { alertFingerprint, alertStorageReady, getOpportunityAlert, upsertOpportunityAlert } from './opportunityAlerts.js'
+import { isSupportedPortalOpportunityUrl } from './opportunityWorkspaceSam.js'
 
 function encode(value) { return JSON.stringify(value ?? null) }
 function decode(value, fallback) {
@@ -525,6 +526,7 @@ export async function getEbuyOpportunity(db, requestId) {
     attachments: (attachments.results || []).map((item) => ({
       id: item.id, amendmentId: item.amendment_id, fileName: item.file_name,
       contentType: item.content_type, byteSize: item.byte_size, archiveStatus: item.archive_status,
+      sourceUrl: item.source_url,
       sharepointWebUrl: item.sharepoint_web_url, archivedAt: item.archived_at,
       errorMessage: item.error_message,
     })),
@@ -606,6 +608,7 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
     // known file and amendment metadata until the detail pass replaces it so
     // a transient eBuy failure cannot erase the information needed to retry.
     if (!record.attachments.length && Array.isArray(previousRecord.attachments)) record.attachments = previousRecord.attachments
+    if (!record.externalLinks?.length && Array.isArray(previousRecord.externalLinks)) record.externalLinks = previousRecord.externalLinks
     if (!record.amendments.length && Array.isArray(previousRecord.amendments)) record.amendments = previousRecord.amendments
     // Discovery summaries and intermittent detail fallbacks are intentionally
     // partial. Never replace richer saved posting data with an empty field
@@ -659,6 +662,18 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
         hash, rawJson, existing?.first_seen_at || nowIso, nowIso, purgeAfter, existing?.created_at || nowIso, nowIso)
 
     const batch = [statement]
+    // Earlier eBuy pulls treated a FedConnect/PIEE opportunity page as a
+    // file. Remove only unarchived legacy rows; actual portal documents use
+    // a distinct portal-file source URL and remain available for retry.
+    const activeAttachmentIds = new Set(record.attachments.map((attachment) => String(attachment.id || '')))
+    const obsoletePortalAttachmentIds = (previousRecord.attachments || [])
+      .filter((attachment) => isSupportedPortalOpportunityUrl(attachment.sourceUrl || attachment.docPath))
+      .map((attachment) => String(attachment.id || ''))
+      .filter((id) => id && !activeAttachmentIds.has(id))
+    for (const id of obsoletePortalAttachmentIds) {
+      batch.push(db.prepare("DELETE FROM ebuy_attachments WHERE request_id = ? AND id = ? AND archive_status != 'archived'")
+        .bind(record.requestId, id))
+    }
     // changedEbuyFields uses the material allow-list. Comparing the stored
     // hash alone would create a false history row when the hashing algorithm
     // is upgraded, even though the source opportunity did not change.
