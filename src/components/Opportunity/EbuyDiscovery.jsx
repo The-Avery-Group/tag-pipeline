@@ -225,7 +225,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
               {visibleOpportunities.map((opportunity) => {
                 const busy = actioning.has(opportunity.requestId)
                 const inPipeline = pipelineIds.has(opportunity.requestId.toLowerCase()) || ['tracked', 'added_to_pipeline'].includes(opportunity.reviewState)
-                return <tr key={opportunity.requestId}>
+                return <tr key={opportunity.requestId} className={opportunity.reviewState === 'dismissed' ? styles.dismissedRow : undefined}>
                   {selectionMode && <td className={styles.checkCell}><input type="checkbox" checked={selectedRows.has(opportunity.requestId)} onChange={(event) => setSelectedRows((current) => {
                     const next = new Set(current)
                     event.target.checked ? next.add(opportunity.requestId) : next.delete(opportunity.requestId)
