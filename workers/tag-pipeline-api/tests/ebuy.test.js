@@ -105,7 +105,7 @@ class PlaceholderCheckingStatement {
     if (this.sql.startsWith('SELECT request_id FROM ebuy_opportunities')) {
       return this.db.opportunities.has(this.values[0]) ? { request_id: this.values[0] } : null
     }
-    if (this.sql.includes('FROM ebuy_opportunities WHERE request_id')) return null
+    if (this.sql.includes('FROM ebuy_opportunities WHERE request_id')) return this.db.existingRecords.get(this.values[0]) || null
     return null
   }
   async all() { return { results: [] } }
@@ -113,7 +113,11 @@ class PlaceholderCheckingStatement {
 }
 
 class PlaceholderCheckingD1 {
-  constructor(opportunities = []) { this.executed = []; this.opportunities = new Set(opportunities) }
+  constructor(opportunities = [], existingRecords = []) {
+    this.executed = []
+    this.opportunities = new Set(opportunities)
+    this.existingRecords = new Map(existingRecords)
+  }
   prepare(sql) { return new PlaceholderCheckingStatement(sql, this) }
   async batch(statements) { for (const statement of statements) await statement.run(); return statements.map(() => ({ success: true })) }
 }
@@ -203,6 +207,25 @@ test('fixture synchronization binds every D1 statement consistently', async () =
   const result = await syncEbuyOpportunities(db, EBUY_FIXTURE_OPPORTUNITIES, { source: 'fixture' })
   assert.equal(result.inserted, EBUY_FIXTURE_OPPORTUNITIES.length)
   assert.ok(db.executed.length > EBUY_FIXTURE_OPPORTUNITIES.length)
+})
+
+test('a legacy FedConnect page is removed instead of being preserved as an eBuy file', async () => {
+  const portalUrl = 'https://www.fedconnect.net/FedConnect/?doc=47QTCX26Q0005&agency=GSA'
+  const record = normalizeLiveEbuyOpportunity({ rfqId: 'RFQ-PORTAL-LEGACY', title: 'Portal record' }, {
+    rfqInfo: { rfqId: 'RFQ-PORTAL-LEGACY', title: 'Portal record', description: portalUrl },
+  }, '47QTCA24D0001')
+  const legacy = {
+    request_id: record.requestId,
+    review_state: 'new',
+    raw_json: JSON.stringify({ ...record, attachments: [{ id: `${record.requestId}:9`, sourceUrl: portalUrl, docPath: portalUrl, fileName: 'FedConnect' }] }),
+  }
+  const db = new PlaceholderCheckingD1([], [[record.requestId, legacy]])
+
+  await syncEbuyOpportunities(db, [record], { source: 'live' })
+
+  const removal = db.executed.find((statement) => statement.sql.startsWith('DELETE FROM ebuy_attachments'))
+  assert.ok(removal)
+  assert.deepEqual(removal.values, [record.requestId, `${record.requestId}:9`])
 })
 
 test('candidate staging refreshes the contract used to retrieve duplicate discovery records', async () => {
