@@ -50,6 +50,20 @@ test('MRAS file links in an eBuy description become archive-ready attachments', 
   assert.equal(record.attachments[0].sourceUrl, 'https://feedback.gsa.gov/WRQualtricsSurveyEngine/File.php?F=F_cBmhyUPBlBNxOzY&download=1')
   assert.match(record.attachments[0].fileName, /^MRAS attachment F_cBmhyUPBlBNxOzY$/)
 })
+
+test('eBuy FedConnect opportunity links remain links while files are discovered separately', () => {
+  const fedConnect = 'https://www.fedconnect.net/FedConnect/?doc=47QTCX26Q0005&agency=GSA'
+  const record = normalizeLiveEbuyOpportunity({
+    rfqId: 'RFQ-PORTAL-1',
+    title: 'Portal-hosted opportunity',
+  }, {
+    rfqInfo: { rfqId: 'RFQ-PORTAL-1', title: 'Portal-hosted opportunity', description: `Click here to see more information: ${fedConnect}` },
+    rfqAttachments: [{ docName: 'Click here to see more information about this opportunity on FedConnect', docPath: fedConnect, docSeqNum: 9 }],
+  }, '47QTCA24D0001')
+
+  assert.deepEqual(record.attachments, [])
+  assert.deepEqual(record.externalLinks, [{ url: fedConnect, label: 'FedConnect opportunity' }])
+})
 import { decryptEbuySecret, encryptEbuySecret, maskEbuyUsername } from '../src/lib/ebuyCrypto.js'
 import { generateTotp } from '../src/lib/ebuyTotp.js'
 import {
