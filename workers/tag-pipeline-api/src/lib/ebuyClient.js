@@ -275,12 +275,17 @@ function isoDate(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-function requestType(info, summary = {}) {
+function requestType(info, summary = {}, description = '') {
   const explicit = normalizeNoticeType(info?.requestTypeString || summary.requestTypeString)
   const titleType = normalizeNoticeType(info?.title || summary.title)
   // MRAS records can retain an RFI-prefixed eBuy Request ID. Prefer the
-  // specific source label/title before falling back to that identifier.
-  if (explicit === 'MRAS' || titleType === 'MRAS') return 'MRAS'
+  // specific source label/title before falling back to that identifier. A
+  // public GSA MRAS survey or its download URLs are also authoritative when
+  // eBuy has shortened the title or labeled the request generically as RFI.
+  const hasMrasSurveyEvidence = mrasSurveyUrls(description).length > 0 ||
+    [...String(description || '').matchAll(/https:\/\/feedback\.gsa\.gov\/(?:CP|WRQualtricsSurveyEngine)\/File\.php\?[^\s<>"']+/gi)]
+      .some((match) => isMrasFileUrl(match[0].replace(/[.,;)]+$/, '')))
+  if (explicit === 'MRAS' || titleType === 'MRAS' || hasMrasSurveyEvidence) return 'MRAS'
   if (explicit) return explicit
   const requestId = String(info?.rfqId || summary?.rfqId || summary?.requestId || '').trim().toUpperCase()
   const idType = ['RFI', 'RFQ', 'RFP'].find((type) => requestId.startsWith(type))
@@ -701,7 +706,7 @@ export function normalizeLiveEbuyOpportunity(summary, detail, contractNumber) {
   return {
     id: String(requestId),
     requestId: String(requestId),
-    requestType: requestType(info, summary),
+    requestType: requestType(info, summary, description),
     title: String(info.title || detailRecord.title || summaryDetail.title || summary.title || ''),
     description,
     referenceNumber: String(info.referenceNum || info.referenceNumber || additional.referenceNumber || detailRecord.referenceNumber || summaryDetail.referenceNumber || summary.referenceNumber || ''),
