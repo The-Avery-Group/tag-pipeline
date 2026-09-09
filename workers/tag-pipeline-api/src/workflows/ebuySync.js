@@ -244,6 +244,14 @@ async function enrichMrasSurveyAttachments(env, record, existing) {
   }
 }
 
+function willCheckMrasSurvey(record, existing) {
+  if (record.requestType !== 'MRAS') return false
+  const surveys = mrasSurveyUrls(record.description)
+  if (!surveys.length) return false
+  const prior = existing?.sourceDetails?.mrasSurvey || {}
+  return prior.url !== surveys[0] || prior.status !== 'ready'
+}
+
 async function enrichExternalPortalAttachments(record, existing) {
   const portalUrls = [...new Set((record.externalLinks || [])
     .map((link) => link?.url)
@@ -303,6 +311,7 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
     let record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
     const existing = await getEbuyOpportunity(env.EBUY_DB, candidate.request_id)
     const portalWarning = await enrichExternalPortalAttachments(record, existing)
+    const mrasSurveyAttempted = willCheckMrasSurvey(record, existing)
     const mrasWarning = await enrichMrasSurveyAttachments(env, record, existing)
     if (portalWarning || mrasWarning) candidateWarning = candidateWarning || portalWarning || mrasWarning
     // The detail request above is authoritative for this pass. Repeating the
@@ -319,7 +328,7 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
     if (candidateWarning) record.sourceDetails.detailStatus = candidateWarning.code || 'detail_warning'
     const sync = await syncEbuyOpportunities(env.EBUY_DB, [record], { source: 'live', completeSnapshot: false })
     await finishEbuySyncCandidate(env.EBUY_DB, runId, candidate.request_id)
-    return { requestId: candidate.request_id, ...sync, candidateWarning }
+    return { requestId: candidate.request_id, ...sync, candidateWarning, mrasSurveyAttempted }
   } catch (error) {
     if (error?.code === 'ebuy_authentication_failed') throw error
     await finishEbuySyncCandidate(env.EBUY_DB, runId, candidate.request_id, error)
@@ -330,11 +339,12 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
 async function processCandidateBatch(env, runId, encryptedTokens, limit = 1) {
   const candidates = await nextEbuySyncCandidateBatch(env.EBUY_DB, runId, limit)
   if (!candidates.length) return { complete: true, processed: 0 }
-  const totals = { processed: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
+  const totals = { processed: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, mrasSurveyAttempts: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
   const jwt = await contractToken(env, encryptedTokens, candidates[0].contract_number)
   for (const candidate of candidates) {
     const result = await processCandidateWithToken(env, runId, candidate, jwt)
     totals.processed++
+    if (result.mrasSurveyAttempted) totals.mrasSurveyAttempts++
     mergeCounts(totals, { ...result, discovered: 0 })
     if (result.candidateError) totals.candidateErrors.push({ requestId: result.requestId, ...result.candidateError })
     if (result.candidateWarning) totals.candidateWarnings.push(result.candidateWarning)
@@ -429,6 +439,12 @@ export async function runEbuySyncWorkflow(env, event, step) {
         mergeCounts(totals, { ...result, discovered: 0 })
         if (result.candidateErrors?.length) totals.candidateErrors.push(...result.candidateErrors)
         if (result.candidateWarnings?.length) totals.candidateWarnings.push(...result.candidateWarnings)
+        // Browser Run's free tier permits one Quick Action every ten seconds.
+        // Only MRAS survey discovery uses that binding, so sleep durably here
+        // rather than slowing ordinary eBuy detail retrieval.
+        if (result.mrasSurveyAttempts && remaining > result.processed) {
+          await step.sleep(`Pace MRAS survey discovery ${iteration}`, '10 seconds')
+        }
         remaining = await step.do(`Count remaining eBuy opportunities ${iteration}`, () => countPendingEbuySyncCandidates(env.EBUY_DB, run.id))
         const processingPercent = Math.min(70, 30 + Math.round((processedCandidates / Math.max(1, totalCandidates)) * 40))
         await step.do(`Record eBuy processing progress ${iteration}`, () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
