@@ -9,7 +9,25 @@ import {
   normalizeSAMNoticeType,
   samTypeMatches,
   sortSAMOpportunities,
+  selectSAMDiscoveryRow,
+  samDetailLookupInput,
 } from '../src/utils/samOpportunityHelpers.js'
+
+test('SAM detail identifies a moved workbook row by notice rather than stale row number', () => {
+  const notice = 'a'.repeat(32)
+  const correct = { _rowIndex: 8, 'Notice ID': notice, 'Solicitation Number': 'RFP-1' }
+  assert.equal(selectSAMDiscoveryRow([{ _rowIndex: 2, 'Notice ID': 'b'.repeat(32) }, correct], notice, 2), correct)
+  assert.equal(selectSAMDiscoveryRow([correct], 'c'.repeat(32), 8), null)
+})
+
+test('SAM detail recovers notice from the saved SAM URL and keeps solicitation routes out of noticeid', () => {
+  const notice = 'a'.repeat(32)
+  const row = { 'Notice ID': 'RFP-1', 'SAM.gov URL': `https://sam.gov/workspace/contract/opp/${notice}/view`, 'Solicitation Number': 'RFP-1' }
+  assert.equal(samDetailLookupInput(row, 'RFP-1').noticeId, notice)
+  assert.equal(selectSAMDiscoveryRow([row], notice), row)
+  assert.deepEqual(samDetailLookupInput(null, 'RFP-1'), { noticeId: '', solicitationNumber: 'RFP-1', samUrl: '' })
+  assert.equal(samDetailLookupInput({ 'SAM.gov URL': `https://evil.example/opp/${notice}/view` }, 'RFP-1').noticeId, '')
+})
 
 test('normalizes line breaks and repeated spacing in SAM opportunity titles', () => {
   assert.equal(cleanSAMOpportunityTitle('  Program\n\n support   services  '), 'Program support services')
