@@ -48,12 +48,11 @@
 .badges span:not([data-notice-type]) {
   background: var(--blue-50);
   border: .5px solid var(--blue-200);
-  border-radius: 999px;
+  border-radius: var(--badge-radius);
   color: var(--blue-700);
-  font-size: 9px;
-  font-weight: 700;
-  padding: 3px 7px;
-  text-transform: uppercase;
+  font-size: var(--badge-font-size);
+  font-weight: var(--badge-font-weight);
+  padding: var(--badge-padding);
 }
 
 .badges .closeDuration {
@@ -61,8 +60,8 @@
   border-color: var(--amber-600);
   color: var(--amber-600);
   font-size: 11px;
-  font-weight: 800;
-  padding: 4px 9px;
+  font-weight: var(--badge-font-weight);
+  padding: var(--badge-padding);
   text-transform: none;
 }
 
