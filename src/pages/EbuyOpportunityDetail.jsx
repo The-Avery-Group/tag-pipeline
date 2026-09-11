@@ -5,7 +5,7 @@ import RichText from '@/components/Common/RichText'
 import CopyValue from '@/components/Common/CopyValue'
 import Modal from '@/components/Common/Modal'
 import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
-import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
+import { DiscoveryTypeBadge, DiscoveryReviewBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
 import { addEbuyDocumentLink, analyzeEbuyOpportunityDocuments, ebuyToPipelineRecord, getEbuyOpportunity, getEbuyOpportunityDocumentAnalysis, reviewEbuyOpportunityDocumentFinding, updateEbuyOpportunityState } from '@/services/ebuyService'
 import {
@@ -122,7 +122,7 @@ export default function EbuyOpportunityDetail({ toast }) {
       <button className={styles.back} onClick={() => navigate(returnTo)}>← Back to eBuy discovery</button>
       <section className={styles.hero}>
         <div>
-          <div className={styles.badges}><DiscoveryTypeBadge type={normalizeEbuyNoticeType(opportunity)} /><span>{opportunity.lifecycleStatus}</span><span className={styles.closeDuration}>{formatEbuyCloseDuration(opportunity.closesAt)}</span>{opportunity.reviewState !== 'new' && <span>{opportunity.reviewState.replaceAll('_', ' ')}</span>}</div>
+          <div className={styles.badges}><DiscoveryTypeBadge type={normalizeEbuyNoticeType(opportunity)} /><span>{opportunity.lifecycleStatus}</span><span className={styles.closeDuration}>{formatEbuyCloseDuration(opportunity.closesAt)}</span><DiscoveryReviewBadge state={opportunity.reviewState} /></div>
           <h1>{singleLine(opportunity.title)}</h1>
           <p>{opportunity.buyerAgency || 'Agency not provided'}{opportunity.buyerDepartment && opportunity.buyerDepartment !== opportunity.buyerAgency ? ` · ${opportunity.buyerDepartment}` : ''}</p>
         </div>
