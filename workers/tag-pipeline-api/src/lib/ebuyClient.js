@@ -314,7 +314,7 @@ export function isMrasSurveyUrl(value) {
 export function isMrasFileUrl(value) {
   try {
     const url = new URL(String(value || '').trim())
-    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'feedback.gsa.gov' &&
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && url.hostname.toLowerCase() === 'feedback.gsa.gov' &&
       /^\/(?:CP|WRQualtricsSurveyEngine)\/File\.php$/i.test(url.pathname) &&
       /^F_[A-Za-z0-9]+$/i.test(url.searchParams.get('F') || '')
   } catch { return false }
@@ -329,6 +329,39 @@ export function mrasFileAttachment(url) {
     sourceUrl,
     mrasSurveyAttachment: true,
   }
+}
+
+export async function downloadPublicMrasFile(value) {
+  let url = String(value || '').trim()
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (!isMrasFileUrl(url) || new URL(url).username || new URL(url).password || new URL(url).port) {
+      throw connectorError('Use a direct GSA document download link, not the survey page or another website.', 'mras_file_url_invalid', 422)
+    }
+    const response = await request(url, { redirect: 'manual', headers: { Accept: '*/*' } })
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('Location')
+      await response.body?.cancel()
+      if (!location) break
+      url = new URL(location, url).href
+      continue
+    }
+    const contentType = response.headers.get('Content-Type') || ''
+    const byteSize = Number(response.headers.get('Content-Length') || 0)
+    if (!response.ok || /text\/html|application\/json/i.test(contentType) || byteSize > 50 * 1024 * 1024 || !response.body) {
+      await response.body?.cancel()
+      throw connectorError('The link did not return a downloadable document under 50 MB. Open the link to check it.', 'mras_file_unavailable', 422)
+    }
+    let bytes = 0
+    const body = response.body.pipeThrough(new TransformStream({
+      transform(chunk, controller) {
+        bytes += chunk.byteLength
+        if (bytes > 50 * 1024 * 1024) throw new Error('The document exceeds the 50 MB download limit')
+        controller.enqueue(chunk)
+      },
+    }))
+    return { body, contentType, byteSize, fileName: downloadedFileName(response, `MRAS-${new URL(url).searchParams.get('F')}${/application\/pdf/i.test(contentType) ? '.pdf' : ''}`) }
+  }
+  throw connectorError('The GSA download redirected too many times', 'mras_file_redirect', 422)
 }
 
 export function mrasSurveyUrls(description) {
