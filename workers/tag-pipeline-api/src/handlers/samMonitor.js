@@ -390,6 +390,7 @@ async function startAttachmentRefresh(env, watch, revision, { portalOnly = false
         syncAttachments: true,
         portalOnly,
         sourceRevision: revision,
+        sourceSnapshot: portalOnly ? null : watch.snapshot,
       },
       retention: { successRetention: '7 days', errorRetention: '14 days' },
     }])
@@ -548,8 +549,10 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
         }
         watch.snapshot = nextSnapshot
         if (watch.change) await recordDurableSAMChange(env, watch)
-        if (watch.change?.sourceModifiedAt && watch.attachmentSyncRevision !== watch.change.sourceModifiedAt) {
-          await startAttachmentRefresh(env, watch, watch.change.sourceModifiedAt).catch((error) => {
+        // SAM can revise fields without changing its posted/modified date.
+        const refreshRevision = `${sourceDate || 'undated'}:${alertFingerprint(nextSnapshot)}`
+        if (watch.change && watch.attachmentSyncRevision !== refreshRevision) {
+          await startAttachmentRefresh(env, watch, refreshRevision).catch((error) => {
             console.warn(JSON.stringify({ event: 'sam_attachment_refresh_start_failed', noticeId: watch.noticeId, message: error.message }))
           })
         }
