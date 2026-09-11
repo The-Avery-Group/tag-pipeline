@@ -65,6 +65,10 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --badge-font-size: 11px;
+  --badge-font-weight: 500;
+  --badge-padding: 2px 8px;
+  --badge-radius: 10px;
 }
 
 html[data-theme='dark'] {
@@ -193,10 +197,10 @@ input, select, textarea {
 /* Badges */
 .badge {
   display: inline-block;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: 10px;
+  font-size: var(--badge-font-size);
+  font-weight: var(--badge-font-weight);
+  padding: var(--badge-padding);
+  border-radius: var(--badge-radius);
   white-space: nowrap;
 }
 .badge-tracking { background: var(--gray-100); color: var(--gray-600); }
@@ -217,6 +221,10 @@ input, select, textarea {
 
 /* Buttons */
 .btn {
+  --button-bg: var(--surface);
+  --button-hover: var(--gray-50);
+  --button-border: var(--gray-200);
+  --button-text: var(--gray-900);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -224,35 +232,38 @@ input, select, textarea {
   font-weight: 500;
   padding: 6px 12px;
   border-radius: var(--radius-md);
-  border: 0.5px solid var(--gray-200);
-  background: var(--surface);
-  color: var(--gray-900);
+  border: 0.5px solid var(--button-border);
+  background: var(--button-bg);
+  color: var(--button-text);
   transition: background 0.1s;
 }
-.btn:hover { background: var(--gray-50); }
-.btn:active { transform: scale(0.98); }
+.btn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--button-hover); text-decoration: none; }
+.btn:active:not(:disabled):not([aria-disabled='true']) { transform: scale(0.98); }
+.btn:disabled, .btn[aria-disabled='true'] { cursor: not-allowed; transform: none; }
+.btn[aria-disabled='true'] { opacity: 0.62; }
+.btn-secondary { --button-bg: var(--surface); --button-hover: var(--gray-50); --button-text: var(--gray-900); --button-border: var(--gray-200); }
 
 .btn-primary {
-  background: var(--blue-600);
-  border-color: var(--blue-600);
-  color: var(--text-on-brand);
+  --button-bg: var(--blue-600);
+  --button-hover: var(--blue-700);
+  --button-border: var(--blue-600);
+  --button-text: var(--text-on-brand);
 }
-.btn-primary:hover { background: var(--blue-700); }
 .btn-primary:focus-visible { outline-color: var(--blue-800); }
 
 .btn-danger {
-  background: var(--red-50);
-  border-color: transparent;
-  color: var(--red-600);
+  --button-bg: var(--red-50);
+  --button-hover: var(--danger-hover);
+  --button-border: transparent;
+  --button-text: var(--red-600);
 }
-.btn-danger:hover { background: var(--danger-hover); }
 
 .btn-ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--gray-600);
+  --button-bg: transparent;
+  --button-hover: var(--gray-100);
+  --button-border: transparent;
+  --button-text: var(--gray-600);
 }
-.btn-ghost:hover { background: var(--gray-100); }
 
 .btn-icon {
   width: 30px;
@@ -375,7 +386,6 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .card:hover { box-shadow: 0 2px 8px var(--shadow-color); }
 
 .btn { transition: background 0.15s, transform 0.1s, box-shadow 0.15s; }
-.btn:active { transform: scale(0.97); }
 
 .badge { transition: opacity 0.15s; }
 
