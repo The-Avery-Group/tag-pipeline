@@ -19,6 +19,7 @@ import {
   finishWorkspaceFolders,
   resolveWorkspaceDestination,
   updatePipelineFolderLink,
+  updatePipelineSAMFields,
   uploadSAMAttachment,
 } from '../lib/opportunityWorkspaceSharePoint.js'
 import {
@@ -55,6 +56,9 @@ export async function runOpportunityWorkspaceWorkflow(env, event, step) {
   try {
     const workspace = await step.do('Load opportunity workspace', () => getWorkspace(env.EBUY_DB, opportunityKey))
     if (!workspace) return { ok: false, error: 'Opportunity workspace request was not found' }
+    if (event.payload?.sourceSnapshot) await step.do('Update current SAM pipeline fields', {
+      retries: { limit: 2, delay: '10 seconds', backoff: 'exponential' }, timeout: '2 minutes',
+    }, () => updatePipelineSAMFields(env, workspace, event.payload.sourceSnapshot))
     const folderName = opportunityWorkspaceFolderName({ agency: workspace.agency, title: workspace.title })
 
     await step.do('Mark workspace provisioning active', () => updateWorkspace(env.EBUY_DB, opportunityKey, {
