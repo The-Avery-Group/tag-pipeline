@@ -11,7 +11,7 @@ export function normalizeEbuyNoticeType(opportunity) {
   // eBuy commonly assigns an RFI-prefixed Request ID to MRAS notices. The
   // explicit source label and opportunity title are therefore more specific
   // than the Request ID-derived RFI classification.
-  if (explicitType === 'MRAS' || titleType === 'MRAS') return 'MRAS'
+  if (explicitType === 'MRAS' || titleType === 'MRAS' || normalizeNoticeType(record.requestType) === 'MRAS') return 'MRAS'
   return explicitType
 }
 
