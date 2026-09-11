@@ -1331,7 +1331,7 @@ export default function Opportunities({ toast }) {
                                       {linkedOpportunity && (
                                         <button className={`btn ${styles.newActionPipeline}`} style={btnSm} title="View in pipeline"
                                           onClick={() => openOpportunity(linkedOpportunity)}>
-                                          View
+                                          Open pipeline
                                         </button>
                                       )}
                                       <button className={`${styles.newAction} ${styles.newActionDismiss}`} style={btnSm}
@@ -1350,7 +1350,7 @@ export default function Opportunities({ toast }) {
                                   {!selectionMode && (
                                     <button className={`${styles.newAction} ${styles.newActionSam}`} style={btnSm}
                                       onClick={() => openSAMOpportunity(opp)}>
-                                      Details
+                                      Open source
                                     </button>
                                   )}
                                 </div>
