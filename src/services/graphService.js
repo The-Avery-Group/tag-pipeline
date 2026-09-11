@@ -613,6 +613,8 @@ export const PIPELINE_HEADERS = [
 
 const PIPELINE_LIFECYCLE_COLUMNS = [
   'Opportunity ID', 'Outcome', 'Archived', 'Archived At', 'Archived By', 'Archive Reason', 'Flagged',
+  'Award Contract Number', 'Award Signed Date', 'Award Recipient', 'Award Recipient UEI',
+  'Award Amount', 'Award Performance Start', 'Award Performance End', 'Award Notice Link',
 ]
 let pipelineSchemaPromise = null
 
