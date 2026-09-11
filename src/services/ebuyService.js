@@ -20,6 +20,12 @@ export async function getEbuyOpportunity(requestId) {
   return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}`, { cache: 'no-store' })
 }
 
+export function addEbuyDocumentLink(requestId, url) {
+  return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}/document-links`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+  })
+}
+
 export async function analyzeEbuyOpportunityDocuments(requestId) {
   return workerJson(`/ebuy/opportunities/${encodeURIComponent(requestId)}/analysis`, { method: 'POST' })
 }
