@@ -31,9 +31,9 @@ function parseLocalDate(val) {
  * or Date objects.
  */
 export function formatDate(val) {
-  if (!val && val !== 0) return '—'
+  if (!val && val !== 0) return '-'
   const d = parseLocalDate(val)
-  if (isNaN(d.getTime())) return '—'
+  if (isNaN(d.getTime())) return '-'
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
@@ -43,7 +43,7 @@ export function formatDate(val) {
  * value has no time component (plain 'YYYY-MM-DD').
  */
 export function formatDateTime(val) {
-  if (!val && val !== 0) return '—'
+  if (!val && val !== 0) return '-'
   const s = String(val).trim()
   // No time component in the source value — nothing meaningful to show beyond the date
   if (s.length <= 10) return formatDate(val)
@@ -378,7 +378,7 @@ export function computeKPIs(pipeline = [], tasks = []) {
     if (owner) ownerCount[owner] = (ownerCount[owner] || 0) + 1
   })
   const topOwner = Object.entries(ownerCount)
-    .sort((a, b) => b[1] - a[1])[0]?.[0] || '—'
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || '-'
 
   const submittedRfps = pipeline.filter((opportunity) => {
     const noticeType = String(opportunity['Notice Type'] || '').trim().toUpperCase()

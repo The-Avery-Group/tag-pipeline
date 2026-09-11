@@ -484,7 +484,7 @@ export function useSAMOpportunities() {
       if (status?.status === 'running' && status?.startedAt) {
         const age = Date.now() - new Date(status.startedAt).getTime()
         if (age > STALL_THRESHOLD_MS) {
-          console.log('[SAM] Detected a stalled pull — auto-resuming')
+          console.log('[SAM] Detected a stalled pull - auto-resuming')
           try {
             await triggerPull({
               force: true,
