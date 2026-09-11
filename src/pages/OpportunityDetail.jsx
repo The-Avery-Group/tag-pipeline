@@ -1752,7 +1752,7 @@ export default function OpportunityDetail({ toast }) {
             {AWARD_FIELDS.map(([column, label, type]) => <div className="form-field" key={column}>
               <span className="form-label">{label}</span>
               <div>{opp[column] === undefined || opp[column] === null || opp[column] === '' ? '—'
-                : type === 'date' ? formatDate(opp[column])
+                : type === 'date' ? formatDate(dateOnly(opp[column]))
                   : type === 'number' ? fmtValue(opp[column])
                     : type === 'url' && /^https?:\/\//i.test(opp[column]) ? <a href={opp[column]} target="_blank" rel="noreferrer">Open Link</a>
                       : String(opp[column])}</div>
