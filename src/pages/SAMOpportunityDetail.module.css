@@ -7,7 +7,7 @@
 .hero h1 { font-size: 22px; line-height: 1.25; margin: 8px 0 5px; overflow-wrap: anywhere; }
 .hero p { color: var(--gray-500); font-size: 12px; margin: 0; }
 .badges, .heroActions { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
-.badges span { background: var(--blue-50); border: .5px solid var(--blue-200); border-radius: 999px; color: var(--blue-700); font-size: 9px; font-weight: 800; padding: 3px 7px; text-transform: uppercase; }
+.badges span:not([data-notice-type]) { background: var(--blue-50); border: .5px solid var(--blue-200); border-radius: var(--badge-radius); color: var(--blue-700); font-size: var(--badge-font-size); font-weight: var(--badge-font-weight); padding: var(--badge-padding); }
 .badges .active { background: var(--green-50); border-color: var(--green-600); color: var(--green-700); }
 .badges .inactive { background: var(--gray-100); border-color: var(--gray-300); color: var(--gray-600); }
 .heroActions { flex: 0 0 auto; justify-content: flex-end; max-width: 440px; }
