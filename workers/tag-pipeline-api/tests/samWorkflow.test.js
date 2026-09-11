@@ -3,11 +3,11 @@ import test from 'node:test'
 import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, parsePOC, refreshSAMDiscoveryRow, samDiscoveryUpdates, samDiscoveryRowMatchesArchive, startScheduledSAMPull } from '../src/handlers/sam.js'
 
 test('New-tab SAM refresh preserves deadline time and excludes user-managed fields', () => {
-  const patch = samDiscoveryUpdates({ title: 'Revised', responseDate: '2026-10-01T14:00:00-04:00', organization: 'Dept.Agency.Office', pointOfContact: ['Person|person@example.gov|123'] })
+  const patch = samDiscoveryUpdates({ title: 'Revised', postedDate: '2026-09-11', responseDate: '2026-10-01T14:00:00-04:00', organization: 'Dept.Agency.Office', pointOfContact: ['Person|person@example.gov|123'] })
   assert.equal(patch['Response Date'], '2026-10-01T14:00:00-04:00')
   assert.equal(patch.Agency, 'Agency')
   assert.equal(patch['Point of Contact'], 'Person | person@example.gov | 123')
-  for (const key of ['Status', 'Date Added', 'Flagged', 'Notice ID', 'Solicitation Number']) assert.equal(key in patch, false)
+  for (const key of ['Status', 'Posted Date', 'Date Added', 'Flagged', 'Notice ID', 'Solicitation Number']) assert.equal(key in patch, false)
 })
 
 test('New-tab SAM refresh skips dismissed rows and patches the current matching row', async () => {
