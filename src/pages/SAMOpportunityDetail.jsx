@@ -9,7 +9,7 @@ import { DiscoveryTypeBadge, DiscoveryReviewBadge } from '@/components/Opportuni
 import { usePipeline } from '@/hooks/usePipeline'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { formatDateTime } from '@/utils/kpiHelpers'
-import { buildSAMOpportunityPatch, cleanSAMOpportunityTitle, isSAMOpportunityFlagged, normalizeSAMNoticeType } from '@/utils/samOpportunityHelpers'
+import { buildSAMOpportunityPatch, cleanSAMOpportunityTitle, isSAMOpportunityFlagged, normalizeSAMNoticeType, selectSAMDiscoveryRow, samDetailLookupInput } from '@/utils/samOpportunityHelpers'
 import { retryOpportunityWorkspace } from '@/services/opportunityWorkspaceService'
 import { startAdaptivePolling } from '@/services/workerClient'
 import {
@@ -131,19 +131,16 @@ export default function SAMOpportunityDetail({ toast }) {
   const returnCandidate = searchParams.get('returnTo') || '/opportunities?tab=New&source=sam'
   const returnTo = returnCandidate.startsWith('/opportunities') ? returnCandidate : '/opportunities?tab=New&source=sam'
 
-  const row = useMemo(() => opportunities.find((item) => (
-    (rowIndex !== null && Number(item._rowIndex) === rowIndex) ||
-    same(item['Notice ID'], decodedNoticeId) || same(item['Solicitation Number'], decodedNoticeId)
-  )) || null, [decodedNoticeId, opportunities, rowIndex])
+  const row = useMemo(() => selectSAMDiscoveryRow(opportunities, decodedNoticeId, rowIndex), [decodedNoticeId, opportunities, rowIndex])
   const rowRef = useRef(row)
   rowRef.current = row
-  const savedNoticeId = row?.['Notice ID'] || decodedNoticeId
-  const savedSolicitationNumber = row?.['Solicitation Number'] || ''
+  const { noticeId: savedNoticeId, solicitationNumber: savedSolicitationNumber, samUrl: savedSamUrl } = samDetailLookupInput(row, decodedNoticeId)
 
   const identifier = useMemo(() => ({
     noticeId: savedNoticeId,
     solicitationNumber: savedSolicitationNumber,
-  }), [savedNoticeId, savedSolicitationNumber])
+    samUrl: savedSamUrl,
+  }), [savedNoticeId, savedSolicitationNumber, savedSamUrl])
   const opportunityKey = clean(detail?.solicitationNumber || detail?.noticeId || identifier.solicitationNumber || identifier.noticeId).toLowerCase()
   const loadDocumentAnalysis = useCallback(() => getSAMOpportunityDocumentAnalysis(opportunityKey), [opportunityKey])
   const runDocumentAnalysis = useCallback(() => analyzeSAMOpportunityDocuments({ ...identifier, noticeType: detail?.noticeType || '' }), [detail?.noticeType, identifier])
