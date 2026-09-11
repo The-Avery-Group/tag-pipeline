@@ -1,5 +1,10 @@
 export function dateOnly(value) {
   const raw = String(value || '').trim()
+  // Award fields in older workbook/cache records may still be Excel serials.
+  if (/^\d{5,6}(?:\.\d+)?$/.test(raw)) {
+    const date = new Date((Math.floor(Number(raw)) - 25569) * 86400000)
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10)
+  }
   const iso = raw.match(/^\d{4}-\d{2}-\d{2}/)
   if (iso) return iso[0]
   const parsed = new Date(raw)
