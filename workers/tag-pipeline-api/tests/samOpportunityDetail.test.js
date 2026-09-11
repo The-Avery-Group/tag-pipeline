@@ -1,7 +1,47 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeSAMOpportunityDetail, normalizeSAMStructuredResources, samDescriptionText, samOrganizationHierarchy } from '../src/lib/samOpportunityDetail.js'
-import { mergeSAMArchive, samArchiveInputForDiscoveryRow } from '../src/handlers/sam.js'
+import { mergeSAMArchive, samArchiveInputForDiscoveryRow, fetchSAMOpportunityRecord } from '../src/handlers/sam.js'
+
+test('SAM lookup falls back to solicitation but keeps the exact requested notice', async () => {
+  const original = globalThis.fetch, calls = [], notice = 'a'.repeat(32)
+  globalThis.fetch = async (input) => {
+    const url = new URL(input); calls.push(url)
+    return Response.json({ opportunitiesData: url.searchParams.has('noticeid') ? [] : [
+      { noticeId: 'b'.repeat(32), solicitationNumber: 'RFP-1' },
+      { noticeId: notice, solicitationNumber: 'RFP-1' },
+    ] })
+  }
+  try {
+    const result = await fetchSAMOpportunityRecord({ SAM_API_KEY: 'test' }, { noticeId: notice, solicitationNumber: 'RFP-1' })
+    assert.equal(result.noticeId, notice)
+    assert.equal(calls.length, 2)
+    const days = (new Date(calls[0].searchParams.get('postedTo')) - new Date(calls[0].searchParams.get('postedFrom'))) / 86400000
+    assert.equal(days, 364)
+  } finally { globalThis.fetch = original }
+})
+
+test('SAM lookup never substitutes a different notice or arbitrary first record', async () => {
+  const original = globalThis.fetch; let calls = 0
+  globalThis.fetch = async () => { calls++; return Response.json({ opportunitiesData: [{ noticeId: 'b'.repeat(32), solicitationNumber: 'RFP-1' }] }) }
+  try {
+    await assert.rejects(fetchSAMOpportunityRecord({ SAM_API_KEY: 'test' }, { noticeId: 'a'.repeat(32), solicitationNumber: 'RFP-1', postedDate: '2020-03-01' }), { code: 'sam_notice_not_returned' })
+    assert.equal(calls, 4)
+  } finally { globalThis.fetch = original }
+})
+
+test('SAM lookup accepts a saved public URL and rejects ambiguous solicitation results', async () => {
+  const original = globalThis.fetch, notice = 'a'.repeat(32)
+  globalThis.fetch = async (input) => {
+    const url = new URL(input)
+    if (url.searchParams.has('noticeid')) assert.equal(url.searchParams.get('noticeid'), notice)
+    return Response.json({ opportunitiesData: [{ noticeId: notice, solicitationNumber: 'RFP-1' }, { noticeId: 'b'.repeat(32), solicitationNumber: 'RFP-1' }] })
+  }
+  try {
+    assert.equal((await fetchSAMOpportunityRecord({ SAM_API_KEY: 'test' }, { samUrl: `https://sam.gov/opp/${notice}/view` })).noticeId, notice)
+    await assert.rejects(fetchSAMOpportunityRecord({ SAM_API_KEY: 'test' }, { noticeId: 'RFP-1' }), { code: 'sam_notice_ambiguous' })
+  } finally { globalThis.fetch = original }
+})
 
 test('portal files absent from the SAM API appear after archiving and remain deduplicated', () => {
   const file = { sourceUrl: 'https://www.fedconnect.net/file', fileName: 'Corrected RFI.pdf', webUrl: 'https://example.sharepoint.com/file' }
