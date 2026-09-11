@@ -44,6 +44,33 @@ test('MRAS files retain the original download filename', () => {
   assert.equal(downloadedFileName(new Response('', { headers: { 'Content-Disposition': "attachment; filename*=UTF-8''Draft%20Requirements.pdf" } }), 'File.php'), 'Draft Requirements.pdf')
 })
 
+test('MRAS survey discovery retains document names instead of generic attachment labels', () => {
+  const url = 'https://feedback.gsa.gov/CP/File.php?F=F_named'
+  const files = mrasAttachmentsFromPage(JSON.stringify({ QuestionText: `<a href="${url}" download="Draft PWS.docx">Download</a><a href="${url}&amp;download=1">Copy</a>` }))
+  assert.equal(files.length, 1)
+  assert.equal(files[0].fileName, 'Draft PWS.docx')
+  assert.equal(files[0].docName, 'Draft PWS.docx')
+  assert.equal(mrasAttachmentsFromPage(`<a href="${url}"><strong>Technical Questions.xlsx</strong></a>`)[0].fileName, 'Technical Questions.xlsx')
+})
+
+test('download filenames handle encoded language tags, quoted semicolons, and generic headers', () => {
+  const name = (disposition) => downloadedFileName(new Response('', { headers: { 'Content-Disposition': disposition } }), 'Draft PWS.pdf')
+  assert.equal(name("attachment; filename=Attachment; filename*=UTF-8'en'Draft%20Scope.docx"), 'Draft Scope.docx')
+  assert.equal(name('attachment; filename="Scope; Attachment 1.pdf"'), 'Scope; Attachment 1.pdf')
+  assert.equal(name('attachment; filename="Attachment"'), 'Draft PWS.pdf')
+  assert.equal(name('attachment; filename="../Scope.pdf"'), '..-Scope.pdf')
+})
+
+test('MRAS public downloads use the survey label only when the host provides no real filename', async () => {
+  const original = globalThis.fetch
+  try {
+    globalThis.fetch = async () => new Response('%PDF', { headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename=Attachment' } })
+    const file = await downloadPublicMrasFile('https://feedback.gsa.gov/CP/File.php?F=F_named', 'Draft PWS')
+    assert.equal(file.fileName, 'Draft PWS.pdf')
+    await file.body.cancel()
+  } finally { globalThis.fetch = original }
+})
+
 test('MRAS public survey and file links are strictly recognized', () => {
   const survey = 'https://feedback.gsa.gov/jfe/form/SV_4GG3TzARCjkjb0O'
   const rfi = 'https://feedback.gsa.gov/CP/File.php?F=F_9Zfyhp5i1yxRlki'
@@ -239,6 +266,9 @@ test('fixture synchronization binds every D1 statement consistently', async () =
   const result = await syncEbuyOpportunities(db, EBUY_FIXTURE_OPPORTUNITIES, { source: 'fixture' })
   assert.equal(result.inserted, EBUY_FIXTURE_OPPORTUNITIES.length)
   assert.ok(db.executed.length > EBUY_FIXTURE_OPPORTUNITIES.length)
+  const attachment = db.executed.find((statement) => statement.sql.startsWith('INSERT INTO ebuy_attachments'))
+  assert.match(attachment.sql, /file_name = CASE WHEN archive_status = 'archived'/)
+  assert.match(attachment.sql, /THEN file_name ELSE excluded.file_name END/)
 })
 
 test('a legacy FedConnect page is removed instead of being preserved as an eBuy file', async () => {
