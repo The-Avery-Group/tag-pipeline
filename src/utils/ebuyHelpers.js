@@ -1,5 +1,21 @@
 import { normalizeNoticeType } from './noticeTypes.js'
 
+export function ebuySurveyWarning(survey) {
+  if (survey?.status !== 'needs_attention') return ''
+  if (!survey.error) return 'The survey did not expose downloadable files. Open its link to check the documents.'
+  // A public survey security challenge is not a file-download failure. Keep
+  // other errors when multiple survey results are combined in the archive.
+  return String(survey.error).split('; ').filter((message) =>
+    !message.includes('GSA requires a browser security check before exposing these documents.')
+  ).join('; ')
+}
+
+export function awaitingEbuySyncStart(status, requestedAt, now = Date.now()) {
+  const startedAt = new Date(status?.lastSync?.started_at || 0).getTime()
+  return Boolean(requestedAt && status?.lastSync?.status !== 'running' &&
+    (!Number.isFinite(startedAt) || startedAt < requestedAt) && now - requestedAt < 30_000)
+}
+
 export function normalizeEbuyNoticeType(opportunity) {
   const record = opportunity && typeof opportunity === 'object'
     ? opportunity
