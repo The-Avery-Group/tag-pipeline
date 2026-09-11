@@ -33,16 +33,16 @@
 .detailOutlineCollapsed { gap: 0; }
 .outlineHeader { align-items: center; display: flex; gap: 6px; justify-content: space-between; min-height: 28px; }
 .outlineHeading { color: var(--gray-400); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.outlineToggle { align-items: center; background: var(--surface); border: 0.5px solid var(--gray-200); border-radius: var(--radius-sm); color: var(--gray-500); cursor: pointer; display: inline-flex; flex: 0 0 28px; font: 600 18px/1 var(--font); height: 28px; justify-content: center; padding: 0; }
-.outlineToggle:hover { background: var(--blue-50); border-color: var(--blue-600); color: var(--blue-700); }
-.outlineToggle:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
+.outlineToggle { align-items: center; background: var(--surface); border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); color: var(--gray-500); cursor: pointer; display: inline-flex; flex: 0 0 28px; font: 600 18px/1 var(--font); height: var(--control-icon-size); justify-content: center; padding: 0; width: var(--control-icon-size); font-size: 16px; }
+.outlineToggle:hover:not(:disabled):not([aria-disabled='true']) { background: var(--blue-50); border-color: var(--blue-600); color: var(--blue-700); }
+.outlineToggle:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); }
 .outlineGroup { display: grid; gap: 2px; }
 .outlineGroup strong { border-left: 3px solid var(--blue-600); color: var(--gray-900); font-size: 11px; margin-bottom: 3px; padding-left: 7px; }
 .outlineGroup:nth-of-type(3) strong { border-left-color: var(--green-600); }
 .outlineGroup:nth-of-type(4) strong { border-left-color: var(--amber-600); }
 .outlineGroup:nth-of-type(5) strong { border-left-color: var(--purple-500, var(--blue-600)); }
 .outlineGroup button { background: transparent; border: 0; border-radius: var(--radius-sm); color: var(--gray-500); cursor: pointer; font: inherit; font-size: 11px; padding: 4px 8px 4px 10px; text-align: left; }
-.outlineGroup button:hover { background: var(--gray-50); color: var(--blue-700); }
+.outlineGroup button:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); color: var(--blue-700); }
 .detailContent { min-width: 0; }
 .detailJump { display: none; }
 .categoryHeading { align-items: center; color: var(--gray-900); display: flex; font-size: 13px; font-weight: 650; gap: 8px; margin: 5px 0 9px; }
@@ -243,18 +243,19 @@
   transition: opacity .12s;
   white-space: nowrap;
 }
-.eightACallout:hover .eightAAddNote, .eightAAddNote:focus-visible, .eightAAddNote:disabled { opacity: 1; }
-.eightAAddNote:disabled { cursor: default; }
+.eightACallout:hover:not(:disabled):not([aria-disabled='true']) .eightAAddNote, .eightAAddNote:focus-visible, .eightAAddNote:disabled { opacity: 1; }
+.eightAAddNote:disabled { cursor: not-allowed; }
 
 .partnerBadge {
   background: var(--green-50);
   border: 0.5px solid var(--green-600);
-  border-radius: 999px;
+  border-radius: var(--badge-radius);
   color: var(--green-600);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 8px;
+  font-size: var(--badge-font-size);
+  font-weight: var(--badge-font-weight);
+  padding: var(--badge-padding);
   white-space: nowrap;
+  line-height: 1.4;
 }
 
 .partnerCallout {
@@ -276,14 +277,14 @@
   width: 100%;
 }
 
-.partnerCallout:hover { background: var(--green-50); border-color: var(--green-700); box-shadow: 0 1px 3px color-mix(in srgb, var(--green-600) 24%, transparent); }
-.partnerCallout:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
+.partnerCallout:hover:not(:disabled):not([aria-disabled='true']) { background: var(--green-50); border-color: var(--green-700); box-shadow: 0 1px 3px color-mix(in srgb, var(--green-600) 24%, transparent); }
+.partnerCallout:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); }
 .partnerCalloutMeta { color: var(--gray-500); font-size: 10px; margin-left: auto; }
 
 /* ── Incumbent award history ── */
 .incumbentHistory { grid-column: 1 / -1; border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); overflow: hidden; }
 .incumbentHistoryHeader { align-items: center; background: var(--surface); border: 0; color: var(--gray-900); cursor: pointer; display: flex; font-family: var(--font); justify-content: space-between; padding: 9px 10px; text-align: left; width: 100%; }
-.incumbentHistoryHeader:hover { background: var(--gray-50); }
+.incumbentHistoryHeader:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .incumbentHistoryHeader small { color: var(--gray-400); display: block; font-size: 10px; font-weight: 400; margin-top: 2px; }
 .incumbentHistoryHeader .incumbentHistoryIdentity { color: var(--gray-700); font-size: 11px; font-weight: 600; }
 .incumbentHistoryBody { border-top: 0.5px solid var(--gray-200); padding: 9px 10px; }
@@ -318,7 +319,7 @@
 .incumbentAgencyTable th:nth-child(3) { width: 14%; }
 .incumbentAgencyTable th:nth-child(4) { width: 24%; }
 .incumbentAgencyTable td { border-top: 0.5px solid var(--gray-100); color: var(--gray-700); padding: 7px 10px; text-align: right; white-space: nowrap; }
-.incumbentAgencyTable tbody tr:hover { background: var(--gray-50); }
+.incumbentAgencyTable tbody tr:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .incumbentAgencyTable td:first-child { text-align: left; }
 .incumbentAgencyTable td strong { color: var(--blue-600); font-weight: 600; }
 .incumbentAgencyName { align-items: center; display: flex; gap: 7px; min-width: 0; }
@@ -352,8 +353,8 @@
   padding: 0;
   text-align: left;
 }
-.contactOpen:hover .contactName { color: var(--blue-700); text-decoration: underline; }
-.contactOpen:focus-visible { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
+.contactOpen:hover:not(:disabled):not([aria-disabled='true']) .contactName { color: var(--blue-700); text-decoration: underline; }
+.contactOpen:focus-visible { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--blue-200); }
 
 .relatedContacts {
   border-top: 0.5px solid var(--gray-200);
@@ -362,7 +363,7 @@
 }
 
 .relatedContactsSummary { align-items: center; background: transparent; border: 0; color: var(--gray-500); cursor: pointer; display: flex; font: inherit; font-size: 11px; gap: 12px; justify-content: space-between; padding: 5px 2px; text-align: left; width: 100%; }
-.relatedContactsSummary:hover { color: var(--blue-700); }
+.relatedContactsSummary:hover:not(:disabled):not([aria-disabled='true']) { color: var(--blue-700); }
 .relatedContactsSummary strong { color: var(--gray-900); }
 .relatedContactsList { padding-top: 5px; }
 
@@ -376,13 +377,13 @@
 .relatedContactOpen { background: transparent; border: 0; color: var(--gray-900); cursor: pointer; display: grid; flex: 1; font: inherit; gap: 2px; min-width: 0; padding: 0; text-align: left; }
 .relatedContactOpen strong { font-size: 12px; }
 .relatedContactOpen span { color: var(--gray-500); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.relatedContactOpen:hover strong { color: var(--blue-700); text-decoration: underline; }
+.relatedContactOpen:hover:not(:disabled):not([aria-disabled='true']) strong { color: var(--blue-700); text-decoration: underline; }
 .relationshipRow { align-items: center; background: var(--surface); border: .5px solid var(--gray-200); border-radius: var(--radius-md); display: flex; gap: 8px; padding: 8px 9px; }
 .relationshipOpportunity { background: transparent; border: 0; color: var(--gray-900); cursor: pointer; flex: 1; font: inherit; min-width: 0; padding: 2px; text-align: left; }
 .relationshipOpportunity strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relationshipOpportunity small { font-size: 9px; margin-top: 2px; }
-.relationshipOpportunity:hover strong { color: var(--blue-700); text-decoration: underline; }
-.relationshipOpportunity:disabled { cursor: default; opacity: .65; }
+.relationshipOpportunity:hover:not(:disabled):not([aria-disabled='true']) strong { color: var(--blue-700); text-decoration: underline; }
+.relationshipOpportunity:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }
 .relationshipTypeControl, .relationshipLinkAs { align-items: center; color: var(--gray-400); display: flex; flex-shrink: 0; font-size: 9px; font-weight: 650; gap: 6px; text-transform: uppercase; }
 .relationshipTypeControl select { min-width: 126px; }
 .relationshipComposer { margin-top: 10px; position: relative; }
@@ -463,7 +464,7 @@
   transition: background 0.1s;
 }
 .contactDropdownRow:last-child { border-bottom: none; }
-.contactDropdownRow:hover { background: var(--blue-50); }
+.contactDropdownRow:hover:not(:disabled):not([aria-disabled='true']) { background: var(--blue-50); }
 
 .contactDropdownName {
   font-size: 12px;
@@ -514,7 +515,7 @@
 .noteAttachment > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .noteAttachment small { color: var(--gray-400); font-size: 9px; }
 .noteAttachment button { align-items: center; background: transparent; border: 0; border-radius: 3px; color: var(--gray-500); cursor: pointer; display: inline-flex; font-size: 15px; height: 20px; justify-content: center; padding: 0; width: 20px; }
-.noteAttachment button:hover { background: var(--red-50); color: var(--red-600); }
+.noteAttachment button:hover:not(:disabled):not([aria-disabled='true']) { background: var(--red-50); color: var(--red-600); }
 .noteFileError { color: var(--red-600); font-size: 10px; }
 .noteAddActions { align-items: center; display: flex; gap: 8px; }
 .noteAddActions > button { flex-shrink: 0; }
@@ -587,7 +588,7 @@
   margin-top: 4px;
   display: block;
 }
-.refreshCtx:hover { text-decoration: underline; }
+.refreshCtx:hover:not(:disabled):not([aria-disabled='true']) { text-decoration: underline; }
 
 @media (max-width: 760px) {
   .detailLayout { grid-template-columns: 1fr; }

@@ -1635,7 +1635,7 @@ export default function OpportunityDetail({ toast }) {
                   >✦ Discuss with AI</button>
                   {!archived && <button className="btn" onClick={handleEdit}><ActionIcon name="edit" /> Edit</button>}
                   {!archived && <button
-                    className="btn btn-ghost"
+                    className="btn btn-danger-ghost"
                     style={{ fontSize: 12, color: 'var(--red-600)' }}
                     onClick={() => setConfirmDelete(true)}
                     title="Delete this opportunity"
@@ -1922,14 +1922,14 @@ export default function OpportunityDetail({ toast }) {
               <div className={styles.fixedLinksEditor}>{[['GovWin link', C.govwin], ['Opportunity folder', C.folder], ['Opportunity slide deck', C.slideDeck]].map(([label, key], index) => <div className={styles.fixedLinkEditRow} key={key}>
                 <label className="form-label" htmlFor={`fixed-link-${index}`}>{label}</label>
                 <input id={`fixed-link-${index}`} className="form-input" value={draft[key]} placeholder="https://…" onChange={(event) => updateDraft({ [key]: event.target.value })} />
-                <button type="button" className="btn btn-ghost btn-icon" aria-label={`Delete ${label}`} title={`Delete ${label}`} onClick={() => updateDraft({ [key]: '' })} disabled={!draft[key]} style={{ color: 'var(--red-600)' }}><ActionIcon name="delete" /></button>
+                <button type="button" className="btn btn-danger-ghost btn-icon" aria-label={`Delete ${label}`} title={`Delete ${label}`} onClick={() => updateDraft({ [key]: '' })} disabled={!draft[key]} ><ActionIcon name="delete" /></button>
               </div>)}</div>
               <div className={styles.otherLinksEditor}>
                 <label className="form-label">Other links</label>
                 {draft.other.map((entry, index) => <div key={index} className={styles.linkEditRow}>
                   <input className="form-input" aria-label={`Link ${index + 1} name`} placeholder="Link name" value={entry.label} onChange={(event) => { const next = [...draft.other]; next[index] = { ...entry, label: event.target.value }; updateDraft({ other: next }) }} />
                   <input className="form-input" aria-label={`Link ${index + 1} URL`} placeholder="https://…" value={entry.url} onChange={(event) => { const next = [...draft.other]; next[index] = { ...entry, url: event.target.value }; updateDraft({ other: next }) }} />
-                  <button type="button" className="btn btn-ghost btn-icon" aria-label={`Delete link ${index + 1}`} title="Delete link" onClick={() => updateDraft({ other: draft.other.filter((_, itemIndex) => itemIndex !== index) })} style={{ color: 'var(--red-600)' }}><ActionIcon name="delete" /></button>
+                  <button type="button" className="btn btn-danger-ghost btn-icon" aria-label={`Delete link ${index + 1}`} title="Delete link" onClick={() => updateDraft({ other: draft.other.filter((_, itemIndex) => itemIndex !== index) })} ><ActionIcon name="delete" /></button>
                 </div>)}
                 <button type="button" className="btn text-sm" onClick={() => updateDraft({ other: [...draft.other, { label: '', url: '' }] })}>+ Add link</button>
               </div>

@@ -103,7 +103,7 @@
   text-align: left;
   width: 100%;
 }
-.groupHeader:hover { color: var(--blue-700); }
+.groupHeader:hover:not(:disabled):not([aria-disabled='true']) { color: var(--blue-700); }
 .groupHeader:focus-visible { border-radius: var(--radius-sm); outline: 2px solid var(--blue-200); outline-offset: 1px; }
 .groupName { align-items: center; display: inline-flex; gap: 6px; min-width: 0; }
 .groupChevron { display: inline-flex; font-size: 14px; justify-content: center; line-height: 1; width: 12px; }
@@ -129,7 +129,7 @@
   border-bottom: 0.5px solid var(--gray-200);
 }
 .taskRow:last-child { border-bottom: none; }
-.taskRow:hover { background: var(--gray-50); }
+.taskRow:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .taskRowActive { background: var(--blue-50) !important; }
 
 /* ── Circle checkbox ─────────────────────────────────────────────────────── */
@@ -146,13 +146,14 @@
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
   padding: 0;
+  color: var(--text-on-brand);
 }
-.circle:hover { border-color: var(--blue-600); background: var(--blue-50); }
+.circle:hover:not(:disabled):not([aria-disabled='true']) { border-color: var(--blue-600); background: var(--blue-50); }
 .circleDone {
-  background: var(--blue-600);
-  border-color: var(--blue-600);
+  background: var(--green-600);
+  border-color: var(--green-600);
 }
-.circleDone:hover { background: var(--blue-800); border-color: var(--blue-800); }
+.circleDone:hover:not(:disabled):not([aria-disabled='true']) { background: var(--green-600); border-color: var(--green-600); }
 
 /* ── Task body ───────────────────────────────────────────────────────────── */
 .taskBody {
@@ -220,12 +221,13 @@
 
 /* ── Status pill ─────────────────────────────────────────────────────────── */
 .statusPill {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 3px 9px;
-  border-radius: 10px;
+  font-size: var(--badge-font-size);
+  font-weight: var(--badge-font-weight);
+  padding: var(--badge-padding);
+  border-radius: var(--badge-radius);
   white-space: nowrap;
   flex-shrink: 0;
+  line-height: 1.4;
 }
 .pill_todo     { background: var(--gray-100); color: var(--gray-600); }
 .pill_progress { background: var(--blue-50);  color: var(--blue-800); }
@@ -302,21 +304,22 @@
 .panelTitle:focus { color: var(--blue-600); }
 
 .panelClose {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  border-radius: var(--radius-md);
   border: none;
   background: none;
   color: var(--gray-400);
   cursor: pointer;
-  font-size: 14px;
-  display: flex;
+  font-size: 16px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   transition: background 0.12s;
+  padding: 0;
 }
-.panelClose:hover { background: var(--gray-100); color: var(--gray-900); }
+.panelClose:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-100); color: var(--gray-900); }
 
 .panelBody {
   flex: 1;
@@ -411,13 +414,15 @@
   background: none;
   border: none;
   font-size: 12px;
-  color: var(--gray-400);
+  color: var(--red-600);
   cursor: pointer;
   font-family: var(--font);
-  padding: 4px 0;
+  padding: var(--control-compact-padding);
   transition: color 0.12s;
+  font: var(--control-compact-font);
+  border-radius: var(--radius-md);
 }
-.panelDeleteBtn:hover { color: var(--red-600); }
+.panelDeleteBtn:hover:not(:disabled):not([aria-disabled='true']) { color: var(--red-600); background: var(--red-50); }
 
 .panelDeleteConfirm {
   display: flex;

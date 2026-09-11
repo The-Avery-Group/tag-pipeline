@@ -65,13 +65,18 @@
   border: none;
   color: var(--gray-400);
   cursor: pointer;
-  font-size: 12px;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
+  font-size: 16px;
+  padding: 0;
+  border-radius: var(--radius-md);
   flex-shrink: 0;
   transition: color 0.1s;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.clearBtn:hover { color: var(--gray-900); }
+.clearBtn:hover:not(:disabled):not([aria-disabled='true']) { color: var(--gray-900); }
 
 /* ── Results area ── */
 .results {
@@ -113,7 +118,7 @@
   border-radius: 0;
   font-family: var(--font);
 }
-.result:hover { background: var(--blue-50); }
+.result:hover:not(:disabled):not([aria-disabled='true']) { background: var(--blue-50); }
 .resultActive { background: var(--blue-50); }
 
 .viewAll {
@@ -126,7 +131,7 @@
   text-align: left;
   cursor: pointer;
 }
-.viewAll:hover { text-decoration: underline; }
+.viewAll:hover:not(:disabled):not([aria-disabled='true']) { text-decoration: underline; }
 
 .resultTitle {
   font-size: 13px;

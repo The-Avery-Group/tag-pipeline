@@ -1846,7 +1846,7 @@ export default function Opportunities({ toast }) {
               </div>
             </div>
             {activeFilterCount > 0 && (
-              <button className="btn btn-ghost text-sm"
+              <button className="btn btn-danger-ghost text-sm"
                 style={{ marginTop: 8, color: 'var(--red-600)' }}
                 onClick={() => updateParams({
                   outlook: '', priority: '', assignedTo: '', agency: new Set(), setAside: '', bidNoBid: '',

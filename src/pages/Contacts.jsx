@@ -521,8 +521,8 @@ export default function Contacts({ toast }) {
                     {/* Footer actions */}
                     <div className={styles.panelActions}>
                       <button className="btn btn-primary" onClick={startEdit}><ActionIcon name="edit" /> Edit contact</button>
-                      <button className="btn btn-ghost"
-                        style={{ color: 'var(--red-600)' }}
+                      <button className="btn btn-danger-ghost"
+                        
                         onClick={() => setConfirmDelete(true)}>Delete</button>
                     </div>
                   </>

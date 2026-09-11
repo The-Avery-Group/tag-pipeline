@@ -25,7 +25,7 @@
 .alertStrip > strong { flex: 0 0 auto; font-size: 12px; }
 .alertStrip > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .alertStrip button { border: 0; background: transparent; color: var(--amber-600); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
-.alertStrip button:hover { text-decoration: underline; }
+.alertStrip button:hover:not(:disabled):not([aria-disabled='true']) { text-decoration: underline; }
 .fileTools { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(145px, 190px) auto; gap: 8px; margin-bottom: 12px; }
 .focusTarget { scroll-margin-top: 72px; }
 .fileEvidence { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; margin-bottom: 10px; border: 1px solid var(--amber-600); border-radius: var(--radius-md); background: var(--amber-50); }
@@ -41,7 +41,7 @@
 .changedMarker { display: inline-flex; margin-left: 7px; padding: 1px 5px; border: 1px solid var(--amber-600); border-radius: 999px; color: var(--amber-600); font-size: 9px; font-weight: 700; vertical-align: middle; }
 .fileTable td:nth-child(3) { max-width: 300px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .number { text-align: right !important; white-space: nowrap; }
-.sourceBadge { display: inline-flex; padding: 2px 7px; border: 1px solid var(--gray-300); border-radius: 999px; color: var(--gray-600); font-size: 10px; white-space: nowrap; }
+.sourceBadge { display: inline-flex; padding: var(--badge-padding); border: 1px solid var(--gray-300); border-radius: var(--badge-radius); color: var(--gray-600); font-size: var(--badge-font-size); white-space: nowrap; font-weight: var(--badge-font-weight); line-height: 1.4; }
 @media (max-width: 760px) {
   .relationshipGrid { grid-template-columns: 1fr; }
   .fileTools { grid-template-columns: 1fr; }

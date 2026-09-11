@@ -78,7 +78,7 @@
   cursor: pointer;
   transition: background 0.1s;
 }
-.msBtn:hover { background: var(--gray-50); }
+.msBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 
 .footer {
   font-size: 11px;

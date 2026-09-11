@@ -46,7 +46,7 @@
   cursor: pointer;
   font-family: var(--font);
 }
-.addBtn:hover { text-decoration: underline; }
+.addBtn:hover:not(:disabled):not([aria-disabled='true']) { text-decoration: underline; }
 
 .saveRow {
   display: flex;
@@ -89,7 +89,7 @@
   text-align: left;
   transition: background 0.12s;
 }
-.collapsibleHeader:hover { background: var(--gray-50); }
+.collapsibleHeader:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 
 .collapsibleTitle {
   font-size: 13px;
@@ -198,7 +198,7 @@
   text-align: left;
   transition: background 0.12s;
 }
-.collapsibleHeader:hover { background: var(--gray-50); }
+.collapsibleHeader:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 
 .collapsibleTitle {
   font-size: 13px;
@@ -417,12 +417,13 @@
   display: inline-flex;
   align-items: center;
   min-height: 20px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: var(--badge-padding);
+  border-radius: var(--badge-radius);
+  font-size: var(--badge-font-size);
+  font-weight: var(--badge-font-weight);
   background: var(--gray-100);
   color: var(--gray-600);
+  line-height: 1.4;
 }
 
 .integrationReady { background: var(--green-50); color: var(--green-700); }

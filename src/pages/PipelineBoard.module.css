@@ -21,7 +21,7 @@
   text-align: left;
   transition: background 0.12s;
 }
-.sectionHeader:hover { background: var(--gray-50); }
+.sectionHeader:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 
 .sectionColor {
   width: 10px;
@@ -92,14 +92,14 @@
   min-width: 0;
 }
 .row:last-child { border-bottom: none; }
-.row:hover { background: var(--gray-50); }
+.row:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 
 .rowHeader {
   cursor: default;
   padding: 6px 16px 6px;
   background: var(--gray-50);
 }
-.rowHeader:hover { background: var(--gray-50); }
+.rowHeader:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .rowHeader span {
   font-size: 10px;
   font-weight: 600;
@@ -135,7 +135,7 @@
   outline: none;
   transition: border-color 0.15s;
 }
-.moveSelect:hover  { border-color: var(--blue-200); }
+.moveSelect:hover:not(:disabled):not([aria-disabled='true'])  { border-color: var(--blue-200); }
 .moveSelect:focus  { border-color: var(--blue-600); }
 
 /* ── Moving state dots ── */
