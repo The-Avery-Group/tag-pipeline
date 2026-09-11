@@ -24,6 +24,17 @@ export function DiscoveryTypeBadge({ type }) {
   return <span data-notice-type={normalized || 'Other'} className={`${styles.typeBadge} ${styles[`type${normalized || 'Other'}`]}`}>{label}</span>
 }
 
+export function DiscoveryReviewBadge({ state }) {
+  const statuses = {
+    added_to_pipeline: ['In pipeline', 'badge-award'],
+    tracked: ['Tracked', 'badge-proposal'],
+    dismissed: ['Dismissed', 'badge-tracking'],
+    flagged: ['Flagged', 'badge-closed-lost'],
+  }
+  const status = statuses[state]
+  return status ? <span data-review-state={state} className={`badge ${status[1]}`}>{status[0]}</span> : null
+}
+
 function AgencyFilter({ agencies, selected, onToggle, onClear }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
