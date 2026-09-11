@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, parsePOC, samDiscoveryRowMatchesArchive, startScheduledSAMPull } from '../src/handlers/sam.js'
+import { isFlaggedSAMOpportunity, normalizeDiscoveryNoticeType, parseOrg, parsePOC, refreshSAMDiscoveryRow, samDiscoveryUpdates, samDiscoveryRowMatchesArchive, startScheduledSAMPull } from '../src/handlers/sam.js'
+
+test('New-tab SAM refresh preserves deadline time and excludes user-managed fields', () => {
+  const patch = samDiscoveryUpdates({ title: 'Revised', responseDate: '2026-10-01T14:00:00-04:00', organization: 'Dept.Agency.Office', pointOfContact: ['Person|person@example.gov|123'] })
+  assert.equal(patch['Response Date'], '2026-10-01T14:00:00-04:00')
+  assert.equal(patch.Agency, 'Agency')
+  assert.equal(patch['Point of Contact'], 'Person | person@example.gov | 123')
+  for (const key of ['Status', 'Date Added', 'Flagged', 'Notice ID', 'Solicitation Number']) assert.equal(key in patch, false)
+})
+
+test('New-tab SAM refresh skips dismissed rows and patches the current matching row', async () => {
+  const original = globalThis.fetch
+  const headers = ['Notice ID', 'Status', 'Title', 'Response Date', 'Flagged', 'Date Added', 'Custom']
+  let status = 'dismissed'; const writes = []
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes('login.microsoftonline.com')) return Response.json({ access_token: 'test', expires_in: 3600 })
+    if (String(url).endsWith('/columns')) return Response.json({ value: headers.map((name) => ({ name })) })
+    if (options.method === 'PATCH') { writes.push({ url: String(url), body: JSON.parse(options.body) }); return Response.json({}) }
+    return Response.json({ value: [{ index: 7, values: [['NOTICE', status, 'Old', '2026-09-01', 'Yes', '2026-08-01', 'Preserve me']] }] })
+  }
+  try {
+    const env = { MS_TENANT_ID: 'test', MS_CLIENT_ID: 'test', MS_CLIENT_SECRET: 'test', WORKBOOK_ID: 'test' }
+    assert.equal((await refreshSAMDiscoveryRow(env, 'notice', { title: 'New' })).skipped, true)
+    assert.equal(writes.length, 0)
+    status = 'new'
+    assert.equal((await refreshSAMDiscoveryRow(env, 'notice', { title: 'New', responseDate: '2026-10-01T14:00:00-04:00' })).updated, true)
+    assert.match(writes[0].url, /index=7/)
+    assert.deepEqual(writes[0].body.values[0], ['NOTICE', 'new', 'New', '2026-10-01T14:00:00-04:00', 'Yes', '2026-08-01', 'Preserve me'])
+  } finally { globalThis.fetch = original }
+})
 import { runSAMPullWorkflowCheckpoint } from '../src/workflows/samPullChain.js'
 
 test('shared SAM flags are recognized for cleanup protection', () => {
