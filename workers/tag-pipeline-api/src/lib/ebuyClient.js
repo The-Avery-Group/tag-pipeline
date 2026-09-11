@@ -336,26 +336,50 @@ export function mrasSurveyUrls(description) {
     .map((value) => value.replace(/[.,;)]+$/, '')))].filter(isMrasSurveyUrl)
 }
 
-export async function discoverMrasSurveyAttachments(browser, surveyUrl) {
+export function mrasAttachmentsFromPage(html) {
+  // Qualtrics embeds the first survey page as JSON inside its HTML. Decode
+  // string escapes without executing any of the page's JavaScript.
+  const text = String(html || '').replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\\//g, '/').replace(/\\"/g, '"').replace(/&amp;|&#38;|&#x26;/gi, '&')
+  const links = text.match(/https?:\/\/feedback\.gsa\.gov\/(?:CP|WRQualtricsSurveyEngine)\/File\.php\?[^\s<>"'\\]+/gi) || []
+  return [...new Map(links.map((url) => url.replace(/^http:/i, 'https:').replace(/[.,;)]+$/, ''))
+    .filter(isMrasFileUrl).map((url) => [new URL(url).searchParams.get('F'), mrasFileAttachment(url)])).values()]
+}
+
+export async function discoverMrasSurveyAttachments(surveyUrl) {
   if (!isMrasSurveyUrl(surveyUrl)) throw connectorError('The MRAS survey link is not a supported public GSA survey', 'mras_survey_url_invalid', 422)
-  if (!browser?.quickAction) throw connectorError('MRAS survey retrieval is not configured', 'mras_browser_unavailable', 503)
-  const response = await browser.quickAction('links', {
-    url: surveyUrl,
-    visibleLinksOnly: true,
-    gotoOptions: { waitUntil: 'networkidle2', timeout: 30_000 },
-    waitForTimeout: 1_000,
-  })
-  const payload = await response.json().catch(() => null)
-  if (response.status === 429) {
-    throw connectorError(
-      payload?.errors?.[0]?.message || 'GSA MRAS document discovery is temporarily rate limited',
-      'mras_survey_rate_limited',
-      429,
-    )
+  const response = await request(surveyUrl, { redirect: 'manual', headers: { Accept: 'text/html' } })
+  if (!response.ok) {
+    await response.body?.cancel()
+    throw connectorError(`GSA survey could not be read (${response.status})`, 'mras_survey_unavailable', response.status)
   }
-  if (!response.ok || payload?.success === false) throw connectorError(payload?.errors?.[0]?.message || `MRAS survey could not be read (${response.status})`, 'mras_survey_unavailable', response.status || 502)
-  const links = Array.isArray(payload?.result) ? payload.result : []
-  return [...new Map(links.filter(isMrasFileUrl).map((url) => [url, mrasFileAttachment(url)])).values()]
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let html = ''; let size = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > 4 * 1024 * 1024) throw connectorError('The GSA survey page exceeds the retrieval size limit', 'mras_survey_too_large')
+      html += decoder.decode(value, { stream: true })
+    }
+    html += decoder.decode()
+  } finally { await reader.cancel() }
+  const attachments = mrasAttachmentsFromPage(html)
+  if (!attachments.length && /SecurityContent|captcha|access denied/i.test(html)) {
+    throw connectorError('GSA requires a browser security check before exposing these documents. Open the survey link to access them.', 'mras_survey_security_check', 409)
+  }
+  return attachments
+}
+
+export async function discoverMrasSurveyFiles(surveys) {
+  const attachments = []; const errors = []
+  for (const url of surveys) {
+    try { attachments.push(...await discoverMrasSurveyAttachments(url)) }
+    catch (error) { errors.push(`${url}: ${error.message}`) }
+  }
+  return { attachments, errors }
 }
 
 export function downloadedFileName(response, fallback) {
