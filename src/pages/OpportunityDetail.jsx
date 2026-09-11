@@ -1748,18 +1748,20 @@ export default function OpportunityDetail({ toast }) {
 
         {/* ── Section 5: Contacts ── */}
         {(opp[C.phase] === 'Contract Awarded' || opp[C.outcome] === 'Won') && <Section title="Award information" id="overview-award">
-          <div className={styles.fieldGrid}>
-            {AWARD_FIELDS.map(([column, label, type]) => <div className="form-field" key={column}>
-              <span className="form-label">{label}</span>
-              <div>{opp[column] === undefined || opp[column] === null || opp[column] === '' ? '—'
+          <dl className={styles.summaryGrid}>
+            {AWARD_FIELDS.map(([column, label, type]) => <div className={styles.summaryField} key={column}>
+              <dt>{label}</dt>
+              <dd>{opp[column] === undefined || opp[column] === null || opp[column] === '' ? '—'
                 : type === 'date' ? formatDate(dateOnly(opp[column]))
                   : type === 'number' ? fmtValue(opp[column])
                     : type === 'url' && /^https?:\/\//i.test(opp[column]) ? <a href={opp[column]} target="_blank" rel="noreferrer">Open Link</a>
-                      : String(opp[column])}</div>
+                      : String(opp[column])}</dd>
             </div>)}
-          </div>
+          </dl>
+          <div className={styles.awardActions}>
           {!archived && <button className="btn btn-secondary" onClick={openAwardInformation} disabled={saving || editing}>Add / update award information</button>}
-          <p className="text-xs text-muted">Award documents are available in Opportunity files. Original solicitation details remain unchanged.</p>
+          <p className="text-xs text-muted">Award documents are available in Opportunity files.</p>
+          </div>
         </Section>}
 
         <Section title="Contacts" id="overview-contacts">
