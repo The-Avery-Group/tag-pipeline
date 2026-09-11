@@ -1,5 +1,6 @@
 import {
   applyPartnerFolderLinks,
+  createPartnerFolder,
   createPartnerUploadSession,
   listPartnerWorkspaceChildren,
   removePartnerUploads,
@@ -14,6 +15,8 @@ export async function handlePartnerWorkspaces(req, env) {
   const url = new URL(req.url)
   const path = url.pathname
   try {
+    const createMatch = path.match(/^\/partner-workspaces\/([^/]+)\/folder$/)
+    if (createMatch && req.method === 'POST') return json(await createPartnerFolder(env, decodeURIComponent(createMatch[1])))
     if (path === '/partner-workspaces/migration/scan' && req.method === 'POST') {
       return json(await scanPartnerFolders(env))
     }
