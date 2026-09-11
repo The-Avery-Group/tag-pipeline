@@ -103,6 +103,7 @@
 .summaryField dd { color: var(--gray-900); font-size: 13px; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
 .summaryEditGroups { display: grid; }
 .summaryCallouts { display: grid; gap: 8px; margin-top: 16px; }
+.awardActions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 16px; padding-top: 14px; border-top: 0.5px solid var(--gray-200); }
 
 .samSuggestion {
   background: var(--blue-50);
