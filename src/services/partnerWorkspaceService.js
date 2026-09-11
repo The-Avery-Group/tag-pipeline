@@ -1,5 +1,9 @@
 import { workerJson } from '@/services/workerClient'
 
+export function createPartnerFolder(uei) {
+  return workerJson(`/partner-workspaces/${encodeURIComponent(uei)}/folder`, { method: 'POST' })
+}
+
 export function scanPartnerWorkspaceFolders() {
   return workerJson('/partner-workspaces/migration/scan', { method: 'POST' })
 }
