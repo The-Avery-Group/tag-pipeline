@@ -34,7 +34,7 @@ import ActionIcon from '@/components/Common/ActionIcon'
 import CopyValue from '@/components/Common/CopyValue'
 import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
 import { dateOnly, localDate, sbaProfileUrl } from '@/utils/opportunityDates'
-import { needsRfiActivityPhasePrompt } from '@/utils/opportunityFormRules'
+import { needsRfiActivityPhasePrompt, AWARD_FIELDS, awardInformationPatch } from '@/utils/opportunityFormRules'
 import {
   invalidateCache,
   publishCacheUpdate,
@@ -154,16 +154,6 @@ function samNoticeIdFromAwardIdentifier(value) {
     if (queryId) return queryId
     return url.pathname.match(/\/(?:opp|opportunities)\/([a-f0-9]{32})(?:\/|$)/i)?.[1] || ''
   } catch { return '' }
-}
-
-function awardOpportunityPatch(record) {
-  const patch = {}
-  Object.values(record?.fields || {}).forEach((field) => {
-    if (field?.column && field.value !== null && field.value !== undefined && field.value !== '') {
-      patch[field.column] = field.column === C.endDate ? dateOnly(field.value) : field.value
-    }
-  })
-  return patch
 }
 
 function inferredLinkLabel(url) {
@@ -472,6 +462,7 @@ export default function OpportunityDetail({ toast }) {
   const [relationshipType, setRelationshipType] = useState('Related only')
   const [linkingOpportunity, setLinkingOpportunity] = useState(false)
   const [awardOutcomeOpen, setAwardOutcomeOpen] = useState(false)
+  const [awardDraft, setAwardDraft] = useState({})
   const [awardIdentifier, setAwardIdentifier] = useState('')
   const [awardFiles, setAwardFiles] = useState([])
   const [awardMatches, setAwardMatches] = useState([])
@@ -1031,6 +1022,27 @@ export default function OpportunityDetail({ toast }) {
     }
   }
 
+  const openAwardInformation = () => {
+    setAwardDraft(Object.fromEntries(AWARD_FIELDS.map(([column, , type]) => [column, type === 'date' ? dateOnly(opp[column]) : opp[column] ?? ''])))
+    setAwardMatches([]); setSelectedAwardMatch(0); setAwardFiles([]); setAwardLookupError('')
+    setAwardIdentifier(opp['Award Contract Number'] || opp['Award Notice Link'] || ''); setAwardUploadProgress(null); setAwardOutcomeOpen(true)
+  }
+
+  const useAwardMatch = (match, index = 0) => {
+    setSelectedAwardMatch(index)
+    const values = {
+      'Award Contract Number': match.award?.number,
+      'Award Signed Date': dateOnly(match.award?.date),
+      'Award Recipient': match.award?.awardeeName,
+      'Award Recipient UEI': match.award?.awardeeUEI,
+      'Award Amount': match.award?.amount,
+      'Award Performance Start': dateOnly(match.record?.fields?.periodOfPerformanceStart?.value),
+      'Award Performance End': dateOnly(match.record?.fields?.contractEndDate?.value),
+      'Award Notice Link': match.link,
+    }
+    setAwardDraft((current) => ({ ...current, ...Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== '')) }))
+  }
+
   const findAwardEvidence = async () => {
     const identifier = awardIdentifier.trim()
     if (!identifier || awardLookupBusy) return
@@ -1043,10 +1055,11 @@ export default function OpportunityDetail({ toast }) {
         if (!/award/i.test(String(notice.opportunityType || notice.baseType || ''))) {
           throw new Error('That SAM.gov link is not an Award Notice.')
         }
-        setAwardMatches([{
+        const match = {
           kind: 'notice', noticeId: notice.noticeId, title: notice.title,
           link: notice.samUrl, award: notice.award, solicitationNumber: notice.solicitationNumber,
-        }])
+        }
+        setAwardMatches([match]); useAwardMatch(match)
       } else {
         const response = await awards.lookup({ piid: identifier, forceRefresh: true })
         const matches = (response?.results || []).map((record) => ({
@@ -1056,27 +1069,28 @@ export default function OpportunityDetail({ toast }) {
           award: {
             number: record.fields?.awardNoticeNumber?.value || record.piid,
             date: record.fields?.awardNoticeDate?.value || record.originalSignedDate,
-            amount: record.fields?.awardNoticeAmount?.value || record.fields?.totalContractValue?.value,
+            amount: record.fields?.awardNoticeAmount?.value ?? record.fields?.totalContractValue?.value,
             awardeeName: record.fields?.awardNoticeAwardee?.value || record.fields?.incumbentName?.value,
             awardeeUEI: record.fields?.incumbentUEI?.value,
           },
         }))
         if (!matches.length) throw new Error('No matching SAM.gov award record was found. You can still upload the award document and record the win.')
-        setAwardMatches(matches); setSelectedAwardMatch(0)
+        setAwardMatches(matches); useAwardMatch(matches[0])
       }
     } catch (error) { setAwardLookupError(error.message) }
     finally { setAwardLookupBusy(false) }
   }
 
   const confirmWonOutcome = async () => {
+    if (saving || archived) return
     const match = awardMatches[selectedAwardMatch] || null
-    if (!match && !awardFiles.length) {
-      setAwardLookupError('Upload an award document or find the SAM.gov award record before continuing.')
-      return
-    }
     setSaving(true); setAwardLookupError('')
     let archiveWarning = ''
     try {
+      const patch = awardInformationPatch(awardDraft)
+      if (patch['Award Amount'] !== '') patch[C.value] = patch['Award Amount']
+      if (patch['Award Performance End']) patch[C.endDate] = patch['Award Performance End']
+      if (patch['Award Signed Date']) patch[C.awardDate] = patch['Award Signed Date']
       if (awardFiles.length) {
         await uploadOpportunityReferenceFiles(decodedCN, awardFiles, setAwardUploadProgress)
         announceOpportunityFilesChanged(decodedCN)
@@ -1088,23 +1102,17 @@ export default function OpportunityDetail({ toast }) {
           announceOpportunityFilesChanged(decodedCN)
         } catch (error) { archiveWarning = `SAM.gov award documents could not be saved automatically: ${error.message}` }
       }
-      const patch = match?.record ? awardOpportunityPatch(match.record) : {}
-      if (match?.award?.awardeeName) patch[C.incumbent] = match.award.awardeeName
-      if (match?.award?.awardeeUEI) patch[C.incumbentUEI] = match.award.awardeeUEI
-      if (match?.award?.amount) patch[C.value] = match.award.amount
-      if (match?.award?.date) patch[C.awardDate] = dateOnly(match.award.date)
-      if (match?.solicitationNumber) patch[C.solNum] = match.solicitationNumber
-      if (match?.link) {
+      if (patch['Award Notice Link']) {
         const existing = cleanLinks(opp[C.otherLinks])
-        if (!existing.some((value) => parseNamedLink(value).url.toLowerCase() === String(match.link).toLowerCase())) {
-          patch[C.otherLinks] = joinLinks([...existing, namedLinkLine('SAM.gov award notice', match.link)])
+        if (!existing.some((value) => parseNamedLink(value).url.toLowerCase() === patch['Award Notice Link'].toLowerCase())) {
+          patch[C.otherLinks] = joinLinks([...existing, namedLinkLine('Award notice', patch['Award Notice Link'])])
         }
       }
       patch[C.outcome] = 'Won'
       patch[C.phase] = 'Contract Awarded'
       await updateOpp(opp._rowIndex, patch, opp)
       setAwardOutcomeOpen(false); setAwardIdentifier(''); setAwardFiles([]); setAwardMatches([]); setAwardUploadProgress(null)
-      toast?.success(archiveWarning ? `Outcome recorded as Won. ${archiveWarning}` : 'Outcome recorded as Won and award evidence saved')
+      toast?.success(archiveWarning ? `Award information saved. ${archiveWarning}` : 'Award information saved')
     } catch (error) {
       setAwardLookupError(error.message)
       toast?.error(`Could not record award: ${error.message}`)
@@ -1482,7 +1490,7 @@ export default function OpportunityDetail({ toast }) {
             </button>
           )}
           {opp[C.phase] === 'Pending Award' && (
-            <select className="form-input" aria-label="Record opportunity outcome" value="" onChange={(event) => { if (event.target.value === 'Won') { setAwardIdentifier(awardNoticeAlert?.details?.samLink || awardNoticeAlert?.details?.awardNumber || ''); setAwardOutcomeOpen(true) } else if (event.target.value) handleOutcome(event.target.value) }} disabled={saving} style={{ width: 'auto' }}>
+            <select className="form-input" aria-label="Record opportunity outcome" value="" onChange={(event) => { if (event.target.value === 'Won') { openAwardInformation() } else if (event.target.value) handleOutcome(event.target.value) }} disabled={saving || archived} style={{ width: 'auto' }}>
               <option value="">Record outcome…</option>
               <option value="Won">Won</option>
               <option value="Lost">Lost</option>
@@ -1739,6 +1747,21 @@ export default function OpportunityDetail({ toast }) {
         </Section>
 
         {/* ── Section 5: Contacts ── */}
+        {(opp[C.phase] === 'Contract Awarded' || opp[C.outcome] === 'Won') && <Section title="Award information" id="overview-award">
+          <div className={styles.fieldGrid}>
+            {AWARD_FIELDS.map(([column, label, type]) => <div className="form-field" key={column}>
+              <span className="form-label">{label}</span>
+              <div>{opp[column] === undefined || opp[column] === null || opp[column] === '' ? '—'
+                : type === 'date' ? formatDate(opp[column])
+                  : type === 'number' ? fmtValue(opp[column])
+                    : type === 'url' && /^https?:\/\//i.test(opp[column]) ? <a href={opp[column]} target="_blank" rel="noreferrer">Open Link</a>
+                      : String(opp[column])}</div>
+            </div>)}
+          </div>
+          {!archived && <button className="btn btn-secondary" onClick={openAwardInformation} disabled={saving || editing}>Add / update award information</button>}
+          <p className="text-xs text-muted">Award documents are available in Opportunity files. Original solicitation details remain unchanged.</p>
+        </Section>}
+
         <Section title="Contacts" id="overview-contacts">
           {linkedContacts.length > 0
             ? linkedContacts.map((c) => (
@@ -2085,25 +2108,29 @@ export default function OpportunityDetail({ toast }) {
 
       {awardOutcomeOpen && (
         <Modal
-          title="Record winning award"
+          title={opp[C.phase] === 'Contract Awarded' || opp[C.outcome] === 'Won' ? 'Edit award information' : 'Record winning award'}
           onClose={() => { if (!saving) { setAwardOutcomeOpen(false); setAwardLookupError('') } }}
           footer={<>
             <button className="btn btn-secondary" onClick={() => setAwardOutcomeOpen(false)} disabled={saving}>Cancel</button>
-            <button className="btn btn-primary" onClick={confirmWonOutcome} disabled={saving || awardLookupBusy}>{saving ? 'Saving…' : 'Confirm win'}</button>
+            <button className="btn btn-primary" onClick={confirmWonOutcome} disabled={saving || awardLookupBusy}>{saving ? 'Saving…' : opp[C.phase] === 'Contract Awarded' || opp[C.outcome] === 'Won' ? 'Save award information' : 'Confirm win'}</button>
           </>}
         >
           <div className={styles.awardOutcomeForm}>
-            <p className="text-sm text-muted">Upload the contracting officer’s award document, or provide an award number or SAM.gov Award Notice link so the CRM can retrieve the award details.</p>
+            <p className="text-sm text-muted">Enter award details, upload the award document, or find an award using its identifier. Review retrieved values before saving. All details and documents are optional and can be added later.</p>
             <div className={styles.awardLookupRow}>
               <label className="form-field"><span className="form-label">Award identifier or SAM.gov link</span><input className="form-input" value={awardIdentifier} onChange={(event) => setAwardIdentifier(event.target.value)} placeholder="Award number, notice ID, or SAM.gov link" /></label>
               <button className="btn btn-secondary" onClick={findAwardEvidence} disabled={!awardIdentifier.trim() || awardLookupBusy}>{awardLookupBusy ? 'Searching…' : 'Find award'}</button>
             </div>
             {awardMatches.length > 0 && <div className={styles.awardMatches}>
               {awardMatches.map((match, index) => <label key={`${match.noticeId || match.award?.number || index}-${index}`}>
-                <input type="radio" name="award-match" checked={selectedAwardMatch === index} onChange={() => setSelectedAwardMatch(index)} />
+                <input type="radio" name="award-match" checked={selectedAwardMatch === index} onChange={() => useAwardMatch(match, index)} />
                 <span><strong>{match.award?.number || match.title || 'SAM.gov award record'}</strong><small>{[match.award?.awardeeName, match.award?.date ? formatDate(match.award.date) : '', match.award?.amount ? fmtValue(match.award.amount) : ''].filter(Boolean).join(' · ') || match.title}</small></span>
               </label>)}
             </div>}
+            {AWARD_FIELDS.map(([column, label, type]) => <label className="form-field" key={column}>
+              <span className="form-label">{label}</span>
+              <input className="form-input" type={type} step={type === 'number' ? 'any' : undefined} min={type === 'number' ? '0' : undefined} value={awardDraft[column] ?? ''} onChange={(event) => setAwardDraft((current) => ({ ...current, [column]: event.target.value }))} />
+            </label>)}
             <label className="form-field"><span className="form-label">Award document</span><input className="form-input" type="file" multiple onChange={(event) => setAwardFiles(Array.from(event.target.files || []))} /></label>
             {awardFiles.length > 0 && <p className="text-xs text-muted">{awardFiles.length} file{awardFiles.length === 1 ? '' : 's'} selected.</p>}
             {awardUploadProgress && <p className="text-xs text-muted">Uploading award document {awardUploadProgress.completed || 0} of {awardUploadProgress.total || awardFiles.length}…</p>}
