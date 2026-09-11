@@ -259,6 +259,7 @@ const DATE_COLUMNS = new Set([
   'DueDate', 'CreatedDate', 'UpdatedDate', 'Date',
   'Submission Date (Response Date)*',
   'Contract End Date*',
+  'Award Signed Date', 'Award Performance Start', 'Award Performance End',
   'Anticipated year for Award (MM/DD/YYYY)*',
   'Questions Due',
   '8(a) Exit Date',
