@@ -10,9 +10,15 @@ import {
   reconcileEbuyPipelineRecords,
   unlinkEbuyPipelineRecord,
   updateEbuyReviewState,
+  recordArchivedEbuyAttachment,
+  recordEbuyAttachmentFailure,
 } from '../lib/ebuyRepository.js'
+import { downloadPublicMrasFile, isMrasFileUrl } from '../lib/ebuyClient.js'
+import { attachmentRecordId } from '../lib/opportunityWorkspaceSam.js'
+import { getWorkspace, recordWorkspaceFile } from '../lib/opportunityWorkspaceRepository.js'
+import { uploadSAMAttachment } from '../lib/opportunityWorkspaceSharePoint.js'
 import { connectEbuyAccount, disconnectEbuyAccount, testStoredEbuyConnection } from '../lib/ebuyConnection.js'
-import { deleteArchivedEbuyFile, deleteEmptyEbuyArchiveFolder } from '../lib/sharepointArchive.js'
+import { archiveEbuyFile, deleteArchivedEbuyFile, deleteEmptyEbuyArchiveFolder } from '../lib/sharepointArchive.js'
 import { cancelDocumentAnalysis, getDocumentAnalysis, reviewDocumentFinding, startDocumentAnalysisWorkflow } from '../lib/documentAnalysis.js'
 
 function json(data, status = 200) {
@@ -89,6 +95,39 @@ export async function handleEbuy(req, env, identity = {}) {
   const url = new URL(req.url)
   const path = url.pathname
   try {
+    const documentLinkMatch = path.match(/^\/ebuy\/opportunities\/([^/]+)\/document-links$/)
+    if (documentLinkMatch && req.method === 'POST') {
+      const db = requireDatabase(env)
+      const requestId = decodeURIComponent(documentLinkMatch[1])
+      const record = await getEbuyOpportunity(db, requestId)
+      if (!record) return json({ error: 'eBuy opportunity not found' }, 404)
+      if (record.reviewState === 'dismissed') return json({ error: 'Restore this opportunity before adding documents' }, 409)
+      const body = await req.json()
+      const sourceUrl = String(body.url || '').trim()
+      if (!isMrasFileUrl(sourceUrl)) return json({ error: 'Enter a direct GSA document download link.' }, 422)
+      const id = await attachmentRecordId(requestId, sourceUrl)
+      const prior = record.attachments.find((file) => file.sourceUrl === sourceUrl && file.archiveStatus === 'archived')
+      if (prior) return json({ ok: true, reused: true, file: prior })
+      const now = new Date().toISOString()
+      await db.prepare(`INSERT INTO ebuy_attachments (id, request_id, file_name, source_url, archive_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`)
+        .bind(id, requestId, `GSA document ${new URL(sourceUrl).searchParams.get('F')}`, sourceUrl, now, now).run()
+      try {
+        const workspace = await getWorkspace(db, record.pipelineContractId || requestId)
+        const file = await downloadPublicMrasFile(sourceUrl)
+        const fileName = file.fileName.replace(/(\.[^.]+)?$/, `-${id.slice(0, 8)}$1`)
+        let saved
+        if (workspace?.sharePointDriveId && (workspace.samFolderId || workspace.typeFolderId)) {
+          saved = { ...await uploadSAMAttachment(env, { driveId: workspace.sharePointDriveId, folderId: workspace.samFolderId || workspace.typeFolderId, fileName, contentType: file.contentType, body: file.body }), driveId: workspace.sharePointDriveId }
+          await recordWorkspaceFile(db, { id, opportunityKey: workspace.opportunityKey, sourceUrl, fileName: saved.name || fileName, contentType: file.contentType, archiveStatus: 'archived', driveId: saved.driveId, itemId: saved.itemId, webUrl: saved.webUrl, archivedAt: now })
+        } else saved = await archiveEbuyFile(env, { requestId, fileName, contentType: file.contentType, body: file.body })
+        const archived = await recordArchivedEbuyAttachment(db, { id, requestId, fileName: saved.name || fileName, contentType: file.contentType, byteSize: saved.size || file.byteSize || null, sourceHash: id, driveId: saved.driveId, itemId: saved.itemId, webUrl: saved.webUrl })
+        return json({ ok: true, file: archived })
+      } catch (error) {
+        await recordEbuyAttachmentFailure(db, id, error.message)
+        throw error
+      }
+    }
     if (path === '/ebuy/status' && req.method === 'GET') return json(await getEbuyStatus(env))
     if (path === '/ebuy/sync/status' && req.method === 'GET') return json(await getEbuyStatus(env))
     if (path === '/ebuy/connection' && req.method === 'POST') {
