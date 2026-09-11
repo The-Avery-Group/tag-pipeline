@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers'
 import {
   downloadEbuyAttachment,
+  downloadPublicMrasFile,
   discoverMrasSurveyFiles,
   downloadedFileName,
   getEbuyContractToken,
@@ -102,6 +103,10 @@ async function contractToken(env, encryptedTokens, contractNumber) {
 }
 
 async function downloadPendingAttachment(env, encryptedTokens, pending) {
+  const sourceUrl = pending.attachment.sourceUrl || pending.attachment.docPath
+  if (isMrasFileUrl(sourceUrl)) {
+    return downloadPublicMrasFile(sourceUrl, pending.attachment.fileName || pending.attachment.docName)
+  }
   // FedConnect and PIEE entries are discovered as external opportunity links.
   // Their actual public files use the same constrained retriever as SAM and
   // do not need an eBuy seller-session token.
@@ -141,7 +146,7 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
   try {
     const download = await downloadPendingAttachment(env, encryptedTokens, pending)
     const downloaded = download.response || download
-    const contentType = download.contentType || downloaded.headers.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
+    const contentType = download.contentType || downloaded.headers?.get('Content-Type') || pending.attachment.contentType || 'application/octet-stream'
     const fileName = download.fileName || downloadedFileName(downloaded, pending.attachment.fileName)
     const archiveLocation = await ensureEbuyArchiveFolder(env, pending.requestId, {
       fastLookup: pending.archiveFolderReady,
@@ -153,12 +158,13 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
       body: downloaded.body,
       archiveLocation,
     })
+    const archivedFileName = archived.name || fileName
     await recordArchivedEbuyAttachment(env.EBUY_DB, {
       id: pending.id,
       requestId: pending.requestId,
-      fileName,
+      fileName: archivedFileName,
       contentType,
-      byteSize: download.byteSize || archived.size || Number(downloaded.headers.get('Content-Length') || 0),
+      byteSize: download.byteSize || archived.size || Number(downloaded.headers?.get('Content-Length') || 0),
       sourceHash: null,
       driveId: archived.driveId,
       itemId: archived.itemId,
@@ -173,7 +179,7 @@ async function archiveNextAttachment(env, runStartedAt, encryptedTokens) {
           itemId: archived.itemId,
           targetDriveId: workspace.sharePointDriveId,
           targetFolderId: workspace.samFolderId,
-          fileName,
+          fileName: archivedFileName,
         })
         await updateEbuyAttachmentLocation(env.EBUY_DB, pending.id, finalLocation)
         try {
@@ -215,6 +221,8 @@ function mergeExternalAttachments(record, attachments, source = 'external') {
     if (!sourceUrl || known.has(sourceUrl.toLowerCase())) continue
     record.attachments.push({
       ...attachment,
+      fileName: attachment.fileName || attachment.docName || 'Attachment',
+      docPath: attachment.docPath || sourceUrl,
       id: `${record.requestId}:${source}:${sourceUrl}`,
       contentType: 'application/octet-stream',
       amendmentId: '',
