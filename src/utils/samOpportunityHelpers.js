@@ -3,6 +3,38 @@ import { serializeSAMPOCs } from './samPoc.js'
 
 const NOTICE_TYPES = new Set(['RFI', 'MRAS', 'RFP', 'RFQ'])
 
+export function samNoticeIdFromValue(value) {
+  const text = String(value || '').trim()
+  const compact = text.replaceAll('-', '')
+  if (/^[a-f\d]{32}$/i.test(compact)) return compact.toLowerCase()
+  try {
+    const url = new URL(text)
+    if (url.protocol !== 'https:' || !['sam.gov', 'www.sam.gov'].includes(url.hostname)) return ''
+    const match = url.pathname.match(/\/opp\/([a-f\d-]+)(?:\/|$)/i)
+    return match ? samNoticeIdFromValue(match[1]) : ''
+  } catch { return '' }
+}
+
+export function selectSAMDiscoveryRow(rows, routeIdentifier, rowIndex = null) {
+  const route = String(routeIdentifier || '').trim().toLowerCase()
+  if (!route) return null
+  const notice = samNoticeIdFromValue(route)
+  const matches = rows.filter((row) => notice
+    ? [row['Notice ID'], row['SAM.gov URL']].some((value) => samNoticeIdFromValue(value) === notice)
+    : String(row['Solicitation Number'] || '').trim().toLowerCase() === route)
+  // A row number is only a tie-breaker among identity-verified records.
+  return matches.find((row) => rowIndex !== null && Number(row._rowIndex) === rowIndex) || matches[0] || null
+}
+
+export function samDetailLookupInput(row, routeIdentifier) {
+  const routeNotice = samNoticeIdFromValue(routeIdentifier)
+  return {
+    noticeId: routeNotice || samNoticeIdFromValue(row?.['SAM.gov URL']) || samNoticeIdFromValue(row?.['Notice ID']),
+    solicitationNumber: String(row?.['Solicitation Number'] || (!routeNotice ? routeIdentifier : '') || '').trim(),
+    samUrl: String(row?.['SAM.gov URL'] || '').trim(),
+  }
+}
+
 export function cleanSAMOpportunityTitle(value) {
   return String(value || '').replace(/\s+/g, ' ').trim()
 }
