@@ -611,7 +611,7 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
       ? previousRecord.attachments.filter((attachment) => !isSupportedPortalOpportunityUrl(attachment.sourceUrl || attachment.docPath))
       : []
     if (!record.attachments.length && retainedPreviousAttachments.length) record.attachments = retainedPreviousAttachments
-    if (!record.externalLinks?.length && Array.isArray(previousRecord.externalLinks)) record.externalLinks = previousRecord.externalLinks
+    record.externalLinks = [...new Map([...(previousRecord.externalLinks || []), ...(record.externalLinks || [])].map((link) => [link.url, link])).values()]
     if (!record.amendments.length && Array.isArray(previousRecord.amendments)) record.amendments = previousRecord.amendments
     // Discovery summaries and intermittent detail fallbacks are intentionally
     // partial. Never replace richer saved posting data with an empty field
