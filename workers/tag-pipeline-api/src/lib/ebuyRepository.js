@@ -694,7 +694,9 @@ export async function syncEbuyOpportunities(db, records, { source = 'fixture', c
       const id = String(attachment.id || `${record.requestId}:${attachment.fileName || crypto.randomUUID()}`)
       const changedAttachment = fileChanges.some((item) => item.id === id && item.change !== 'removed')
       batch.push(db.prepare(`INSERT INTO ebuy_attachments (id, request_id, amendment_id, file_name, content_type, byte_size, source_url, archive_status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET amendment_id = excluded.amendment_id, file_name = excluded.file_name, content_type = excluded.content_type, byte_size = excluded.byte_size, source_url = COALESCE(excluded.source_url, source_url), archive_status = CASE WHEN ? THEN 'pending' ELSE archive_status END, error_message = CASE WHEN ? THEN NULL ELSE error_message END, updated_at = excluded.updated_at`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET amendment_id = excluded.amendment_id,
+        file_name = CASE WHEN archive_status = 'archived' AND file_name NOT IN ('Attachment', 'File.php') AND file_name NOT LIKE 'MRAS attachment %' THEN file_name ELSE excluded.file_name END,
+        content_type = excluded.content_type, byte_size = excluded.byte_size, source_url = COALESCE(excluded.source_url, source_url), archive_status = CASE WHEN ? THEN 'pending' ELSE archive_status END, error_message = CASE WHEN ? THEN NULL ELSE error_message END, updated_at = excluded.updated_at`)
         .bind(id, record.requestId, attachment.amendmentId || null, String(attachment.fileName || 'Attachment'), String(attachment.contentType || 'application/octet-stream'), Number(attachment.byteSize || 0) || null, attachment.sourceUrl || null, source === 'fixture' ? 'fixture' : 'pending', nowIso, nowIso, changedAttachment ? 1 : 0, changedAttachment ? 1 : 0))
     }
     await db.batch(batch)
