@@ -1,4 +1,6 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers'
+import { refreshSAMDiscoveryRow } from '../handlers/sam.js'
+import { getRuntimeState } from '../lib/automationHealth.js'
 import {
   ensureSAMArchive,
   getSAMArchive,
@@ -28,6 +30,16 @@ async function scheduleContinuation(env, step, opportunityKey, cursor) {
 }
 
 export async function runSAMArchiveWorkflow(env, event, step) {
+  if (event.payload?.discoveryUpdate) {
+    const { noticeId, snapshot, watchKey, checkedAt } = event.payload.discoveryUpdate
+    return step.do('Refresh non-dismissed SAM discovery record', {
+      retries: { limit: 3, delay: '15 seconds', backoff: 'exponential' }, timeout: '2 minutes',
+    }, async () => {
+      const latest = watchKey ? await getRuntimeState(env, watchKey) : null
+      const currentSnapshot = latest?.snapshot && Date.parse(latest.lastCheckedAt) > Date.parse(checkedAt) ? latest.snapshot : snapshot
+      return refreshSAMDiscoveryRow(env, noticeId, currentSnapshot)
+    })
+  }
   const opportunityKey = String(event.payload?.opportunityKey || '').trim().toLowerCase()
   const startCursor = Math.max(0, Number(event.payload?.cursor) || 0)
   if (!env.EBUY_DB || !opportunityKey) return { ok: false, error: 'SAM.gov archive metadata is unavailable' }
