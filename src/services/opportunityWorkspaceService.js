@@ -68,12 +68,20 @@ export function retryOpportunityWorkspace(opportunityKey, opportunity = null) {
   })
 }
 
-export function archiveOpportunityAwardEvidence(opportunityKey, noticeId) {
-  return workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/award-evidence`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ noticeId }),
-  })
+export async function archiveOpportunityAwardEvidence(opportunityKey, noticeId) {
+  const result = { saved: [], issues: [] }
+  let cursor = 0
+  do {
+    const batch = await workerJson(`/opportunity-workspaces/${encodeURIComponent(opportunityKey)}/award-evidence`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ noticeId, cursor }),
+    })
+    result.saved.push(...(batch.saved || [])); result.issues.push(...(batch.issues || []))
+    result.attachmentTotal = batch.attachmentTotal
+    if (batch.nextCursor != null && batch.nextCursor <= cursor) throw new Error('Award document retrieval did not advance')
+    cursor = batch.nextCursor
+  } while (cursor != null)
+  return result
 }
 
 export function listOpportunityWorkspaceFiles(opportunityKey, parentId = '') {
