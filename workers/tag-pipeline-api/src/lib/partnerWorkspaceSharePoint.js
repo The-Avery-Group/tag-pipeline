@@ -200,6 +200,35 @@ export async function applyPartnerFolderLinks(env, mappings) {
   return { updated, skipped, results }
 }
 
+export async function createPartnerFolder(env, uei) {
+  const { token, driveId, root } = await workbookContext(env)
+  const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
+  const partner = partners.find((row) => String(partnerWorkbookValue(row, 'UEI Number')).trim().toUpperCase() === String(uei).trim().toUpperCase())
+  if (!partner) throw Object.assign(new Error('Partner not found'), { status: 404 })
+  const current = String(partnerWorkbookValue(partner, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
+  if (current) return { webUrl: current, reused: true }
+  const name = String(partnerWorkbookValue(partner, 'Company Name', 'Partner Name', 'Company Name*')).replace(/["*:<>?\/\\|]/g, '-').replace(/[. ]+$/, '').trim()
+  if (!name) throw Object.assign(new Error('Give this partner a company name before creating its folder'), { status: 422 })
+  let folder = await childByName(env, token, driveId, root.id, name)
+  if (!folder) {
+    try {
+      const result = await graphResponse(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${root.id}/children`, token, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
+      })
+      folder = result.body
+    } catch (error) {
+      folder = await childByName(env, token, driveId, root.id, name)
+      if (!folder) throw error
+    }
+  }
+  if (!folder.folder) throw new Error('A file already uses this partner folder name')
+  await ensureColumn(env, driveId, token, 'PartnersTable', PARTNER_FOLDER_HEADER)
+  const result = await applyPartnerFolderLinks(env, [{ uei, folderId: folder.id, expectedCurrentLink: '' }])
+  if (result.skipped) throw new Error(result.results[0]?.reason || 'Could not link the partner folder')
+  return { webUrl: folder.webUrl }
+}
+
 async function partnerFolder(env, uei) {
   const { token, driveId, root } = await workbookContext(env)
   const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
