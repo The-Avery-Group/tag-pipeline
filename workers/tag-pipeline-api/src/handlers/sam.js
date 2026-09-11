@@ -381,7 +381,7 @@ export function samDiscoveryUpdates(snapshot) {
     Title: snapshot.title, 'Response Date': snapshot.responseDate,
     'Set-Aside Type': snapshot.setAside, 'NAICS Code': snapshot.naics,
     Department: org.department, Agency: org.agency, Office: org.office,
-    'Posted Date': snapshot.postedDate, 'SAM.gov URL': snapshot.uiLink,
+    'SAM.gov URL': snapshot.uiLink,
     'Point of Contact': (snapshot.pointOfContact || []).map((value) => value.split('|').filter(Boolean).join(' | ')).join('\n'),
     'Notice Type': normalizeDiscoveryNoticeType(snapshot.type, snapshot.baseType, snapshot.title),
   }).filter(([, value]) => value != null && value !== ''))
