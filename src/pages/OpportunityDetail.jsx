@@ -7,6 +7,7 @@ import { useContacts } from '@/hooks/useContacts'
 import { usePartners } from '@/hooks/usePartners'
 import { useAuth } from '@/auth/AuthContext'
 import Topbar from '@/components/Layout/Topbar'
+import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { useAwardsLookup } from '@/hooks/useAwardsLookup'
 import { useEntityEightA } from '@/hooks/useEntityEightA'
 import { useRfiFollowUpMonitor } from '@/hooks/useRfiFollowUpMonitor'
@@ -757,11 +758,6 @@ export default function OpportunityDetail({ toast }) {
   const isResponseRecord = isResponseOpportunity(cur, C)
   const hasFollowOnMatcher = isFollowOnSourceOpportunity(cur, C)
   const noticeType = normalizeNoticeType(f(C.noticeType))
-  const noticeTypeBadgeClass = noticeType === 'MRAS'
-    ? 'badge-qualify'
-    : noticeType === 'RFI'
-      ? 'badge-tracking'
-      : 'badge-proposal'
   const submissionDateLabel = noticeType === 'MRAS'
     ? 'MRAS submission date'
     : noticeType === 'RFI'
@@ -1580,7 +1576,7 @@ export default function OpportunityDetail({ toast }) {
                   <>
                     <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>{opp[C.phase]}</span>
                     {opp[C.outlook] && <span className="badge badge-tracking">{opp[C.outlook]}</span>}
-                    {noticeType && <span className={`badge ${noticeTypeBadgeClass}`}>{noticeType}</span>}
+                    {noticeType && <DiscoveryTypeBadge type={noticeType} />}
                   </>
                 )
               }
