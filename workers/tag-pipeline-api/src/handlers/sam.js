@@ -532,42 +532,64 @@ async function queueNewSAMArchives(env, rows) {
   return { queued: instances.filter(Boolean).length }
 }
 
-export async function fetchSAMOpportunityRecord(env, { noticeId = '', solicitationNumber = '', postedDate = '' } = {}) {
+export async function fetchSAMOpportunityRecord(env, { noticeId = '', solicitationNumber = '', postedDate = '', samUrl = '' } = {}) {
   if (!env.SAM_API_KEY) throw Object.assign(new Error('SAM_API_KEY not configured'), { status: 503 })
-  const notice = String(noticeId || '').trim()
-  const solicitation = String(solicitationNumber || '').trim()
+  const asNotice = (value) => {
+    const compact = String(value || '').trim().replaceAll('-', '')
+    return /^[a-f\d]{32}$/i.test(compact) ? compact.toLowerCase() : ''
+  }
+  let linkNotice = ''
+  try {
+    const url = new URL(samUrl || noticeId)
+    if (url.protocol === 'https:' && ['sam.gov', 'www.sam.gov'].includes(url.hostname)) {
+      linkNotice = asNotice(url.pathname.match(/\/opp\/([a-f\d-]+)(?:\/|$)/i)?.[1])
+    }
+  } catch { /* A plain identifier is expected for most calls. */ }
+  const notice = asNotice(noticeId) || linkNotice
+  const solicitation = String(solicitationNumber || (!notice && !String(noticeId).includes('://') ? noticeId : '') || '').trim()
   if (!notice && !solicitation) throw Object.assign(new Error('A notice ID or solicitation number is required'), { status: 400 })
   const today = new Date()
-  const posted = postedDate ? new Date(postedDate) : null
-  const anchor = posted && !Number.isNaN(posted.getTime()) ? posted : today
-  const from = new Date(anchor)
-  const to = new Date(anchor)
-  from.setUTCDate(from.getUTCDate() - Math.floor(MAX_SAM_DATE_RANGE_DAYS / 2))
-  to.setUTCDate(to.getUTCDate() + Math.floor(MAX_SAM_DATE_RANGE_DAYS / 2))
-  if (to > today) to.setTime(today.getTime())
-  const params = new URLSearchParams({
-    api_key: env.SAM_API_KEY,
-    postedFrom: formatDateParam(from),
-    postedTo: formatDateParam(to),
-    limit: '10',
-    offset: '0',
-  })
-  if (notice) params.set('noticeid', notice)
-  else params.set('solnum', solicitation)
-  const response = await fetchWithRetry(`${SAM_BASE}?${params}`)
-  if (response.status === 401) {
-    await setKeyExpired(env, true)
-    throw Object.assign(new Error('SAM API key expired or invalid'), { status: 502, code: 'KEY_EXPIRED' })
+  const serial = /^\d{5}(?:\.\d+)?$/.test(String(postedDate)) ? Number(postedDate) : null
+  const posted = serial ? new Date(Date.UTC(1899, 11, 30) + serial * 86400000) : postedDate ? new Date(postedDate) : null
+  const recentFrom = new Date(today)
+  recentFrom.setUTCDate(recentFrom.getUTCDate() - MAX_SAM_DATE_RANGE_DAYS)
+  const windows = []
+  if (posted && Number.isFinite(posted.getTime()) && posted <= today && posted < recentFrom) {
+    const from = new Date(posted), to = new Date(posted)
+    from.setUTCDate(from.getUTCDate() - 1)
+    to.setUTCDate(to.getUTCDate() + MAX_SAM_DATE_RANGE_DAYS - 1)
+    windows.push([from, to > today ? today : to])
   }
-  if (response.status === 204) throw Object.assign(new Error('The SAM.gov opportunity was not found'), { status: 404 })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) throw Object.assign(new Error(payload?.message || `SAM.gov opportunity lookup failed (${response.status})`), { status: 502 })
-  const records = payload?.opportunitiesData || []
-  const record = records.find((item) => notice && normalizeNoticeId(item.noticeId) === normalizeNoticeId(notice))
-    || records.find((item) => solicitation && normalizeSolNum(item.solicitationNumber) === normalizeSolNum(solicitation))
-    || records[0]
-  if (!record) throw Object.assign(new Error('The SAM.gov opportunity was not found'), { status: 404 })
-  return record
+  windows.push([recentFrom, today])
+  // At most four searches: known historical/recent window, then the same
+  // bounded windows by solicitation. Never replace an exact notice with a
+  // related amendment or the first arbitrary result.
+  const searches = [notice && ['noticeid', notice], solicitation && ['solnum', solicitation]].filter(Boolean)
+  for (const [field, value] of searches) for (const [from, to] of windows) {
+    const params = new URLSearchParams({ api_key: env.SAM_API_KEY, postedFrom: formatDateParam(from), postedTo: formatDateParam(to), limit: '100', offset: '0', [field]: value })
+    const response = await fetchWithRetry(`${SAM_BASE}?${params}`)
+    if (response.status === 401) {
+      await setKeyExpired(env, true)
+      throw Object.assign(new Error('SAM API key expired or invalid'), { status: 502, code: 'KEY_EXPIRED' })
+    }
+    if (response.status === 204) continue
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) throw Object.assign(new Error(payload?.message || `SAM.gov opportunity lookup failed (${response.status})`), { status: 502 })
+    if (payload?.totalRecords === 0 && !payload.opportunitiesData) continue
+    if (!payload || !Array.isArray(payload.opportunitiesData)) throw Object.assign(new Error('SAM.gov returned an unreadable opportunity response'), { status: 502 })
+    const matches = payload.opportunitiesData.filter((item) => notice
+      ? asNotice(item.noticeId) === notice
+      : normalizeSolNum(item.solicitationNumber) === normalizeSolNum(solicitation))
+    if (notice && matches.length) return matches[0]
+    if (!notice && matches.length) {
+      const identities = new Set(matches.map((item) => asNotice(item.noticeId) || String(item.noticeId || '')))
+      if (identities.size !== 1 || Number(payload.totalRecords || 0) > payload.opportunitiesData.length) {
+        throw Object.assign(new Error('Multiple SAM notices match this solicitation. Open the specific notice using its SAM.gov notice ID.'), { status: 409, code: 'sam_notice_ambiguous' })
+      }
+      return matches[0]
+    }
+  }
+  throw Object.assign(new Error('SAM.gov’s API did not return this notice in the checked posting-date ranges. Its saved SAM.gov page may still be available.'), { status: 404, code: 'sam_notice_not_returned' })
 }
 
 export async function resolveSAMOpportunityDescription(env, record) {
@@ -1664,6 +1686,7 @@ export async function handleSAM(req, env, ctx) {
         noticeId: url.searchParams.get('noticeId') || '',
         solicitationNumber: url.searchParams.get('solicitationNumber') || '',
         postedDate: url.searchParams.get('postedDate') || '',
+        samUrl: url.searchParams.get('samUrl') || '',
       })
       const described = await resolveSAMOpportunityDescription(env, record)
       const detail = normalizeSAMOpportunityDetail(await fetchSAMStructuredResources(described))
