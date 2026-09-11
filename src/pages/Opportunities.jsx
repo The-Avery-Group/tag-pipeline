@@ -14,7 +14,7 @@ import Modal from '@/components/Common/Modal'
 import CopyValue from '@/components/Common/CopyValue'
 import ExpiringContractDiscovery from '@/components/Opportunity/ExpiringContractDiscovery'
 import EbuyDiscovery from '@/components/Opportunity/EbuyDiscovery'
-import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
+import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, DiscoveryReviewBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
 import { formatDate, formatDateTime, getEndDateBand, EXPIRING_BANDS } from '@/utils/kpiHelpers'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import {
@@ -998,12 +998,7 @@ export default function Opportunities({ toast }) {
     }
   }, [pullProgress, pullOrigin])
 
-  const samStatusBadge = (status) => {
-    if (status === 'added_to_pipeline') return <span className="badge badge-award"    style={{ fontSize: 10 }}>In pipeline</span>
-    if (status === 'tracked')           return <span className="badge badge-proposal" style={{ fontSize: 10 }}>Tracked</span>
-    if (status === 'dismissed')         return <span className="badge badge-tracking" style={{ fontSize: 10, opacity: 0.6 }}>Dismissed</span>
-    return null
-  }
+  const samStatusBadge = (status) => <DiscoveryReviewBadge state={status} />
 
   const samChangeBadge = (opportunity) => {
     const change = samChangesByRow[opportunity._rowIndex]?.change
