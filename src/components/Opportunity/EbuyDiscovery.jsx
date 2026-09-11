@@ -4,7 +4,7 @@ import { useEbuyOpportunities } from '@/hooks/useEbuyOpportunities'
 import { ebuyToPipelineRecord, reconcileEbuyPipeline } from '@/services/ebuyService'
 import EbuySyncProgress from '@/components/Common/EbuySyncProgress'
 import CopyValue from '@/components/Common/CopyValue'
-import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
+import DiscoveryToolbar, { DiscoverySelectionBar, DiscoveryTypeBadge, DiscoveryReviewBadge, readStoredDiscoveryType } from '@/components/Opportunity/DiscoveryToolbar'
 import { formatEbuyDateTime, normalizeEbuyNoticeType } from '@/utils/ebuyHelpers'
 import { samTypeMatches } from '@/utils/samOpportunityHelpers'
 import styles from './EbuyDiscovery.module.css'
@@ -13,10 +13,6 @@ const listScrollPositions = new Map()
 const listViewState = { type: 'All', agencies: [] }
 
 function singleLine(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
-
-function reviewLabel(value) {
-  return ({ added_to_pipeline: 'In pipeline', tracked: 'Tracked', dismissed: 'Dismissed', flagged: 'Flagged' })[value] || ''
-}
 
 export default function EbuyDiscovery({ search, pipeline, pipelineLoading = false, includeDismissed = false, add, toast, onCountChange }) {
   const navigate = useNavigate()
@@ -235,7 +231,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                     <div className={styles.titleCell}>
                     <button className={`${styles.flag} ${opportunity.reviewState === 'flagged' ? styles.flagActive : ''}`} title={opportunity.reviewState === 'flagged' ? 'Remove team flag' : 'Flag for the team'} onClick={() => changeState(opportunity, opportunity.reviewState === 'flagged' ? 'new' : 'flagged')} disabled={busy} aria-label="Toggle flag">⚑</button>
                     <button className={styles.title} onClick={() => openDetail(opportunity)}>{singleLine(opportunity.title) || opportunity.requestId}</button>
-                    {reviewLabel(opportunity.reviewState) && <span className={styles.state}>{reviewLabel(opportunity.reviewState)}</span>}
+                    <DiscoveryReviewBadge state={opportunity.reviewState} />
                     </div>
                   </td>
                   <td className={styles.typeCell}><DiscoveryTypeBadge type={normalizeEbuyNoticeType(opportunity)} /></td>
