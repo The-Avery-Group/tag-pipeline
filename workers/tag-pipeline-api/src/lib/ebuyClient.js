@@ -320,18 +320,21 @@ export function isMrasFileUrl(value) {
   } catch { return false }
 }
 
-export function mrasFileAttachment(url) {
+export function mrasFileAttachment(url, label = '') {
   const sourceUrl = String(url || '').trim()
   const fileId = new URL(sourceUrl).searchParams.get('F')
+  const fileName = String(label || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
+    || `MRAS attachment ${fileId}`
   return {
     docPath: sourceUrl,
-    docName: `MRAS attachment ${fileId}`,
+    docName: fileName,
+    fileName,
     sourceUrl,
     mrasSurveyAttachment: true,
   }
 }
 
-export async function downloadPublicMrasFile(value) {
+export async function downloadPublicMrasFile(value, fallbackName = '') {
   let url = String(value || '').trim()
   for (let attempt = 0; attempt < 4; attempt++) {
     if (!isMrasFileUrl(url) || new URL(url).username || new URL(url).password || new URL(url).port) {
@@ -359,7 +362,9 @@ export async function downloadPublicMrasFile(value) {
         controller.enqueue(chunk)
       },
     }))
-    return { body, contentType, byteSize, fileName: downloadedFileName(response, `MRAS-${new URL(url).searchParams.get('F')}${/application\/pdf/i.test(contentType) ? '.pdf' : ''}`) }
+    const fallback = fallbackName || `MRAS-${new URL(url).searchParams.get('F')}`
+    const extension = /application\/pdf/i.test(contentType) && !/\.[a-z0-9]{2,5}$/i.test(fallback) ? '.pdf' : ''
+    return { body, contentType, byteSize, fileName: downloadedFileName(response, `${fallback}${extension}`) }
   }
   throw connectorError('The GSA download redirected too many times', 'mras_file_redirect', 422)
 }
@@ -375,8 +380,19 @@ export function mrasAttachmentsFromPage(html) {
   const text = String(html || '').replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/\\\//g, '/').replace(/\\"/g, '"').replace(/&amp;|&#38;|&#x26;/gi, '&')
   const links = text.match(/https?:\/\/feedback\.gsa\.gov\/(?:CP|WRQualtricsSurveyEngine)\/File\.php\?[^\s<>"'\\]+/gi) || []
+  const labels = new Map()
+  for (const match of text.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const href = match[1].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]?.replace(/^http:/i, 'https:')
+    if (!isMrasFileUrl(href)) continue
+    const downloadName = match[1].match(/\bdownload\s*=\s*["']([^"']+)["']/i)?.[1]
+    const label = String(downloadName || match[2]).replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
+    if (label && !/^(?:attachment|download|click here|copy)$/i.test(label)) {
+      const id = new URL(href).searchParams.get('F')
+      if (!labels.has(id)) labels.set(id, label)
+    }
+  }
   return [...new Map(links.map((url) => url.replace(/^http:/i, 'https:').replace(/[.,;)]+$/, ''))
-    .filter(isMrasFileUrl).map((url) => [new URL(url).searchParams.get('F'), mrasFileAttachment(url)])).values()]
+    .filter(isMrasFileUrl).map((url) => [new URL(url).searchParams.get('F'), mrasFileAttachment(url, labels.get(new URL(url).searchParams.get('F')))])).values()]
 }
 
 export async function discoverMrasSurveyAttachments(surveyUrl) {
@@ -417,11 +433,16 @@ export async function discoverMrasSurveyFiles(surveys) {
 
 export function downloadedFileName(response, fallback) {
   const disposition = String(response?.headers?.get('Content-Disposition') || '')
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-  const candidate = encoded || plain
-  if (!candidate) return fallback
-  try { return decodeURIComponent(candidate).replace(/[\\/\\\\]/g, '-').trim() || fallback } catch { return candidate.replace(/[\\/\\\\]/g, '-').trim() || fallback }
+  const encoded = disposition.match(/filename\*\s*=\s*"?UTF-8'[^']*'([^";]+)/i)?.[1]
+  const plain = disposition.match(/filename\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;]+))/i)
+  const candidates = [encoded, plain?.[1]?.replace(/\\(["\\])/g, '$1') || plain?.[2], fallback]
+  for (let candidate of candidates) {
+    if (!candidate) continue
+    try { candidate = decodeURIComponent(candidate) } catch { /* Keep an undecodable source name intact. */ }
+    const clean = candidate.replace(/[\u0000-\u001f\u007f]/g, '').replace(/[\\/]/g, '-').trim()
+    if (clean && !/^(?:attachment|file\.php)$/i.test(clean)) return clean
+  }
+  return fallback
 }
 
 function sourceRecord(value) {
