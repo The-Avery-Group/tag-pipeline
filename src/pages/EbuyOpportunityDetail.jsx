@@ -219,7 +219,6 @@ export default function EbuyOpportunityDetail({ toast }) {
             <div>
               {attachment.sharepointWebUrl ? <strong><a href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">{attachment.fileName}</a></strong> : <strong>{attachment.fileName}</strong>}
               <span>{formatEbuyAttachmentMeta(attachment)}</span>
-              {/^https:\/\//i.test(attachment.sourceUrl || '') && <a href={attachment.sourceUrl} target="_blank" rel="noreferrer">Open Link</a>}
               {failed && <span className={styles.fileError}>{attachment.errorMessage || 'The file could not be archived during the last synchronization.'}</span>}
             </div>
             {attachment.sharepointWebUrl
@@ -242,7 +241,7 @@ export default function EbuyOpportunityDetail({ toast }) {
       <button className="btn" disabled={importingLinks} onClick={() => setDocumentLinksOpen(false)}>Close</button>
       <button className="btn btn-primary" disabled={importingLinks || !documentLinks.trim()} onClick={importDocumentLinks}>{importingLinks ? 'Downloading…' : 'Download documents'}</button>
     </>}>
-      <p className="text-sm">Paste direct GSA document download links, one per line—not the survey page. Up to 20 links, 50 MB per file. Original links remain available after archiving.</p>
+      <p className="text-sm">Paste direct GSA document download links, one per line—not the survey page. Up to 20 links, 50 MB per file. Saved documents appear under Attachments.</p>
       <textarea className="form-input" aria-label="Document download links" rows={6} value={documentLinks} onChange={(event) => setDocumentLinks(event.target.value)} disabled={importingLinks} placeholder="https://feedback.gsa.gov/CP/File.php?F=…" />
       {documentLinkResults.length > 0 && <ul>{documentLinkResults.map((result) => <li key={result.url} style={{ marginTop: 10, overflowWrap: 'anywhere' }}><strong>{result.status}</strong> — {result.fileName || result.url}{result.error && <p className="text-sm">{result.error}</p>}</li>)}</ul>}
     </Modal>}
