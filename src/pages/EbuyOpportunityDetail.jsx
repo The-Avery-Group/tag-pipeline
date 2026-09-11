@@ -7,7 +7,7 @@ import Modal from '@/components/Common/Modal'
 import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
 import { DiscoveryTypeBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
-import { analyzeEbuyOpportunityDocuments, ebuyToPipelineRecord, getEbuyOpportunity, getEbuyOpportunityDocumentAnalysis, reviewEbuyOpportunityDocumentFinding, updateEbuyOpportunityState } from '@/services/ebuyService'
+import { addEbuyDocumentLink, analyzeEbuyOpportunityDocuments, ebuyToPipelineRecord, getEbuyOpportunity, getEbuyOpportunityDocumentAnalysis, reviewEbuyOpportunityDocumentFinding, updateEbuyOpportunityState } from '@/services/ebuyService'
 import {
   formatEbuyChangedField,
   formatEbuyAttachmentMeta,
@@ -38,12 +38,38 @@ export default function EbuyOpportunityDetail({ toast }) {
   const [actioning, setActioning] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [dismissedPrompt, setDismissedPrompt] = useState(false)
+  const [documentLinksOpen, setDocumentLinksOpen] = useState(false)
+  const [documentLinks, setDocumentLinks] = useState('')
+  const [documentLinkResults, setDocumentLinkResults] = useState([])
+  const [importingLinks, setImportingLinks] = useState(false)
+  const importLinksRef = useRef(false)
   const actionRef = useRef(false)
   const inPipeline = useMemo(() => pipeline.some((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase()), [pipeline, requestId])
   const returnTo = searchParams.get('returnTo') || '/opportunities?tab=New&source=ebuy'
   const decodedRequestId = decodeURIComponent(requestId)
   const loadDocumentAnalysis = useMemo(() => () => getEbuyOpportunityDocumentAnalysis(decodedRequestId), [decodedRequestId])
   const runDocumentAnalysis = useMemo(() => () => analyzeEbuyOpportunityDocuments(decodedRequestId), [decodedRequestId])
+
+  const importDocumentLinks = async () => {
+    if (importLinksRef.current) return
+    const links = [...new Set(documentLinks.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))]
+    if (!links.length || links.length > 20) { toast?.error('Enter between 1 and 20 download links, one per line.'); return }
+    importLinksRef.current = true; setImportingLinks(true)
+    setDocumentLinkResults(links.map((url) => ({ url, status: 'Waiting' })))
+    try {
+      for (const url of links) {
+        setDocumentLinkResults((current) => current.map((item) => item.url === url ? { ...item, status: 'Downloading…' } : item))
+        try {
+          const result = await addEbuyDocumentLink(decodedRequestId, url)
+          setDocumentLinkResults((current) => current.map((item) => item.url === url ? { ...item, status: result.reused ? 'Already saved' : 'Saved', fileName: result.file?.fileName } : item))
+        } catch (error) {
+          setDocumentLinkResults((current) => current.map((item) => item.url === url ? { ...item, status: 'Failed', error: error.message } : item))
+        }
+      }
+      setOpportunity(await getEbuyOpportunity(decodedRequestId))
+    } catch (error) { toast?.error(`Files were processed, but the detail page could not refresh: ${error.message}`) }
+    finally { importLinksRef.current = false; setImportingLinks(false) }
+  }
 
   useEffect(() => {
     let active = true
@@ -179,6 +205,7 @@ export default function EbuyOpportunityDetail({ toast }) {
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Files</span><h2>Attachments</h2></div><span className={styles.count}>{opportunity.attachments?.length || 0}</span></header>
+        {opportunity.reviewState !== 'dismissed' && <button className="btn" onClick={() => setDocumentLinksOpen(true)}>Add document links</button>}
         {opportunity.sourceDetails?.mrasSurvey?.status === 'needs_attention' && <div className={styles.referenceWarning}><strong>Survey documents need attention</strong><span>{opportunity.sourceDetails.mrasSurvey.error || 'The survey did not expose downloadable files. Open its link below to check the documents.'}</span></div>}
         {(opportunity.attachmentReferences?.missing?.length > 0 || (opportunity.attachmentReferences?.mentioned && !opportunity.attachments?.length)) && <div className={styles.referenceWarning}>
           <strong>Referenced attachment unavailable</strong>
@@ -192,6 +219,7 @@ export default function EbuyOpportunityDetail({ toast }) {
             <div>
               {attachment.sharepointWebUrl ? <strong><a href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">{attachment.fileName}</a></strong> : <strong>{attachment.fileName}</strong>}
               <span>{formatEbuyAttachmentMeta(attachment)}</span>
+              {/^https:\/\//i.test(attachment.sourceUrl || '') && <a href={attachment.sourceUrl} target="_blank" rel="noreferrer">Open Link</a>}
               {failed && <span className={styles.fileError}>{attachment.errorMessage || 'The file could not be archived during the last synchronization.'}</span>}
             </div>
             {attachment.sharepointWebUrl
@@ -210,6 +238,14 @@ export default function EbuyOpportunityDetail({ toast }) {
       </section>}
 
     </div>
+    {documentLinksOpen && <Modal title="Add document links" onClose={() => { if (!importingLinks) setDocumentLinksOpen(false) }} footer={<>
+      <button className="btn" disabled={importingLinks} onClick={() => setDocumentLinksOpen(false)}>Close</button>
+      <button className="btn btn-primary" disabled={importingLinks || !documentLinks.trim()} onClick={importDocumentLinks}>{importingLinks ? 'Downloading…' : 'Download documents'}</button>
+    </>}>
+      <p className="text-sm">Paste direct GSA document download links, one per line—not the survey page. Up to 20 links, 50 MB per file. Original links remain available after archiving.</p>
+      <textarea className="form-input" aria-label="Document download links" rows={6} value={documentLinks} onChange={(event) => setDocumentLinks(event.target.value)} disabled={importingLinks} placeholder="https://feedback.gsa.gov/CP/File.php?F=…" />
+      {documentLinkResults.length > 0 && <ul>{documentLinkResults.map((result) => <li key={result.url} style={{ marginTop: 10, overflowWrap: 'anywhere' }}><strong>{result.status}</strong> — {result.fileName || result.url}{result.error && <p className="text-sm">{result.error}</p>}</li>)}</ul>}
+    </Modal>}
     {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
       <button className="btn" onClick={() => setDismissedPrompt(false)}>Stay here</button>
       <button className="btn btn-primary" autoFocus onClick={() => navigate(returnTo)}>Back to opportunities</button>
