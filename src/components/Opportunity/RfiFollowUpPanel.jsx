@@ -94,9 +94,9 @@ export default function RfiFollowUpPanel({ opp, contacts, linkedContractNumbers,
   const canCheck = Boolean(effective.rules.monitoringEnabled && effective.title)
   return (
     <div ref={panelRef} className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12, scrollMarginTop: 16 }}>
-      <button onClick={() => setOpen((value) => !value)} style={{ display: 'flex', gap: 10, alignItems: 'center', width: '100%', padding: '12px 16px', border: 'none', background: 'var(--surface)', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font)' }}>
+      <button onClick={() => setOpen((value) => !value)} className="section-toggle" aria-expanded={open}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)' }}>{workflowLabel} follow-on matcher</div>
+          <div className="section-toggle-title">{workflowLabel} follow-on matcher</div>
           <div className="text-xs text-muted" style={{ marginTop: 2 }}>
             {status?.lastCheckedAt ? `${pending.length} pending result${pending.length === 1 ? '' : 's'} · checked ${formatDate(status.lastCheckedAt)}` : 'Run a targeted follow-on check.'}
           </div>

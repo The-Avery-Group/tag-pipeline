@@ -223,7 +223,7 @@
   padding: 8px;
 }
 
-.resultRow:hover {
+.resultRow:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--gray-50);
 }
 
@@ -284,12 +284,12 @@
 .possibleFormerBadge {
   background: var(--amber-50);
   border: 0.5px solid var(--amber-600);
-  border-radius: 999px;
+  border-radius: var(--badge-radius);
   color: var(--amber-700);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1.2;
-  padding: 3px 6px;
+  font-size: var(--badge-font-size);
+  font-weight: var(--badge-font-weight);
+  line-height: 1.4;
+  padding: var(--badge-padding);
   white-space: nowrap;
 }
 
@@ -367,19 +367,19 @@
 
 .opportunityToggle {
   align-items: center;
-  background: var(--surface);
+  background: var(--surface-raised);
   border: 0;
   color: var(--gray-900);
   cursor: pointer;
   display: flex;
   font-family: var(--font);
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: var(--section-heading-padding);
   text-align: left;
   width: 100%;
 }
 
-.opportunityToggle:hover {
+.opportunityToggle:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--gray-50);
 }
 
@@ -392,8 +392,8 @@
 
 .opportunityToggle strong {
   color: var(--gray-900);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--section-heading-size);
+  font-weight: var(--section-heading-weight);
 }
 
 .opportunityToggle small {

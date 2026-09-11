@@ -9,19 +9,20 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--gray-50);
+  padding: var(--section-heading-padding);
+  background: var(--surface-raised);
   border: none;
   width: 100%;
   text-align: left;
   cursor: pointer;
   font-family: var(--font);
+  color: var(--gray-900);
 }
-.header:hover { background: var(--gray-100); }
+.header:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-100); }
 
 .sparkIcon { font-size: 13px; color: var(--blue-600); }
 
-.headerTitle { font-size: 12px; font-weight: 500; color: var(--gray-900); }
+.headerTitle { font-size: var(--section-heading-size); font-weight: var(--section-heading-weight); color: var(--gray-900); }
 
 .headerHint { font-size: 11px; color: var(--gray-400); margin-left: auto; }
 
@@ -86,7 +87,7 @@
   cursor: pointer;
   padding: 0;
 }
-.regenBtn:hover { text-decoration: underline; }
+.regenBtn:hover:not(:disabled):not([aria-disabled='true']) { text-decoration: underline; }
 
 .copied {
   color: var(--green-600) !important;

@@ -18,7 +18,7 @@
 .choiceGroup { display: inline-flex; overflow: hidden; border: 0.5px solid var(--gray-200); border-radius: var(--radius-md); }
 .choice { padding: 6px 8px; border: 0; border-right: 0.5px solid var(--gray-200); background: var(--surface); color: var(--gray-600); cursor: pointer; font: 500 11px var(--font); }
 .choice:last-child { border-right: 0; }
-.choice:hover { background: var(--gray-50); }
+.choice:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .choiceActive { composes: choice; background: var(--blue-50); color: var(--blue-800); }
 
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }

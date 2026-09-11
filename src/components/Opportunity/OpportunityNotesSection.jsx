@@ -98,7 +98,7 @@ export default function OpportunityNotesSection({
                   {!note._temp && (
                     <button
                       type="button"
-                      className="btn btn-ghost btn-icon"
+                      className="btn btn-danger-ghost btn-icon"
                       style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--red-600)' }}
                       onClick={() => deleteNote(note)}
                       disabled={deletingNoteId === note._rowIndex || savingNoteId !== null}

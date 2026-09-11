@@ -36,13 +36,18 @@
 .close {
   background: transparent;
   border: none;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--gray-400);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  padding: 0;
+  border-radius: var(--radius-md);
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.close:hover { background: var(--gray-100); color: var(--gray-900); }
+.close:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-100); color: var(--gray-900); }
 
 .body {
   flex: 1;

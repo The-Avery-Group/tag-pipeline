@@ -20,7 +20,7 @@
   cursor: pointer;
 }
 
-.panelHeader:hover { background: var(--gray-50); }
+.panelHeader:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .headerCopy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 .title { font-size: 13px; font-weight: 650; }
 .hint { color: var(--gray-500); font-size: 10px; }
@@ -87,7 +87,7 @@
 
 .milestone span { font-size: 11px; font-weight: 650; }
 .milestone small { color: var(--gray-500); font-size: 9px; }
-.milestone:hover { border-color: var(--blue-300); }
+.milestone:hover:not(:disabled):not([aria-disabled='true']) { border-color: var(--blue-300); }
 .activeMilestone { border-color: var(--blue-500); background: var(--blue-50); color: var(--blue-800); }
 
 .composerHeader {
@@ -106,7 +106,7 @@
 
 .composerHeader > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .composerHeader small { color: var(--gray-500); font-size: 10px; white-space: nowrap; }
-.status { padding: 2px 7px; border-radius: 999px; font-size: 9px; font-weight: 700; }
+.status { padding: var(--badge-padding); border-radius: var(--badge-radius); font-size: var(--badge-font-size); font-weight: var(--badge-font-weight); line-height: 1.4; }
 .ready { background: var(--green-50); color: var(--green-700); }
 .outlook { background: var(--blue-50); color: var(--blue-800); }
 .scheduled { background: var(--blue-50); color: var(--blue-700); }
@@ -133,7 +133,7 @@
 .actions, .actions > div { display: flex; align-items: center; gap: 8px; }
 .actions { justify-content: space-between; padding-top: 12px; border-top: 0.5px solid var(--gray-200); }
 .disabledActions { opacity: 1; }
-.disabledActions > :disabled { opacity: 0.58; }
+.disabledActions > :disabled { opacity: var(--control-disabled-opacity); }
 
 @media (max-width: 700px) {
   .hint { display: none; }

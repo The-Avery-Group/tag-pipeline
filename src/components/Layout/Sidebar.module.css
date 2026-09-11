@@ -58,7 +58,7 @@
   z-index: 2;
 }
 
-.collapseToggle:hover {
+.collapseToggle:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--blue-50);
   color: var(--blue-800);
 }
@@ -156,7 +156,7 @@
   cursor: pointer;
   font-family: var(--font);
 }
-.navItem:hover { background: var(--gray-100); color: var(--gray-900); }
+.navItem:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-100); color: var(--gray-900); }
 .active { background: var(--blue-50) !important; color: var(--blue-800) !important; font-weight: 500; }
 
 .navIcon {
@@ -227,7 +227,7 @@
   font-family: var(--font);
   transition: background 0.12s, color 0.12s;
 }
-.signOutBtn:hover { background: var(--red-50); color: var(--red-600); border-color: transparent; }
+.signOutBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--red-50); color: var(--red-600); border-color: transparent; }
 .footerActions {
   display: flex;
   flex-direction: column;
@@ -269,9 +269,9 @@
   padding: 0;
   transition: background .12s, border-color .12s, color .12s;
 }
-.themeToggle:hover { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-800); }
-.themeToggle:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); outline: none; }
-.settingsBtn:hover { background: var(--gray-50); color: var(--gray-900); text-decoration: none; }
+.themeToggle:hover:not(:disabled):not([aria-disabled='true']) { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-800); }
+.themeToggle:focus-visible { box-shadow: 0 0 0 2px var(--blue-200); }
+.settingsBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); color: var(--gray-900); text-decoration: none; }
 .settingsBtnActive { background: var(--blue-50) !important; color: var(--blue-800) !important; border-color: var(--blue-200) !important; }
 .settingsBtn .navIcon,
 .themeToggle .navIcon,
@@ -298,7 +298,7 @@
   text-align: left;
   transition: background 0.12s, border-color 0.12s;
 }
-.searchTrigger:hover {
+.searchTrigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--gray-100);
   border-color: var(--gray-200);
   color: var(--gray-600);
@@ -334,7 +334,7 @@
   text-align: left;
   transition: background 0.12s, border-color 0.12s;
 }
-.searchTrigger:hover {
+.searchTrigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--gray-100);
   border-color: var(--gray-200);
   color: var(--gray-600);

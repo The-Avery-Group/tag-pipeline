@@ -71,16 +71,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
   border-radius: var(--radius-md);
   border: 0.5px solid var(--gray-200);
   background: var(--surface);
   color: var(--gray-600);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
+  font-size: 16px;
+  padding: 0;
 }
-.iconBtn:hover { background: var(--gray-50); }
+.iconBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .iconBtnActive { background: var(--blue-50); border-color: var(--blue-200); color: var(--blue-600); }
 
 .iconBtnPrimary {
@@ -88,4 +90,4 @@
   border-color: var(--blue-600);
   color: var(--text-on-brand);
 }
-.iconBtnPrimary:hover { background: var(--blue-800); border-color: var(--blue-800); }
+.iconBtnPrimary:hover:not(:disabled):not([aria-disabled='true']) { background: var(--primary-hover); border-color: var(--primary-hover); }

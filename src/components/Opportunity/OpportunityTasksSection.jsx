@@ -70,7 +70,7 @@ export default function OpportunityTasksSection({
                   <button type="button" className="btn btn-ghost btn-icon" onClick={() => editTask(task)} aria-label={`Edit ${task.Title}`} title="Edit task" disabled={deletingTaskId === task.TaskID}>
                     <ActionIcon name="edit" />
                   </button>
-                  <button type="button" className="btn btn-ghost btn-icon" onClick={() => deleteTask(task)} aria-label={`Delete ${task.Title}`} title="Delete task" disabled={deletingTaskId === task.TaskID} style={{ color: 'var(--red-600)' }}>
+                  <button type="button" className="btn btn-danger-ghost btn-icon" onClick={() => deleteTask(task)} aria-label={`Delete ${task.Title}`} title="Delete task" disabled={deletingTaskId === task.TaskID} >
                     {deletingTaskId === task.TaskID ? '…' : <ActionIcon name="delete" />}
                   </button>
                 </div>

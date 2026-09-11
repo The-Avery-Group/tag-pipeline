@@ -1,12 +1,12 @@
 .section { border: .5px solid var(--gray-200); border-radius: var(--radius-md); margin-bottom: 16px; overflow: hidden; scroll-margin-top: 16px; }
-.sectionToggle { align-items: center; background: var(--surface-raised); border: 0; color: var(--gray-900); cursor: pointer; display: flex; font: inherit; justify-content: space-between; padding: 13px 16px; text-align: left; width: 100%; }
-.sectionToggle:hover { background: var(--gray-50); }
+.sectionToggle { align-items: center; background: var(--surface-raised); border: 0; color: var(--gray-900); cursor: pointer; display: flex; font: inherit; justify-content: space-between; padding: var(--section-heading-padding); text-align: left; width: 100%; }
+.sectionToggle:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .sectionToggle > span:first-child { display: grid; gap: 3px; min-width: 0; }
-.sectionToggle strong { font-size: 12px; }
+.sectionToggle strong { font-size: var(--section-heading-size); font-weight: var(--section-heading-weight); }
 .sectionToggle small { color: var(--gray-500); font-size: 10px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toggleMeta { align-items: center; display: flex; flex-shrink: 0; gap: 9px; }
 .sectionChevron { color: var(--gray-500); font-size: 15px; }
-.status { border-radius: 999px; font-size: 9px; font-weight: 700; padding: 3px 7px; text-transform: capitalize; }
+.status { border-radius: var(--badge-radius); font-size: var(--badge-font-size); font-weight: var(--badge-font-weight); padding: var(--badge-padding); text-transform: capitalize; line-height: 1.4; }
 .ready { background: var(--green-50); color: var(--green-600); }
 .partial { background: var(--amber-50); color: var(--amber-600); }
 .failed { background: var(--red-50); color: var(--red-600); }
@@ -23,7 +23,7 @@
 .tree { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
 .treeItem { min-width: 0; }
 .itemRow, .fileRow { align-items: center; border-radius: var(--radius-sm); display: flex; min-height: 34px; }
-.itemRow:hover, .fileRow:hover { background: var(--gray-50); }
+.itemRow:hover:not(:disabled):not([aria-disabled='true']), .fileRow:hover:not(:disabled):not([aria-disabled='true']) { background: var(--gray-50); }
 .folderButton { align-items: center; background: transparent; border: 0; color: var(--gray-900); cursor: pointer; display: flex; flex: 1; font: inherit; font-size: 11px; gap: 7px; min-width: 0; padding: 6px 8px; text-align: left; }
 .folderButton > span:nth-last-of-type(1) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folderButton small, .fileRow small { color: var(--gray-400); font-size: 9px; margin-left: auto; }

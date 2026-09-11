@@ -69,8 +69,8 @@ export default function AwardLookupPanel({
 
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
-      <button onClick={handleToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 16px', background: 'var(--surface)', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font)' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-900)', flex: 1 }}>Contract award lookup</span>
+      <button onClick={handleToggle} className="section-toggle" aria-expanded={open}>
+        <span className="section-toggle-title">Contract award lookup</span>
         {loading && <span className="text-xs text-muted">Looking up…</span>}
         <span style={{ fontSize: 18, color: 'var(--gray-400)', lineHeight: 1, transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>›</span>
       </button>

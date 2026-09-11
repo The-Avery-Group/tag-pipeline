@@ -284,14 +284,27 @@ function MarketIntelligenceView({ contracts, loading, error, search, expanded, d
     return [...groups.values()].sort((left, right) => left.year - right.year || (left.quarter || 0) - (right.quarter || 0))
   }, [baseContracts, filters.basis, filters.grouping, filters.quarter, filters.year, timelineWindow])
   const visibleContracts = useMemo(() => filters.focus ? baseContracts.filter((contract) => expirationPeriod(contract.ultimateCompletionDate, filters.basis, filters.grouping)?.key === filters.focus) : baseContracts, [baseContracts, filters.basis, filters.focus, filters.grouping])
-  const totalValue = visibleContracts.reduce((sum, contract) => sum + (Number(contract.totalContractValue) || 0), 0)
-  const agenciesRepresented = new Set(visibleContracts.map((contract) => contract.agency || contract.department).filter(Boolean)).size
-  const actualIdvs = [...new Set(visibleContracts.map((contract) => String(contract.referencedIdvPiid || '').trim()).filter(Boolean))]
-  const resolvedIdvs = new Set(visibleContracts.filter((contract) => contract.referencedIdvPiid && vehicleName(contract)).map((contract) => String(contract.referencedIdvPiid).trim())).size
-  const unresolvedContracts = visibleContracts.filter((contract) => contract.referencedIdvPiid && !vehicleName(contract))
-  const vehicleData = groupMarketContracts(visibleContracts.filter((contract) => contract.referencedIdvPiid && vehicleName(contract)), vehicleName, 12, metrics.vehicle)
-  const agencyData = groupMarketContracts(visibleContracts, (contract) => contract.agency || contract.department, 12, metrics.agency)
-  const setAsideData = groupMarketContracts(visibleContracts, (contract) => contract.setAside || 'Not specified', 10, metrics.setAside)
+  // Opening a filter or a contract detail must not rebuild every chart and KPI.
+  const { totalValue, agenciesRepresented, actualIdvs, resolvedIdvs, unresolvedContracts, vehicleContracts } = useMemo(() => {
+    let totalValue = 0
+    const agencies = new Set(), idvs = new Set(), resolved = new Set()
+    const unresolvedContracts = [], vehicleContracts = []
+    for (const contract of visibleContracts) {
+      totalValue += Number(contract.totalContractValue) || 0
+      const agency = contract.agency || contract.department
+      if (agency) agencies.add(agency)
+      const idv = String(contract.referencedIdvPiid || '').trim()
+      if (idv) idvs.add(idv)
+      if (contract.referencedIdvPiid) {
+        if (vehicleName(contract)) { resolved.add(idv); vehicleContracts.push(contract) }
+        else unresolvedContracts.push(contract)
+      }
+    }
+    return { totalValue, agenciesRepresented: agencies.size, actualIdvs: [...idvs], resolvedIdvs: resolved.size, unresolvedContracts, vehicleContracts }
+  }, [visibleContracts])
+  const vehicleData = useMemo(() => groupMarketContracts(vehicleContracts, vehicleName, 12, metrics.vehicle), [vehicleContracts, metrics.vehicle])
+  const agencyData = useMemo(() => groupMarketContracts(visibleContracts, (contract) => contract.agency || contract.department, 12, metrics.agency), [visibleContracts, metrics.agency])
+  const setAsideData = useMemo(() => groupMarketContracts(visibleContracts, (contract) => contract.setAside || 'Not specified', 10, metrics.setAside), [visibleContracts, metrics.setAside])
   const clearFilters = () => setFilters({ band: 'all', from: '', to: '', basis: 'fiscal', grouping: 'quarter', year: '', quarter: 'all', agency: [], vehicle: 'all', setAside: 'all', value: 'all', focus: '' })
   const agencyFilterLabel = !filters.agency.length
     ? 'All agencies'
