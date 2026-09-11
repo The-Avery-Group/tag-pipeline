@@ -1,11 +1,12 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers'
 import {
   downloadEbuyAttachment,
-  discoverMrasSurveyAttachments,
+  discoverMrasSurveyFiles,
   downloadedFileName,
   getEbuyContractToken,
   getEbuyOpportunityDetail,
   mrasSurveyUrls,
+  isMrasFileUrl,
   listActiveEbuyOpportunities,
   normalizeLiveEbuyOpportunity,
 } from '../lib/ebuyClient.js'
@@ -226,30 +227,25 @@ async function enrichMrasSurveyAttachments(env, record, existing) {
   const surveys = mrasSurveyUrls(record.description)
   if (!surveys.length) return null
   const prior = existing?.sourceDetails?.mrasSurvey || {}
-  // A survey is rendered only when first encountered or when eBuy changes the
-  // link. This keeps Browser Run well within its free-plan daily allowance.
-  if (prior.url === surveys[0] && prior.status === 'ready') return null
+  // Preserve archived files while periodically checking the public survey.
+  mergeExternalAttachments(record, (existing?.attachments || []).filter((file) => isMrasFileUrl(file.sourceUrl || file.docPath)), 'mras')
+  if (JSON.stringify(prior.urls || [prior.url]) === JSON.stringify(surveys) && Date.now() - Date.parse(prior.checkedAt) < 86400000 && prior.status === 'ready' && prior.fileCount > 0 && record.attachments.some((file) => isMrasFileUrl(file.sourceUrl || file.docPath))) {
+    record.sourceDetails.mrasSurvey = prior
+    return null
+  }
   try {
-    const attachments = await discoverMrasSurveyAttachments(env.BROWSER, surveys[0])
+    const { attachments, errors } = await discoverMrasSurveyFiles(surveys)
     mergeExternalAttachments(record, attachments, 'mras')
-    record.sourceDetails.mrasSurvey = { url: surveys[0], status: 'ready', fileCount: attachments.length, checkedAt: new Date().toISOString() }
-    return attachments.length ? null : {
+    record.sourceDetails.mrasSurvey = { url: surveys[0], urls: surveys, status: attachments.length && !errors.length ? 'ready' : 'needs_attention', fileCount: attachments.length, checkedAt: new Date().toISOString(), error: errors.join('; ') }
+    return attachments.length && !errors.length ? null : {
       requestId: record.requestId,
       code: 'mras_survey_no_files',
-      message: 'The MRAS survey was available but did not expose any downloadable opportunity files',
+      message: errors.length ? `MRAS survey attachments could not all be retrieved: ${errors.join('; ')}` : 'The MRAS survey was available but did not expose any downloadable opportunity files',
     }
   } catch (error) {
     record.sourceDetails.mrasSurvey = { url: surveys[0], status: 'needs_attention', checkedAt: new Date().toISOString(), error: error.message }
     return { requestId: record.requestId, code: error.code || 'mras_survey_unavailable', message: `MRAS survey attachments could not be retrieved: ${error.message}` }
   }
-}
-
-function willCheckMrasSurvey(record, existing) {
-  if (record.requestType !== 'MRAS') return false
-  const surveys = mrasSurveyUrls(record.description)
-  if (!surveys.length) return false
-  const prior = existing?.sourceDetails?.mrasSurvey || {}
-  return prior.url !== surveys[0] || prior.status !== 'ready'
 }
 
 async function enrichExternalPortalAttachments(record, existing) {
@@ -311,7 +307,6 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
     let record = normalizeLiveEbuyOpportunity(summary, detail, candidate.contract_number)
     const existing = await getEbuyOpportunity(env.EBUY_DB, candidate.request_id)
     const portalWarning = await enrichExternalPortalAttachments(record, existing)
-    const mrasSurveyAttempted = willCheckMrasSurvey(record, existing)
     const mrasWarning = await enrichMrasSurveyAttachments(env, record, existing)
     if (portalWarning || mrasWarning) candidateWarning = candidateWarning || portalWarning || mrasWarning
     // The detail request above is authoritative for this pass. Repeating the
@@ -328,7 +323,7 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
     if (candidateWarning) record.sourceDetails.detailStatus = candidateWarning.code || 'detail_warning'
     const sync = await syncEbuyOpportunities(env.EBUY_DB, [record], { source: 'live', completeSnapshot: false })
     await finishEbuySyncCandidate(env.EBUY_DB, runId, candidate.request_id)
-    return { requestId: candidate.request_id, ...sync, candidateWarning, mrasSurveyAttempted }
+    return { requestId: candidate.request_id, ...sync, candidateWarning }
   } catch (error) {
     if (error?.code === 'ebuy_authentication_failed') throw error
     await finishEbuySyncCandidate(env.EBUY_DB, runId, candidate.request_id, error)
@@ -339,12 +334,11 @@ async function processCandidateWithToken(env, runId, candidate, jwt) {
 async function processCandidateBatch(env, runId, encryptedTokens, limit = 1) {
   const candidates = await nextEbuySyncCandidateBatch(env.EBUY_DB, runId, limit)
   if (!candidates.length) return { complete: true, processed: 0 }
-  const totals = { processed: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, mrasSurveyAttempts: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
+  const totals = { processed: 0, inserted: 0, updated: 0, unchanged: 0, removed: 0, archivedFiles: 0, candidateErrors: [], candidateWarnings: [], attachmentFailures: [] }
   const jwt = await contractToken(env, encryptedTokens, candidates[0].contract_number)
   for (const candidate of candidates) {
     const result = await processCandidateWithToken(env, runId, candidate, jwt)
     totals.processed++
-    if (result.mrasSurveyAttempted) totals.mrasSurveyAttempts++
     mergeCounts(totals, { ...result, discovered: 0 })
     if (result.candidateError) totals.candidateErrors.push({ requestId: result.requestId, ...result.candidateError })
     if (result.candidateWarning) totals.candidateWarnings.push(result.candidateWarning)
@@ -439,12 +433,6 @@ export async function runEbuySyncWorkflow(env, event, step) {
         mergeCounts(totals, { ...result, discovered: 0 })
         if (result.candidateErrors?.length) totals.candidateErrors.push(...result.candidateErrors)
         if (result.candidateWarnings?.length) totals.candidateWarnings.push(...result.candidateWarnings)
-        // Browser Run's free tier permits one Quick Action every ten seconds.
-        // Only MRAS survey discovery uses that binding, so sleep durably here
-        // rather than slowing ordinary eBuy detail retrieval.
-        if (result.mrasSurveyAttempts && remaining > result.processed) {
-          await step.sleep(`Pace MRAS survey discovery ${iteration}`, '10 seconds')
-        }
         remaining = await step.do(`Count remaining eBuy opportunities ${iteration}`, () => countPendingEbuySyncCandidates(env.EBUY_DB, run.id))
         const processingPercent = Math.min(70, 30 + Math.round((processedCandidates / Math.max(1, totalCandidates)) * 40))
         await step.do(`Record eBuy processing progress ${iteration}`, () => updateEbuySyncRunProgress(env.EBUY_DB, run.id, totals, {
