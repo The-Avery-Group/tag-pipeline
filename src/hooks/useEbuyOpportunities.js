@@ -6,6 +6,7 @@ import {
   updateEbuyOpportunityState,
 } from '@/services/ebuyService'
 import { startAdaptivePolling } from '@/services/workerClient'
+import { awaitingEbuySyncStart } from '@/utils/ebuyHelpers'
 
 const listCache = new Map()
 let statusCache = null
@@ -35,9 +36,11 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
       ])
       if (request !== requestRef.current) return
       setData(nextData)
-      setStatus(nextStatus)
+      if (!awaitingEbuySyncStart(nextStatus, requestedSyncAtRef.current)) {
+        setStatus(nextStatus)
+        statusCache = nextStatus
+      }
       listCache.set(key, nextData)
-      statusCache = nextStatus
       setError(null)
     } catch (loadError) {
       if (request === requestRef.current) setError(loadError)
@@ -69,12 +72,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
         // Workflow creation is asynchronous. The first status read can still
         // contain the previous terminal run; keep the optimistic running state
         // until D1 exposes the run that this button just started.
-        if (
-          requestedAt &&
-          nextStatus?.lastSync?.status !== 'running' &&
-          observedStartedAt < requestedAt &&
-          Date.now() - requestedAt < 30_000
-        ) return
+        if (awaitingEbuySyncStart(nextStatus, requestedAt)) return
         if (nextStatus?.lastSync?.status === 'running' && observedStartedAt >= requestedAt) {
           requestedSyncAtRef.current = 0
         }
@@ -90,7 +88,8 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
       key: 'ebuy-sync-status',
       poll: getEbuyStatus,
       onResult: applyProgress,
-      shouldContinue: (nextStatus) => nextStatus?.lastSync?.status === 'running',
+      shouldContinue: (nextStatus) => nextStatus?.lastSync?.status === 'running' ||
+        awaitingEbuySyncStart(nextStatus, requestedSyncAtRef.current),
     })
     return () => { disposed = true; stop() }
   }, [load, status?.lastSync?.status])
@@ -102,6 +101,7 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
     requestedSyncAtRef.current = Date.now()
     try {
       const result = await startEbuyLiveSync()
+      if (result.alreadyRunning) requestedSyncAtRef.current = 0
       setStatus((current) => {
         const next = {
           ...(current || {}),
@@ -164,7 +164,13 @@ export function useEbuyOpportunities({ search = '', type = 'all', state = 'all',
   }, [data.opportunities, key])
 
   return {
-    ...data, status, loading, error,
+    ...data, status: startingSync ? {
+      ...status,
+      lastSync: {
+        status: 'running',
+        progress: { phase: 'preparing', percent: 0, message: 'Requesting eBuy synchronization' },
+      },
+    } : status, loading, error,
     syncing: startingSync || status?.lastSync?.status === 'running',
     refresh: load, synchronize, updateState,
   }
