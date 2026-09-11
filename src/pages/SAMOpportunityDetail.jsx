@@ -5,6 +5,7 @@ import RichText from '@/components/Common/RichText'
 import CopyValue from '@/components/Common/CopyValue'
 import Modal from '@/components/Common/Modal'
 import DocumentAnalysisPanel from '@/components/Opportunity/DocumentAnalysisPanel'
+import { DiscoveryTypeBadge, DiscoveryReviewBadge } from '@/components/Opportunity/DiscoveryToolbar'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useSAMOpportunities } from '@/hooks/useSAMOpportunities'
 import { formatDateTime } from '@/utils/kpiHelpers'
@@ -123,6 +124,7 @@ export default function SAMOpportunityDetail({ toast }) {
   const [dismissedPrompt, setDismissedPrompt] = useState(false)
   const actionRef = useRef(false)
   const archiveStartedRef = useRef(false)
+  const detailRequestRef = useRef(0)
   const decodedNoticeId = decodeURIComponent(routeNoticeId)
   const rowParam = searchParams.get('row')
   const rowIndex = rowParam !== null && /^\d+$/.test(rowParam) ? Number(rowParam) : null
@@ -133,11 +135,15 @@ export default function SAMOpportunityDetail({ toast }) {
     (rowIndex !== null && Number(item._rowIndex) === rowIndex) ||
     same(item['Notice ID'], decodedNoticeId) || same(item['Solicitation Number'], decodedNoticeId)
   )) || null, [decodedNoticeId, opportunities, rowIndex])
+  const rowRef = useRef(row)
+  rowRef.current = row
+  const savedNoticeId = row?.['Notice ID'] || decodedNoticeId
+  const savedSolicitationNumber = row?.['Solicitation Number'] || ''
 
   const identifier = useMemo(() => ({
-    noticeId: row?.['Notice ID'] || decodedNoticeId,
-    solicitationNumber: row?.['Solicitation Number'] || '',
-  }), [decodedNoticeId, row])
+    noticeId: savedNoticeId,
+    solicitationNumber: savedSolicitationNumber,
+  }), [savedNoticeId, savedSolicitationNumber])
   const opportunityKey = clean(detail?.solicitationNumber || detail?.noticeId || identifier.solicitationNumber || identifier.noticeId).toLowerCase()
   const loadDocumentAnalysis = useCallback(() => getSAMOpportunityDocumentAnalysis(opportunityKey), [opportunityKey])
   const runDocumentAnalysis = useCallback(() => analyzeSAMOpportunityDocuments({ ...identifier, noticeType: detail?.noticeType || '' }), [detail?.noticeType, identifier])
@@ -148,35 +154,44 @@ export default function SAMOpportunityDetail({ toast }) {
   )) || null, [detail, pipeline, row])
 
   const loadDetail = useCallback(async ({ quiet = false, refresh = false } = {}) => {
+    const requestId = ++detailRequestRef.current
+    const savedRow = rowRef.current
     if (!quiet) setLoading(true)
     try {
       const result = await getSAMOpportunityDetail(
-        { ...identifier, postedDate: row?.['Posted Date'] || row?.PostedDate || '' },
+        { ...identifier, postedDate: savedRow?.['Posted Date'] || savedRow?.PostedDate || '' },
         { refresh },
       )
+      if (requestId !== detailRequestRef.current) return null
       setDetail(result.opportunity)
-      setLoadError(result.warning ? new Error(result.warning) : null)
+      setLoadError(result.warning ? Object.assign(new Error(result.warning), { liveRefresh: true }) : null)
       return result.warning ? null : result.opportunity
     } catch (error) {
-      setLoadError(error)
-      setDetail((current) => current || fallbackDetail(row, decodedNoticeId))
+      if (requestId !== detailRequestRef.current) return null
+      setLoadError(Object.assign(new Error(error.message), { liveRefresh: refresh }))
+      setDetail((current) => current || fallbackDetail(savedRow, decodedNoticeId))
       return null
     } finally {
-      if (!quiet) setLoading(false)
+      if (requestId === detailRequestRef.current) setLoading(false)
     }
-  }, [decodedNoticeId, identifier, row])
+  }, [decodedNoticeId, identifier])
 
   useEffect(() => {
     archiveStartedRef.current = false
-    setDetail(null)
+    setDetail(fallbackDetail(rowRef.current, decodedNoticeId))
     setLoadError(null)
     setDescriptionExpanded(false)
   }, [decodedNoticeId])
 
+  const rowsReady = !rowsLoading || Boolean(row)
   useEffect(() => {
-    if (rowsLoading && !row) return
-    loadDetail()
-  }, [loadDetail, row, rowsLoading])
+    if (!rowsReady) return
+    // Flags, review-state changes, and workbook cache refreshes must not
+    // refetch the same full SAM record. Render the saved summary immediately.
+    setDetail((current) => current || fallbackDetail(rowRef.current, decodedNoticeId))
+    loadDetail({ quiet: Boolean(rowRef.current) })
+    return () => { detailRequestRef.current += 1 }
+  }, [decodedNoticeId, loadDetail, rowsReady])
 
   const startArchive = useCallback(async ({ force = false } = {}) => {
     if (!identifier.noticeId && !identifier.solicitationNumber) return
@@ -328,14 +343,14 @@ export default function SAMOpportunityDetail({ toast }) {
     <Topbar title={detail.title || detail.noticeId} subtitle1={`SAM.gov · ${detail.noticeId || detail.solicitationNumber}`} showFilter={false} showNew={false} />
     <div className={`page-body ${styles.page}`}>
       <button className={styles.back} onClick={() => navigate(returnTo)}>← Back to SAM.gov discovery</button>
-      {loadError && <div className={styles.warning}><span><strong>Live SAM.gov details could not refresh.</strong> {detail ? 'Showing the last saved opportunity information.' : 'No saved detail is available.'}</span><button disabled={retryingDetail} onClick={retryLiveOpportunity}>{retryingDetail ? 'Reloading opportunity and attachments…' : 'Try again'}</button></div>}
+      {loadError && <div className={styles.warning}><span><strong>{loadError.liveRefresh ? 'SAM.gov refresh could not complete.' : 'Additional opportunity details could not load.'}</strong> Showing saved information; the description, links or attachments may be incomplete. <span>{loadError.message}</span></span><button disabled={retryingDetail} onClick={retryLiveOpportunity}>{retryingDetail ? 'Reloading opportunity and attachments…' : 'Try again'}</button></div>}
 
       <section className={styles.hero}>
         <div className={styles.heroText}>
           <div className={styles.badges}>
-            {detail.noticeType && <span>{detail.noticeType}</span>}
+            {detail.noticeType && <DiscoveryTypeBadge type={detail.noticeType} />}
             <span className={detail.active ? styles.active : styles.inactive}>{detail.status}</span>
-            {row?.Status && row.Status !== 'new' && <span>{row.Status.replaceAll('_', ' ')}</span>}
+            <DiscoveryReviewBadge state={row?.Status} />
           </div>
           <h1>{detail.title}</h1>
           <p>{organization.subTier || organization.department || 'Organization not provided'} · {detail.noticeId || detail.solicitationNumber}</p>
