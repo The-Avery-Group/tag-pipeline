@@ -5,6 +5,7 @@ function queryFor(input = {}) {
   if (input.noticeId) query.set('noticeId', input.noticeId)
   if (input.solicitationNumber) query.set('solicitationNumber', input.solicitationNumber)
   if (input.postedDate) query.set('postedDate', input.postedDate)
+  if (input.samUrl) query.set('samUrl', input.samUrl)
   return query
 }
 
