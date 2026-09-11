@@ -83,7 +83,7 @@ async function adoptExistingFolderIfAvailable(env, storage, workspace, folderLin
   })
 }
 
-async function archiveAwardNoticeFiles(env, workspace, noticeId) {
+async function archiveAwardNoticeFiles(env, workspace, noticeId, cursor = 0) {
   if (!workspace?.sharePointDriveId || !(workspace.samFolderId || workspace.typeFolderId || workspace.rootFolderId)) {
     throw Object.assign(new Error('Set up the opportunity SharePoint workspace before saving award documents'), { status: 409 })
   }
@@ -91,7 +91,8 @@ async function archiveAwardNoticeFiles(env, workspace, noticeId) {
   if (!notice.noticeId || String(notice.noticeId).toLowerCase() !== String(noticeId).toLowerCase()) {
     throw Object.assign(new Error('The SAM.gov Award Notice could not be verified'), { status: 404 })
   }
-  const links = notice.resourceLinks.slice(0, 20)
+  const allLinks = [...new Set(notice.resourceLinks)]
+  const links = allLinks.slice(cursor, cursor + 3)
   const saved = []
   const issues = []
   for (let index = 0; index < links.length; index += 1) {
@@ -140,7 +141,7 @@ async function archiveAwardNoticeFiles(env, workspace, noticeId) {
       })
     }
   }
-  return { noticeId: notice.noticeId, attachmentTotal: links.length, saved, issues }
+  return { noticeId: notice.noticeId, attachmentTotal: allLinks.length, saved, issues, nextCursor: cursor + links.length < allLinks.length ? cursor + links.length : null }
 }
 
 export async function handleOpportunityWorkspaces(req, env) {
@@ -252,7 +253,8 @@ export async function handleOpportunityWorkspaces(req, env) {
       const body = await req.json().catch(() => ({}))
       const noticeId = String(body.noticeId || '').trim()
       if (!noticeId) return json({ error: 'A SAM.gov Award Notice ID is required.' }, 400)
-      return json({ ok: true, ...(await archiveAwardNoticeFiles(env, workspace, noticeId)) })
+      const cursor = Math.max(0, Math.floor(Number(body.cursor) || 0))
+      return json({ ok: true, ...(await archiveAwardNoticeFiles(env, workspace, noticeId, cursor)) })
     }
 
     const analysisMatch = path.match(/^\/opportunity-workspaces\/([^/]+)\/analysis$/)
