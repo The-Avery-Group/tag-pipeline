@@ -8,7 +8,7 @@ import {
   workspaceCalendarYear,
 } from '../src/lib/opportunityWorkspaceDomain.js'
 import { resetWorkspaceForRebuild } from '../src/lib/opportunityWorkspaceRepository.js'
-import { opportunityUploadValidation, workspaceSplitPlan } from '../src/lib/opportunityWorkspaceSharePoint.js'
+import { opportunityUploadValidation, pipelineSAMFieldUpdates, workspaceSplitPlan } from '../src/lib/opportunityWorkspaceSharePoint.js'
 import {
   attachmentSourceName,
   discoverPortalAttachments,
@@ -20,6 +20,22 @@ import {
   portalSourceScope,
   stablePortalSourceSignature,
 } from '../src/lib/opportunityWorkspaceSam.js'
+
+test('SAM refresh updates source fields without erasing values or replacing submitted dates', () => {
+  const snapshot = { title: 'Revised title', naics: '', setAside: 'Small business', responseDate: '2026-10-01T13:00:00-04:00' }
+  const draft = pipelineSAMFieldUpdates({}, snapshot)
+  assert.equal(draft['Submission Date (Response Date)*'], snapshot.responseDate)
+  assert.equal(draft['Project Title / Description*'], snapshot.title)
+  assert.equal('NAICS Code*' in draft, false)
+  assert.equal('Contract Number / Notice ID' in draft, false)
+  for (const row of [
+    { 'TAG Pipeline Activity Phase': 'Submitted RFP' },
+    { 'TAG Opportunity Phase': 'Pending Award' },
+    { 'TAG Opportunity Phase': 'Contract Awarded' },
+    { 'TAG Opportunity Phase': 'Closed Lost' },
+    { Outcome: 'Won' },
+  ]) assert.equal('Submission Date (Response Date)*' in pipelineSAMFieldUpdates(row, snapshot), false)
+})
 
 test('opportunity workspace uses known agency abbreviations and a safe title', () => {
   assert.equal(agencyAbbreviation('Department of Defense Education Activity'), 'DODEA')
