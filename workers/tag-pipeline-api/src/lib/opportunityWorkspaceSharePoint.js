@@ -707,6 +707,45 @@ export async function updatePipelineFolderLink(env, workspace, webUrl) {
   return { updated: true }
 }
 
+export function pipelineSAMFieldUpdates(row, snapshot) {
+  const updates = {
+    'Project Title / Description*': snapshot.title,
+    'NAICS Code*': snapshot.naics,
+    'Set- Aside*': snapshot.setAside,
+  }
+  // This legacy column becomes TAG's actual submission date after submission.
+  const submitted = /submitted rfp/i.test(row['TAG Pipeline Activity Phase'] || '') ||
+    ['Pending Award', 'Contract Awarded', 'Closed Lost'].includes(row['TAG Opportunity Phase']) || Boolean(row.Outcome)
+  if (!submitted && snapshot.responseDate) updates['Submission Date (Response Date)*'] = snapshot.responseDate
+  return Object.fromEntries(Object.entries(updates).filter(([, value]) => value != null && value !== ''))
+}
+
+export async function updatePipelineSAMFields(env, workspace, snapshot) {
+  if (!snapshot) return { updated: false }
+  const token = await getAppOnlyGraphToken(env)
+  const driveId = driveIdFor(env)
+  const rows = await readWorkbookTable(env, driveId, token, 'PipelineTable')
+  const key = String(workspace.opportunityKey || '').trim().toLowerCase()
+  const row = rows.find((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === key)
+  if (!row) return { updated: false }
+  const updates = pipelineSAMFieldUpdates(row, snapshot)
+  const columns = await graphWorkbookFetch(env, driveId, token, '/tables/PipelineTable/columns')
+  const headers = columns.value.map((column) => column.name)
+  const values = [...row._values]
+  while (values.length < headers.length) values.push('')
+  const changed = []
+  for (const [name, value] of Object.entries(updates)) {
+    const index = headers.indexOf(name)
+    if (index < 0 || value == null || value === '' || String(row[name] || '') === String(value)) continue
+    values[index] = value
+    changed.push(name)
+  }
+  if (changed.length) await graphWorkbookFetch(env, driveId, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
+    method: 'PATCH', body: JSON.stringify({ values: [values] }),
+  })
+  return { updated: Boolean(changed.length), fields: changed }
+}
+
 export function fullItemPath(item) {
   const parentPath = String(item?.parentReference?.path || '').replace(/\/$/, '')
   return `${parentPath}/${item?.name || ''}`
