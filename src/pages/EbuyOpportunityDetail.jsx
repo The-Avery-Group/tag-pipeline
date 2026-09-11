@@ -18,6 +18,9 @@ import {
 import styles from './EbuyOpportunityDetail.module.css'
 
 function singleLine(value) { return String(value || '').replace(/\s+/g, ' ').trim() }
+function linkHost(value) {
+  try { return new URL(value).hostname.replace(/^www\./, '') } catch { return '' }
+}
 
 function Field({ label, children, wide = false }) {
   const copyable = typeof children === 'string' || typeof children === 'number'
@@ -102,9 +105,11 @@ export default function EbuyOpportunityDetail({ toast }) {
           {!inPipeline && <button className="btn btn-primary" onClick={() => addToPipeline('New')} disabled={actioning}>+ Add to pipeline</button>}
           {!inPipeline && <button className="btn" onClick={() => addToPipeline('Tracking')} disabled={actioning}>Track</button>}
           {inPipeline && <button className="btn btn-primary" onClick={() => {
-            const linked = pipeline.find((item) => String(item['Contract Number / Notice ID'] || '').trim().toLowerCase() === decodeURIComponent(requestId).toLowerCase())
+            const keys = [opportunity.pipelineContractId, decodedRequestId].filter(Boolean).map((value) => String(value).trim().toLowerCase())
+            const linked = pipeline.find((item) => keys.includes(String(item['Contract Number / Notice ID'] || '').trim().toLowerCase()))
             if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}?row=${linked._rowIndex}`)
-          }}>Open opportunity</button>}
+            else toast?.error('The linked pipeline opportunity could not be found. Refresh the pipeline and try again.')
+          }}>Open pipeline</button>}
           {opportunity.reviewState !== 'dismissed' && <button className={styles.dismiss} onClick={() => changeState('dismissed')} disabled={actioning}>Dismiss</button>}
         </div>
       </section>
@@ -174,6 +179,7 @@ export default function EbuyOpportunityDetail({ toast }) {
 
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Files</span><h2>Attachments</h2></div><span className={styles.count}>{opportunity.attachments?.length || 0}</span></header>
+        {opportunity.sourceDetails?.mrasSurvey?.status === 'needs_attention' && <div className={styles.referenceWarning}><strong>Survey documents need attention</strong><span>{opportunity.sourceDetails.mrasSurvey.error || 'The survey did not expose downloadable files. Open its link below to check the documents.'}</span></div>}
         {(opportunity.attachmentReferences?.missing?.length > 0 || (opportunity.attachmentReferences?.mentioned && !opportunity.attachments?.length)) && <div className={styles.referenceWarning}>
           <strong>Referenced attachment unavailable</strong>
           <span>{opportunity.attachmentReferences?.missing?.length
@@ -184,16 +190,24 @@ export default function EbuyOpportunityDetail({ toast }) {
           const failed = attachment.archiveStatus === 'error'
           return <article key={attachment.id} className={styles.file}>
             <div>
-              <strong>{attachment.fileName}</strong>
+              {attachment.sharepointWebUrl ? <strong><a href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">{attachment.fileName}</a></strong> : <strong>{attachment.fileName}</strong>}
               <span>{formatEbuyAttachmentMeta(attachment)}</span>
               {failed && <span className={styles.fileError}>{attachment.errorMessage || 'The file could not be archived during the last synchronization.'}</span>}
             </div>
             {attachment.sharepointWebUrl
-              ? <a className="btn" href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open archived file</a>
+              ? <a className="btn" href={attachment.sharepointWebUrl} target="_blank" rel="noreferrer">Open File</a>
               : <span className={styles.pending}>{failed ? 'Retries on next sync' : 'Awaiting archive'}</span>}
           </article>
         })}{!opportunity.attachments?.length && !opportunity.attachmentReferences?.mentioned && <p className={styles.empty}>No attachments were included in this archive.</p>}</div>
       </section>
+
+      {opportunity.externalLinks?.length > 0 && <section className={styles.card}>
+        <header><div><span className={styles.eyebrow}>Resources</span><h2>External links</h2></div><span className={styles.count}>{opportunity.externalLinks.length}</span></header>
+        <div className={styles.list}>{opportunity.externalLinks.map((link) => <article key={link.url} className={styles.file}>
+          <div><strong><a href={link.url} target="_blank" rel="noreferrer">{link.label}</a></strong><span>{linkHost(link.url)}</span></div>
+          <a className="btn" href={link.url} target="_blank" rel="noreferrer">Open Link</a>
+        </article>)}</div>
+      </section>}
 
     </div>
     {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
