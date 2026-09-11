@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -163,7 +164,7 @@ function filterChipLabel(key, val) {
 
 function fmtValue(v) {
   const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''))
-  if (!n) return '—'
+  if (!n) return '-'
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
   return `$${n.toFixed(0)}`
@@ -1110,7 +1111,7 @@ export default function Opportunities({ toast }) {
         selectionDisabled={isPulling || checkingSAMChanges || Boolean(bulkProgress)}
       >
           <button className="btn btn-primary text-xs" title="Pull opportunities from SAM.gov" style={{ padding: '3px 10px' }}
-            onClick={() => handlePull()} disabled={isPulling}>
+            onClick={() => handlePull({ force: true })} disabled={isPulling}>
             {isPulling ? '⏳ Pulling…' : '↻ Pull'}
           </button>
           <button className="btn text-xs" title="Check for SAM.gov updates" style={{ padding: '3px 10px' }}
@@ -1271,14 +1272,14 @@ export default function Opportunities({ toast }) {
                           </td>
                           <td className={styles.samTypeCell}><DiscoveryTypeBadge type={opp['Notice Type']} /></td>
                           <td className={styles.samAgencyCell}>
-                            <span>{opp.Agency || '—'}</span>
+                            <span>{opp.Agency || '-'}</span>
                             {opp.Department && opp.Department !== opp.Agency && <small>{opp.Department}</small>}
                           </td>
-                          <td className={styles.samSetAsideCell}>{opp['Set-Aside Type'] || '—'}</td>
-                          <td className={styles.samNaicsCell}>{opp['NAICS Code'] || '—'}</td>
+                          <td className={styles.samSetAsideCell}>{opp['Set-Aside Type'] || '-'}</td>
+                          <td className={styles.samNaicsCell}>{opp['NAICS Code'] || '-'}</td>
                           <td className={styles.samDateCell}>{formatDateTime(opp['Response Date'])}</td>
                           <td className={styles.samPocCell} title={pocDisplay || undefined}>
-                            {pocDisplay || '—'}
+                            {pocDisplay || '-'}
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             {isDismissed
@@ -1433,15 +1434,15 @@ export default function Opportunities({ toast }) {
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
               <td>
                 <span className={`badge ${PHASE_BADGE[opp[C.phase]] || 'badge-tracking'}`}>
-                  {opp[C.phase] || '—'}
+                  {opp[C.phase] || '-'}
                 </span>
               </td>
-              <td className="text-sm text-muted">{opp[C.outlook] || '—'}</td>
-              <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+              <td className="text-sm text-muted">{opp[C.outlook] || '-'}</td>
+              <td className="text-sm text-muted">{opp[C.agency] || '-'}</td>
               <td className="text-sm">
                 {opp[C.priority]
                   ? <span className={`badge ${PRIORITY_BADGE[opp[C.priority]] || 'badge-tracking'}`}>{opp[C.priority]}</span>
-                  : <span className="text-muted">—</span>}
+                  : <span className="text-muted">-</span>}
               </td>
               <td className="text-sm">{fmtValue(opp[C.value])}</td>
               <td className="text-sm text-muted">{formatDate(opp[C.lastMod])}</td>
@@ -1484,9 +1485,9 @@ export default function Opportunities({ toast }) {
               </td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
               <td><span className="badge badge-tracking">{normalizeNoticeType(opp[C.noticeType]) || 'Legacy'}</span></td>
-              <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+              <td className="text-sm text-muted">{opp[C.agency] || '-'}</td>
               <td className={`text-sm ${opp[C.submDate] ? '' : 'text-muted'}`}>
-                {opp[C.submDate] ? formatDate(opp[C.submDate]) : '—'}
+                {opp[C.submDate] ? formatDate(opp[C.submDate]) : '-'}
               </td>
             </tr>
           )
@@ -1516,10 +1517,10 @@ export default function Opportunities({ toast }) {
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
-              <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+              <td className="text-sm text-muted">{opp[C.agency] || '-'}</td>
               <td className="text-sm">{fmtValue(opp[C.value])}</td>
               <td className={`text-sm ${opp[C.endDate] ? '' : 'text-muted'}`}>
-                {opp[C.endDate] ? formatDate(opp[C.endDate]) : '—'}
+                {opp[C.endDate] ? formatDate(opp[C.endDate]) : '-'}
               </td>
               <td className="text-sm text-muted">{formatDate(opp[C.lastMod])}</td>
               <td>
@@ -1563,7 +1564,7 @@ export default function Opportunities({ toast }) {
                   {opp[C.phase]}
                 </span>
               </td>
-              <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+              <td className="text-sm text-muted">{opp[C.agency] || '-'}</td>
               <td className="text-sm">{fmtValue(opp[C.value])}</td>
               <td className="text-sm text-muted">{formatDate(opp[C.lastMod])}</td>
               <td>
@@ -1588,10 +1589,10 @@ export default function Opportunities({ toast }) {
         <tr key={opp['Opportunity ID'] || opp._rowIndex} onClick={() => openOpportunity(opp)}>
           <td style={{ fontWeight: 500, maxWidth: 300 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
           <td className="text-xs text-muted"><CopyValue value={opp[C.contractNum]} label="contract or notice ID">{opp[C.contractNum]}</CopyValue></td>
-          <td className="text-sm text-muted">{opp[C.agency] || '—'}</td>
+          <td className="text-sm text-muted">{opp[C.agency] || '-'}</td>
           <td className="text-sm text-muted">{formatDateTime(opp['Archived At'])}</td>
-          <td className="text-sm text-muted">{opp['Archived By'] || '—'}</td>
-          <td className="text-sm text-muted">{opp['Archive Reason'] || '—'}</td>
+          <td className="text-sm text-muted">{opp['Archived By'] || '-'}</td>
+          <td className="text-sm text-muted">{opp['Archive Reason'] || '-'}</td>
           <td onClick={(event) => event.stopPropagation()}>
             <div style={{ display: 'flex', gap: 6 }}>
               <button className="btn btn-sm" onClick={async () => {
@@ -2079,7 +2080,7 @@ export default function Opportunities({ toast }) {
                   <div className="form-field"><label className="form-label">Folder</label><input className="form-input" type="url" value={form[C.folder]} onChange={(e) => setForm({ ...form, [C.folder]: e.target.value })} /></div>
                   <div className="form-field"><label className="form-label">Slide deck</label><input className="form-input" type="url" value={form[C.slideDeck]} onChange={(e) => setForm({ ...form, [C.slideDeck]: e.target.value })} /></div>
                   <div className="form-field"><label className="form-label">GovWin</label><input className="form-input" type="url" value={form[C.govwin]} onChange={(e) => setForm({ ...form, [C.govwin]: e.target.value })} /></div>
-                  <div className="form-field"><label className="form-label">Other links</label><textarea className="form-input" rows="2" value={form[C.otherLinks]} onChange={(e) => setForm({ ...form, [C.otherLinks]: e.target.value })} /></div>
+                  <div className="form-field"><label className="form-label">Other links</label><AutoTextarea className="form-input" rows="2" value={form[C.otherLinks]} onChange={(e) => setForm({ ...form, [C.otherLinks]: e.target.value })} /></div>
                 </div>
               </div>
             </div>}
