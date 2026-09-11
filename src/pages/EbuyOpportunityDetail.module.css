@@ -45,7 +45,7 @@
   gap: 6px;
 }
 
-.badges span:not([data-notice-type]) {
+.badges span:not([data-notice-type]):not([data-review-state]) {
   background: var(--blue-50);
   border: .5px solid var(--blue-200);
   border-radius: var(--badge-radius);
