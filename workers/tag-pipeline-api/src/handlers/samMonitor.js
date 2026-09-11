@@ -551,6 +551,18 @@ export async function runSAMMonitorCheck(env, cursor = 0, { scheduled = false } 
         if (watch.change) await recordDurableSAMChange(env, watch)
         // SAM can revise fields without changing its posted/modified date.
         const refreshRevision = `${sourceDate || 'undated'}:${alertFingerprint(nextSnapshot)}`
+        if (env.SAM_ARCHIVE_WORKFLOW?.createBatch && watch.discoverySyncRevision !== refreshRevision) {
+          try {
+            await env.SAM_ARCHIVE_WORKFLOW.createBatch([{
+              id: `sam-discovery-${alertFingerprint({ noticeId: watch.noticeId, refreshRevision })}-${crypto.randomUUID().slice(0, 8)}`,
+              params: { discoveryUpdate: { noticeId: watch.noticeId, snapshot: nextSnapshot, watchKey: watch.key, checkedAt: watch.lastCheckedAt } },
+              retention: { successRetention: '3 days', errorRetention: '7 days' },
+            }])
+            watch.discoverySyncRevision = refreshRevision
+          } catch (error) {
+            errors.push({ noticeId: watch.noticeId, error: `Discovery refresh: ${error.message}` })
+          }
+        }
         if (watch.change && watch.attachmentSyncRevision !== refreshRevision) {
           await startAttachmentRefresh(env, watch, refreshRevision).catch((error) => {
             console.warn(JSON.stringify({ event: 'sam_attachment_refresh_start_failed', noticeId: watch.noticeId, message: error.message }))
