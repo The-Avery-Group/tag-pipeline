@@ -245,13 +245,18 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                   <td className={styles.dateCell}>{formatEbuyDateTime(opportunity.closesAt)}</td>
                   <td><div className={styles.actions}>
                     {inPipeline
-                      ? <button className={`${styles.action} ${styles.pipeline}`} onClick={() => openDetail(opportunity)}>View details</button>
+                      ? <button className={`${styles.action} ${styles.pipeline}`} onClick={() => {
+                        const keys = [opportunity.pipelineContractId, opportunity.requestId].filter(Boolean).map((value) => String(value).trim().toLowerCase())
+                        const linked = pipeline.find((row) => [row['Contract Number / Notice ID'], row['Opportunity ID']].some((value) => keys.includes(String(value || '').trim().toLowerCase())))
+                        if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}?row=${linked._rowIndex}`)
+                        else toast?.error('The linked pipeline record could not be found. Refresh the pipeline and try again.')
+                      }}>Open pipeline</button>
                       : <button className={`${styles.action} ${styles.pipeline}`} onClick={() => addToPipeline(opportunity, 'New')} disabled={busy}>+ Pipeline</button>}
-                    <button className={`${styles.action} ${styles.track}`} onClick={() => addToPipeline(opportunity, 'Tracking')} disabled={busy || inPipeline}>Track</button>
+                    {!inPipeline && <button className={`${styles.action} ${styles.track}`} onClick={() => addToPipeline(opportunity, 'Tracking')} disabled={busy}>Track</button>}
                     {opportunity.reviewState === 'dismissed'
                       ? <button className={`${styles.action} ${styles.restore}`} onClick={() => changeState(opportunity, 'new')} disabled={busy}>Restore</button>
                       : <button className={`${styles.action} ${styles.dismiss}`} onClick={() => changeState(opportunity, 'dismissed')} disabled={busy}>Dismiss</button>}
-                    <button className={`${styles.action} ${styles.details}`} onClick={() => openDetail(opportunity)}>Details</button>
+                    <button className={`${styles.action} ${styles.details}`} onClick={() => openDetail(opportunity)}>Open source</button>
                   </div></td>
                 </tr>
               })}
