@@ -363,6 +363,7 @@ async function findLocalEbuyFollowUps(env, watch) {
     return match ? {
       ...match,
       source: 'GSA eBuy',
+      requestId: opportunity.requestId,
       detailUrl: `/opportunities/ebuy/${encodeURIComponent(opportunity.requestId)}`,
       samLink: '',
     } : null
