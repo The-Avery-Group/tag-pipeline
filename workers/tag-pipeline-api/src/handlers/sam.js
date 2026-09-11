@@ -27,7 +27,7 @@
  */
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
-import { getAppOnlyGraphToken } from '../lib/graph.js'
+import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
 import { getRuntimeState, putAutomationRun, putRuntimeState } from '../lib/automationHealth.js'
 import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
 import { fetchSAMStructuredResources, isSAMApiUrl, normalizeSAMOpportunityDetail, samDescriptionText } from '../lib/samOpportunityDetail.js'
@@ -374,6 +374,32 @@ const NEW_OPP_HEADERS = [
   'NAICS Code', 'Posted Date', 'SAM.gov URL', 'Date Added', 'Status',
   'Notice Type', 'Flagged',
 ]
+
+export function samDiscoveryUpdates(snapshot) {
+  const org = parseOrg(snapshot.organization)
+  return Object.fromEntries(Object.entries({
+    Title: snapshot.title, 'Response Date': snapshot.responseDate,
+    'Set-Aside Type': snapshot.setAside, 'NAICS Code': snapshot.naics,
+    Department: org.department, Agency: org.agency, Office: org.office,
+    'Posted Date': snapshot.postedDate, 'SAM.gov URL': snapshot.uiLink,
+    'Point of Contact': (snapshot.pointOfContact || []).map((value) => value.split('|').filter(Boolean).join(' | ')).join('\n'),
+    'Notice Type': normalizeDiscoveryNoticeType(snapshot.type, snapshot.baseType, snapshot.title),
+  }).filter(([, value]) => value != null && value !== ''))
+}
+
+export async function refreshSAMDiscoveryRow(env, noticeId, snapshot) {
+  const token = await getAppOnlyGraphToken(env)
+  const rows = await readWorkbookTable(env, DRIVE_ID, token, 'NewOpportunitiesTable')
+  const row = rows.find((item) => normalizeNoticeId(item['Notice ID']) === normalizeNoticeId(noticeId))
+  if (!row || String(row.Status || '').trim().toLowerCase() === 'dismissed') return { updated: false, skipped: true }
+  // Resolve the current row by notice ID, never by the monitor's old row index.
+  const patches = samDiscoveryUpdates(snapshot)
+  const changed = Object.keys(patches).some((key) => key in row && String(row[key] ?? '') !== String(patches[key]))
+  if (!changed) return { updated: false }
+  const columns = await graphFetch(env, token, '/tables/NewOpportunitiesTable/columns')
+  await updateOpportunityRow(env, token, row._rowIndex, { ...row, ...patches }, columns.value.map((column) => column.name))
+  return { updated: true }
+}
 
 async function appendOpportunity(env, token, data, headers = NEW_OPP_HEADERS) {
   const row = headers.map((h) => data[h] ?? '')
