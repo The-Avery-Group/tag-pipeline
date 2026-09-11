@@ -2,7 +2,25 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EBUY_FIXTURE_OPPORTUNITIES } from '../src/fixtures/ebuyOpportunities.js'
 import { changedEbuyFields, hashEbuyOpportunity, lifecycleForEbuyOpportunity, normalizeEbuyOpportunity, retentionDeadline } from '../src/lib/ebuyDomain.js'
-import { discoverMrasSurveyAttachments, discoverMrasSurveyFiles, downloadedFileName, isMrasFileUrl, isMrasSurveyUrl, mrasAttachmentsFromPage, mrasSurveyUrls, normalizeLiveEbuyOpportunity, resolveEbuySetAside } from '../src/lib/ebuyClient.js'
+import { discoverMrasSurveyAttachments, discoverMrasSurveyFiles, downloadPublicMrasFile, downloadedFileName, isMrasFileUrl, isMrasSurveyUrl, mrasAttachmentsFromPage, mrasSurveyUrls, normalizeLiveEbuyOpportunity, resolveEbuySetAside } from '../src/lib/ebuyClient.js'
+
+test('manual MRAS downloads stream PDFs and reject HTML or off-host redirects', async () => {
+  const original = globalThis.fetch
+  const url = 'https://feedback.gsa.gov/CP/File.php?F=F_public'
+  try {
+    globalThis.fetch = async () => new Response('%PDF-test', { headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename="RFI.pdf"' } })
+    const file = await downloadPublicMrasFile(url)
+    assert.equal(file.fileName, 'RFI.pdf')
+    assert.equal(await new Response(file.body).text(), '%PDF-test')
+    globalThis.fetch = async () => new Response('<html>Sign in</html>', { headers: { 'Content-Type': 'text/html' } })
+    await assert.rejects(() => downloadPublicMrasFile(url), /downloadable document/)
+    let requests = 0
+    globalThis.fetch = async () => { requests++; return new Response(null, { status: 302, headers: { Location: 'https://example.com/private' } }) }
+    await assert.rejects(() => downloadPublicMrasFile(url), /direct GSA/)
+    assert.equal(requests, 1)
+    await assert.rejects(() => downloadPublicMrasFile('https://feedback.gsa.gov/jfe/form/SV_survey'), /direct GSA/)
+  } finally { globalThis.fetch = original }
+})
 
 test('MRAS retains successful files when another survey requires a security check', async () => {
   const original = globalThis.fetch
