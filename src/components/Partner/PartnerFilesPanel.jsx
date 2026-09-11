@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listPartnerWorkspaceFiles } from '@/services/partnerWorkspaceService'
+import { createPartnerFolder, listPartnerWorkspaceFiles } from '@/services/partnerWorkspaceService'
 import { PARTNER_FILES_CHANGED_EVENT } from '@/services/partnerReferenceUploadService'
 import styles from '@/components/Opportunity/OpportunityFilesPanel.module.css'
 
@@ -56,7 +56,7 @@ function FileTree({ items, uei, refreshToken }) {
     : <li className={styles.treeItem} key={item.id}><a className={styles.fileRow} href={item.webUrl} target="_blank" rel="noreferrer"><span className={styles.fileIcon}>□</span><span className={styles.fileName}>{item.name}</span><small>{formatSize(item.size)}</small><span className={styles.openGlyph}>↗</span></a></li>)}</ul>
 }
 
-export default function PartnerFilesPanel({ partner }) {
+export default function PartnerFilesPanel({ partner, onCreated }) {
   const uei = String(partner?.['UEI Number'] || '').trim()
   const folderLink = String(partner?.['Link to Partner Folder'] || '').trim()
   const [open, setOpen] = useState(false)
@@ -90,7 +90,12 @@ export default function PartnerFilesPanel({ partner }) {
       <span className={styles.toggleMeta}><span className={styles.sectionChevron}>{open ? '⌃' : '⌄'}</span></span>
     </button>
     {open && <div className={styles.panel}>
-      {!folderLink && <div className={styles.state}><strong>No partner folder linked</strong><span>Use Settings → SharePoint folder linking → Partners.</span></div>}
+      {!folderLink && <div className={styles.state}><strong>No partner folder linked</strong><button className="btn" disabled={loading || !uei} onClick={async () => {
+        setLoading(true); setError('')
+        try { const result = await createPartnerFolder(uei); await onCreated?.(result.webUrl) }
+        catch (nextError) { setError(nextError.message) }
+        finally { setLoading(false) }
+      }}>{loading ? 'Creating…' : 'Create partner folder'}</button></div>}
       {loading && <div className={styles.state}>Loading partner files…</div>}
       {error && <div className={styles.stateError}><span>{error}</span><button type="button" className="btn" onClick={load}>Try again</button></div>}
       {parent && <div className={styles.workspaceBar}><div><strong>{parent.name}</strong><span>{items?.length || 0} items</span></div><a className="btn" href={parent.webUrl || folderLink} target="_blank" rel="noreferrer">Open in SharePoint</a></div>}
