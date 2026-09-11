@@ -255,7 +255,7 @@ export default function LegacyFolderMigration({ toast }) {
                     </div>}
               </td>
               <td><span className={`${styles.confidence} ${styles[`confidence_${row.confidence}`] || ''}`} title={row.reason}>{migrationConfidenceLabel(row.confidence)}</span><small>{row.reason}</small></td>
-              <td className={row.applyResult?.status === 'skipped' ? styles.issue : ''}>{row.applyResult?.reason || (row.applyResult?.status === 'updated' ? 'Updated' : '—')}</td>
+              <td className={row.applyResult?.status === 'skipped' ? styles.issue : ''}>{row.applyResult?.reason || (row.applyResult?.status === 'updated' ? 'Updated' : '-')}</td>
             </tr>
           })}</tbody>
         </table>

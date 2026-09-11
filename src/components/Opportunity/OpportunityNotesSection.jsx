@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useMemo, useRef, useState } from 'react'
 import OpportunitySection from '@/components/Opportunity/OpportunitySection'
 import ActionIcon from '@/components/Common/ActionIcon'
@@ -111,7 +112,7 @@ export default function OpportunityNotesSection({
                 </div>
                 {editingNoteId === note._rowIndex
                   ? <div ref={noteEditorRef} className={styles.noteEditor}>
-                      <textarea className="form-input" rows={3} value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} disabled={savingNoteId === note._rowIndex} />
+                      <AutoTextarea className="form-input" rows={3} value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} disabled={savingNoteId === note._rowIndex} />
                       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                         <button type="button" className="btn btn-primary text-sm" onClick={() => saveNote(note)} disabled={savingNoteId === note._rowIndex || !noteDraft.trim()}>{savingNoteId === note._rowIndex ? 'Saving…' : 'Save note'}</button>
                         <button type="button" className="btn text-sm" onClick={cancelEdit} disabled={savingNoteId === note._rowIndex}>Cancel</button>
@@ -122,7 +123,7 @@ export default function OpportunityNotesSection({
             ))
       }
       <div ref={newNoteRef} className={styles.noteAdd}>
-        <textarea
+        <AutoTextarea
           className="form-input"
           placeholder="Add a note…"
           value={newNote}

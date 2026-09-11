@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '@/components/Common/Modal'
 import {
@@ -411,13 +412,6 @@ export default function PeopleSearch({
   }, [clearSearchTimeout])
 
   useEffect(() => {
-    const editor = queryEditorRef.current
-    if (!editor || !expanded) return
-    editor.style.height = 'auto'
-    editor.style.height = `${editor.scrollHeight}px`
-  }, [expanded, queryDraft])
-
-  useEffect(() => {
     if (variant !== 'opportunity' || !expanded || suggestedOnce) return
     void suggestQueries()
   }, [expanded, suggestedOnce, suggestQueries, variant])
@@ -678,7 +672,7 @@ export default function PeopleSearch({
               : 'LinkedIn profile filter → required organization → roles → office, program, or keywords. OR stays inside each group.'}
           </span>
         </div>
-        <textarea
+        <AutoTextarea
           ref={queryEditorRef}
           id={`people-query-${generatedId}`}
           className={`form-input ${styles.queryEditor}`}
@@ -925,7 +919,7 @@ export default function PeopleSearch({
             </div>
             <div className={`form-field ${styles.spanFull}`}>
               <label className="form-label">Notes</label>
-              <textarea
+              <AutoTextarea
                 className="form-input"
                 rows={3}
                 value={contactDraft.Notes || ''}

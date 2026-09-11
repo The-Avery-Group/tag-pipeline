@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
@@ -118,12 +119,11 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
         {/* Panel header */}
         <div className={styles.panelHeader}>
           <CircleCheck status={form.Status} onClick={() => setField('Status', STATUS_NEXT[form.Status] || 'To Do')} />
-          <textarea
+          <AutoTextarea
             className={styles.panelTitle}
             rows={1}
             value={form.Title}
             onChange={(e) => setField('Title', e.target.value)}
-            onInput={(e) => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px` }}
             placeholder="Task title"
           />
           <button className={styles.panelClose} onClick={onClose} aria-label="Close">✕</button>
@@ -133,7 +133,7 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
           {/* Description */}
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Description</label>
-            <textarea
+            <AutoTextarea
               className={styles.panelTextarea}
               rows={4}
               placeholder="Add a note…"
@@ -176,7 +176,7 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
                 value={form.AssignedTo || ''}
                 onChange={(e) => setField('AssignedTo', e.target.value)}
               >
-                <option value="">— Select —</option>
+                <option value="">Select…</option>
                 {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
               </select>
             </div>
@@ -294,10 +294,10 @@ function OppPicker({ pipeline, value, onChange }) {
                   onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent' }}
                 >
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue-800)', marginBottom: 2 }}>
-                    {cn || '—'}
+                    {cn || '-'}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--gray-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {t || '—'}
+                    {t || '-'}
                   </div>
                 </div>
               )
@@ -307,7 +307,7 @@ function OppPicker({ pipeline, value, onChange }) {
       {/* Selected value summary */}
       {selected && (
         <div style={{ fontSize: 11, color: 'var(--gray-400)', paddingLeft: 2 }}>
-          Selected: <strong style={{ color: 'var(--blue-800)' }}>{selected[C_CN]}</strong> — {selected[C_TITLE]}
+          Selected: <strong style={{ color: 'var(--blue-800)' }}>{selected[C_CN]}</strong> - {selected[C_TITLE]}
         </div>
       )}
     </div>
@@ -687,7 +687,7 @@ export default function Tasks({ toast }) {
             </div>
             <div className="form-field">
               <label className="form-label">Description</label>
-              <textarea className="form-input" rows={3} value={taskForm.Description}
+              <AutoTextarea className="form-input" rows={3} value={taskForm.Description}
                 onChange={(e) => setFormField('Description', e.target.value)} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -695,7 +695,7 @@ export default function Tasks({ toast }) {
                 <label className="form-label">Assigned to</label>
                 <select className="form-input" value={taskForm.AssignedTo}
                   onChange={(e) => setFormField('AssignedTo', e.target.value)}>
-                  <option value="">— Select —</option>
+                  <option value="">Select…</option>
                   {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
                 </select>
               </div>

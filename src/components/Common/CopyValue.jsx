@@ -4,7 +4,7 @@ import styles from './CopyValue.module.css'
 export default function CopyValue({ value, children, label = 'value', className = '' }) {
   const [copied, setCopied] = useState(false)
   const text = String(value ?? '').trim()
-  if (!text) return children || '—'
+  if (!text) return children || '-'
   const copy = async (event) => {
     event.preventDefault()
     event.stopPropagation()

@@ -74,7 +74,7 @@ export function useAIChat({ conversationId, promptType = 'general', initialConte
           Math.max(Math.ceil(err.retryAfterSeconds || MAX_RATE_LIMIT_WAIT_SECONDS), 1),
           MAX_RATE_LIMIT_WAIT_SECONDS
         )
-        setToolActivity(`Groq is rate-limited — retrying in ${seconds}s…`)
+        setToolActivity(`Groq is rate-limited. Retrying in ${seconds}s…`)
         await waitWithAbort(seconds * 1000, signal)
       }
     }

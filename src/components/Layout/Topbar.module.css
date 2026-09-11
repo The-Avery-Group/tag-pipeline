@@ -91,3 +91,7 @@
   color: var(--text-on-brand);
 }
 .iconBtnPrimary:hover:not(:disabled):not([aria-disabled='true']) { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+/* Shared action colors; preserve this control’s layout and behavior. */
+.iconBtn { background: var(--action-bg); color: var(--action-text); border: .5px solid var(--action-border); border-radius: var(--radius-md); }
+.iconBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--action-hover); color: var(--action-text); }

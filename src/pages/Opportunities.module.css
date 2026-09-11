@@ -705,3 +705,7 @@ tr:hover:not(:disabled):not([aria-disabled='true']) .rowCheckbox {
 }
 .samUpdatedBadge:hover:not(:disabled):not([aria-disabled='true']) .samUpdatedTooltip,
 .samUpdatedBadge:focus-visible .samUpdatedTooltip { visibility: visible; }
+
+/* Shared action colors; preserve this control’s layout and behavior. */
+.syncDetailsButton { background: var(--action-bg); color: var(--action-text); border: .5px solid var(--action-border); border-radius: var(--radius-md); }
+.syncDetailsButton:hover:not(:disabled):not([aria-disabled='true']) { background: var(--action-hover); color: var(--action-text); }

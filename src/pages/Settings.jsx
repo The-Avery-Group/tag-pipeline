@@ -630,7 +630,7 @@ export default function Settings({ toast }) {
                     <label className={styles.ebuyTotpField}>
                       <span>Authenticator setup key</span>
                       <input className="form-input" type="password" autoComplete="off" value={ebuyConnectionForm.totpSecret} onChange={(event) => setEbuyConnectionForm((current) => ({ ...current, totpSecret: event.target.value }))} required disabled={ebuyConnecting} />
-                      <small>Enter the permanent setup key shown when an authenticator app is enrolled—not the rotating six-digit code. Email verification cannot support unattended synchronization.</small>
+                      <small>Enter the permanent setup key from authenticator enrollment. Do not use the rotating six-digit code.<br />Email verification cannot support unattended synchronization.</small>
                     </label>
                     <div className={styles.ebuyConsent}>
                       Connecting authorizes TAG CRM to retrieve the company&apos;s eligible eBuy opportunities and archive their attachments in the existing SharePoint site. It does not submit quotes or change eBuy data.

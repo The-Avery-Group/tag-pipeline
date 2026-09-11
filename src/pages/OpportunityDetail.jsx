@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -255,7 +256,7 @@ function findIncumbentPartner(incumbentUEI, partners) {
 }
 
 function formatFieldValue(val) {
-  if (val === null || val === undefined || val === '') return '—'
+  if (val === null || val === undefined || val === '') return '-'
   if (val instanceof Date) return formatDate(val)
   if (typeof val === 'number') return val.toLocaleString()
   return String(val)
@@ -1600,7 +1601,7 @@ export default function OpportunityDetail({ toast }) {
                   value={f(C.assignedTo) || ''}
                   onChange={(e) => set(C.assignedTo)(e.target.value)}
                 >
-                  <option value="">— Select —</option>
+                  <option value="">Select…</option>
                   {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
                 </select>
               </div>
@@ -1747,7 +1748,7 @@ export default function OpportunityDetail({ toast }) {
           <dl className={styles.summaryGrid}>
             {AWARD_FIELDS.map(([column, label, type]) => <div className={styles.summaryField} key={column}>
               <dt>{label}</dt>
-              <dd>{opp[column] === undefined || opp[column] === null || opp[column] === '' ? '—'
+              <dd>{opp[column] === undefined || opp[column] === null || opp[column] === '' ? '-'
                 : type === 'date' ? formatDate(dateOnly(opp[column]))
                   : type === 'number' ? fmtValue(opp[column])
                     : type === 'url' && /^https?:\/\//i.test(opp[column]) ? <a href={opp[column]} target="_blank" rel="noreferrer">Open Link</a>
@@ -1770,7 +1771,7 @@ export default function OpportunityDetail({ toast }) {
                     </span>
                     <span className={styles.contactInfo}>
                       <span className={styles.contactName}>{c.Name}</span>
-                      <span className={styles.contactSub}>{[c.Title, c.Agency].filter(Boolean).join(' · ') || '—'}</span>
+                      <span className={styles.contactSub}>{[c.Title, c.Agency].filter(Boolean).join(' · ') || '-'}</span>
                     </span>
                   </button>
                   {(c.Email || c.Phone) && <span className={styles.contactMethods}>
@@ -1838,8 +1839,8 @@ export default function OpportunityDetail({ toast }) {
                         className={styles.contactDropdownRow}
                         onClick={() => !linkingContactId && handleLinkContact(c)}
                       >
-                        <div className={styles.contactDropdownName}>{c.Name || '—'}</div>
-                        <div className={styles.contactDropdownSub}>{c.Agency || c.Email || '—'}</div>
+                        <div className={styles.contactDropdownName}>{c.Name || '-'}</div>
+                        <div className={styles.contactDropdownSub}>{c.Agency || c.Email || '-'}</div>
                       </div>
                     ))
                 }
@@ -2159,7 +2160,7 @@ export default function OpportunityDetail({ toast }) {
               </div>
               <div className="form-field">
                 <label className="form-label">Description</label>
-                <textarea className="form-input" rows={3} value={taskForm.Description}
+                <AutoTextarea className="form-input" rows={3} value={taskForm.Description}
                   onChange={(e) => setTaskForm({ ...taskForm, Description: e.target.value })} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -2167,7 +2168,7 @@ export default function OpportunityDetail({ toast }) {
                   <label className="form-label">Assigned to</label>
                   <select className="form-input" value={taskForm.AssignedTo}
                     onChange={(e) => setTaskForm({ ...taskForm, AssignedTo: e.target.value })}>
-                    <option value="">— Select —</option>
+                    <option value="">Select…</option>
                     {assigneeOptions.map((a) => <option key={a}>{a}</option>)}
                   </select>
                 </div>

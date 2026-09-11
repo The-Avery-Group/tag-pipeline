@@ -197,6 +197,10 @@ a.matchSource { color: var(--gray-500); text-decoration: underline; }
   .marketDetailGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .periodFilterRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Shared action colors; preserve this control’s layout and behavior. */
+.inlineRuleButton { background: var(--action-bg); color: var(--action-text); border: .5px solid var(--action-border); border-radius: var(--radius-md); }
+.inlineRuleButton:hover:not(:disabled):not([aria-disabled='true']) { background: var(--action-hover); color: var(--action-text); }
 @media (max-width: 620px) {
   .controls { grid-template-columns: 1fr; }
   .controls > button { grid-column: auto; width: 100%; }

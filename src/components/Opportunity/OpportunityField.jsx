@@ -12,7 +12,7 @@ export default function OpportunityField({ label, value, editing, onChange, type
         : <div className="form-input" style={{ background: 'var(--gray-50)', color: 'var(--gray-900)' }}>
           {raw && value !== null && value !== undefined && value !== ''
             ? <CopyValue value={value} label={label}>{String(value)}</CopyValue>
-            : raw ? '—' : formatValue(value)}
+            : raw ? '-' : formatValue(value)}
         </div>
       }
     </div>

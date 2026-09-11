@@ -5,6 +5,10 @@
   margin-bottom: 20px;
 }
 
+/* Shared action colors; preserve this control’s layout and behavior. */
+.addBtn { background: var(--action-bg); color: var(--action-text); border: .5px solid var(--action-border); border-radius: var(--radius-md); }
+.addBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--action-hover); color: var(--action-text); }
+
 .sectionLabel {
   font-size: 11px;
   font-weight: 600;

@@ -32,7 +32,7 @@ function normalized(value) {
 
 function formatBytes(bytes) {
   const size = Number(bytes || 0)
-  if (!size) return '—'
+  if (!size) return '-'
   const units = ['B', 'KB', 'MB', 'GB']
   const index = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1)
   return `${(size / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`

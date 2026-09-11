@@ -200,10 +200,10 @@ export default function PipelineBoard({ toast }) {
                                     {opp[C.title]}
                                   </span>
                                   <span className={styles.colAgency}>
-                                    {opp[C.agency] || '—'}
+                                    {opp[C.agency] || '-'}
                                   </span>
                                   <span className={styles.colValue}>
-                                    {val ? formatCurrency(val) : '—'}
+                                    {val ? formatCurrency(val) : '-'}
                                   </span>
                                   <span className={styles.colActivity} onClick={(e) => e.stopPropagation()}>
                                     {movingActivity[cn]
@@ -222,7 +222,7 @@ export default function PipelineBoard({ toast }) {
                                           onChange={(e) => handleActivityMove(opp, e.target.value, e)}
                                           disabled={isMoving || !!movingActivity[cn]}
                                         >
-                                          <option value="">— Select —</option>
+                                          <option value="">Select…</option>
                                           {activityPhases.map((p) => (
                                             <option key={p} value={p}>{p}</option>
                                           ))}

@@ -346,7 +346,7 @@ export default function Lookup({ toast }) {
             <label className="form-label">Phase</label>
             <input className="form-input" value="Identified" disabled />
             <span className="text-xs text-muted" style={{ marginTop: 4 }}>
-              Always starts here — advances through the pipeline from this point, same as any other opportunity.
+              Starts here and advances through the pipeline like any other opportunity.
             </span>
           </div>
           <div className="form-field">
@@ -355,7 +355,7 @@ export default function Lookup({ toast }) {
               {outlookOptions.map((o) => <option key={o}>{o}</option>)}
             </select>
             <span className="text-xs text-muted" style={{ marginTop: 4 }}>
-              Defaults to "Expiring" since this data is already-awarded — change it if that's not right here.
+              Defaults to "Expiring" for an awarded contract. Change it if needed.
             </span>
           </div>
         </Modal>

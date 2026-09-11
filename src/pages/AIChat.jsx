@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
@@ -276,7 +277,7 @@ export function AIChat({ toast }) {
         {/* ── Input area ── */}
         <div className={styles.inputArea}>
           <div className={styles.inputRow}>
-            <textarea
+            <AutoTextarea
               ref={inputRef}
               autoFocus
               className={styles.input}

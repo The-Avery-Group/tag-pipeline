@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
@@ -14,6 +15,7 @@ import {
   formatEbuyCloseDuration,
   formatEbuyDateTime,
   normalizeEbuyNoticeType,
+  ebuySurveyWarning,
 } from '@/utils/ebuyHelpers'
 import styles from './EbuyOpportunityDetail.module.css'
 
@@ -206,7 +208,7 @@ export default function EbuyOpportunityDetail({ toast }) {
       <section className={styles.card}>
         <header><div><span className={styles.eyebrow}>Files</span><h2>Attachments</h2></div><span className={styles.count}>{opportunity.attachments?.length || 0}</span></header>
         {opportunity.reviewState !== 'dismissed' && <button className="btn" onClick={() => setDocumentLinksOpen(true)}>Add document links</button>}
-        {opportunity.sourceDetails?.mrasSurvey?.status === 'needs_attention' && <div className={styles.referenceWarning}><strong>Survey documents need attention</strong><span>{opportunity.sourceDetails.mrasSurvey.error || 'The survey did not expose downloadable files. Open its link below to check the documents.'}</span></div>}
+        {ebuySurveyWarning(opportunity.sourceDetails?.mrasSurvey) && <div className={styles.referenceWarning}><strong>Survey documents need attention</strong><span>{ebuySurveyWarning(opportunity.sourceDetails?.mrasSurvey)}</span></div>}
         {(opportunity.attachmentReferences?.missing?.length > 0 || (opportunity.attachmentReferences?.mentioned && !opportunity.attachments?.length)) && <div className={styles.referenceWarning}>
           <strong>Referenced attachment unavailable</strong>
           <span>{opportunity.attachmentReferences?.missing?.length
@@ -241,9 +243,19 @@ export default function EbuyOpportunityDetail({ toast }) {
       <button className="btn" disabled={importingLinks} onClick={() => setDocumentLinksOpen(false)}>Close</button>
       <button className="btn btn-primary" disabled={importingLinks || !documentLinks.trim()} onClick={importDocumentLinks}>{importingLinks ? 'Downloading…' : 'Download documents'}</button>
     </>}>
-      <p className="text-sm">Paste direct GSA document download links, one per line—not the survey page. Up to 20 links, 50 MB per file. Saved documents appear under Attachments.</p>
-      <textarea className="form-input" aria-label="Document download links" rows={6} value={documentLinks} onChange={(event) => setDocumentLinks(event.target.value)} disabled={importingLinks} placeholder="https://feedback.gsa.gov/CP/File.php?F=…" />
-      {documentLinkResults.length > 0 && <ul>{documentLinkResults.map((result) => <li key={result.url} style={{ marginTop: 10, overflowWrap: 'anywhere' }}><strong>{result.status}</strong> — {result.fileName || result.url}{result.error && <p className="text-sm">{result.error}</p>}</li>)}</ul>}
+      <div className="form-help" id="document-links-help">
+        <p>Download GSA documents into this opportunity’s attachments.</p>
+        <ol>
+          <li>Open the survey and copy each document’s download link.</li>
+          <li>Paste one link per line below. Do not paste the survey page link.</li>
+        </ol>
+        <p className="text-muted">Up to 20 links, with a maximum of 50 MB per file. Saved files appear under Attachments.</p>
+      </div>
+      <div className="form-field">
+        <label className="form-label" htmlFor="document-download-links">Document download links</label>
+        <AutoTextarea id="document-download-links" className="form-input" aria-describedby="document-links-help" rows={6} value={documentLinks} onChange={(event) => setDocumentLinks(event.target.value)} disabled={importingLinks} placeholder="https://feedback.gsa.gov/CP/File.php?F=…" />
+      </div>
+      {documentLinkResults.length > 0 && <ul>{documentLinkResults.map((result) => <li key={result.url} style={{ marginTop: 10, overflowWrap: 'anywhere' }}><strong>{result.status}</strong> - {result.fileName || result.url}{result.error && <p className="text-sm">{result.error}</p>}</li>)}</ul>}
     </Modal>}
     {dismissedPrompt && <Modal title="Opportunity dismissed" onClose={() => setDismissedPrompt(false)} footer={<>
       <button className="btn" onClick={() => setDismissedPrompt(false)}>Stay here</button>

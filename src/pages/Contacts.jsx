@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useContacts } from '@/hooks/useContacts'
@@ -322,7 +323,7 @@ export default function Contacts({ toast }) {
       </div>
       <div className="form-field" style={{ gridColumn: '1 / -1' }}>
         <label className="form-label">Notes</label>
-        <textarea className="form-input" rows={2}
+        <AutoTextarea className="form-input" rows={2}
           value={form.Notes ?? ''}
           onChange={(e) => setField('Notes', e.target.value)} />
       </div>
@@ -469,7 +470,7 @@ export default function Contacts({ toast }) {
                                 <div className={styles.formGrid}>
                                   <div className="form-field"><label className="form-label">Date *</label><input className="form-input" type="date" required value={interactionForm['Interaction Date']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Date': e.target.value })); if (interactionError) setInteractionError('') }} /></div>
                                   <div className="form-field"><label className="form-label">Interaction type *</label><select className="form-input" required value={interactionForm['Interaction Type']} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, 'Interaction Type': e.target.value })); if (interactionError) setInteractionError('') }}><option value="" disabled>Select type</option><option>Email</option><option>Call</option><option>Meeting</option><option>Event</option><option>Other</option></select></div>
-                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes{['Other', 'Event'].includes(interactionForm['Interaction Type']) ? ' *' : ''}</label><textarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, Notes: e.target.value })); if (interactionError) setInteractionError('') }} /></div>
+                                  <div className="form-field" style={{ gridColumn: '1 / -1' }}><label className="form-label">Notes{['Other', 'Event'].includes(interactionForm['Interaction Type']) ? ' *' : ''}</label><AutoTextarea className="form-input" rows={3} value={interactionForm.Notes} onChange={(e) => { setInteractionForm((prev) => ({ ...prev, Notes: e.target.value })); if (interactionError) setInteractionError('') }} /></div>
                                   <div className="form-field"><label className="form-label">Follow-up date</label><input className="form-input" type="date" value={interactionForm['Follow-up Date']} onChange={(e) => setInteractionForm((prev) => ({ ...prev, 'Follow-up Date': e.target.value }))} /></div>
                                 </div>
                                 {interactionError && <p className={styles.interactionError} role="alert">{interactionError}</p>}

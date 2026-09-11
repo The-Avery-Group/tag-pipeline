@@ -257,7 +257,7 @@ export default function SearchModal({ onClose }) {
                   onClick={() => go(`/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}`)}>
                   <div className={styles.resultTitle}>{o['Project Title / Description*']}</div>
                   <div className={styles.resultMeta}>{o['Contract Number / Notice ID']}</div>
-                  <div className={styles.resultMeta}>{o['Department*'] || o['Agency*'] || '—'}</div>
+                  <div className={styles.resultMeta}>{o['Department*'] || o['Agency*'] || '-'}</div>
                 </button>
               ))}
               {results.counts.opportunities > MAX_PER_CATEGORY && (
@@ -279,7 +279,7 @@ export default function SearchModal({ onClose }) {
                   onClick={() => go(`/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}?row=${o._rowIndex}`)}>
                   <div className={styles.resultTitle}>{o['Project Title / Description*']}</div>
                   <div className={styles.resultMeta}>{o['Contract Number / Notice ID']} · Archived</div>
-                  <div className={styles.resultMeta}>{o['Department*'] || o['Agency*'] || '—'}</div>
+                  <div className={styles.resultMeta}>{o['Department*'] || o['Agency*'] || '-'}</div>
                 </button>
               })}
               {results.counts.archivedOpportunities > MAX_PER_CATEGORY && (
@@ -303,7 +303,7 @@ export default function SearchModal({ onClose }) {
                     onClick={() => go(`/opportunities?tab=New&search=${encodeURIComponent(identifier || opportunity.Title || '')}`)}>
                     <div className={styles.resultTitle}>{opportunity.Title || 'Untitled opportunity'}</div>
                     <div className={styles.resultMeta}>{identifier || 'No Notice ID'}</div>
-                    <div className={styles.resultMeta}>{opportunity.Department || opportunity.Agency || '—'}</div>
+                    <div className={styles.resultMeta}>{opportunity.Department || opportunity.Agency || '-'}</div>
                   </button>
                 )
               })}
@@ -329,7 +329,7 @@ export default function SearchModal({ onClose }) {
                     onClick={() => go(`/opportunities/ebuy/${encodeURIComponent(identifier)}`)}>
                     <div className={styles.resultTitle}>{opportunity.title || 'Untitled opportunity'}</div>
                     <div className={styles.resultMeta}>{identifier || 'No request ID'}{status ? ` · ${status}` : ''}</div>
-                    <div className={styles.resultMeta}>{opportunity.buyerDepartment || opportunity.buyerAgency || '—'}</div>
+                    <div className={styles.resultMeta}>{opportunity.buyerDepartment || opportunity.buyerAgency || '-'}</div>
                   </button>
                 )
               })}
@@ -376,8 +376,8 @@ export default function SearchModal({ onClose }) {
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => go(`/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}`)}>
                   <div className={styles.resultTitle}>{c.Name}</div>
-                  <div className={styles.resultMeta}>{c.Email || '—'}</div>
-                  <div className={styles.resultMeta}>{c.Agency || '—'}</div>
+                  <div className={styles.resultMeta}>{c.Email || '-'}</div>
+                  <div className={styles.resultMeta}>{c.Agency || '-'}</div>
                 </button>
                 )
               })}

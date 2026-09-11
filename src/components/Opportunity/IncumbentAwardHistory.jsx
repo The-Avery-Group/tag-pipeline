@@ -9,7 +9,7 @@ const SUBCONTRACT_COLOR = 'var(--chart-phase-research)'
 
 function fullCurrency(value) {
   const number = Number(value)
-  if (!Number.isFinite(number)) return '—'
+  if (!Number.isFinite(number)) return '-'
   const sign = number < 0 ? '-' : ''
   return `${sign}$${Math.abs(number).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
@@ -104,7 +104,7 @@ export default function IncumbentAwardHistory({ incumbentUEI, incumbentName }) {
       {loading ? <div className="text-xs text-muted">Loading incumbent award history…</div>
         : error ? <div className="text-xs text-danger">Could not load award history: {error}</div>
         : data && <>
-          <div className={styles.incumbentHistoryMetrics}><span><strong>{data.contractCount}</strong> prime contracts</span><span><strong>{valueLabel(data.averageAwardValue) || '—'}</strong> average award amount</span><span><strong>{data.expiringAwards}</strong> expiring within 6 months</span></div>
+          <div className={styles.incumbentHistoryMetrics}><span><strong>{data.contractCount}</strong> prime contracts</span><span><strong>{valueLabel(data.averageAwardValue) || '-'}</strong> average award amount</span><span><strong>{data.expiringAwards}</strong> expiring within 6 months</span></div>
           <div className={styles.incumbentChartSwitch} role="tablist" aria-label="Award history chart">
             <button type="button" role="tab" aria-selected={chartView === 'activity'} className={chartView === 'activity' ? styles.historyControlActive : styles.historyControl} onClick={() => setChartView('activity')}>Contract obligations</button>
             <button type="button" role="tab" aria-selected={chartView === 'agency'} className={chartView === 'agency' ? styles.historyControlActive : styles.historyControl} onClick={() => setChartView('agency')}>Agency distribution</button>

@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
@@ -181,7 +182,7 @@ export default function Partners({ toast }) {
       <div className={styles.formSectionTitle}>{SECTIONS.find(([section]) => section === id)?.[1]}</div>
       <div className={styles.formGrid}>{FIELDS.filter(([, , , , section]) => section === id).map(([key, label, type, required]) => <div className={`form-field ${type === 'textarea' ? styles.full : ''}`} key={key}>
         <label className="form-label">{label}{required ? ' *' : ''}</label>
-        {type === 'textarea' ? <textarea className="form-input" rows={3} value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /> : <input className="form-input" value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />}
+        {type === 'textarea' ? <AutoTextarea className="form-input" rows={3} value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /> : <input className="form-input" value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />}
       </div>)}</div>
     </div>
   )

@@ -334,8 +334,8 @@ function OppRow({ opp, onClick }) {
           {opp[C.phase]}
         </span>
       </span>
-      <span className={styles.colAgency}>{opp[C.agency] || '—'}</span>
-      <span className={styles.colValue}>{value ? formatCurrency(value) : '—'}</span>
+      <span className={styles.colAgency}>{opp[C.agency] || '-'}</span>
+      <span className={styles.colValue}>{value ? formatCurrency(value) : '-'}</span>
     </div>
   )
 }
@@ -368,7 +368,7 @@ function TaskRow({ task, onClose, closing, onRowClick }) {
       <span className={`${styles.colTaskDue} ${overdue ? 'text-danger' : 'text-muted'}`}>
         {overdue ? `${formatDate(task.DueDate)} · overdue` : formatDate(task.DueDate)}
       </span>
-      <span className={styles.colTaskAssignee + ' text-muted'}>{task.AssignedTo || '—'}</span>
+      <span className={styles.colTaskAssignee + ' text-muted'}>{task.AssignedTo || '-'}</span>
       <span className={styles.colTaskAction}>
         <button
           className={`${styles.taskCheck} ${task.Status === 'Done' ? styles.taskCheckDone : ''}`}
@@ -626,39 +626,39 @@ export default function Dashboard({ toast }) {
         <div className={styles.kpiGrid}>
           <KpiCard
             label="Total opportunities"
-            value={initialPLoad ? '—' : kpis.total}
+            value={initialPLoad ? '-' : kpis.total}
             sub={`${kpis.open} open · ${kpis.closed} awarded`}
             onClick={() => goToOpportunities({ tab: 'All' })}
           />
           <KpiCard
             label="Pipeline value"
-            value={initialPLoad ? '—' : kpis.totalValueFormatted}
+            value={initialPLoad ? '-' : kpis.totalValueFormatted}
             sub="Open opportunities"
           />
           <KpiCard
             label="Expiring in 6 months"
             title="Contracts expiring within 6 months"
-            value={initialPLoad ? '—' : expiringBandCounts['0-6']}
+            value={initialPLoad ? '-' : expiringBandCounts['0-6']}
             sub={expiringBandCounts['0-6'] > 0 ? 'Review recompetes' : 'None expiring soon'}
             danger={expiringBandCounts['0-6'] > 0}
             onClick={() => goToOpportunities({ tab: 'Expiring', endBand: '0-6' })}
           />
           <KpiCard
             label="Overdue tasks"
-            value={initialTLoad ? '—' : kpis.overdueCount}
+            value={initialTLoad ? '-' : kpis.overdueCount}
             sub={kpis.overdueCount > 0 ? 'Needs attention' : 'All on track'}
             danger={kpis.overdueCount > 0}
             onClick={() => navigate('/tasks?status=overdue')}
           />
           <KpiCard
             label="Pending Award"
-            value={initialPLoad ? '—' : kpis.pendingAward}
+            value={initialPLoad ? '-' : kpis.pendingAward}
             sub="Submitted RFPs awaiting a decision"
             onClick={() => goToOpportunities({ tab: 'All', phase: 'Pending Award' })}
           />
           <KpiCard
             label="Company PWIN"
-            value={initialPLoad ? '—' : `${kpis.companyPwin.toFixed(1)}%`}
+            value={initialPLoad ? '-' : `${kpis.companyPwin.toFixed(1)}%`}
             sub={`${kpis.won} won · ${kpis.submittedRfpCount} submitted · ${kpis.decidedPwin.toFixed(1)}% decided`}
           />
         </div>
@@ -850,7 +850,7 @@ export default function Dashboard({ toast }) {
             ? [1, 2, 3].map((i) => <div key={i} className={`skeleton ${styles.rowSkeleton}`} />)
             : displayedTasks.length === 0
               ? <p className="text-sm text-muted" style={{ padding: '8px 0' }}>
-                  {taskTab === 'overdue' ? 'No overdue tasks — nice work!' : 'No active tasks.'}
+                  {taskTab === 'overdue' ? 'No overdue tasks.' : 'No active tasks.'}
                 </p>
               : (
                 <div className={styles.consistentTable}>

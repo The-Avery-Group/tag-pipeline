@@ -1,3 +1,4 @@
+import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useMemo, useRef, useState } from 'react'
 import ActionIcon from '@/components/Common/ActionIcon'
 import RichText from '@/components/Common/RichText'
@@ -84,10 +85,10 @@ export default function PartnerNotesPanel({ partner, toast }) {
     {legacyNote && <div className={styles.legacyNote}><span>Legacy partner note</span><RichText value={legacyNote} /></div>}
     {loading ? <div className="skeleton" style={{ height: 55 }} /> : notes.length === 0 && !legacyNote ? <p className="text-sm text-muted">No partner notes yet.</p> : notes.map((note) => <div className={styles.noteItem} key={note.NoteID}>
       <div className={styles.noteMeta}><span>{note.Date} · {note.Author}</span><button type="button" onClick={() => { setEditing(note); setDraft(note.NoteText || '') }} title="Edit note" aria-label="Edit note"><ActionIcon name="edit" /></button><button type="button" onClick={() => deleteNote(note)} disabled={deleting === note._rowIndex} title="Delete note" aria-label="Delete note">{deleting === note._rowIndex ? '…' : <ActionIcon name="delete" />}</button></div>
-      {editing?._rowIndex === note._rowIndex ? <div ref={editor} className={styles.noteEditor}><textarea className="form-input" rows={4} value={draft} onChange={(event) => setDraft(event.target.value)} /><div><button type="button" className="btn btn-primary text-sm" onClick={saveEdit} disabled={saving || !draft.trim()}>{saving ? 'Saving…' : 'Save note'}</button><button type="button" className="btn text-sm" onClick={() => setEditing(null)} disabled={saving}>Cancel</button></div></div> : <RichText value={note.NoteText} />}
+      {editing?._rowIndex === note._rowIndex ? <div ref={editor} className={styles.noteEditor}><AutoTextarea className="form-input" rows={4} value={draft} onChange={(event) => setDraft(event.target.value)} /><div><button type="button" className="btn btn-primary text-sm" onClick={saveEdit} disabled={saving || !draft.trim()}>{saving ? 'Saving…' : 'Save note'}</button><button type="button" className="btn text-sm" onClick={() => setEditing(null)} disabled={saving}>Cancel</button></div></div> : <RichText value={note.NoteText} />}
     </div>)}
     <div ref={composer} className={styles.noteComposer}>
-      <textarea className="form-input" rows={3} placeholder="Add a partner note…" value={text} onChange={(event) => setText(event.target.value)} />
+      <AutoTextarea className="form-input" rows={3} placeholder="Add a partner note…" value={text} onChange={(event) => setText(event.target.value)} />
       <input ref={fileInput} className={styles.hiddenFileInput} type="file" multiple onChange={chooseFiles} />
       {attachments.length > 0 && <div className={styles.attachments}>{attachments.map((file, index) => <div key={`${file.name}-${file.size}-${index}`}><ActionIcon name="attachment" /><span>{file.name}</span><small>{formatSize(file.size)}</small><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>}
       {fileError && <div className={styles.fileError}>{fileError}</div>}

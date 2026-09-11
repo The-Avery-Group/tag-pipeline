@@ -62,3 +62,8 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* Dialog instructions need readable spacing without changing nested forms. */
+.body > p { line-height: 1.55; margin-bottom: 12px; }
+.body > :is(ul, ol) { padding-left: 20px; margin-bottom: 12px; line-height: 1.55; }
+.body > :is(ul, ol) > li + li { margin-top: 6px; }
