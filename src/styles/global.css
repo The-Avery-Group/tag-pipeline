@@ -8,6 +8,9 @@
   /* Palette */
   --blue-50: #E6F1FB;
   --blue-200: #85B7EB;
+  --blue-100: #d5e8f9;
+  --blue-300: var(--blue-200);
+  --blue-500: var(--blue-600);
   --blue-600: #185FA5;
   --blue-800: #0C447C;
   --blue-700: #0C447C;
@@ -32,10 +35,16 @@
   --gray-500: #76756F;
   --gray-600: #5F5E5A;
   --gray-700: #44433F;
+  --gray-800: var(--gray-700);
   --gray-900: #1A1A19;
 
   --purple-50: #EEEDFE;
   --purple-800: #3C3489;
+  --purple-700: var(--purple-800);
+  --red-200: var(--error-border);
+  --red-500: var(--red-600);
+  --amber-100: #f3dfb8;
+  --amber-500: var(--amber-600);
 
   /* Semantic UI tokens. Light values deliberately preserve the existing UI. */
   --surface: #fff;
@@ -44,6 +53,18 @@
   --text-on-brand: #fff;
   --overlay: rgba(0, 0, 0, 0.35);
   --shadow-color: rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 1px 2px var(--shadow-color);
+  --shadow-lg: 0 8px 24px var(--shadow-color);
+  --primary-hover: #0C447C;
+  --control-disabled-opacity: 0.62;
+  --control-font: 500 12px var(--font);
+  --control-compact-font: 500 11px var(--font);
+  --control-padding: 6px 12px;
+  --control-compact-padding: 4px 8px;
+  --control-icon-size: 30px;
+  --section-heading-padding: 13px 16px;
+  --section-heading-size: 12px;
+  --section-heading-weight: 500;
   --danger-hover: #f7c1c1;
   --success-border: #c0dd97;
   --error-border: #f09595;
@@ -61,6 +82,10 @@
   --new-action-track: #854F0B;
   --new-action-dismiss: #A32D2D;
   --new-action-text: #fff;
+  --new-action-pipeline-hover: #2f590c;
+  --new-action-sam-hover: #0C447C;
+  --new-action-track-hover: #6b3e08;
+  --new-action-dismiss-hover: #872323;
 
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -72,23 +97,26 @@
 }
 
 html[data-theme='dark'] {
+  --blue-100: #214968;
+  --amber-100: #59431d;
+  --primary-hover: #85b7eb;
   --blue-50: #173a5d;
   --blue-200: #347dbd;
   --blue-600: #5ba5e8;
-  --blue-700: #347dbd;
+  --blue-700: #8cc8ff;
   --blue-800: #b9dcff;
 
   --green-50: #20351c;
   --green-600: #a6d47a;
-  --green-700: #4f8a2b;
+  --green-700: #a6d47a;
 
   --amber-50: #443416;
   --amber-600: #f4be7b;
-  --amber-700: #a56416;
+  --amber-700: #f4be7b;
 
   --red-50: #491e22;
   --red-600: #ffaaa8;
-  --red-700: #b54444;
+  --red-700: #ffaaa8;
 
   --gray-50: #20211f;
   --gray-100: #171816;
@@ -128,6 +156,10 @@ html[data-theme='dark'] {
   --new-action-track: #885f1c;
   --new-action-dismiss: #984245;
   --new-action-text: #fff;
+  --new-action-pipeline-hover: #335e20;
+  --new-action-sam-hover: #184d7c;
+  --new-action-track-hover: #704d16;
+  --new-action-dismiss-hover: #7d3437;
 }
 
 html, body, #root {
@@ -152,10 +184,10 @@ input:disabled,
 select:disabled,
 textarea:disabled {
   cursor: not-allowed;
-  opacity: 0.62;
+  opacity: var(--control-disabled-opacity);
 }
 
-:focus-visible {
+:root :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--blue-600);
   outline-offset: 2px;
 }
@@ -202,7 +234,10 @@ input, select, textarea {
   padding: var(--badge-padding);
   border-radius: var(--badge-radius);
   white-space: nowrap;
+  line-height: 1.4;
 }
+button.badge { border: 0.5px solid transparent; }
+button.badge:hover:not(:disabled) { box-shadow: inset 0 0 0 1px currentColor; }
 .badge-tracking { background: var(--gray-100); color: var(--gray-600); }
 .badge-qualify  { background: var(--amber-50); color: var(--amber-600); }
 .badge-proposal { background: var(--blue-50);  color: var(--blue-800);  }
@@ -228,24 +263,23 @@ input, select, textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 6px 12px;
+  font: var(--control-font);
+  padding: var(--control-padding);
   border-radius: var(--radius-md);
   border: 0.5px solid var(--button-border);
   background: var(--button-bg);
   color: var(--button-text);
-  transition: background 0.1s;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
 }
 .btn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--button-hover); text-decoration: none; }
-.btn:active:not(:disabled):not([aria-disabled='true']) { transform: scale(0.98); }
+.btn:active:not(:disabled):not([aria-disabled='true']) { opacity: 0.9; }
 .btn:disabled, .btn[aria-disabled='true'] { cursor: not-allowed; transform: none; }
 .btn[aria-disabled='true'] { opacity: 0.62; }
 .btn-secondary { --button-bg: var(--surface); --button-hover: var(--gray-50); --button-text: var(--gray-900); --button-border: var(--gray-200); }
 
 .btn-primary {
   --button-bg: var(--blue-600);
-  --button-hover: var(--blue-700);
+  --button-hover: var(--primary-hover);
   --button-border: var(--blue-600);
   --button-text: var(--text-on-brand);
 }
@@ -266,12 +300,18 @@ input, select, textarea {
 }
 
 .btn-icon {
-  width: 30px;
-  height: 30px;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
   padding: 0;
   justify-content: center;
   font-size: 16px;
 }
+.btn-compact { font: var(--control-compact-font); padding: var(--control-compact-padding); }
+.btn.btn-danger-ghost { --button-bg: transparent; --button-hover: var(--red-50); --button-text: var(--red-600); --button-border: transparent; color: var(--red-600); }
+
+.section-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: var(--section-heading-padding); background: var(--surface-raised); border: 0; color: var(--gray-900); text-align: left; font-family: var(--font); }
+.section-toggle:hover:not(:disabled) { background: var(--gray-50); }
+.section-toggle-title { flex: 1; font-size: var(--section-heading-size); font-weight: var(--section-heading-weight); color: var(--gray-900); }
 
 /* Form elements */
 .form-field { display: flex; flex-direction: column; gap: 4px; }
@@ -377,15 +417,8 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .justify-between { justify-content: space-between; }
 .w-full { width: 100%; }
 
-/* ── Smoother transitions ── */
-* { transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+/* Static cards do not animate or suggest that the whole card is clickable. */
 
-.card {
-  transition: box-shadow 0.18s;
-}
-.card:hover { box-shadow: 0 2px 8px var(--shadow-color); }
-
-.btn { transition: background 0.15s, transform 0.1s, box-shadow 0.15s; }
 
 .badge { transition: opacity 0.15s; }
 
