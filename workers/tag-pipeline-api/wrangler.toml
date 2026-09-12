@@ -80,6 +80,11 @@ class_name = "DocumentAnalysisWorkflow"
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
+# Enable only after secrets, webhook signing and a live approval smoke test.
+FATHOM_ENABLED = "false"
+FATHOM_OWNER_EMAIL = "agbadegesin@theaverygroupllc.com"
+# Set an ISO UTC activation time at rollout. Earlier meetings are never imported.
+FATHOM_ACTIVATED_AT = ""
 
 [triggers]
 # All cron schedules are UTC. 12:00 UTC is 1:00 PM Nigeria time (WAT).
@@ -91,7 +96,9 @@ ALLOWED_ORIGIN = "https://the-avery-group.github.io"
 # - Capability document eTag checks: every day at 1:01 PM WAT
 # - Teams reminders: every day at 2:01 PM WAT, so weekend RFI response
 #   reminders remain active while the other reminder categories defer to Monday.
-crons = ["0 0,6,12,18 * * *", "5 0,6,12,18 * * *", "15 0,6,12,18 * * *", "1 12 * * *", "1 13 * * *"]
+# Fathom: checkpointed processing/cleanup every five minutes, offset from pulls;
+# recovery checks the API at most hourly. No work is imported while disabled.
+crons = ["0 0,6,12,18 * * *", "5 0,6,12,18 * * *", "15 0,6,12,18 * * *", "1 12 * * *", "1 13 * * *", "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"]
 
 [observability]
 enabled = true
