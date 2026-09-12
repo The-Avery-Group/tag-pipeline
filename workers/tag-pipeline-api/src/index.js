@@ -48,6 +48,7 @@ import {
 } from './lib/scheduledCadence.js'
 import { purgeDocumentAnalysisData } from './lib/documentAnalysis.js'
 import { getRuntimeState, purgeRuntimeState } from './lib/automationHealth.js'
+import { handleFathom, runFathomJobs, FATHOM_CRON } from './handlers/fathom.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
 
@@ -105,10 +106,15 @@ export default {
       // came from an authenticated user of this Entra application. Health is
       // deliberately public for deployment monitoring; scheduled handlers do
       // not pass through fetch() and are unaffected.
-      const identity = path !== '/health' ? await verifyEntraRequest(req, env) : null
+      // Only this exact inbound webhook uses Fathom's signed-payload auth.
+      const signedFathomWebhook = path === '/fathom/webhook' && req.method === 'POST'
+      const identity = path !== '/health' && !signedFathomWebhook ? await verifyEntraRequest(req, env) : null
 
       if (path === '/health' && req.method === 'GET') {
         response = json({ status: 'ok', timestamp: new Date().toISOString() })
+
+      } else if (path.startsWith('/fathom/')) {
+        response = await handleFathom(req, env, identity)
 
       } else if (path === '/notify' && req.method === 'POST') {
         response = await handleNotify(req, env)
@@ -222,6 +228,12 @@ export default {
   // opportunity synchronization uses staggered weekday checkpoints. Follow-on
   // checks use each recovery slot; response-deadline reminders also run weekends.
   async scheduled(controller, env, ctx) {
+    if (controller.cron === FATHOM_CRON) {
+      ctx.waitUntil(runFathomJobs(env).catch(() => {
+        console.error(JSON.stringify({ event: 'fathom_scheduled_failed' }))
+      }))
+      return
+    }
     if (isOpportunityPullCron(controller.cron)) {
       const isBackup = isOpportunityPullBackupCron(controller.cron)
       const pullSlotTime = opportunityPullSlotTime(controller.scheduledTime, controller.cron)
