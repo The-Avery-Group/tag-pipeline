@@ -20,6 +20,7 @@ import styles from './Dashboard.module.css'
 import { useOpportunityAlerts } from '@/hooks/useOpportunityAlerts'
 import { acknowledgeOpportunityAlert } from '@/services/opportunityAlertService'
 import { getSAMOpportunities } from '@/services/graphService'
+import FathomTaskReview from '@/components/Tasks/FathomTaskReview'
 
 const C = {
   phase:       'TAG Opportunity Phase',
@@ -300,7 +301,7 @@ function AgencyChart({ sortedAgencies, onSegmentClick }) {
 
 
 // Collapsible card wrapper — same visual language as PipelineBoard sections
-function CollapsibleCard({ title, count, countDanger = false, defaultOpen = true, children, onViewAll }) {
+function CollapsibleCard({ title, count, countDanger = false, defaultOpen = true, children, onViewAll, keepMounted = false }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className={styles.collapsibleCard}>
@@ -319,7 +320,7 @@ function CollapsibleCard({ title, count, countDanger = false, defaultOpen = true
         )}
         <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>›</span>
       </button>
-      {open && <div className={styles.collapsibleBody}>{children}</div>}
+      {(open || keepMounted) && <div className={styles.collapsibleBody} style={open ? undefined : { display: 'none' }}>{children}</div>}
     </div>
   )
 }
@@ -406,6 +407,7 @@ export default function Dashboard({ toast }) {
   const { pipeline, loading: pLoading } = usePipeline()
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
   const reviewQueue = useOpportunityAlerts()
+  const [fathomReviewCount, setFathomReviewCount] = useState(0)
   const [samReviewRows, setSamReviewRows] = useState(null)
   const [closingTask, setClosingTask] = useState(null)
   const [taskTab, setTaskTab] = useState('overdue')
@@ -581,7 +583,7 @@ export default function Dashboard({ toast }) {
           defaultCollapsed={true}
         />
 
-        <CollapsibleCard title="Review queue" count={reviewQueue.alerts.length} countDanger defaultOpen={false}>
+        <CollapsibleCard title="Review queue" count={reviewQueue.alerts.length + fathomReviewCount} countDanger defaultOpen={false} keepMounted>
           {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
             : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No unreviewed opportunity changes.</p>
             : <div className={styles.reviewQueue}>
@@ -620,6 +622,7 @@ export default function Dashboard({ toast }) {
                 </div>
               ))}
             </div>}
+          <FathomTaskReview pipeline={pipeline} onCount={setFathomReviewCount} toast={toast} />
         </CollapsibleCard>
 
         {/* ── Row 1: KPI strip ── */}
