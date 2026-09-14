@@ -78,8 +78,12 @@ async function replaceState(db, key, before, value) {
 export async function enqueueMeeting(env, meeting, now = Date.now()) {
   if (!eligibleMeeting(meeting, env, now)) return { accepted: false, reason: 'outside_scope_or_retention' }
   const db = dbFor(env), id = String(meeting.recording_id), expires = iso(Date.parse(meeting.recording_end_time) + HOURS_48)
+  if (await readState(db, `fathom:job:${id}`, now)) {
+    return { accepted: true, duplicate: true }
+  }
   // Whitelist content. No summaries, videos, invitee lists or unrelated fields.
   const input = {
+    analysisVersion: 3,
     recording_id: id, recording_end_time: meeting.recording_end_time,
     share_url: meeting.share_url || meeting.url,
     transcript: Array.isArray(meeting.transcript) ? meeting.transcript : [],
@@ -101,12 +105,26 @@ async function fathomGet(env, path) {
   return JSON.parse(await boundedBody(response, 4000000))
 }
 
+export function nextFathomRecovery(now) {
+  const next = new Date(now)
+  next.setUTCHours(19, 0, 0, 0) // 8 PM Africa/Lagos, which has no DST.
+  if (next.getTime() <= now) next.setUTCDate(next.getUTCDate() + 1)
+  return next.getTime()
+}
+
+export function fathomRecoveryDue(state, now) {
+  if (state?.nextAt > now) return false
+  // Continue an interrupted scan independently of the daily discovery window.
+  if (state?.cursor || state?.error) return true
+  return new Date(now).getUTCHours() >= 19
+}
+
 async function recoverMeetings(env) {
-  // Recovery scans only the active 48-hour window, hourly, and resumes pages.
+  // Webhooks are primary. Scan once daily after 8 PM Nigeria time, resuming pages.
   // The cursor expires too. Repeated webhooks cannot extend meeting retention.
   const db = dbFor(env), key = 'fathom:recovery', now = Date.now()
   let before = await readState(db, key)
-  if (before && before.value.nextAt > now) return
+  if (!fathomRecoveryDue(before?.value, now)) return
   if (!before) {
     await db.prepare('INSERT OR IGNORE INTO crm_runtime_state (state_key,category,payload_json,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?)')
       .bind(key, 'fathom-control', '{"nextAt":0}', iso(now + HOURS_48), iso(now), iso(now)).run()
@@ -125,7 +143,7 @@ async function recoverMeetings(env) {
   try {
     const payload = await fathomGet(env, `/meetings?${url.searchParams}`)
     for (const meeting of payload.items || []) if (eligibleMeeting(meeting, env)) await enqueueMeeting(env, meeting)
-    await replaceState(db, key, locked, { cursor: payload.next_cursor || null, windowFrom, windowTo, nextAt: now + (payload.next_cursor ? 300000 : 3600000) })
+    await replaceState(db, key, locked, { cursor: payload.next_cursor || null, windowFrom, windowTo, nextAt: payload.next_cursor ? now + 300000 : nextFathomRecovery(now) })
   } catch (e) {
     await replaceState(db, key, locked, { ...before.value, nextAt: now + 900000, error: 'Meeting recovery could not complete. It will retry automatically.' })
   }
@@ -151,6 +169,17 @@ export async function runFathomJobs(env) {
       const sourceKey = `fathom:input:${job.id}`
       let input = await readState(db, sourceKey)
       if (!input) throw error('Meeting data expired', 410)
+      // Upgrade unfinished jobs once. Existing completed/approved tasks remain.
+      if (input.value.analysisVersion !== 3) {
+        const upgraded = { ...input.value, analysisVersion: 3, actionItemsPublished: false }
+        await replaceState(db, sourceKey, input, upgraded)
+        input = { ...input, value: upgraded }
+      }
+      if (current.reviewVersion !== 3) {
+        const old = { raw: JSON.stringify(current) }
+        current = { ...current, state: null, reviewVersion: 3 }
+        if (!await replaceState(db, row.state_key, old, current)) continue
+      }
       if (!input.value.transcript?.length) {
         const payload = await fathomGet(env, `/recordings/${job.id}/transcript`)
         const updated = { ...input.value, transcript: payload.transcript || [] }
@@ -179,10 +208,14 @@ export async function runFathomJobs(env) {
           // INSERT OR IGNORE makes interrupted publication and replay safe.
           const stamp = iso(Date.now())
           const writes = next.proposals.map((task, index) => {
-            const id = `${job.id}:${index}`
+            const slot = task.actionIndexes?.length ? 100000 + Math.min(...task.actionIndexes) : index
+            const id = `${job.id}:${slot}`
             return db.prepare('INSERT OR IGNORE INTO crm_runtime_state (state_key,category,payload_json,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?)')
-              .bind(`fathom:proposal:${id}`, 'fathom-proposal', JSON.stringify({ ...task, id, meetingId: job.id, ended: job.ended, status: 'pending', needsReview: task.status === 'uncertain', taskId: `F_${job.id}_${index}` }), row.expires_at, stamp, stamp)
+              .bind(`fathom:proposal:${id}`, 'fathom-proposal', JSON.stringify({ ...task, reviewed: true, id, meetingId: job.id, ended: job.ended, status: 'pending', needsReview: task.status === 'uncertain', taskId: `F_${job.id}_${slot}` }), row.expires_at, stamp, stamp)
           })
+          // Remove only unapproved, unedited early-publication rows from the
+          // prior version. Approved/rejected/in-flight rows are never changed.
+          await db.prepare("DELETE FROM crm_runtime_state WHERE category = 'fathom-proposal' AND json_extract(payload_json, '$.meetingId') = ? AND json_extract(payload_json, '$.status') = 'pending' AND json_extract(payload_json, '$.actionIndex') IS NOT NULL AND json_extract(payload_json, '$.edit') IS NULL").bind(job.id).run()
           if (writes.length) await db.batch(writes)
           await replaceState(db, row.state_key, { raw: JSON.stringify(current) }, { id: job.id, ended: job.ended, status: 'done', proposalCount: next.proposals.length, excludedCount: next.excluded.length, issues: next.issues })
           // Release the transcript early after successful completion. The job
@@ -214,6 +247,8 @@ async function approveProposal(req, env, identity, id, body) {
   if (!before) throw error('This task proposal has expired or no longer exists.', 410)
   if (before.value.status === 'approved') return json({ approved: true, taskId: before.value.taskId, alreadyExisted: true })
   if (before.value.status === 'rejected') throw error('This task proposal was rejected.', 409)
+  const meetingJob = await readState(db, `fathom:job:${before.value.meetingId}`)
+  if (meetingJob && meetingJob.value.status !== 'done' && before.value.status !== 'approving') throw error('Meeting review is still processing. Please wait for the reviewed tasks.', 409)
   const token = req.headers.get('Authorization').replace(/^Bearer\s+/i, '')
   const drive = env.WORKBOOK_DRIVE_ID || DRIVE
   // Reconcile an uncertain earlier append. NEVER issue a second append when
@@ -284,10 +319,11 @@ export async function handleFathom(req, env, identity = null) {
     if (path === '/fathom/review' && req.method === 'GET') {
       const rows = await db.prepare("SELECT category, payload_json, expires_at FROM crm_runtime_state WHERE category IN ('fathom-proposal','fathom-job','fathom-control') AND expires_at > ? ORDER BY created_at DESC LIMIT 250").bind(iso(Date.now())).all()
       const proposals = [], jobs = []
+      const unfinished = new Set((rows.results || []).filter(row => row.category === 'fathom-job').map(row => JSON.parse(row.payload_json)).filter(job => job.status !== 'done').map(job => String(job.id)))
       let recoveryIssue = null
       for (const row of rows.results || []) {
         const value = JSON.parse(row.payload_json)
-        if (row.category === 'fathom-proposal' && ['pending','approving'].includes(value.status)) proposals.push({ ...value, edit: undefined, expiresAt: row.expires_at })
+        if (row.category === 'fathom-proposal' && ['pending','approving'].includes(value.status) && (value.status === 'approving' || !unfinished.has(String(value.meetingId)))) proposals.push({ ...value, edit: undefined, expiresAt: row.expires_at })
         if (row.category === 'fathom-job' && value.status !== 'done') jobs.push({ id: value.id, status: value.status, ended: value.ended, error: value.error || null, phase: value.state?.phase || 'queued', reviewed: value.state?.index || 0, expiresAt: row.expires_at })
         if (row.category === 'fathom-control') recoveryIssue = value.error || null
       }
