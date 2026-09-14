@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { onDataChanged, publishDataChanged } from '@/services/workerClient'
 import {
   acknowledgeOpportunityAlert as acknowledgeAlert,
   getOpportunityAlerts,
@@ -26,12 +27,19 @@ export function useOpportunityAlerts(opportunityKey = '', { enabled = true } = {
   useEffect(() => { load() }, [load])
   useEffect(() => {
     if (!enabled) return undefined
+    return onDataChanged(topics => {
+      if (topics.includes('opportunity-alerts') && !document.hidden && navigator.onLine) void load({ silent: true })
+    })
+  }, [load, enabled])
+  useEffect(() => {
+    if (!enabled) return undefined
     const timer = window.setInterval(() => load({ silent: true }), 5 * 60 * 1000)
     return () => window.clearInterval(timer)
   }, [load, enabled])
 
   const acknowledge = useCallback(async (type, fingerprint = '') => {
     const data = await acknowledgeAlert(opportunityKey, type, fingerprint)
+    publishDataChanged(['opportunity-alerts'])
     setAlerts((current) => current.map((alert) =>
       alert.type === type ? data.alert : alert
     ))
