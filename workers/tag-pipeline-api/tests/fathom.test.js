@@ -2,7 +2,27 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Miniflare } from 'miniflare'
-import { fathomEnabled, eligibleMeeting, enqueueMeeting, handleFathom, verifyFathomSignature, boundedBody, runFathomJobs, validateTaskEdit } from '../src/handlers/fathom.js'
+import { fathomEnabled, eligibleMeeting, enqueueMeeting, handleFathom, verifyFathomSignature, boundedBody, runFathomJobs, validateTaskEdit, fathomRecoveryDue, nextFathomRecovery } from '../src/handlers/fathom.js'
+
+test('recovery starts after 8 PM Nigeria time and does not repeat hourly', () => {
+  const at = value => Date.parse(`2026-09-14T${value}Z`)
+  assert.equal(fathomRecoveryDue(null, at('18:59:59')), false)
+  assert.equal(fathomRecoveryDue(null, at('19:00:00')), true)
+  assert.equal(fathomRecoveryDue({ nextAt: at('12:00:00') }, at('15:00:00')), false)
+  const nextAt = nextFathomRecovery(at('19:02:00'))
+  assert.equal(new Date(nextAt).toISOString(), '2026-09-15T19:00:00.000Z')
+  assert.equal(fathomRecoveryDue({ nextAt }, at('20:02:00')), false)
+  assert.equal(fathomRecoveryDue({ nextAt }, nextAt), true)
+  assert.equal(nextFathomRecovery(at('18:59:00')), at('19:00:00'))
+})
+
+test('recovery pagination and error retries keep their backoff outside the daily window', () => {
+  const now = Date.parse('2026-09-15T00:02:00Z')
+  for (const state of [{ cursor: 'page-2' }, { error: 'retry' }]) {
+    assert.equal(fathomRecoveryDue({ ...state, nextAt: now + 1 }, now), false)
+    assert.equal(fathomRecoveryDue({ ...state, nextAt: now }, now), true)
+  }
+})
 
 let mf, db
 before(async () => {
@@ -23,6 +43,35 @@ const edit = { title: 'Send proposal', description: 'Prepare the requested propo
 const request = (path, body) => new Request(`https://crm.test${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer user-test-token', 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
 const proposal = id => ({ id, meetingId: id.split(':')[0], status: 'pending', taskId: `F_${id.replace(':','_')}`, title: 'Send proposal', meetingReference: { url: 'https://fathom.video/share/test' } })
 
+test('Fathom actions remain private until review completes and replay does not recreate input', async () => {
+  const m = { ...meeting(900), transcript: [], action_items: [
+    { description: 'Send labor rates', assignee: { name: 'Jamie', email: 'JAMIE@example.com' } },
+    { description: 'Already completed', completed: true },
+    { description: 'Send labor rates' },
+  ] }
+  await enqueueMeeting(envFor(), m)
+  assert.equal(await row('fathom:proposal:900:100000'), null)
+  assert.equal(await row('fathom:proposal:900:100001'), null)
+  assert.equal(await row('fathom:proposal:900:100002'), null)
+  await enqueueMeeting(envFor(), { ...m, action_items: [{ description: 'Changed replay' }] })
+  assert.equal(JSON.parse((await row('fathom:input:900')).payload_json).action_items[0].description, 'Send labor rates')
+  await db.prepare("UPDATE crm_runtime_state SET payload_json = ? WHERE state_key = 'fathom:job:900'").bind(JSON.stringify({ id: '900', status: 'done' })).run()
+  await db.prepare("DELETE FROM crm_runtime_state WHERE state_key = 'fathom:input:900'").run()
+  await enqueueMeeting(envFor(), m)
+  assert.equal(await row('fathom:input:900'), null)
+})
+
+test('legacy early proposals are hidden and cannot be approved until meeting review completes', async () => {
+  const base = { ...proposal('901:100000'), edit: { title: 'User wording' } }
+  await put('fathom:proposal:901:100000', 'fathom-proposal', base)
+  await put('fathom:job:901', 'fathom-job', { id: '901', status: 'processing' })
+  const result = await (await handleFathom(request('/fathom/review'), envFor(), identity)).json()
+  assert.equal(result.proposals.some(p => p.id === base.id), false)
+  assert.equal((await handleFathom(request('/fathom/proposals/901:100000/approve', edit), envFor(), identity)).status, 409)
+  await put('fathom:proposal:901:100000', 'fathom-proposal', { ...base, status: 'approved' })
+  assert.equal((await handleFathom(request('/fathom/proposals/901:100000/approve', edit), envFor(), identity)).status, 200)
+})
+
 test('only current TAG Capture meetings owned by the configured user are eligible', () => {
   const env = envFor(), m = meeting(1)
   assert.equal(eligibleMeeting(m, env), true)
@@ -42,6 +91,27 @@ test('signature verifies raw body, version and timestamp; tampering and replay f
   assert.equal(await verifyFathomSignature(req,body+' ',secret),false)
   assert.equal(await verifyFathomSignature(req,body,secret,Date.now()+360000),false)
   assert.equal(await verifyFathomSignature(req,body,'bad-secret'),false)
+})
+
+test('signed eligible webhook queues a private review; generic test meetings are ignored', async () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  const env = { ...envFor(), FATHOM_WEBHOOK_SECRET: 'whsec_' + Buffer.from(bytes).toString('base64') }
+  const key = await crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const send = async m => {
+    const body = JSON.stringify(m), timestamp = String(Math.floor(Date.now() / 1000))
+    const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`test-event.${timestamp}.${body}`))).toString('base64')
+    return handleFathom(new Request('https://crm.test/fathom/webhook', { method: 'POST', body, headers: { 'webhook-id': 'test-event', 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` } }), env)
+  }
+  const m = { ...meeting(990), action_items: [{ description: 'Send the revised proposal.' }] }
+  const response = await send(m)
+  assert.equal(response.status, 202)
+  assert.equal((await response.json()).accepted, true)
+  assert.ok(await row('fathom:job:990'))
+  assert.equal(await row('fathom:proposal:990:100000'), null)
+  assert.equal((await (await send(m)).json()).duplicate, true)
+  const ignored = await (await send({ ...m, recording_id: 991, title: 'Webhook sample meeting' })).json()
+  assert.equal(ignored.accepted, false)
+  assert.equal(ignored.reason, 'outside_scope_or_retention')
 })
 test('chunked oversized bodies are rejected without trusting Content-Length', async () => {
   await assert.rejects(boundedBody(new Request('https://test', { method:'POST', body:'abcdef' }),5), /too large/)
@@ -162,14 +232,14 @@ test('background processing publishes review proposals, never live tasks, and re
     calls++
     assert.equal(model,'@cf/openai/gpt-oss-120b')
     assert.ok(options.signal)
-    const system=input.messages[0].content
-    return {response:system.startsWith('Find') || system.startsWith('Merge') ? {candidates:[{title:'Send revised proposal',evidenceIds:['S0'],actionIndexes:[],searchTerms:['proposal']}]}
-      : {title:'Send revised proposal',description:'Send the revised proposal.',status:'outstanding',category:'capture',commitment:[{id:'S0',quote:'I will send the revised proposal.'}],lifecycle:[],assigneeId:'P0',assigneeEvidence:[{id:'S0',quote:'I will send the revised proposal.'}],deadline:null,deadlineScanComplete:true,unresolvedDeadlineIds:[]}}
+    assert.match(input.messages[0].content, /BATCH RESPONSE/)
+    assert.equal(await row('fathom:proposal:201:0'), null)
+    return {response:{tasks:[{title:'Send revised proposal',description:'Send the revised proposal.',actionIndexes:[],status:'outstanding',category:'capture',commitment:[{id:'S0',quote:'I will send the revised proposal.'}],lifecycle:[],assigneeId:'P0',assigneeEvidence:[{id:'S0',quote:'I will send the revised proposal.'}],deadline:null,deadlineScanComplete:true,unresolvedDeadlineIds:[]}],overflow:false}}
   }}}
   const m=meeting(201)
   await enqueueMeeting(env,m)
   await Promise.all([runFathomJobs(env),runFathomJobs(env)])
-  assert.equal(calls,3)
+  assert.equal(calls,1)
   assert.equal(JSON.parse((await row('fathom:job:201')).payload_json).status,'done')
   assert.equal(await row('fathom:input:201'),null)
   const result=JSON.parse((await row('fathom:proposal:201:0')).payload_json)
@@ -179,7 +249,7 @@ test('background processing publishes review proposals, never live tasks, and re
   assert.equal(result.suggestedAssignee.email,'jamie@example.com')
   await enqueueMeeting(env,m)
   await runFathomJobs(env)
-  assert.equal(calls,3)
+  assert.equal(calls,1)
 })
 test('rate limit retains checkpoints and uses no other AI provider', async () => {
   await db.prepare("DELETE FROM crm_runtime_state WHERE category IN ('fathom-job','fathom-input')").run()
