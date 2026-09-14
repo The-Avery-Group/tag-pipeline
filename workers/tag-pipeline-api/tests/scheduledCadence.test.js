@@ -1,13 +1,35 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 
 import {
+  DAILY_MAINTENANCE_CRON,
+  dailyMaintenanceTask,
   isOpportunityPullCron,
   isQuarterlyExpiringRefreshTime,
   opportunityPullSlotTime,
   samMonitorAlreadyRanForSlot,
   samMonitorDueAtSlot,
 } from '../src/lib/scheduledCadence.js'
+
+test('combined maintenance trigger preserves separate UTC run times and legacy schedules', () => {
+  assert.equal(dailyMaintenanceTask(DAILY_MAINTENANCE_CRON, Date.parse('2026-09-14T12:01:00Z')), 'capabilities')
+  assert.equal(dailyMaintenanceTask(DAILY_MAINTENANCE_CRON, Date.parse('2026-09-14T13:01:00Z')), 'notifications')
+  assert.equal(dailyMaintenanceTask(DAILY_MAINTENANCE_CRON, Date.parse('2026-09-14T14:01:00Z')), null)
+  assert.equal(dailyMaintenanceTask(DAILY_MAINTENANCE_CRON, NaN), null)
+  assert.equal(dailyMaintenanceTask('0 0,6,12,18 * * *', Date.parse('2026-09-14T12:00:00Z')), null)
+  assert.equal(dailyMaintenanceTask('1 12 * * *', 0), 'capabilities')
+  assert.equal(dailyMaintenanceTask('1 13 * * *', 0), 'notifications')
+})
+
+test('Worker configuration fits five free-plan cron definitions including Fathom', () => {
+  const config = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8')
+  const crons = JSON.parse(config.match(/^crons\s*=\s*(\[[^\n]+\])/m)[1])
+  assert.ok(crons.length <= 5)
+  assert.equal(new Set(crons).size, crons.length)
+  assert.ok(crons.includes(DAILY_MAINTENANCE_CRON))
+  assert.ok(crons.includes('2,7,12,17,22,27,32,37,42,47,52,57 * * * *'))
+})
 
 test('quarterly expiring refresh runs at midnight UTC on the first day of each calendar quarter', () => {
   for (const month of ['01', '04', '07', '10']) {
