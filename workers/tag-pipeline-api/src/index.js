@@ -48,7 +48,7 @@ import {
   samMonitorDueAtSlot,
 } from './lib/scheduledCadence.js'
 import { purgeDocumentAnalysisData } from './lib/documentAnalysis.js'
-import { getRuntimeState, purgeRuntimeState } from './lib/automationHealth.js'
+import { getRuntimeState, purgeRuntimeState, getDataRevisions } from './lib/automationHealth.js'
 import { handleFathom, runFathomJobs, FATHOM_CRON } from './handlers/fathom.js'
 
 // ── CORS helpers ───────────────────────────────────────────────────────────
@@ -113,6 +113,9 @@ export default {
 
       if (path === '/health' && req.method === 'GET') {
         response = json({ status: 'ok', timestamp: new Date().toISOString() })
+
+      } else if (path === '/data-revisions' && req.method === 'GET') {
+        response = new Response(JSON.stringify(await getDataRevisions(env)), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
 
       } else if (path.startsWith('/fathom/')) {
         response = await handleFathom(req, env, identity)
