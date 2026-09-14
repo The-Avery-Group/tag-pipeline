@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import vm from 'node:vm'
 import { fathomActionProposals, resolveMeetingDeadline } from '../workers/tag-pipeline-api/src/lib/fathomAnalysis.js'
 import { prepareMeeting, parseOutput, sourceEvidence, verificationContext, normalizeVerification, analyzeMeeting, taskPreview, extractModelOutput, discoveryWindows, advanceAnalysis } from '../tools/fathom-task-preview.mjs'
 
@@ -11,6 +13,34 @@ const fixture = () => ({ recording_id: 1, recording_end_time: '2026-09-10T17:00:
   { timestamp: '00:16:00', speaker: { display_name: 'Alex' }, text: 'Yes, I have saved the folder.' },
 ] })
 const verification = () => ({ title: 'Renew subscription', status: 'outstanding', category: 'administrative', commitment: [{ id: 'S1', quote: 'I will renew it.' }], lifecycle: [], assigneeId: 'P1', assigneeEvidence: [{ id: 'S1', quote: 'I will renew it.' }], deadline: { id: 'S2', quote: 'latest will be tomorrow' }, deadlineScanComplete: true, unresolvedDeadlineIds: [], reviewNotes: [] })
+
+test('first status request bypasses stale lease, active cadence adapts and stop prevents updates', async () => {
+  const source = (await readFile(new URL('../src/services/workerClient.js', import.meta.url), 'utf8')).replace(/^import .*$/mg, '').replace('import.meta.env.VITE_API_BASE_URL', '"https://test.invalid"').replace(/export /g, '')
+  const scheduled = [], delays = [], storage = new Map([['tag_poll_lease:review', JSON.stringify({ owner: 'other', expiresAt: Date.now() + 120000 })]])
+  const context = vm.createContext({ Date, Map, Set, JSON, Math, Promise, crypto: { randomUUID: () => 'test-tab' },
+    document: { hidden: false, addEventListener() {}, removeEventListener() {} }, navigator: { onLine: true },
+    window: { setTimeout(fn, delay) { scheduled.push(fn); delays.push(delay); return scheduled.length }, clearTimeout() {}, addEventListener() {}, removeEventListener() {} },
+    localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
+  })
+  vm.runInContext(source, context)
+  const start = vm.runInContext('startAdaptivePolling', context)
+  let calls = 0, accepted = 0
+  const stop = start({ key: 'review', initialBypassLease: true, poll: async () => { calls++; return { jobs: [{}] } }, onResult: () => accepted++, getDelay: result => result?.jobs.length ? 10000 : 60000 })
+  await scheduled.shift()()
+  assert.equal(calls, 1)
+  assert.equal(accepted, 1)
+  assert.equal(delays.at(-1), 10000)
+  stop()
+  await scheduled.shift()()
+  assert.equal(calls, 1)
+  const publish = vm.runInContext('publishDataChanged', context)
+  const subscribe = vm.runInContext('onDataChanged', context)
+  let topics
+  const unsubscribe = subscribe(value => { topics = [...value] })
+  publish(['TasksTable', 'TasksTable', 'unsafe/token'])
+  assert.deepEqual(topics, ['TasksTable'])
+  unsubscribe()
+})
 
 test('combined review checks baseline and missed tasks in one call, with no intermediate proposals', async () => {
   const m = { ...fixture(), analysisVersion: 3, action_items: [{ description: 'Renew subscription' }] }
