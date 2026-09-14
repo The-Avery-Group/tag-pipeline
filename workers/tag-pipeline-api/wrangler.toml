@@ -80,11 +80,13 @@ class_name = "DocumentAnalysisWorkflow"
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
-# Enable only after secrets, webhook signing and a live approval smoke test.
-FATHOM_ENABLED = "false"
+# Controlled V1: suggestions only; every actual task requires user approval.
+# Production secrets/bindings must exist. Set false to pause processing.
+FATHOM_ENABLED = "true"
 FATHOM_OWNER_EMAIL = "agbadegesin@theaverygroupllc.com"
-# Set an ISO UTC activation time at rollout. Earlier meetings are never imported.
-FATHOM_ACTIVATED_AT = ""
+# Fixed rollout cutoff. Do not advance on routine deployments or backdate for tests.
+# Recovery additionally excludes meetings older than 48 hours.
+FATHOM_ACTIVATED_AT = "2026-09-14T12:57:16Z"
 
 [triggers]
 # All cron schedules are UTC. 12:00 UTC is 1:00 PM Nigeria time (WAT).
