@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Miniflare } from 'miniflare'
-import { eligibleMeeting, enqueueMeeting, handleFathom, verifyFathomSignature, boundedBody, runFathomJobs, validateTaskEdit } from '../src/handlers/fathom.js'
+import { fathomEnabled, eligibleMeeting, enqueueMeeting, handleFathom, verifyFathomSignature, boundedBody, runFathomJobs, validateTaskEdit } from '../src/handlers/fathom.js'
 
 let mf, db
 before(async () => {
@@ -196,4 +196,23 @@ test('rate limit retains checkpoints and uses no other AI provider', async () =>
 })
 test('enabled flag blocks mutation rather than reporting false success', async () => {
   assert.equal((await handleFathom(request('/fathom/proposals/202:0/approve',edit),{...envFor(),FATHOM_ENABLED:'false'},identity)).status,503)
+})
+test('controlled rollout still requires credentials, bindings and a fixed activation cutoff', async () => {
+  const config = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8')
+  const cutoff = config.match(/^FATHOM_ACTIVATED_AT = "([^"]+)"/m)?.[1]
+  // Both values are valid: the documented emergency pause must remain deployable.
+  assert.match(config, /^FATHOM_ENABLED = "(?:true|false)"/m)
+  assert.ok(Number.isFinite(Date.parse(cutoff)))
+  assert.equal(fathomEnabled(envFor()), true)
+  for (const key of ['FATHOM_API_KEY', 'AI', 'EBUY_DB', 'FATHOM_OWNER_EMAIL', 'FATHOM_ACTIVATED_AT']) {
+    const env = { ...envFor(), [key]: undefined }
+    assert.equal(fathomEnabled(env), false)
+    assert.equal((await handleFathom(request('/fathom/proposals/202:0/approve', edit), env, identity)).status, 503)
+  }
+  const boundary = Date.parse(cutoff), env = { ...envFor(), FATHOM_ACTIVATED_AT: cutoff }
+  const sample = { ...meeting(301), recording_start_time: new Date(boundary - 60000).toISOString(), recording_end_time: new Date(boundary - 1).toISOString() }
+  assert.equal(eligibleMeeting(sample, env, boundary + 1000), false)
+  sample.recording_end_time = cutoff
+  assert.equal(eligibleMeeting(sample, env, boundary + 1000), true)
+  assert.equal(eligibleMeeting(sample, env, boundary + 48 * 3600000), false)
 })
