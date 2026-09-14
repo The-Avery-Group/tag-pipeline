@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { fathomActionProposals, resolveMeetingDeadline } from '../workers/tag-pipeline-api/src/lib/fathomAnalysis.js'
 import { prepareMeeting, parseOutput, sourceEvidence, verificationContext, normalizeVerification, analyzeMeeting, taskPreview, extractModelOutput, discoveryWindows, advanceAnalysis } from '../tools/fathom-task-preview.mjs'
 
 const fixture = () => ({ recording_id: 1, recording_end_time: '2026-09-10T17:00:00Z', action_items: [], transcript: [
@@ -10,6 +11,75 @@ const fixture = () => ({ recording_id: 1, recording_end_time: '2026-09-10T17:00:
   { timestamp: '00:16:00', speaker: { display_name: 'Alex' }, text: 'Yes, I have saved the folder.' },
 ] })
 const verification = () => ({ title: 'Renew subscription', status: 'outstanding', category: 'administrative', commitment: [{ id: 'S1', quote: 'I will renew it.' }], lifecycle: [], assigneeId: 'P1', assigneeEvidence: [{ id: 'S1', quote: 'I will renew it.' }], deadline: { id: 'S2', quote: 'latest will be tomorrow' }, deadlineScanComplete: true, unresolvedDeadlineIds: [], reviewNotes: [] })
+
+test('combined review checks baseline and missed tasks in one call, with no intermediate proposals', async () => {
+  const m = { ...fixture(), analysisVersion: 3, action_items: [{ description: 'Renew subscription' }] }
+  let calls = 0
+  const result = await advanceAnalysis(m, null, async system => {
+    calls++
+    assert.match(system, /BATCH RESPONSE/)
+    return { tasks: [{ ...verification(), actionIndexes: [0] }], overflow: false }
+  })
+  assert.equal(calls, 1)
+  assert.equal(result.phase, 'done')
+  assert.equal(result.proposals[0].dueDate, '2026-09-11')
+  assert.equal(result.proposals[0].suggestedAssignee.name, 'Jamie')
+  assert.deepEqual(result.proposals[0].actionIndexes, [0])
+})
+
+test('combined review rejects omitted baseline actions and fabricated evidence', async () => {
+  const m = { ...fixture(), analysisVersion: 3, action_items: [{ description: 'Renew subscription' }] }
+  await assert.rejects(advanceAnalysis(m, null, async () => ({ tasks: [], overflow: false })), /omitted/)
+  await assert.rejects(advanceAnalysis(m, null, async () => ({ tasks: [{ ...verification(), actionIndexes: [0], commitment: [{ id: 'S1', quote: 'Invented text' }] }] })), /exact substring/)
+})
+
+test('long meeting checkpoints all windows before publishing consolidated results', async () => {
+  const m = { ...fixture(), analysisVersion: 3, action_items: [{ description: 'Renew subscription' }] }
+  m.transcript.push(...Array.from({ length: 45 }, (_, i) => ({ timestamp: '00:20:00', speaker: { display_name: 'Alex' }, text: `Background ${i}. ` + 'Context. '.repeat(150) })))
+  let state = null, calls = 0
+  do {
+    state = await advanceAnalysis(m, state, async (system, input) => {
+      calls++
+      if (input.includes('reviewedWindows') || input.includes('S1 P1')) return { tasks: [{ ...verification(), actionIndexes: [0] }] }
+      return { tasks: [] }
+    })
+    if (state.phase !== 'done') assert.deepEqual(state.proposals, [])
+  } while (state.phase !== 'done' && calls < 10)
+  assert.equal(state.phase, 'done')
+  assert.ok(calls > 1)
+  assert.equal(state.proposals.length, 1)
+})
+
+test('meeting deadline resolution handles weekdays and leaves ambiguous dates unset', () => {
+  const ended = '2026-09-14T16:00:00Z'
+  assert.equal(resolveMeetingDeadline('by Thursday', ended), '2026-09-17')
+  assert.equal(resolveMeetingDeadline('by next Thursday', ended), null)
+  assert.equal(resolveMeetingDeadline('today', ended), '2026-09-14')
+  assert.equal(resolveMeetingDeadline('2026-09-20', ended), '2026-09-20')
+  assert.equal(resolveMeetingDeadline('2026-02-30', ended), null)
+})
+
+test('initial action deadline uses Lagos meeting date and preserves the source wording', () => {
+  const [task] = fathomActionProposals({ ...fixture(), recording_end_time: '2026-09-10T23:30:00Z', action_items: [{ description: 'Send requested rates', assignee: { name: 'Jamie', email: 'Jamie@example.com' } }] })
+  assert.equal(task.description, 'Send requested rates')
+  assert.equal(task.dueDate, '2026-09-14')
+  assert.equal(task.deadlineNeedsReview, true)
+})
+
+test('supplementary review improves the existing action instead of creating a duplicate task', async () => {
+  const m = { ...fixture(), actionItemsPublished: true, action_items: [{ description: 'Renew subscription', recording_timestamp: '00:01:10' }] }
+  const candidate = { title: 'Renew subscription by tomorrow', evidenceIds: ['S1', 'S2'], actionIndexes: [0] }
+  let state = await advanceAnalysis(m, null, async system => {
+    assert.match(system, /SUPPLEMENTARY REVIEW/)
+    assert.match(system, /baseline/)
+    return { candidates: [candidate] }
+  })
+  state = await advanceAnalysis(m, state, async () => ({ candidates: [candidate] }))
+  state = await advanceAnalysis(m, state, async () => verification())
+  assert.equal(state.proposals.length, 0)
+  assert.equal(state.corrections[0].actionIndex, 0)
+  assert.equal(state.corrections[0].dueDate, '2026-09-11')
+})
 
 test('quotes must exist at their cited source, not merely elsewhere', () => {
   const { lines } = prepareMeeting(fixture())
