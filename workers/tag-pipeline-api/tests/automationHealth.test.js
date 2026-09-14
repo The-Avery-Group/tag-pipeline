@@ -1,6 +1,24 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { enrichAutomationRun } from '../src/lib/automationHealth.js'
+import { enrichAutomationRun, getDataRevisions } from '../src/lib/automationHealth.js'
+
+test('change feed reads only scoped metadata and detects category removal', async () => {
+  let rows = [{ category: 'fathom-job', version: '2026-09-14T17:00:00Z', records: 1 }]
+  const env = { EBUY_DB: { prepare(sql) {
+    assert.match(sql, /^SELECT category, MAX\(updated_at\)/)
+    assert.doesNotMatch(sql, /payload_json|INSERT|UPDATE|DELETE/)
+    return { bind(...categories) {
+      assert.ok(categories.includes('follow-on-snapshot'))
+      assert.ok(!categories.includes('fathom-input'))
+      return { all: async () => ({ results: rows }) }
+    } }
+  } } }
+  const first = await getDataRevisions(env)
+  assert.ok(first.revisions.fathom.includes('2026-09-14'))
+  rows = []
+  assert.notEqual((await getDataRevisions(env)).revisions.fathom, first.revisions.fathom)
+  assert.deepEqual(await getDataRevisions({}), { revisions: {} })
+})
 
 test('keeps the most recent successful and failed automation outcomes together', () => {
   const successful = enrichAutomationRun(null, { status: 'success', completedAt: '2026-07-25T12:00:00.000Z' })
