@@ -1,6 +1,17 @@
 export const OPPORTUNITY_PULL_CRON = '0 0,6,12,18 * * *'
 export const EBUY_PULL_CRON = '5 0,6,12,18 * * *'
 export const OPPORTUNITY_PULL_BACKUP_CRON = '15 0,6,12,18 * * *'
+export const DAILY_MAINTENANCE_CRON = '1 12,13 * * *'
+
+// Share one trigger without running both workloads at both hours. Accept old
+// trigger names while Cloudflare propagates the replacement schedules.
+export function dailyMaintenanceTask(cron, scheduledTime) {
+  if (cron === '1 12 * * *') return 'capabilities'
+  if (cron === '1 13 * * *') return 'notifications'
+  if (cron !== DAILY_MAINTENANCE_CRON) return null
+  const hour = new Date(scheduledTime).getUTCHours()
+  return hour === 12 ? 'capabilities' : hour === 13 ? 'notifications' : null
+}
 
 export function isOpportunityPullCron(value) {
   return value === OPPORTUNITY_PULL_CRON || value === EBUY_PULL_CRON || value === OPPORTUNITY_PULL_BACKUP_CRON
