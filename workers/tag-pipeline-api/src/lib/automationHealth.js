@@ -2,6 +2,21 @@ const DEFAULT_TTL = 60 * 60 * 24 * 180
 const D1_STATE_CHUNK_CHARACTERS = 700_000
 const CHUNK_MARKER = '__crmRuntimeStateChunks'
 
+// Small indexed status categories only. No payloads, transcript text or writes.
+export async function getDataRevisions(env) {
+  const groups = {
+    fathom: ['fathom-job', 'fathom-proposal'],
+    'opportunity-alerts': ['sam-monitor-snapshot', 'follow-on-snapshot'],
+    NewOpportunitiesTable: ['sam-status'],
+    PipelineTable: ['sam-monitor-snapshot'],
+  }
+  if (!env.EBUY_DB) return { revisions: {} }
+  const categories = [...new Set(Object.values(groups).flat())]
+  const rows = await env.EBUY_DB.prepare(`SELECT category, MAX(updated_at) AS version, COUNT(*) AS records FROM crm_runtime_state WHERE category IN (${categories.map(() => '?').join(',')}) GROUP BY category`).bind(...categories).all()
+  const indexed = new Map((rows.results || []).map(row => [row.category, `${row.version}:${row.records}`]))
+  return { revisions: Object.fromEntries(Object.entries(groups).map(([topic, names]) => [topic, names.map(name => indexed.get(name) || '').join('|')])) }
+}
+
 function expiryFromTtl(expirationTtl) {
   const seconds = Number(expirationTtl || 0)
   return seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null
