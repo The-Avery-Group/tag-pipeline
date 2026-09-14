@@ -301,12 +301,13 @@ function AgencyChart({ sortedAgencies, onSegmentClick }) {
 
 
 // Collapsible card wrapper — same visual language as PipelineBoard sections
-function CollapsibleCard({ title, count, countDanger = false, defaultOpen = true, children, onViewAll, keepMounted = false }) {
+function CollapsibleCard({ title, count, statusText, countDanger = false, defaultOpen = true, children, onViewAll, keepMounted = false }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className={styles.collapsibleCard}>
       <button className={styles.collapsibleHeader} onClick={() => setOpen((v) => !v)}>
         <span className={styles.collapsibleTitle}>{title}</span>
+        {statusText && <span role="status" className="text-sm text-muted">{statusText}</span>}
         {count !== undefined && (
           <span className={`${styles.collapsibleCount} ${countDanger && count > 0 ? styles.collapsibleCountDanger : ''}`}>{count}</span>
         )}
@@ -408,6 +409,7 @@ export default function Dashboard({ toast }) {
   const { tasks, loading: tLoading, update: updateTask } = useTasks()
   const reviewQueue = useOpportunityAlerts()
   const [fathomReviewCount, setFathomReviewCount] = useState(0)
+  const [fathomStatus, setFathomStatus] = useState({ loading: true, jobs: 0, error: false })
   const [samReviewRows, setSamReviewRows] = useState(null)
   const [closingTask, setClosingTask] = useState(null)
   const [taskTab, setTaskTab] = useState('overdue')
@@ -583,9 +585,9 @@ export default function Dashboard({ toast }) {
           defaultCollapsed={true}
         />
 
-        <CollapsibleCard title="Review queue" count={reviewQueue.alerts.length + fathomReviewCount} countDanger defaultOpen={false} keepMounted>
+        <CollapsibleCard title="Review queue" count={reviewQueue.loading || fathomStatus.loading ? undefined : reviewQueue.alerts.length + fathomReviewCount} statusText={reviewQueue.loading || fathomStatus.loading ? 'Loading review queue…' : fathomStatus.error ? 'Meeting status unavailable' : fathomStatus.jobs ? `${fathomStatus.jobs} meeting${fathomStatus.jobs === 1 ? '' : 's'} processing` : ''} countDanger defaultOpen={false} keepMounted>
           {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
-            : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No unreviewed opportunity changes.</p>
+            : reviewQueue.alerts.length === 0 ? null
             : <div className={styles.reviewQueue}>
               {reviewQueueEntries.map(({ alert, opportunity, identifier, samNoticeId, samRowIndex, displayTitle, supportingDetail }) => (
                 <div className={styles.reviewQueueRow} key={`${alert.opportunityKey}:${alert.type}:${alert.fingerprint}`}>
@@ -622,7 +624,7 @@ export default function Dashboard({ toast }) {
                 </div>
               ))}
             </div>}
-          <FathomTaskReview pipeline={pipeline} onCount={setFathomReviewCount} toast={toast} />
+          <FathomTaskReview pipeline={pipeline} onCount={setFathomReviewCount} onStatus={setFathomStatus} toast={toast} />
         </CollapsibleCard>
 
         {/* ── Row 1: KPI strip ── */}
