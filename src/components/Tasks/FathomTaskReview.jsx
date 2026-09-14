@@ -90,7 +90,7 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
   const names = [...new Set(recipients.map(r => r['Pipeline Assignee']).filter(Boolean))].sort()
   return <section aria-label="Meeting task proposals" style={{ marginTop: 16 }}>
     <h3 className="text-sm" style={{ marginBottom: 8 }}>TAG Capture task proposals</h3>
-    <p className="text-sm text-muted">AI suggestions may miss tasks or need corrections. Check the task, assignee and deadline before approving.</p>
+    <p className="text-sm text-muted">Tasks appear after AI reviews the action items and transcript, including assignees, deadlines and additional follow-ups. Choose the opportunity and confirm before approving.</p>
     <p className="text-sm text-muted">Nothing is added automatically. Unapproved proposals expire 48 hours after the meeting ends.</p>
     {error && <p role="alert" className="text-sm">{error} <button className="btn btn-sm" onClick={refresh}>Try again</button></p>}
     {data.recoveryIssue && <p role="status" className="text-sm">{data.recoveryIssue}</p>}
@@ -130,7 +130,7 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
         </select></label>
         {!names.length && <p className="text-sm text-muted">Configure the notification recipient list before approving tasks.</p>}
         <label style={fieldStyle}>Due date<input className="form-input" style={inputStyle} type="date" value={form.dueDate} onChange={e => setForm({ ...form, dueDate: e.target.value })} /></label>
-        {selected.deadlineNeedsReview && <p className="text-sm text-muted">Confirm the deadline mentioned in the meeting.</p>}
+        {selected.deadlineNeedsReview && <p className="text-sm text-muted">Confirm the deadline identified in the meeting. Unclear dates are left blank.</p>}
         {selected.meetingReference && <div>
           <label><input type="checkbox" checked={form.includeMeetingLink} onChange={e => setForm({ ...form, includeMeetingLink: e.target.checked })} /> Include meeting link in the task</label>
           <div style={{ marginTop: 8 }}><a className="btn btn-sm" href={selected.meetingReference.url} target="_blank" rel="noopener noreferrer">View meeting</a></div>
