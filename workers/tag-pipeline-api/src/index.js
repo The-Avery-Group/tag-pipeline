@@ -37,6 +37,7 @@ import { handleTransactionCoding, TRANSACTION_CODING_HTTP_METHODS } from './hand
 import { purgeExpiredTransactionCodingData } from './lib/transactionCodingRepository.js'
 import { runPendingAwardMonitor, runQuarterlyExpirationReconciliation } from './handlers/pipelineMonitors.js'
 import {
+  dailyMaintenanceTask,
   isEbuyPullCron,
   isOpportunityPullBackupCron,
   isOpportunityPullCron,
@@ -292,11 +293,12 @@ export default {
     }
     // One minute after the workload-heavy SAM pull, compare the capabilities
     // document eTag. It downloads the DOCX only after a source change.
-    if (controller.cron === '1 12 * * *') {
+    const maintenanceTask = dailyMaintenanceTask(controller.cron, controller.scheduledTime)
+    if (maintenanceTask === 'capabilities') {
       ctx.waitUntil(refreshCapabilitiesIfChanged(env))
     }
     // Teams reminders retain their dedicated 2:01 PM WAT run.
-    if (controller.cron === '1 13 * * *') {
+    if (maintenanceTask === 'notifications') {
       ctx.waitUntil(runScheduledNotifications(env))
       if (env.EBUY_DB) {
         ctx.waitUntil(purgeRuntimeState(env.EBUY_DB, { limit: 500 }).catch((error) => {
