@@ -52,7 +52,7 @@ function adaptiveDelay(elapsed) {
  * profile. Results are broadcast to other tabs so they do not repeat the same
  * authenticated Worker request.
  */
-export function startAdaptivePolling({ key, poll, onResult, shouldContinue, immediate = true }) {
+export function startAdaptivePolling({ key, poll, onResult, shouldContinue, immediate = true, initialBypassLease = false, getDelay, topics = [] }) {
   if (adaptivePollers.has(key)) return adaptivePollers.get(key)
   const startedAt = Date.now()
   const leaseKey = `tag_poll_lease:${key}`
@@ -60,9 +60,11 @@ export function startAdaptivePolling({ key, poll, onResult, shouldContinue, imme
   let timer = null
   let stopped = false
   let inFlight = false
+  let firstRequest = true
+  let lastResult
   const resume = () => { if (!document.hidden && navigator.onLine) schedule(0) }
 
-  const delay = () => adaptiveDelay(Date.now() - startedAt)
+  const delay = () => getDelay ? Math.max(3000, getDelay(lastResult)) : adaptiveDelay(Date.now() - startedAt)
   const ownsLease = () => {
     if (typeof localStorage === 'undefined') return true
     try {
@@ -82,6 +84,7 @@ export function startAdaptivePolling({ key, poll, onResult, shouldContinue, imme
     adaptivePollers.delete(key)
     document.removeEventListener('visibilitychange', resume)
     window.removeEventListener('online', resume)
+    unsubscribeChanges()
     try {
       const current = JSON.parse(localStorage.getItem(leaseKey) || 'null')
       if (current?.owner === pollTabId) localStorage.removeItem(leaseKey)
@@ -95,17 +98,20 @@ export function startAdaptivePolling({ key, poll, onResult, shouldContinue, imme
   }
 
   const accept = async (result) => {
+    if (stopped) return
+    lastResult = result
     await onResult?.(result)
     if (shouldContinue && !shouldContinue(result)) stop()
   }
 
   const run = async () => {
     if (stopped || inFlight) return
-    if (document.hidden || !navigator.onLine || !ownsLease()) {
+    if (document.hidden || !navigator.onLine || (!(initialBypassLease && firstRequest) && !ownsLease())) {
       schedule(document.hidden || !navigator.onLine ? 60_000 : delay())
       return
     }
     inFlight = true
+    firstRequest = false
     try {
       const result = await poll()
       if (result !== undefined && result !== null) {
@@ -125,7 +131,36 @@ export function startAdaptivePolling({ key, poll, onResult, shouldContinue, imme
   })
   document.addEventListener('visibilitychange', resume)
   window.addEventListener('online', resume)
+  const unsubscribeChanges = onDataChanged(changed => {
+    if (topics.some(topic => changed.includes(topic))) resume()
+  })
   adaptivePollers.set(key, stop)
   schedule(immediate ? 0 : delay())
   return stop
+}
+
+// Metadata-only invalidation messages. Never broadcast rows, tokens or meeting text.
+const changeListeners = new Set()
+let changeChannel
+function changesChannel() {
+  if (!changeChannel && typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+    changeChannel = new BroadcastChannel('tag-data-changed-v1')
+    changeChannel.addEventListener('message', event => {
+      const topics = validTopics(event.data?.topics)
+      if (topics.length) for (const listener of changeListeners) listener(topics)
+    })
+  }
+  return changeChannel
+}
+const validTopics = values => Array.isArray(values) ? [...new Set(values.filter(v => typeof v === 'string' && /^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(v)))].slice(0, 30) : []
+export function publishDataChanged(values, { local = true, broadcast = true } = {}) {
+  const topics = validTopics(values)
+  if (!topics.length) return
+  if (broadcast) changesChannel()?.postMessage({ topics })
+  if (local) for (const listener of changeListeners) listener(topics)
+}
+export function onDataChanged(listener) {
+  changesChannel()
+  changeListeners.add(listener)
+  return () => changeListeners.delete(listener)
 }
