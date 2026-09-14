@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Modal from '@/components/Common/Modal'
 import AutoTextarea from '@/components/Common/AutoTextarea'
-import { workerJson, startAdaptivePolling, WORKER_URL } from '@/services/workerClient'
+import { workerJson, startAdaptivePolling, WORKER_URL, publishDataChanged } from '@/services/workerClient'
 import { getNotificationRecipients } from '@/services/graphService'
 import { invalidateCache } from '@/services/dataCache'
 import { notifyTaskCreated } from '@/services/notifyService'
@@ -10,9 +10,10 @@ const empty = { enabled: false, proposals: [], jobs: [] }
 const fieldStyle = { display: 'grid', gap: 6, width: '100%' }
 const inputStyle = { width: '100%', minWidth: 0 }
 
-export default function FathomTaskReview({ pipeline, onCount, toast }) {
+export default function FathomTaskReview({ pipeline, onCount, onStatus, toast }) {
   const [data, setData] = useState(empty)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(Boolean(WORKER_URL))
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState(null)
   const [recipients, setRecipients] = useState([])
@@ -22,22 +23,24 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
   const receive = useCallback(result => {
     setData(result)
     setError('')
+    setLoading(false)
     onCount(result.proposals?.length || 0)
-  }, [onCount])
+    onStatus?.({ loading: false, jobs: result.jobs?.length || 0, error: false })
+  }, [onCount, onStatus])
   const refresh = useCallback(async () => {
     if (!WORKER_URL) return
     try { receive(await workerJson('/fathom/review')) }
-    catch (e) { setError(e.message) }
-  }, [receive])
+    catch (e) { setError(e.message); setLoading(false); onStatus?.({ loading: false, jobs: data.jobs.length, error: true }) }
+  }, [receive, onStatus, data.jobs.length])
 
   useEffect(() => {
-    if (!WORKER_URL) return undefined
+    if (!WORKER_URL) { onStatus?.({ loading: false, jobs: 0, error: false }); return undefined }
     // One shared, backed-off poll. Stops when hidden/offline and when disabled.
-    return startAdaptivePolling({ key: 'fathom-review', poll: async () => {
+    return startAdaptivePolling({ key: 'fathom-review', initialBypassLease: true, topics: ['fathom'], getDelay: result => result?.jobs?.some(job => job.status !== 'attention') ? 10000 : 60000, poll: async () => {
       try { return await workerJson('/fathom/review') }
-      catch (e) { setError(e.message); throw e }
+      catch (e) { setError(e.message); setLoading(false); onStatus?.({ loading: false, jobs: 0, error: true }); throw e }
     }, onResult: receive, shouldContinue: result => result.enabled !== false })
-  }, [receive])
+  }, [receive, onStatus])
 
   // Expire visible proposals even if the next poll is delayed or offline.
   useEffect(() => {
@@ -48,10 +51,11 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
       const proposals = data.proposals.filter(active)
       setData(current => ({ ...current, proposals, jobs: current.jobs.filter(active) }))
       onCount(proposals.length)
+      onStatus?.({ loading: false, jobs: data.jobs.filter(active).length, error: false })
       if (selected && !active(selected)) { setSelected(null); setForm(null) }
     }, Math.max(0, Math.min(...expiries) - Date.now()) + 50)
     return () => window.clearTimeout(timer)
-  }, [data, onCount, selected])
+  }, [data, onCount, onStatus, selected])
 
   const open = async proposal => {
     editorId.current = proposal.id
@@ -81,10 +85,12 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
       }
       setSelected(null)
       setForm(null)
+      publishDataChanged(['fathom'])
       await refresh()
     } catch (e) { setEditorError(e.message); await refresh() }
     finally { setBusy(false) }
   }
+  if (loading) return <p role="status" className="text-sm text-muted">Loading meeting review…</p>
   if (!data.enabled && !error) return null
   const opportunities = pipeline.filter(p => !['yes','true','1'].includes(String(p.Archived || '').toLowerCase()))
   const names = [...new Set(recipients.map(r => r['Pipeline Assignee']).filter(Boolean))].sort()
@@ -95,10 +101,11 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
     {error && <p role="alert" className="text-sm">{error} <button className="btn btn-sm" onClick={refresh}>Try again</button></p>}
     {data.recoveryIssue && <p role="status" className="text-sm">{data.recoveryIssue}</p>}
     {data.jobs?.map(job => <div key={job.id} className="text-sm" style={{ marginTop: 10 }}>
-      <span>TAG Capture, {new Date(job.ended).toLocaleDateString()}: {job.status === 'attention' ? 'Processing needs attention.' : 'Processing meeting tasks…'}</span>
+      <span>TAG Capture, {new Date(job.ended).toLocaleDateString()}: {job.status === 'attention' ? 'Needs attention' : job.status === 'queued' ? (job.error ? 'Waiting to retry' : 'Queued') : job.phase === 'finalize' ? 'Consolidating reviewed tasks' : 'Reviewing transcript'}</span>
+      {job.status === 'queued' && !job.error && <p className="text-sm text-muted">Waiting for the background processor. Analysis has not started.</p>}
       {job.status === 'attention' && <button className="btn btn-sm" disabled={busy} style={{ marginLeft: 8 }} onClick={async () => {
         setBusy(true)
-        try { await workerJson(`/fathom/jobs/${job.id}/retry`, { method: 'POST' }); await refresh() }
+        try { await workerJson(`/fathom/jobs/${job.id}/retry`, { method: 'POST' }); publishDataChanged(['fathom']); await refresh() }
         catch (e) { setError(e.message) }
         finally { setBusy(false) }
       }}>Retry processing</button>}
@@ -139,5 +146,3 @@ export default function FathomTaskReview({ pipeline, onCount, toast }) {
     </Modal>}
   </section>
 }
-
-//
