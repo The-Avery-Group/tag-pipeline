@@ -25,6 +25,7 @@ import {
   invalidateTables,
 } from '@/services/graphService'
 import { queueTableMutation } from '@/services/workbookMutations'
+import { publishDataChanged, onDataChanged, startAdaptivePolling, workerJson, WORKER_URL } from '@/services/workerClient'
 
 const POLL_INTERVAL_MS = 60 * 1000
 const ACTIVE_REFRESH_INTERVAL_MS = 3 * 60 * 1000
@@ -62,6 +63,8 @@ const verificationTimers = new Map()
 const verificationInFlight = new Map()
 const verificationPending = new Set()
 const listeners = new Set()
+let stopChangeFeed = null
+let stopChangeListener = null
 
 export function onCacheRefresh(listener) {
   listeners.add(listener)
@@ -137,6 +140,7 @@ export async function forceRefreshCache(tableNames = []) {
  * in this browser session are refreshed, never the whole workbook blindly.
  */
 export async function invalidateCache(tableNames = []) {
+  publishDataChanged(tableNames.length ? tableNames : getCachedTableNames(), { local: false })
   try {
     await forceRefreshCache(tableNames)
   } catch (error) {
@@ -152,6 +156,7 @@ export async function invalidateCache(tableNames = []) {
 export async function publishCacheUpdate(tableNames = []) {
   const targets = [...new Set(tableNames)].filter((tableName) => loaders[tableName])
   if (!targets.length) return []
+  publishDataChanged(targets, { local: false })
   const updatedAt = Date.now()
   targets.forEach((tableName) => {
     lastTableRefreshAt.set(tableName, updatedAt)
@@ -278,6 +283,22 @@ async function refreshIfWorkbookChanged({ returningToTab = false } = {}) {
 
 export function startPolling() {
   if (pollTimer) return
+  stopChangeListener = onDataChanged(topics => {
+    const targets = topics.filter(name => loaders[name])
+    targets.forEach(name => dirtyTables.add(name))
+    // Only data used by this visible page is fetched. Others stay marked dirty.
+    if (!document.hidden && navigator.onLine) verifyCacheInBackground(targets.filter(name => activeTables.has(name)), 250)
+  })
+  if (WORKER_URL) {
+    let previous = null
+    stopChangeFeed = startAdaptivePolling({ key: 'data-revisions', initialBypassLease: true, getDelay: () => 30000, poll: () => workerJson('/data-revisions'), onResult: result => {
+      if (previous) {
+        const changed = Object.keys(result.revisions || {}).filter(key => previous[key] !== result.revisions[key])
+        if (changed.length) publishDataChanged(changed, { broadcast: false })
+      }
+      previous = result.revisions || {}
+    } })
+  }
   pollTimer = setInterval(refreshIfWorkbookChanged, POLL_INTERVAL_MS)
   visibilityHandler = () => {
     if (!document.hidden) void refreshIfWorkbookChanged({ returningToTab: true })
@@ -286,6 +307,9 @@ export function startPolling() {
 }
 
 export function stopPolling() {
+  stopChangeFeed?.()
+  stopChangeListener?.()
+  stopChangeFeed = stopChangeListener = null
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
   if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler)
