@@ -100,7 +100,8 @@ FATHOM_ACTIVATED_AT = "2026-09-14T12:57:16Z"
 #   reminders remain active while the other reminder categories defer to Monday.
 # Fathom: checkpointed processing/cleanup every five minutes, offset from pulls;
 # recovery checks the API at most hourly. No work is imported while disabled.
-crons = ["0 0,6,12,18 * * *", "5 0,6,12,18 * * *", "15 0,6,12,18 * * *", "1 12 * * *", "1 13 * * *", "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"]
+# Five trigger definitions fit Workers Free. Dispatch daily maintenance by UTC hour.
+crons = ["0 0,6,12,18 * * *", "5 0,6,12,18 * * *", "15 0,6,12,18 * * *", "1 12,13 * * *", "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"]
 
 [observability]
 enabled = true
