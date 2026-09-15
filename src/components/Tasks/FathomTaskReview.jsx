@@ -119,15 +119,15 @@ export default function FathomTaskReview({ pipeline, onCount, onStatus, toast })
     {selected && form && <Modal title="Review meeting task" onClose={() => { setSelected(null); setForm(null) }} dismissible={!busy} footer={<>
       <button className="btn btn-danger" disabled={busy || selected.status === 'approving'} onClick={() => act(selected, 'reject')}>Reject</button>
       <button className="btn" disabled={busy} onClick={() => { setSelected(null); setForm(null) }}>Cancel</button>
-      <button className="btn btn-primary" disabled={busy || (selected.status !== 'approving' && (!form.title.trim() || !form.opportunityId || !form.assignee || !form.dueDate))} onClick={() => act(selected, 'approve', form)}>{busy ? 'Saving…' : selected.status === 'approving' ? 'Check previous save' : 'Approve task'}</button>
+      <button className="btn btn-primary" disabled={busy || (selected.status !== 'approving' && (!form.title.trim() || !form.assignee || !form.dueDate))} onClick={() => act(selected, 'approve', form)}>{busy ? 'Saving…' : selected.status === 'approving' ? 'Check previous save' : 'Approve task'}</button>
     </>}>
       <div style={{ display: 'grid', gap: 16 }}>
         {editorError && <p role="alert" className="text-sm">{editorError}</p>}
         {selected.needsReview && <p className="text-sm text-muted">The discussion was unclear. Confirm that this task is needed before approving.</p>}
         <label style={fieldStyle}>Task title<AutoTextarea className="form-input" style={inputStyle} rows={2} maxLength={250} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
         <label style={fieldStyle}>Description<AutoTextarea className="form-input" style={inputStyle} rows={3} maxLength={5000} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label>
-        <label style={fieldStyle}>Opportunity<select className="form-input" style={inputStyle} value={form.opportunityId} onChange={e => setForm({ ...form, opportunityId: e.target.value })}>
-          <option value="">Choose a pipeline opportunity</option>
+        <label style={fieldStyle}>Opportunity (optional)<select className="form-input" style={inputStyle} value={form.opportunityId} onChange={e => setForm({ ...form, opportunityId: e.target.value })}>
+          <option value="">No linked opportunity</option>
           {opportunities.map(p => <option key={p['Opportunity ID'] || p['Contract Number / Notice ID']} value={p['Opportunity ID'] || p['Contract Number / Notice ID']}>{p['Project Title / Description*']} ({p['Contract Number / Notice ID']})</option>)}
         </select></label>
         <label style={fieldStyle}>Assignee<select className="form-input" style={inputStyle} value={form.assignee} onChange={e => setForm({ ...form, assignee: e.target.value })}>
