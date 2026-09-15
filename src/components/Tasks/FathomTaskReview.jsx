@@ -118,7 +118,7 @@ export default function FathomTaskReview({ pipeline, onCount, onStatus, toast })
     {!data.jobs?.length && !data.proposals?.length && <p className="text-sm text-muted">No meeting tasks waiting for review.</p>}
     {data.proposals?.map(proposal => <div key={proposal.id} style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--gray-200)' }}>
       <div style={{ minWidth: 0 }}>
-        <div className="text-sm">{proposal.title}</div>
+        <div className="text-sm" style={{ fontWeight: 700 }}>{proposal.title}</div>
         <div className="text-muted" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
           {formatMeetingDate(proposal.ended)} · {proposal.suggestedAssignee?.name ? `Suggested assignee: ${proposal.suggestedAssignee.name}` : 'Assignee not identified'}
         </div>
