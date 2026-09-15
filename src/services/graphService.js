@@ -687,6 +687,10 @@ export const PARTNER_HEADERS = [
 ]
 
 export const LEGACY_PARTNER_FOLDER_HEADER = 'Link to onedrive folder'
+export const PARTNER_ENRICHMENT_HEADERS = [
+  'Partner Group', 'USAspending Enabled', 'USAspending Agencies',
+  'USAspending Vehicles', 'USAspending Refreshed At',
+]
 
 export const NOTES_HEADERS = [
   'NoteID', 'ContractNumber', 'Date', 'Author', 'NoteText', 'Related Type', 'Related ID',
@@ -1159,7 +1163,7 @@ export async function getPartners() {
   // underlying workbook or shifting any cell values.
   return rows.map((row) => {
     const normalizedKeys = new Map(Object.keys(row).map((key) => [normalizeTableHeader(key), key]))
-    const canonical = Object.fromEntries(PARTNER_HEADERS.map((header) => {
+    const canonical = Object.fromEntries([...PARTNER_HEADERS, ...PARTNER_ENRICHMENT_HEADERS].map((header) => {
       const sourceKey = normalizedKeys.get(normalizeTableHeader(header))
       if (sourceKey && row[sourceKey] !== '') return [header, row[sourceKey]]
       if (header === 'Link to Partner Folder') {
@@ -1173,6 +1177,7 @@ export async function getPartners() {
 }
 
 async function partnerSchema() {
+  await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
   headerCache.delete('PartnersTable')
   const headers = await getTableHeaders('PartnersTable')
   const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
@@ -1186,7 +1191,8 @@ async function partnerSchema() {
 
 function partnerValuesForWorkbook(values, schema) {
   const canonicalValues = new Map(Object.entries(values || {}).map(([key, value]) => [normalizeTableHeader(key), value]))
-  return Object.fromEntries(schema.headers.map((header) => [
+  return Object.fromEntries(schema.headers.filter((header) => canonicalValues.has(normalizeTableHeader(header)) ||
+    (normalizeTableHeader(header) === normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER) && canonicalValues.has(normalizeTableHeader('Link to Partner Folder')))).map((header) => [
     header,
     canonicalValues.get(normalizeTableHeader(header)) ?? (
       normalizeTableHeader(header) === normalizeTableHeader(LEGACY_PARTNER_FOLDER_HEADER)
