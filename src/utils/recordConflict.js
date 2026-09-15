@@ -4,6 +4,7 @@ const TABLE_IDENTITY_COLUMNS = {
   NotesTable: 'NoteID',
   ContactsTable: 'ContactID',
   PartnersTable: 'UEI Number',
+  PartnerVehiclesTable: 'Record ID',
   ContactInteractionsTable: 'InteractionID',
   NewOpportunitiesTable: ['Notice ID', 'Solicitation Number'],
   EmailFollowUpTemplatesTable: 'Template ID',
