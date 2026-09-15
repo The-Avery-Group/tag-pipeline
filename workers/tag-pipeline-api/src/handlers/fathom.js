@@ -236,7 +236,7 @@ export async function runFathomJobs(env) {
 
 export function validateTaskEdit(data) {
   const title = clean(data.title), description = clean(data.description), opportunityId = clean(data.opportunityId), assignee = clean(data.assignee), dueDate = clean(data.dueDate)
-  if (!title || title.length > 250 || description.length > 5000 || !opportunityId || opportunityId.length > 250 || !assignee || assignee.length > 250) throw error('Choose an opportunity and assignee, and enter a task title.')
+  if (!title || title.length > 250 || description.length > 5000 || opportunityId.length > 250 || !assignee || assignee.length > 250) throw error('Choose an assignee, enter a task title, and check the field lengths.')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || !Number.isFinite(Date.parse(dueDate)) || iso(Date.parse(dueDate)).slice(0, 10) !== dueDate) throw error('Choose a valid due date.')
   return { title, description, opportunityId, assignee, dueDate, includeMeetingLink: data.includeMeetingLink === true }
 }
@@ -265,20 +265,20 @@ async function approveProposal(req, env, identity, id, body) {
   if (!await replaceState(db, key, before, current)) throw error('This proposal changed. Refresh the review queue.', 409)
   try {
     const [pipeline, recipients, tasks, columns] = await Promise.all([
-      readWorkbookTable(env, drive, token, 'PipelineTable'),
+      edit.opportunityId ? readWorkbookTable(env, drive, token, 'PipelineTable') : [],
       readWorkbookTable(env, drive, token, 'NotificationRecipientsTable'),
       readWorkbookTable(env, drive, token, 'TasksTable'),
       graphWorkbookFetch(env, drive, token, '/tables/TasksTable/columns'),
     ])
     const matches = pipeline.filter(p => (p['Opportunity ID'] || p['Contract Number / Notice ID']) === edit.opportunityId && !['yes','true','1'].includes(String(p.Archived || '').toLowerCase()))
-    if (matches.length !== 1) throw error('Select one current pipeline opportunity.', 409)
+    if (edit.opportunityId && matches.length !== 1) throw error('Select one current pipeline opportunity.', 409)
     if (!recipients.some(r => r['Pipeline Assignee'] === edit.assignee)) throw error('Select an assignee from the notification user list.')
     const opportunity = matches[0]
     const headers = (columns.value || []).map(c => c.name)
     for (const required of ['TaskID','ContractNumber','Title','Description','AssignedTo','DueDate','Status']) if (!headers.includes(required)) throw error('TasksTable is missing a required column. Open Tasks in the CRM to check its setup.', 409)
     const existing = tasks.find(t => t.TaskID === current.taskId)
     const record = {
-      TaskID: current.taskId, ContractNumber: opportunity['Contract Number / Notice ID'], ContractTitle: opportunity['Project Title / Description*'],
+      TaskID: current.taskId, ContractNumber: opportunity?.['Contract Number / Notice ID'] || '', ContractTitle: opportunity?.['Project Title / Description*'] || '',
       OpportunityNotes: '', Title: edit.title, Description: edit.description + (edit.includeMeetingLink && current.meetingReference?.url ? `\n\nMeeting: ${current.meetingReference.url}` : ''),
       AssignedTo: edit.assignee, DueDate: edit.dueDate, Priority: 'Medium', Status: 'To Do',
       CreatedBy: identity.displayName || identity.userPrincipalName, CreatedDate: iso(Date.now()).slice(0,10), UpdatedDate: iso(Date.now()).slice(0,10),
