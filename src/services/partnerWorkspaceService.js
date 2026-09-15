@@ -1,5 +1,13 @@
 import { workerJson } from '@/services/workerClient'
 
+export function getPartnerEnrichment(uei) {
+  return workerJson(`/partner-workspaces/enrichment?uei=${encodeURIComponent(uei)}`)
+}
+
+export function refreshPartnerEnrichment(uei) {
+  return workerJson('/partner-workspaces/enrichment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uei }) })
+}
+
 export function createPartnerFolder(uei) {
   return workerJson(`/partner-workspaces/${encodeURIComponent(uei)}/folder`, { method: 'POST' })
 }
