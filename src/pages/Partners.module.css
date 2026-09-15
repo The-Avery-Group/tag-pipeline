@@ -1,4 +1,16 @@
 .page { min-height: 0; overflow: hidden; }
+.groupTitle { color: var(--gray-900); font-size: 22px; margin: 0; }
+.entitySelector { display: grid; gap: 7px; }
+.entitySelector label { color: var(--blue-800); font-weight: 600; font-size: 12px; }
+.entitySelector small { color: var(--gray-500); font-size: 12px; }
+.profileSection { min-width: 0; }
+.profile .profileSection { grid-template-columns: minmax(0, 1fr); }
+.enrichmentSection { border: .5px solid var(--gray-200); background: var(--gray-50); border-radius: var(--radius-md); min-width: 0; }
+.enrichmentSection summary { cursor: pointer; padding: 14px 16px; color: var(--blue-800); font-weight: 600; font-size: 13px; }
+.enrichmentBody { padding: 0 16px 16px; display: grid; gap: 12px; }
+.vehicleTable { overflow-x: auto; }
+.vehicleTable table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.vehicleTable th, .vehicleTable td { text-align: left; vertical-align: top; padding: 9px; border-bottom: .5px solid var(--gray-200); }
 .workspace { display: grid; grid-template-columns: minmax(245px, 29%) minmax(0, 1fr); height: 100%; min-height: 0; overflow: hidden; padding: 0; }
 .listPanel { background: var(--gray-50); border-right: 0.5px solid var(--gray-200); min-width: 0; overflow-y: auto; }
 .searchBar { align-items: center; background: var(--gray-50); border-bottom: 0.5px solid var(--gray-200); display: flex; gap: 8px; padding: 12px; position: sticky; top: 0; z-index: 1; }
