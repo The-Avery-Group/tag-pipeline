@@ -9,6 +9,13 @@ import { notifyTaskCreated } from '@/services/notifyService'
 const empty = { enabled: false, proposals: [], jobs: [] }
 const fieldStyle = { display: 'grid', gap: 6, width: '100%' }
 const inputStyle = { width: '100%', minWidth: 0 }
+const meetingDateFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Lagos', month: 'short', day: 'numeric', year: 'numeric' })
+function formatMeetingDate(value) {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return 'Date unavailable'
+  const parts = Object.fromEntries(meetingDateFormat.formatToParts(date).map(part => [part.type, part.value]))
+  return `${parts.month === 'Sep' ? 'Sept' : parts.month} ${parts.day} ${parts.year}`
+}
 
 export default function FathomTaskReview({ pipeline, onCount, onStatus, toast }) {
   const [data, setData] = useState(empty)
@@ -112,7 +119,9 @@ export default function FathomTaskReview({ pipeline, onCount, onStatus, toast })
     {data.proposals?.map(proposal => <div key={proposal.id} style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--gray-200)' }}>
       <div style={{ minWidth: 0 }}>
         <div className="text-sm">{proposal.title}</div>
-        <div className="text-sm text-muted">TAG Capture, {new Date(proposal.ended).toLocaleDateString()}{proposal.suggestedAssignee?.name ? ` · Suggested: ${proposal.suggestedAssignee.name}` : ''}</div>
+        <div className="text-muted" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+          {formatMeetingDate(proposal.ended)} · {proposal.suggestedAssignee?.name ? `Suggested assignee: ${proposal.suggestedAssignee.name}` : 'Assignee not identified'}
+        </div>
       </div>
       <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => open(proposal)}>Review task</button>
     </div>)}
