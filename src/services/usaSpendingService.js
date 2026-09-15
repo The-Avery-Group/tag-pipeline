@@ -44,18 +44,19 @@ function filters(uei, yearType) {
   return { time_period: [period(yearType)], recipient_search_text: [uei], award_type_codes: CONTRACT_CODES }
 }
 
-async function post(path, body, signal, attempts = 3) {
+async function post(path, body, signal, attempts = 3, timeoutMs = REQUEST_TIMEOUT_MS) {
   let lastStatus = null
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError')
     const controller = new AbortController()
     const forwardAbort = () => controller.abort(signal?.reason || 'Request cancelled')
     signal?.addEventListener('abort', forwardAbort, { once: true })
-    const timeout = setTimeout(() => controller.abort('USAspending request timed out'), REQUEST_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort('USAspending request timed out'), timeoutMs)
     try {
       const response = await fetch(`${BASE}${path}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal,
+        method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal,
       })
-      if (response.ok) return response.json()
+      if (response.ok) return await response.json()
       lastStatus = response.status
       if (![429, 502, 503, 504, 525].includes(response.status) || attempt === attempts - 1) break
     } catch (error) {
@@ -68,6 +69,48 @@ async function post(path, body, signal, attempts = 3) {
     await sleep(300 * (attempt + 1))
   }
   throw new Error(lastStatus === 525 ? 'USAspending is temporarily unavailable. Please try again.' : `USAspending API error ${lastStatus || 'unavailable'}`)
+}
+
+/** Complete partner evidence, fetched directly without Worker or persistent cache. */
+export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () => {}, at = new Date().toISOString() } = {}) {
+  uei = String(uei || '').trim().toUpperCase()
+  if (!validUEI(uei)) throw new Error('A valid 12-character UEI is required')
+  const end = new Date(at); const start = new Date(end)
+  start.setUTCFullYear(start.getUTCFullYear() - 5)
+  const period = { start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10) }
+  const agencies = new Map(); const ids = new Set()
+  for (const kind of ['contracts', 'vehicles']) {
+    let more = true
+    for (let page = 1; more; page++) {
+      if (page > 500) throw new Error('History exceeds the safe page limit. No partial results saved.')
+      onProgress(`Reading ${kind}, page ${page}…`)
+      const data = await post('/search/spending_by_award/', {
+        filters: { recipient_search_text: [uei], award_type_codes: kind === 'contracts' ? CONTRACT_CODES : ['IDV_A', 'IDV_B', 'IDV_B_A', 'IDV_B_B', 'IDV_B_C', 'IDV_C', 'IDV_D', 'IDV_E'], ...(kind === 'contracts' ? { time_period: [period] } : {}) },
+        fields: ['Award ID', 'Recipient UEI', 'Funding Agency', 'Funding Sub Agency', 'Awarding Agency', 'Awarding Sub Agency', 'generated_internal_id'],
+        page, limit: 100, sort: 'Award ID', order: 'asc', subawards: false,
+      }, signal, 3, 60_000)
+      if (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== 'boolean' || (data.page_metadata.hasNext && !data.results.length)) throw new Error('USAspending returned an incomplete page. No results saved.')
+      for (const row of data.results) {
+        if (String(row['Recipient UEI'] || '').trim().toUpperCase() !== uei) throw new Error('USAspending recipient does not match this partner. No results saved.')
+        if (kind === 'vehicles') {
+          if (!row.generated_internal_id) throw new Error('Vehicle source identifier is missing')
+          ids.add(row.generated_internal_id)
+        } else {
+          const name = row['Funding Sub Agency'] || row['Funding Agency'] || row['Awarding Sub Agency'] || row['Awarding Agency']
+          if (name) agencies.set(name, { name })
+        }
+      }
+      more = data.page_metadata.hasNext
+    }
+  }
+  const details = []
+  for (const id of ids) {
+    onProgress(`Reading vehicle ${details.length + 1} of ${ids.size}…`)
+    const detail = await post(`/awards/${encodeURIComponent(id)}/`, null, signal, 3, 60_000)
+    if (String(detail.recipient?.recipient_uei || '').trim().toUpperCase() !== uei || detail.category !== 'idv' || !detail.piid || detail.generated_unique_award_id !== id) throw new Error('Vehicle identity could not be verified. No results saved.')
+    details.push(detail)
+  }
+  return { uei, checkedAt: at, period, agencies: [...agencies.values()], details }
 }
 
 function money(value) { return Number(value || 0) }
