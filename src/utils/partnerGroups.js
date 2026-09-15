@@ -3,6 +3,13 @@ export function partnerRefreshEnabled(partner) {
   return ['', 'yes'].includes(String(partner?.['USAspending Enabled'] || '').trim().toLowerCase())
 }
 
+export function partnerRefreshDue(partner, now = new Date()) {
+  if (!partnerRefreshEnabled(partner) || !/^[A-Z0-9]{12}$/.test(String(partner?.['UEI Number'] || '').trim().toUpperCase())) return false
+  const last = new Date(partner?.['USAspending Refreshed At'] || '')
+  const quarterStart = Date.UTC(now.getUTCFullYear(), Math.floor(now.getUTCMonth() / 3) * 3, 1)
+  return !Number.isFinite(last.getTime()) || last.getTime() < quarterStart
+}
+
 export function partnerGroupKey(partner) {
   const group = String(partner?.['Partner Group'] || '').trim()
   return group ? `group:${group.toLocaleLowerCase()}` : `entity:${partner?.['UEI Number'] || partner?._rowIndex}`
