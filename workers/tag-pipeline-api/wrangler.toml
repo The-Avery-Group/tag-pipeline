@@ -77,6 +77,11 @@ name = "opportunity-document-analysis"
 binding = "DOCUMENT_ANALYSIS_WORKFLOW"
 class_name = "DocumentAnalysisWorkflow"
 
+[[workflows]]
+name = "partner-enrichment"
+binding = "PARTNER_ENRICHMENT_WORKFLOW"
+class_name = "PartnerEnrichmentWorkflow"
+
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGIN = "https://the-avery-group.github.io"
