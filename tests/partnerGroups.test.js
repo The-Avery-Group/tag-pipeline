@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { groupPartners, sharedPartnerWorkspace, partnerProfilePath } from '../src/utils/partnerGroups.js'
+import { groupPartners, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled } from '../src/utils/partnerGroups.js'
+
+test('quarterly refresh defaults on without individual opt-in and honors opt-out', () => {
+  assert.equal(partnerRefreshEnabled({}), true)
+  assert.equal(partnerRefreshEnabled({ 'USAspending Enabled': '' }), true)
+  assert.equal(partnerRefreshEnabled({ 'USAspending Enabled': ' Yes ' }), true)
+  assert.equal(partnerRefreshEnabled({ 'USAspending Enabled': ' No ' }), false)
+})
 
 test('groups only explicit company groups and retains all subsidiary records', () => {
   const partners = [
