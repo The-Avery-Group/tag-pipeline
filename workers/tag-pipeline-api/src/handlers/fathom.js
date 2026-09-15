@@ -119,16 +119,33 @@ export function fathomRecoveryDue(state, now) {
   return new Date(now).getUTCHours() >= 19
 }
 
-async function recoverMeetings(env) {
+export async function recoverMeetings(env, now = Date.now()) {
   // Webhooks are primary. Scan once daily after 8 PM Nigeria time, resuming pages.
   // The cursor expires too. Repeated webhooks cannot extend meeting retention.
-  const db = dbFor(env), key = 'fathom:recovery', now = Date.now()
+  const db = dbFor(env), key = 'fathom:recovery'
   let before = await readState(db, key)
-  if (!fathomRecoveryDue(before?.value, now)) return
+  const due = fathomRecoveryDue(before?.value, now)
+  if (!due && !before?.value.error) return
+  // One capture call per Lagos calendar day. A completed review satisfies
+  // discovery for that day, including a failed scan resumed after midnight.
+  const targetTime = Date.parse(before?.value.windowTo || '')
+  const today = iso(now + 3600000).slice(0, 10)
+  const targetDay = iso((before?.value.error || before?.value.cursor) && Number.isFinite(targetTime) ? targetTime + 3600000 : now + 3600000).slice(0, 10)
+  const resumeAt = targetDay !== today && new Date(now).getUTCHours() >= 19 ? now : nextFathomRecovery(now)
+  const completed = await db.prepare("SELECT state_key FROM crm_runtime_state WHERE category = 'fathom-job' AND expires_at > ? AND json_extract(payload_json, '$.status') = 'done' AND date(json_extract(payload_json, '$.ended'), '+1 hour') = ? LIMIT 1").bind(iso(now), targetDay).first()
+  if (completed && before) {
+    await replaceState(db, key, before, { nextAt: resumeAt, completedDay: targetDay })
+    return
+  }
+  if (!due) return
   if (!before) {
     await db.prepare('INSERT OR IGNORE INTO crm_runtime_state (state_key,category,payload_json,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?)')
       .bind(key, 'fathom-control', '{"nextAt":0}', iso(now + HOURS_48), iso(now), iso(now)).run()
     before = await readState(db, key)
+  }
+  if (completed) {
+    if (before) await replaceState(db, key, before, { nextAt: resumeAt, completedDay: targetDay })
+    return
   }
   if (!before || !await replaceState(db, key, before, { ...before.value, nextAt: now + 300000 })) return
   const locked = await readState(db, key)
@@ -145,7 +162,7 @@ async function recoverMeetings(env) {
     for (const meeting of payload.items || []) if (eligibleMeeting(meeting, env)) await enqueueMeeting(env, meeting)
     await replaceState(db, key, locked, { cursor: payload.next_cursor || null, windowFrom, windowTo, nextAt: payload.next_cursor ? now + 300000 : nextFathomRecovery(now) })
   } catch (e) {
-    await replaceState(db, key, locked, { ...before.value, nextAt: now + 900000, error: 'Meeting recovery could not complete. It will retry automatically.' })
+    await replaceState(db, key, locked, { ...before.value, windowFrom, windowTo, nextAt: now + 900000, error: 'Meeting recovery could not complete. It will retry automatically.' })
   }
 }
 
