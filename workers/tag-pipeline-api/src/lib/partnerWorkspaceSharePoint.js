@@ -11,6 +11,16 @@ import {
 export const PARTNERS_ROOT_NAME = 'Partners'
 export const PARTNER_FOLDER_HEADER = 'Link to Partner Folder'
 export const LEGACY_PARTNER_FOLDER_HEADER = 'Link to onedrive folder'
+export function partnerSharedFolderLink(partner, partners) {
+  const own = String(partnerWorkbookValue(partner, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
+  if (own) return own
+  const group = String(partnerWorkbookValue(partner, 'Partner Group')).trim().toLowerCase()
+  if (!group) return ''
+  const links = [...new Set(partners.filter(row => String(partnerWorkbookValue(row, 'Partner Group')).trim().toLowerCase() === group)
+    .map(row => String(partnerWorkbookValue(row, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim().replace(/\/$/, '')).filter(Boolean))]
+  if (links.length > 1) throw Object.assign(new Error('This group has conflicting folder links. Confirm the correct folder before uploading.'), { status: 409 })
+  return links[0] || ''
+}
 const HIDDEN_SYSTEM_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 
 function normalizedHeader(value) {
@@ -205,8 +215,9 @@ export async function createPartnerFolder(env, uei) {
   const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
   const partner = partners.find((row) => String(partnerWorkbookValue(row, 'UEI Number')).trim().toUpperCase() === String(uei).trim().toUpperCase())
   if (!partner) throw Object.assign(new Error('Partner not found'), { status: 404 })
-  const current = String(partnerWorkbookValue(partner, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
+  const current = partnerSharedFolderLink(partner, partners)
   if (current) return { webUrl: current, reused: true }
+  if (String(partnerWorkbookValue(partner, 'Partner Group')).trim()) throw Object.assign(new Error('Link the existing shared company-group folder before uploading.'), { status: 409 })
   const name = String(partnerWorkbookValue(partner, 'Company Name', 'Partner Name', 'Company Name*')).replace(/["*:<>?\/\\|]/g, '-').replace(/[. ]+$/, '').trim()
   if (!name) throw Object.assign(new Error('Give this partner a company name before creating its folder'), { status: 422 })
   let folder = await childByName(env, token, driveId, root.id, name)
@@ -234,7 +245,7 @@ async function partnerFolder(env, uei) {
   const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
   const partner = partners.find((candidate) => String(partnerWorkbookValue(candidate, 'UEI Number')).trim().toUpperCase() === String(uei || '').trim().toUpperCase())
   if (!partner) throw Object.assign(new Error('Partner was not found in PartnersTable'), { status: 404 })
-  const link = String(partnerWorkbookValue(partner, PARTNER_FOLDER_HEADER, LEGACY_PARTNER_FOLDER_HEADER)).trim()
+  const link = partnerSharedFolderLink(partner, partners)
   if (!link) throw Object.assign(new Error('Link this partner to its SharePoint folder before uploading files'), { status: 409 })
   const { body: folder } = await graphResponse(
     `https://graph.microsoft.com/v1.0/shares/${encodedSharingUrl(link)}/driveItem?$select=id,name,webUrl,parentReference,folder`,
