@@ -149,11 +149,13 @@ test('cleanup removes expired temporary rows, not current rows or unrelated data
 test('dates are validated, including impossible calendar dates', () => {
   assert.equal(validateTaskEdit(edit).dueDate,'2026-09-15')
   assert.throws(()=>validateTaskEdit({...edit,dueDate:'2026-02-31'}),/valid due date/)
-  assert.throws(()=>validateTaskEdit({...edit,opportunityId:''}),/Choose an opportunity/)
+  assert.equal(validateTaskEdit({...edit,opportunityId:''}).opportunityId,'')
+  assert.throws(()=>validateTaskEdit({...edit,opportunityId:'',assignee:''}),/Choose an assignee/)
+  assert.throws(()=>validateTaskEdit({...edit,opportunityId:'x'.repeat(251)}),/field lengths/)
 })
 
 function mockGraph(t, { failAppend = false, commitOnFailure = false, failReads = false } = {}) {
-  const real = globalThis.fetch, saved = [], calls = { append: 0 }
+  const real = globalThis.fetch, saved = [], calls = { append: 0, pipeline: 0 }
   const tables = {
     PipelineTable: [{ 'Opportunity ID':'O_123','Contract Number / Notice ID':'RFQ-1','Project Title / Description*':'Actual opportunity', Archived:'' }],
     NotificationRecipientsTable: [{ 'Pipeline Assignee':'Jamie','Teams UPN / Entra Object ID':'jamie@example.com' }],
@@ -164,6 +166,7 @@ function mockGraph(t, { failAppend = false, commitOnFailure = false, failReads =
     assert.equal(options.headers.Authorization,'Bearer user-test-token')
     const path = new URL(url).pathname, name = path.match(/\/tables\/([^/]+)/)?.[1]
     assert.ok(name, 'only workbook requests are allowed')
+    if (name === 'PipelineTable') calls.pipeline++
     const headers = name==='TasksTable'?taskHeaders:Object.keys(tables[name][0])
     if (path.endsWith('/rows/add')) {
       calls.append++
@@ -189,6 +192,25 @@ test('approval uses actual workbook relationships and omits meeting link when un
   assert.equal(saved[0].CreatedBy,'Reviewer')
   assert.equal((await handleFathom(request('/fathom/proposals/110:0/approve',edit),envFor(),identity)).status,200)
   assert.equal(calls.append,1)
+})
+test('approval without an opportunity saves a general task and skips pipeline reads', async t => {
+  await put('fathom:proposal:118:0','fathom-proposal',proposal('118:0'))
+  const {saved,calls} = mockGraph(t)
+  const response = await handleFathom(request('/fathom/proposals/118:0/approve',{...edit,opportunityId:''}),envFor(),identity)
+  assert.equal(response.status,200)
+  assert.equal(calls.pipeline,0)
+  assert.equal(calls.append,1)
+  assert.equal(saved[0].ContractNumber,'')
+  assert.equal(saved[0].ContractTitle,'')
+  assert.equal(saved[0].AssignedTo,edit.assignee)
+  assert.equal(saved[0].DueDate,edit.dueDate)
+})
+test('approval still rejects an invalid nonempty opportunity', async t => {
+  await put('fathom:proposal:119:0','fathom-proposal',proposal('119:0'))
+  const {calls} = mockGraph(t)
+  const response = await handleFathom(request('/fathom/proposals/119:0/approve',{...edit,opportunityId:'missing'}),envFor(),identity)
+  assert.equal(response.status,409)
+  assert.equal(calls.append,0)
 })
 test('ambiguous successful save is reconciled without a duplicate append', async t => {
   await put('fathom:proposal:111:0','fathom-proposal',proposal('111:0'))
