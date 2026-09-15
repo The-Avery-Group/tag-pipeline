@@ -1,7 +1,30 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { agencyEvidence, partnerEnrichmentPeriod, vehicleRecord, startPartnerEnrichment, savePartnerSummary } from '../src/lib/partnerEnrichment.js'
+import { agencyEvidence, partnerEnrichmentPeriod, vehicleRecord, startPartnerEnrichment, savePartnerSummary, partnerEnrichmentEnabled, partnerRunStatus } from '../src/lib/partnerEnrichment.js'
 const uei = 'ABCDEFGHIJK1'
+
+test('refresh defaults on for valid UEIs; explicit opt-out and invalid identifiers are skipped', () => {
+  assert.equal(partnerEnrichmentEnabled({ 'UEI Number': uei }), true)
+  assert.equal(partnerEnrichmentEnabled({ 'UEI Number': uei, 'USAspending Enabled': ' Yes ' }), true)
+  assert.equal(partnerEnrichmentEnabled({ 'UEI Number': uei, 'USAspending Enabled': ' No ' }), false)
+  assert.equal(partnerEnrichmentEnabled({ 'UEI Number': 'invalid' }), false)
+})
+test('manual run status never carries over to another partner', () => {
+  const run = { requestedUEI: uei, status: 'running', startedAt: 'today' }
+  assert.equal(partnerRunStatus(run, 'OTHERUEI1234', null), null)
+  assert.equal(partnerRunStatus(run, uei, null).status, 'running')
+  assert.equal(partnerRunStatus(run, uei, { checkedAt: 'today' }).status, 'complete')
+})
+test('batch status distinguishes included, excluded, waiting, completed and failed partners', () => {
+  const run = { status: 'running', partnerUEIs: [uei, 'OTHERUEI1234'], currentUEI: uei, startedAt: 'today', failures: [] }
+  assert.equal(partnerRunStatus(run, 'EXCLUDED1234', null), null)
+  assert.equal(partnerRunStatus(run, uei, null).status, 'running')
+  assert.equal(partnerRunStatus(run, 'OTHERUEI1234', null).status, 'queued')
+  assert.equal(partnerRunStatus(run, uei, { checkedAt: 'today' }).status, 'complete')
+  assert.equal(partnerRunStatus({ ...run, failures: [{ uei, error: 'Failed' }] }, uei, null).error, 'Failed')
+  assert.deepEqual(partnerRunStatus({ ...run, failures: [{ uei, error: 'Failed' }] }, 'OTHERUEI1234', null).failures, [])
+  assert.equal(partnerRunStatus({ status: 'running' }, uei, null), null)
+})
 
 test('uses a rolling five-year period', () => {
   assert.deepEqual(partnerEnrichmentPeriod('2026-09-15T12:00:00Z'), { start_date: '2021-09-15', end_date: '2026-09-15' })
