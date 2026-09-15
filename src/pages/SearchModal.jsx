@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePipeline } from '@/hooks/usePipeline'
 import { useContacts } from '@/hooks/useContacts'
 import { usePartners } from '@/hooks/usePartners'
+import { partnerProfilePath } from '@/utils/partnerGroups'
 import { useTasks } from '@/hooks/useTasks'
 import { useNotes } from '@/hooks/useNotes'
 import { useContactEngagement } from '@/hooks/useContactEngagement'
@@ -174,7 +175,7 @@ export default function SearchModal({ onClose }) {
     ...results.ebuyOpportunities.map((opportunity) => ({
       path: `/opportunities/ebuy/${encodeURIComponent(ebuyOpportunityId(opportunity))}`,
     })),
-    ...results.partners.map((partner) => ({ path: `/partners?search=${encodeURIComponent(partner['Partner Name'] || '')}` })),
+    ...results.partners.map((partner) => ({ path: partnerProfilePath(partner) })),
     ...results.contacts.map((c) => ({ path: `/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}` })),
     ...results.tasks.map((t) => ({ path: `/tasks?taskId=${encodeURIComponent(t.TaskID)}` })),
     ...results.interactions.map((interaction) => ({
@@ -350,8 +351,9 @@ export default function SearchModal({ onClose }) {
                   <button key={partner._rowIndex || partner['Partner Name']}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                     onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => go(`/partners?search=${encodeURIComponent(partner['Partner Name'] || '')}`)}>
+                    onClick={() => go(partnerProfilePath(partner))}>
                     <div className={styles.resultTitle}>{partner['Partner Name']}</div>
+                    {partner['Partner Group'] && <div className={styles.resultMeta}>{partner['Partner Group']} · Subsidiary</div>}
                     <div className={styles.resultMeta}>{partner['UEI Number'] ? `UEI: ${partner['UEI Number']}` : 'No UEI recorded'}</div>
                     <div className={styles.resultMeta}>{partner.Capabilities || partner['Company Strengths'] || 'Partner record'}</div>
                   </button>
