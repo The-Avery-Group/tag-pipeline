@@ -1176,6 +1176,66 @@ export async function getPartners() {
   })
 }
 
+const PARTNER_VEHICLE_TABLE = 'PartnerVehiclesTable'
+const PARTNER_VEHICLE_HEADERS = ['Record ID', 'Partner UEI', 'Vehicle Name', 'PIID', 'Relationship', 'Current End Date', 'Potential End Date', 'Last Date to Order', 'Source Link', 'Last Seen', 'Status']
+
+export async function getPartnerResearch(uei) {
+  invalidate('PartnersTable')
+  const matches = (await getPartners()).filter(row => String(row['UEI Number'] || '').trim().toUpperCase() === uei)
+  if (matches.length !== 1) throw new Error('Partner UEI is missing or duplicated in the workbook')
+  const partner = matches[0]
+  let vehicles = []
+  try {
+    invalidate(PARTNER_VEHICLE_TABLE)
+    vehicles = (await getSheetRows(PARTNER_VEHICLE_TABLE)).filter(row => String(row['Partner UEI'] || '').trim().toUpperCase() === uei)
+  } catch (error) { if (!isMissingWorkbookTable(error)) throw error }
+  return { partner, snapshot: { uei, checkedAt: partner['USAspending Refreshed At'], agencies: String(partner['USAspending Agencies'] || '').split(',').map(name => ({ name: name.trim() })).filter(a => a.name), vehicles } }
+}
+
+export async function savePartnerResearch(snapshot) {
+  const { uei, checkedAt, agencies, vehicles } = snapshot
+  const patch = {
+    'USAspending Agencies': agencies.map(a => a.name).sort().join(', '),
+    'USAspending Vehicles': [...new Set(vehicles.map(v => `${v['Vehicle Name'] || 'Unresolved vehicle'} (${v.PIID})`))].sort().join(', '),
+    'USAspending Refreshed At': checkedAt,
+  }
+  if (Object.values(patch).some(value => value.length > 32000)) throw new Error('Partner summary exceeds workbook cell capacity')
+  // Re-read identity and opt-out immediately before publication.
+  const { partner } = await getPartnerResearch(uei)
+  if (!['', 'yes'].includes(String(partner['USAspending Enabled'] || '').trim().toLowerCase())) throw new Error('Refresh was turned off. Results were not saved.')
+  await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
+  await queueTableMutation(PARTNER_VEHICLE_TABLE, async () => {
+    try { await getTableHeaders(PARTNER_VEHICLE_TABLE, { force: true }) }
+    catch (error) {
+      if (!isMissingWorkbookTable(error)) throw error
+      const sheet = await graphFetch('/worksheets/add', { method: 'POST', body: JSON.stringify({ name: `Partner vehicles ${Date.now().toString(36)}` }) })
+      await graphFetch(`/worksheets/${sheet.id}/range(address='A1:K1')`, { method: 'PATCH', body: JSON.stringify({ values: [PARTNER_VEHICLE_HEADERS] }) })
+      const table = await graphFetch(`/worksheets/${sheet.id}/tables/add`, { method: 'POST', body: JSON.stringify({ address: 'A1:K1', hasHeaders: true }) })
+      await graphFetch(`/tables/${table.id}`, { method: 'PATCH', body: JSON.stringify({ name: PARTNER_VEHICLE_TABLE }) })
+    }
+    const headers = await getTableHeaders(PARTNER_VEHICLE_TABLE, { force: true })
+    if (PARTNER_VEHICLE_HEADERS.some(h => !headers.includes(h))) throw new Error('Partner vehicle table schema is incomplete')
+    for (const vehicle of vehicles) {
+      invalidate(PARTNER_VEHICLE_TABLE)
+      const rows = await getSheetRows(PARTNER_VEHICLE_TABLE)
+      const matches = rows.filter(row => row['Record ID'] === vehicle['Record ID'])
+      if (matches.length > 1) throw new Error('Duplicate vehicle records need review')
+      if (matches.length) await updateRowUnlocked(PARTNER_VEHICLE_TABLE, matches[0]._rowIndex, vehicle, headers, { original: matches[0] })
+      else await createPartnerVehicleRow(vehicle, headers)
+    }
+  })
+  await updatePartner(partner._rowIndex, patch, partner)
+}
+
+async function createPartnerVehicleRow(vehicle, headers) {
+  // Reconcile an uncertain append before retrying to avoid duplicate vehicle rows.
+  return appendWithReconciliation({
+    idColumn: 'Record ID', idValue: vehicle['Record ID'],
+    append: () => appendRow(PARTNER_VEHICLE_TABLE, vehicle, headers),
+    readRows: async () => { invalidate(PARTNER_VEHICLE_TABLE); return getSheetRows(PARTNER_VEHICLE_TABLE) },
+  })
+}
+
 async function partnerSchema() {
   await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
   headerCache.delete('PartnersTable')
