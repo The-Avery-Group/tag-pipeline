@@ -1,4 +1,8 @@
 // Explicit workbook grouping, never inferred from similar names or UEIs.
+export function partnerRefreshEnabled(partner) {
+  return ['', 'yes'].includes(String(partner?.['USAspending Enabled'] || '').trim().toLowerCase())
+}
+
 export function partnerGroupKey(partner) {
   const group = String(partner?.['Partner Group'] || '').trim()
   return group ? `group:${group.toLocaleLowerCase()}` : `entity:${partner?.['UEI Number'] || partner?._rowIndex}`
