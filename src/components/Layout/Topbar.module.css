@@ -95,3 +95,10 @@
 /* Shared action colors; preserve this control’s layout and behavior. */
 .iconBtn { background: var(--action-bg); color: var(--action-text); border: .5px solid var(--action-border); border-radius: var(--radius-md); }
 .iconBtn:hover:not(:disabled):not([aria-disabled='true']) { background: var(--action-hover); color: var(--action-text); }
+.queueButton { max-width: min(320px, 35vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.queueHelp { color: var(--gray-500); font-size: 12px; line-height: 1.5; margin: 0 0 14px; }
+.queueList { list-style: none; margin: 0 0 14px; padding: 0; max-height: 50vh; overflow-y: auto; }
+.queueList li { display: grid; gap: 5px; padding: 10px 0; border-bottom: .5px solid var(--gray-200); }
+.queueList a { font-size: 13px; color: var(--blue-600); overflow-wrap: anywhere; }
+.queueList span { font-size: 12px; color: var(--gray-500); overflow-wrap: anywhere; }
+.queueList button { justify-self: start; }
