@@ -15,7 +15,6 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import { groupPartners, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled } from '@/utils/partnerGroups'
 import { getPartnerEnrichment, refreshPartnerEnrichment } from '@/services/partnerWorkspaceService'
-import { startAdaptivePolling } from '@/services/workerClient'
 import { formatDateTime } from '@/utils/kpiHelpers'
 import styles from './Partners.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
@@ -106,6 +105,7 @@ export default function Partners({ toast }) {
   const [enrichmentResult, setEnrichment] = useState(null)
   const [enrichmentError, setEnrichmentError] = useState('')
   const [refreshingUEI, setRefreshingUEI] = useState('')
+  const [refreshProgress, setRefreshProgress] = useState('')
   const [pollVersion, setPollVersion] = useState(0)
   const selectedUEI = String(selected?.['UEI Number'] || '').trim().toUpperCase()
   const activeUEI = useRef(selectedUEI)
@@ -117,21 +117,29 @@ export default function Partners({ toast }) {
     setEnrichment(null); setEnrichmentError('')
     if (!/^[A-Z0-9]{12}$/.test(selectedUEI)) return undefined
     let disposed = false
-    const stop = startAdaptivePolling({
-      key: `partner-enrichment:${selectedUEI}`, initialBypassLease: true,
-      poll: async () => {
-        try { return await getPartnerEnrichment(selectedUEI) }
-        catch (err) { return { error: err.message, status: { status: 'unavailable' } } }
-      },
-      onResult: result => { if (!disposed) { setEnrichmentError(result.error || ''); setEnrichment({ ...result, uei: selectedUEI }) } },
-      shouldContinue: result => result.busy || ['running', 'queued'].includes(result.status?.status),
-    })
-    return () => { disposed = true; stop() }
+    const load = async () => {
+      try {
+        const saved = await getPartnerEnrichment(selectedUEI)
+        if (disposed) return
+        setEnrichment(saved)
+        setRefreshingUEI(selectedUEI); setRefreshProgress('Checking saved information…')
+        const result = await refreshPartnerEnrichment(selectedUEI, { automatic: true, onProgress: message => { if (!disposed) setRefreshProgress(message) } })
+        if (!disposed) setEnrichment(result)
+      } catch (err) { if (!disposed) setEnrichmentError(err.message) }
+      finally { if (!disposed) setRefreshingUEI(current => current === selectedUEI ? '' : current) }
+    }
+    load()
+    return () => { disposed = true }
   }, [selectedUEI, pollVersion])
   const refreshEnrichment = async () => {
     const uei = selectedUEI
     setRefreshingUEI(uei); setEnrichmentError('')
-    try { const result = await refreshPartnerEnrichment(selectedUEI); setPollVersion(v => v + 1); toast?.success(result.reused ? 'A partner refresh is already running. Check status before starting another.' : 'Partner research refresh queued') }
+    setRefreshProgress('Reading USAspending…')
+    try {
+      const result = await refreshPartnerEnrichment(uei, { onProgress: message => { if (activeUEI.current === uei) setRefreshProgress(message) } })
+      if (activeUEI.current === uei) setEnrichment(result)
+      toast?.success('Partner USAspending information saved to workbook')
+    }
     catch (err) { if (activeUEI.current === uei) setEnrichmentError(err.message) }
     finally { setRefreshingUEI(current => current === uei ? '' : current) }
   }
@@ -255,7 +263,7 @@ export default function Partners({ toast }) {
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
             <details className={styles.enrichmentSection} open><summary>USAspending agency history and vehicles</summary><div className={styles.enrichmentBody}>
-              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI) || enrichment?.busy} onClick={refreshEnrichment}>{refreshing ? 'Starting…' : 'Refresh USAspending'}</button><button className="btn text-sm" onClick={() => setPollVersion(v => v + 1)}>Check status</button></div>
+              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)} onClick={refreshEnrichment}>{refreshing ? 'Refreshing…' : 'Refresh USAspending'}</button></div>
               {(!refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)) && <p className="text-sm text-muted">{/^[A-Z0-9]{12}$/.test(selectedUEI) ? 'USAspending refresh is turned off for this partner.' : 'Add a valid 12-character UEI to refresh this partner.'}</p>}
               <label className="text-sm"><input type="checkbox" checked={refreshEnabled} disabled={saveAction.isLoading} onChange={async event => {
                 const partner = selected
@@ -264,11 +272,9 @@ export default function Partners({ toast }) {
                 try { await saveAction.run(() => update(partner._rowIndex, patch, partner)); setPollVersion(v => v + 1) }
                 catch (err) { setSelected(current => current?._rowIndex === partner._rowIndex ? partner : current); toast?.error(`Could not save refresh setting: ${err.message}`) }
               }} /> Quarterly refresh</label>
-              {enrichment?.busy && !enrichment?.status && <p className="text-sm text-muted">Another partner refresh is in progress. This partner has not been started.</p>}
+              {refreshing && <p className="text-sm text-muted" role="status">{refreshProgress} Keep this CRM tab open until saving finishes.</p>}
               {enrichmentError && <p className="text-sm text-muted">{enrichmentError}</p>}
-              {enrichment?.status && <p className="text-sm text-muted">Refresh: {enrichment.status.status?.replaceAll('_', ' ')}{enrichment.status.error ? ` · ${enrichment.status.error}` : ''}</p>}
-              {enrichment?.status?.failures?.filter(item => item.uei === selectedUEI).map(item => <p key={item.uei} className="text-sm text-muted">{item.error}</p>)}
-              <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot?.agencies?.map(a => a.name).join(', ') || selected['USAspending Agencies']} />
+              <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join(', ') || 'None reported' : selected['USAspending Agencies']} />
               <DetailField label="Last successful refresh" value={enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At'] ? formatDateTime(enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At']) : ''} />
               {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable}><table><thead><tr><th>Contract vehicle / PIID</th><th>Current end</th><th>Potential end</th><th>Last date to order</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><br />{vehicle.PIID}</td><td>{vehicle['Current End Date'] || 'Not reported'}</td><td>{vehicle['Potential End Date'] || 'Not reported'}</td><td>{vehicle['Last Date to Order'] || 'Not reported'}</td></tr>)}</tbody></table></div>}
               <p className="text-sm text-muted">Direct IDV awards only. Reported dates do not establish current ordering eligibility. Research-only and indirect access remain in Market profile.</p>
