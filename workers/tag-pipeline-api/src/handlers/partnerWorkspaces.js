@@ -6,6 +6,7 @@ import {
   removePartnerUploads,
   scanPartnerFolders,
 } from '../lib/partnerWorkspaceSharePoint.js'
+import { getPartnerEnrichment, startPartnerEnrichment } from '../lib/partnerEnrichment.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -15,6 +16,11 @@ export async function handlePartnerWorkspaces(req, env) {
   const url = new URL(req.url)
   const path = url.pathname
   try {
+    if (path === '/partner-workspaces/enrichment' && req.method === 'GET') return json(await getPartnerEnrichment(env, String(url.searchParams.get('uei') || '').trim().toUpperCase()))
+    if (path === '/partner-workspaces/enrichment' && req.method === 'POST') {
+      const body = await req.json()
+      return json(await startPartnerEnrichment(env, { uei: String(body.uei || '').trim().toUpperCase() }), 202)
+    }
     const createMatch = path.match(/^\/partner-workspaces\/([^/]+)\/folder$/)
     if (createMatch && req.method === 'POST') return json(await createPartnerFolder(env, decodeURIComponent(createMatch[1])))
     if (path === '/partner-workspaces/migration/scan' && req.method === 'POST') {
