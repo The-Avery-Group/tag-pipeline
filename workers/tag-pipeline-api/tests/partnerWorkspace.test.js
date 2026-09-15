@@ -1,6 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizePartnerFolderName, partnerWorkbookValue } from '../src/lib/partnerWorkspaceSharePoint.js'
+import { normalizePartnerFolderName, partnerWorkbookValue, partnerSharedFolderLink } from '../src/lib/partnerWorkspaceSharePoint.js'
+
+test('subsidiaries reuse only an explicitly grouped shared folder', () => {
+  const partner = { 'Partner Group': 'Example' }
+  const siblings = [{ 'Partner Group': 'example', 'Link to Partner Folder': 'https://example.sharepoint.com/shared/' }]
+  assert.equal(partnerSharedFolderLink(partner, siblings), 'https://example.sharepoint.com/shared')
+  assert.equal(partnerSharedFolderLink({}, siblings), '')
+  assert.equal(partnerSharedFolderLink({ ...partner, 'Link to Partner Folder': 'own' }, siblings), 'own')
+})
+
+test('conflicting sibling folders are not silently chosen', () => {
+  const siblings = ['one', 'two'].map(link => ({ 'Partner Group': 'Example', 'Link to Partner Folder': link }))
+  assert.throws(() => partnerSharedFolderLink({ 'Partner Group': 'Example' }, siblings), { status: 409 })
+})
 
 test('partner folder matching tolerates punctuation and legal suffix differences', () => {
   assert.equal(normalizePartnerFolderName('Example Technology Group, LLC'), 'example technology group')
