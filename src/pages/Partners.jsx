@@ -13,7 +13,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
-import { groupPartners, partnerGroupKey, sharedPartnerWorkspace } from '@/utils/partnerGroups'
+import { groupPartners, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled } from '@/utils/partnerGroups'
 import { getPartnerEnrichment, refreshPartnerEnrichment } from '@/services/partnerWorkspaceService'
 import { startAdaptivePolling } from '@/services/workerClient'
 import { formatDateTime } from '@/utils/kpiHelpers'
@@ -24,7 +24,7 @@ const FIELDS = [
   ['Partner Name', 'Partner name', 'input', true, 'identity'],
   ['UEI Number', 'UEI', 'input', true, 'identity'],
   ['Partner Group', 'Company group (same name for each subsidiary)', 'input', false, 'identity'],
-  ['USAspending Enabled', 'Enable quarterly USAspending refresh for this confirmed UEI', 'checkbox', false, 'identity'],
+  ['USAspending Enabled', 'Quarterly USAspending refresh (on by default)', 'checkbox', false, 'identity'],
   ['Contact Information', 'Contact details', 'textarea', false, 'contact'],
   ['Link to website', 'Website', 'input', false, 'contact'],
   ['Link to Partner Folder', 'Partner SharePoint folder', 'input', false, 'contact'],
@@ -103,11 +103,16 @@ export default function Partners({ toast }) {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const saveAction = useAsyncAction()
   const deleteAction = useAsyncAction()
-  const [enrichment, setEnrichment] = useState(null)
+  const [enrichmentResult, setEnrichment] = useState(null)
   const [enrichmentError, setEnrichmentError] = useState('')
-  const [refreshing, setRefreshing] = useState(false)
+  const [refreshingUEI, setRefreshingUEI] = useState('')
   const [pollVersion, setPollVersion] = useState(0)
   const selectedUEI = String(selected?.['UEI Number'] || '').trim().toUpperCase()
+  const activeUEI = useRef(selectedUEI)
+  activeUEI.current = selectedUEI
+  const enrichment = enrichmentResult?.uei === selectedUEI ? enrichmentResult : null
+  const refreshing = refreshingUEI === selectedUEI && Boolean(selectedUEI)
+  const refreshEnabled = partnerRefreshEnabled(selected)
   useEffect(() => {
     setEnrichment(null); setEnrichmentError('')
     if (!/^[A-Z0-9]{12}$/.test(selectedUEI)) return undefined
@@ -116,18 +121,19 @@ export default function Partners({ toast }) {
       key: `partner-enrichment:${selectedUEI}`, initialBypassLease: true,
       poll: async () => {
         try { return await getPartnerEnrichment(selectedUEI) }
-        catch (err) { if (!disposed) setEnrichmentError(err.message); return { status: { status: 'unavailable' } } }
+        catch (err) { return { error: err.message, status: { status: 'unavailable' } } }
       },
-      onResult: result => { if (!disposed) setEnrichment(result) },
-      shouldContinue: result => ['running', 'queued'].includes(result.status?.status),
+      onResult: result => { if (!disposed) { setEnrichmentError(result.error || ''); setEnrichment({ ...result, uei: selectedUEI }) } },
+      shouldContinue: result => result.busy || ['running', 'queued'].includes(result.status?.status),
     })
     return () => { disposed = true; stop() }
   }, [selectedUEI, pollVersion])
   const refreshEnrichment = async () => {
-    setRefreshing(true); setEnrichmentError('')
+    const uei = selectedUEI
+    setRefreshingUEI(uei); setEnrichmentError('')
     try { const result = await refreshPartnerEnrichment(selectedUEI); setPollVersion(v => v + 1); toast?.success(result.reused ? 'A partner refresh is already running. Check status before starting another.' : 'Partner research refresh queued') }
-    catch (err) { setEnrichmentError(err.message) }
-    finally { setRefreshing(false) }
+    catch (err) { if (activeUEI.current === uei) setEnrichmentError(err.message) }
+    finally { setRefreshingUEI(current => current === uei ? '' : current) }
   }
 
   const partnerSearchIndex = useMemo(() => buildSearchIndex(partners), [partners])
@@ -223,7 +229,7 @@ export default function Partners({ toast }) {
       <div className={styles.formSectionTitle}>{SECTIONS.find(([section]) => section === id)?.[1]}</div>
       <div className={styles.formGrid}>{FIELDS.filter(([, , , , section]) => section === id).map(([key, label, type, required]) => <div className={`form-field ${type === 'textarea' ? styles.full : ''}`} key={key}>
         <label className="form-label">{label}{required ? ' *' : ''}</label>
-        {type === 'checkbox' ? <input type="checkbox" checked={/^yes$/i.test(form[key] || '')} onChange={event => setForm(current => ({ ...current, [key]: event.target.checked ? 'Yes' : 'No' }))} /> : type === 'textarea' ? <AutoTextarea className="form-input" rows={3} value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /> : <input className="form-input" value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />}
+        {type === 'checkbox' ? <input aria-label={label} type="checkbox" checked={['', 'yes'].includes(String(form[key] || '').trim().toLowerCase())} onChange={event => setForm(current => ({ ...current, [key]: event.target.checked ? 'Yes' : 'No' }))} /> : type === 'textarea' ? <AutoTextarea className="form-input" rows={3} value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /> : <input className="form-input" value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />}
       </div>)}</div>
     </div>
   )
@@ -249,8 +255,16 @@ export default function Partners({ toast }) {
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
             <details className={styles.enrichmentSection} open><summary>USAspending agency history and vehicles</summary><div className={styles.enrichmentBody}>
-              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !/^yes$/i.test(selected['USAspending Enabled'] || '')} onClick={refreshEnrichment}>{refreshing ? 'Starting…' : 'Refresh USAspending'}</button><button className="btn text-sm" onClick={() => setPollVersion(v => v + 1)}>Check status</button></div>
-              {!/^yes$/i.test(selected['USAspending Enabled'] || '') && <p className="text-sm text-muted">Enable quarterly refresh in Edit after confirming this entity’s UEI. Existing research is preserved.</p>}
+              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI) || enrichment?.busy} onClick={refreshEnrichment}>{refreshing ? 'Starting…' : 'Refresh USAspending'}</button><button className="btn text-sm" onClick={() => setPollVersion(v => v + 1)}>Check status</button></div>
+              {(!refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)) && <p className="text-sm text-muted">{/^[A-Z0-9]{12}$/.test(selectedUEI) ? 'USAspending refresh is turned off for this partner.' : 'Add a valid 12-character UEI to refresh this partner.'}</p>}
+              <label className="text-sm"><input type="checkbox" checked={refreshEnabled} disabled={saveAction.isLoading} onChange={async event => {
+                const partner = selected
+                const patch = { 'USAspending Enabled': event.target.checked ? 'Yes' : 'No' }
+                setSelected(current => current?._rowIndex === partner._rowIndex ? { ...current, ...patch } : current)
+                try { await saveAction.run(() => update(partner._rowIndex, patch, partner)); setPollVersion(v => v + 1) }
+                catch (err) { setSelected(current => current?._rowIndex === partner._rowIndex ? partner : current); toast?.error(`Could not save refresh setting: ${err.message}`) }
+              }} /> Quarterly refresh</label>
+              {enrichment?.busy && !enrichment?.status && <p className="text-sm text-muted">Another partner refresh is in progress. This partner has not been started.</p>}
               {enrichmentError && <p className="text-sm text-muted">{enrichmentError}</p>}
               {enrichment?.status && <p className="text-sm text-muted">Refresh: {enrichment.status.status?.replaceAll('_', ' ')}{enrichment.status.error ? ` · ${enrichment.status.error}` : ''}</p>}
               {enrichment?.status?.failures?.filter(item => item.uei === selectedUEI).map(item => <p key={item.uei} className="text-sm text-muted">{item.error}</p>)}
