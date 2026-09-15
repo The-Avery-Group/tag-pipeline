@@ -15,7 +15,8 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
 import { groupPartners, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled } from '@/utils/partnerGroups'
 import { getPartnerEnrichment, refreshPartnerEnrichment } from '@/services/partnerWorkspaceService'
-import { formatDateTime } from '@/utils/kpiHelpers'
+import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
+import { dateOnly } from '@/utils/opportunityDates'
 import styles from './Partners.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
@@ -86,6 +87,11 @@ function DetailField({ label, value, link, rich = false }) {
     ? <a href={safeUrl(value)} target="_blank" rel="noreferrer">{link}</a>
     : rich ? <RichText value={value} /> : value
   return <div className={styles.detailField}><span>{label}</span><div><CopyValue value={value} label={label}>{content}</CopyValue></div></div>
+}
+
+function vehicleDate(value) {
+  const formatted = formatDate(dateOnly(value))
+  return formatted === '-' ? 'Not reported' : formatted
 }
 
 export default function Partners({ toast }) {
@@ -262,7 +268,9 @@ export default function Partners({ toast }) {
             <div className={styles.profileSection}><h3>Contact and links</h3><DetailField label="Contact details" value={selected['Contact Information']} /><DetailField label="Website" value={selected['Link to website']} link="Open website" /><DetailField label="Partner SharePoint folder" value={selected['Link to Partner Folder']} link="Open folder" /></div>
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
-            <details className={styles.enrichmentSection} open><summary>USAspending agency history and vehicles</summary><div className={styles.enrichmentBody}>
+            <details className={styles.enrichmentSection} open><summary>Agency history and contract vehicles</summary><div className={styles.enrichmentBody}>
+              <small className={styles.researchSource}>Source: USAspending</small>
+              <details className={styles.refreshSettings} key={`refresh-settings-${selectedUEI}`}><summary>Refresh settings</summary><div className={styles.refreshSettingsBody}>
               <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)} onClick={refreshEnrichment}>{refreshing ? 'Refreshing…' : 'Refresh USAspending'}</button></div>
               {(!refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)) && <p className="text-sm text-muted">{/^[A-Z0-9]{12}$/.test(selectedUEI) ? 'USAspending refresh is turned off for this partner.' : 'Add a valid 12-character UEI to refresh this partner.'}</p>}
               <label className="text-sm"><input type="checkbox" checked={refreshEnabled} disabled={saveAction.isLoading} onChange={async event => {
@@ -272,12 +280,13 @@ export default function Partners({ toast }) {
                 try { await saveAction.run(() => update(partner._rowIndex, patch, partner)); setPollVersion(v => v + 1) }
                 catch (err) { setSelected(current => current?._rowIndex === partner._rowIndex ? partner : current); toast?.error(`Could not save refresh setting: ${err.message}`) }
               }} /> Quarterly refresh</label>
+              <small className={styles.researchSource}>Last successful refresh: {enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At'] ? formatDateTime(enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At']) : 'Not yet refreshed'}</small>
+              </div></details>
               {refreshing && <p className="text-sm text-muted" role="status">{refreshProgress} Keep this CRM tab open until saving finishes.</p>}
               {enrichmentError && <p className="text-sm text-muted">{enrichmentError}</p>}
-              <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join(', ') || 'None reported' : selected['USAspending Agencies']} />
-              <DetailField label="Last successful refresh" value={enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At'] ? formatDateTime(enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At']) : ''} />
-              {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable}><table><thead><tr><th>Contract vehicle / PIID</th><th>Current end</th><th>Potential end</th><th>Last date to order</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><br />{vehicle.PIID}</td><td>{vehicle['Current End Date'] || 'Not reported'}</td><td>{vehicle['Potential End Date'] || 'Not reported'}</td><td>{vehicle['Last Date to Order'] || 'Not reported'}</td></tr>)}</tbody></table></div>}
-              <p className="text-sm text-muted">Direct IDV awards only. Reported dates do not establish current ordering eligibility. Research-only and indirect access remain in Market profile.</p>
+              <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
+              {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable} tabIndex={0} role="region" aria-label="Contract vehicles"><table aria-label="Reported contract vehicles and dates"><thead><tr><th scope="col">Contract vehicle / PIID</th><th scope="col">Current end date</th><th scope="col">Potential end date</th><th scope="col">Last date to order</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><span className={styles.vehiclePiid}>{vehicle.PIID}</span></td><td>{vehicleDate(vehicle['Current End Date'])}</td><td>{vehicleDate(vehicle['Potential End Date'])}</td><td>{vehicleDate(vehicle['Last Date to Order'])}</td></tr>)}</tbody></table></div>}
+              <p className={styles.researchNote}>Direct IDV awards only. Reported dates do not establish current ordering eligibility. Research-only and indirect access remain in Market profile.</p>
             </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
             {sharedWorkspace.conflict && <p className="text-sm text-muted">This group has different folder links. Existing folders remain separate; select a subsidiary to view its files.</p>}
