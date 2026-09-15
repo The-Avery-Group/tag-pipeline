@@ -30,7 +30,6 @@ import { AuthError, verifyEntraRequest } from './lib/auth.js'
 import { getAutomationHealth } from './lib/automationHealth.js'
 import { handleOpportunityWorkspaces } from './handlers/opportunityWorkspaces.js'
 import { handlePartnerWorkspaces } from './handlers/partnerWorkspaces.js'
-import { startPartnerEnrichment } from './lib/partnerEnrichment.js'
 import { handleOpportunityAlerts } from './handlers/opportunityAlerts.js'
 import { purgeOldOpportunityAlertEvents } from './lib/opportunityAlerts.js'
 import { purgeDismissedSAMArchives } from './lib/samArchiveRepository.js'
@@ -300,12 +299,6 @@ export default {
     const maintenanceTask = dailyMaintenanceTask(controller.cron, controller.scheduledTime)
     if (maintenanceTask === 'capabilities') {
       ctx.waitUntil(refreshCapabilitiesIfChanged(env))
-      const date = new Date(controller.scheduledTime)
-      if (date.getUTCDate() === 1 && [0, 3, 6, 9].includes(date.getUTCMonth())) {
-        ctx.waitUntil(startPartnerEnrichment(env, { scheduledTime: controller.scheduledTime }).catch(error => {
-          console.error(JSON.stringify({ event: 'partner_enrichment_failed', message: error.message }))
-        }))
-      }
     }
     // Teams reminders retain their dedicated 2:01 PM WAT run.
     if (maintenanceTask === 'notifications') {
