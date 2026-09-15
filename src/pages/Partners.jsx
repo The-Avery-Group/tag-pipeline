@@ -1,5 +1,5 @@
 import AutoTextarea from '@/components/Common/AutoTextarea'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Topbar from '@/components/Layout/Topbar'
 import Modal from '@/components/Common/Modal'
@@ -13,8 +13,8 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
-import { groupPartners, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled } from '@/utils/partnerGroups'
-import { getPartnerEnrichment, refreshPartnerEnrichment } from '@/services/partnerWorkspaceService'
+import { groupPartners, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled, partnerRefreshDue, partnerRefreshQueue } from '@/utils/partnerGroups'
+import { getPartnerEnrichment, refreshPartnerEnrichment, refreshAllPartnerEnrichment } from '@/services/partnerWorkspaceService'
 import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
 import { dateOnly } from '@/utils/opportunityDates'
 import styles from './Partners.module.css'
@@ -110,15 +110,25 @@ export default function Partners({ toast }) {
   const deleteAction = useAsyncAction()
   const [enrichmentResult, setEnrichment] = useState(null)
   const [enrichmentError, setEnrichmentError] = useState('')
-  const [refreshingUEI, setRefreshingUEI] = useState('')
-  const [refreshProgress, setRefreshProgress] = useState('')
+  const refreshJobs = useSyncExternalStore(partnerRefreshQueue.subscribe, partnerRefreshQueue.getSnapshot)
   const [pollVersion, setPollVersion] = useState(0)
   const selectedUEI = String(selected?.['UEI Number'] || '').trim().toUpperCase()
   const activeUEI = useRef(selectedUEI)
   activeUEI.current = selectedUEI
   const enrichment = enrichmentResult?.uei === selectedUEI ? enrichmentResult : null
-  const refreshing = refreshingUEI === selectedUEI && Boolean(selectedUEI)
+  const refreshJob = refreshJobs.find(job => job.uei === selectedUEI)
+  const refreshing = ['queued', 'running'].includes(refreshJob?.status)
   const refreshEnabled = partnerRefreshEnabled(selected)
+  useEffect(() => {
+    let disposed = false
+    if (['queued', 'running'].includes(refreshJob?.status)) setEnrichmentError('')
+    if (refreshJob?.status === 'complete') {
+      getPartnerEnrichment(selectedUEI).then(result => {
+        if (!disposed) { setEnrichment(result); setEnrichmentError('') }
+      }).catch(err => { if (!disposed) setEnrichmentError(err.message) })
+    }
+    return () => { disposed = true }
+  }, [selectedUEI, refreshJob?.status])
   useEffect(() => {
     setEnrichment(null); setEnrichmentError('')
     if (!/^[A-Z0-9]{12}$/.test(selectedUEI)) return undefined
@@ -128,26 +138,25 @@ export default function Partners({ toast }) {
         const saved = await getPartnerEnrichment(selectedUEI)
         if (disposed) return
         setEnrichment(saved)
-        setRefreshingUEI(selectedUEI); setRefreshProgress('Checking saved information…')
-        const result = await refreshPartnerEnrichment(selectedUEI, { automatic: true, onProgress: message => { if (!disposed) setRefreshProgress(message) } })
+        const existing = partnerRefreshQueue.getSnapshot().find(job => job.uei === selectedUEI)
+        if (!partnerRefreshDue(saved.partner) && !['queued', 'running'].includes(existing?.status)) return
+        if (existing?.status === 'failed') return
+        const result = await refreshPartnerEnrichment(selectedUEI, { automatic: true, name: partnerName(saved.partner) })
         if (!disposed) setEnrichment(result)
       } catch (err) { if (!disposed) setEnrichmentError(err.message) }
-      finally { if (!disposed) setRefreshingUEI(current => current === selectedUEI ? '' : current) }
     }
     load()
     return () => { disposed = true }
   }, [selectedUEI, pollVersion])
   const refreshEnrichment = async () => {
     const uei = selectedUEI
-    setRefreshingUEI(uei); setEnrichmentError('')
-    setRefreshProgress('Reading USAspending…')
+    setEnrichmentError('')
     try {
-      const result = await refreshPartnerEnrichment(uei, { onProgress: message => { if (activeUEI.current === uei) setRefreshProgress(message) } })
+      const result = await refreshPartnerEnrichment(uei, { name: partnerName(selected) })
       if (activeUEI.current === uei) setEnrichment(result)
-      toast?.success('Partner USAspending information saved to workbook')
+      if (!result.skipped) toast?.success('Partner USAspending information saved to workbook')
     }
     catch (err) { if (activeUEI.current === uei) setEnrichmentError(err.message) }
-    finally { setRefreshingUEI(current => current === uei ? '' : current) }
   }
 
   const partnerSearchIndex = useMemo(() => buildSearchIndex(partners), [partners])
@@ -271,7 +280,7 @@ export default function Partners({ toast }) {
             <details className={styles.enrichmentSection} open><summary>Agency history and contract vehicles</summary><div className={styles.enrichmentBody}>
               <small className={styles.researchSource}>Source: USAspending</small>
               <details className={styles.refreshSettings} key={`refresh-settings-${selectedUEI}`}><summary>Refresh settings</summary><div className={styles.refreshSettingsBody}>
-              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)} onClick={refreshEnrichment}>{refreshing ? 'Refreshing…' : 'Refresh USAspending'}</button></div>
+              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)} onClick={refreshEnrichment}>{refreshing ? refreshJob.status === 'queued' ? 'Queued' : 'Refreshing…' : 'Refresh USAspending'}</button><button className="btn text-sm" onClick={() => { void refreshAllPartnerEnrichment(partners); toast?.success('Enabled partners with valid UEIs added to the refresh queue') }}>Refresh all partners</button></div>
               {(!refreshEnabled || !/^[A-Z0-9]{12}$/.test(selectedUEI)) && <p className="text-sm text-muted">{/^[A-Z0-9]{12}$/.test(selectedUEI) ? 'USAspending refresh is turned off for this partner.' : 'Add a valid 12-character UEI to refresh this partner.'}</p>}
               <label className="text-sm"><input type="checkbox" checked={refreshEnabled} disabled={saveAction.isLoading} onChange={async event => {
                 const partner = selected
@@ -282,8 +291,8 @@ export default function Partners({ toast }) {
               }} /> Quarterly refresh</label>
               <small className={styles.researchSource}>Last successful refresh: {enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At'] ? formatDateTime(enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At']) : 'Not yet refreshed'}</small>
               </div></details>
-              {refreshing && <p className="text-sm text-muted" role="status">{refreshProgress} Keep this CRM tab open until saving finishes.</p>}
-              {enrichmentError && <p className="text-sm text-muted">{enrichmentError}</p>}
+              {refreshing && <p className={styles.researchSource} role="status">{refreshJob.status === 'queued' ? 'Queued for a background update.' : 'Updating in the background.'} You can continue using the CRM.</p>}
+              {(enrichmentError || refreshJob?.error) && <p className="text-sm text-muted">{enrichmentError || refreshJob.error}</p>}
               <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
               {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable} tabIndex={0} role="region" aria-label="Contract vehicles"><table aria-label="Reported contract vehicles and dates"><thead><tr><th scope="col">Contract vehicle / PIID</th><th scope="col">Current end date</th><th scope="col">Potential end date</th><th scope="col">Last date to order</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><span className={styles.vehiclePiid}>{vehicle.PIID}</span></td><td>{vehicleDate(vehicle['Current End Date'])}</td><td>{vehicleDate(vehicle['Potential End Date'])}</td><td>{vehicleDate(vehicle['Last Date to Order'])}</td></tr>)}</tbody></table></div>}
               <p className={styles.researchNote}>Direct IDV awards only. Reported dates do not establish current ordering eligibility. Research-only and indirect access remain in Market profile.</p>
