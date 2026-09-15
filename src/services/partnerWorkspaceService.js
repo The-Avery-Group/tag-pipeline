@@ -2,10 +2,9 @@ import { workerJson } from '@/services/workerClient'
 import { getPartnerResearch, savePartnerResearch, getSheetRows, invalidateTables } from '@/services/graphService'
 import { publishCacheUpdate } from '@/services/dataCache'
 import { fetchPartnerAwardEvidence } from './usaSpendingService.js'
-import { partnerRefreshDue, partnerRefreshEnabled } from '../utils/partnerGroups.js'
+import { partnerRefreshDue, partnerRefreshEnabled, partnerRefreshQueue } from '../utils/partnerGroups.js'
 import { mergeContractVehicleRules, resolveContractVehicle } from '../../workers/tag-pipeline-api/src/lib/contractVehicleResolver.js'
 
-const refreshes = new Map()
 const autoAttempts = new Map()
 
 export async function getPartnerEnrichment(uei) {
@@ -13,12 +12,13 @@ export async function getPartnerEnrichment(uei) {
   return { ...result, uei }
 }
 
-export function refreshPartnerEnrichment(uei, { automatic = false, onProgress = () => {} } = {}) {
-  if (refreshes.has(uei)) return refreshes.get(uei)
+export function refreshPartnerEnrichment(uei, { automatic = false, name = '' } = {}) {
+  uei = String(uei || '').trim().toUpperCase()
+  return partnerRefreshQueue.enqueue(uei, name, async onProgress => {
   const run = async () => {
     const saved = await getPartnerEnrichment(uei)
-    if (!partnerRefreshEnabled(saved.partner)) return saved
-    if (automatic && (!partnerRefreshDue(saved.partner) || Date.now() - (autoAttempts.get(uei) || 0) < 3600_000)) return saved
+    if (!partnerRefreshEnabled(saved.partner)) return { ...saved, skipped: true }
+    if (automatic && (!partnerRefreshDue(saved.partner) || Date.now() - (autoAttempts.get(uei) || 0) < 3600_000)) return { ...saved, skipped: true }
     autoAttempts.set(uei, Date.now())
     onProgress('Reading USAspending…')
     const evidence = await fetchPartnerAwardEvidence(uei, { onProgress })
@@ -47,11 +47,16 @@ export function refreshPartnerEnrichment(uei, { automatic = false, onProgress = 
   }
   // One tab performs publication at a time. Quarterly eligibility is re-read
   // after acquiring the lock so another tab's completed refresh is respected.
-  const promise = (globalThis.navigator?.locks
+  return globalThis.navigator?.locks
     ? navigator.locks.request('tag-partner-research', run)
-    : run()).finally(() => refreshes.delete(uei))
-  refreshes.set(uei, promise)
-  return promise
+    : run()
+  })
+}
+
+export function refreshAllPartnerEnrichment(partners) {
+  const unique = new Map(partners.filter(partner => partnerRefreshEnabled(partner) && /^[A-Z0-9]{12}$/.test(String(partner['UEI Number'] || '').trim().toUpperCase())).map(partner => [String(partner['UEI Number']).trim().toUpperCase(), partner]))
+  // All jobs enter synchronously; failures are visible in the shared queue.
+  return Promise.allSettled([...unique].map(([uei, partner]) => refreshPartnerEnrichment(uei, { name: partner['Partner Name'] })))
 }
 
 export function createPartnerFolder(uei) {
