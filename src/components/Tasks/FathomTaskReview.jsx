@@ -90,12 +90,12 @@ export default function FathomTaskReview({ pipeline, onCount, onStatus, toast })
     } catch (e) { setEditorError(e.message); await refresh() }
     finally { setBusy(false) }
   }
-  if (loading) return <p role="status" className="text-sm text-muted">Loading meeting review…</p>
+  if (loading) return <section aria-label="Task review" style={{ marginTop: 20 }}><h3 className="review-section-divider">Task review</h3><p role="status" className="text-sm text-muted">Loading meeting review…</p></section>
   if (!data.enabled && !error) return null
   const opportunities = pipeline.filter(p => !['yes','true','1'].includes(String(p.Archived || '').toLowerCase()))
   const names = [...new Set(recipients.map(r => r['Pipeline Assignee']).filter(Boolean))].sort()
-  return <section aria-label="Meeting task proposals" style={{ marginTop: 16 }}>
-    <h3 className="text-sm" style={{ marginBottom: 8 }}>TAG Capture task proposals</h3>
+  return <section aria-label="Task review" style={{ marginTop: 20 }}>
+    <h3 className="review-section-divider">Task review</h3>
     {error && <p role="alert" className="text-sm">{error} <button className="btn btn-sm" onClick={refresh}>Try again</button></p>}
     {data.recoveryIssue && <p role="status" className="text-sm">{data.recoveryIssue}</p>}
     {data.jobs?.map(job => <div key={job.id} className="text-sm" style={{ marginTop: 10 }}>
