@@ -586,8 +586,9 @@ export default function Dashboard({ toast }) {
         />
 
         <CollapsibleCard title="Review queue" count={reviewQueue.loading || fathomStatus.loading ? undefined : reviewQueue.alerts.length + fathomReviewCount} statusText={reviewQueue.loading || fathomStatus.loading ? 'Loading review queue…' : fathomStatus.error ? 'Meeting status unavailable' : fathomStatus.jobs ? `${fathomStatus.jobs} meeting${fathomStatus.jobs === 1 ? '' : 's'} processing` : ''} countDanger defaultOpen={false} keepMounted>
+          <h3 className="review-section-divider">Opportunity review</h3>
           {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
-            : reviewQueue.alerts.length === 0 ? null
+            : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No opportunity changes waiting for review.</p>
             : <div className={styles.reviewQueue}>
               {reviewQueueEntries.map(({ alert, opportunity, identifier, samNoticeId, samRowIndex, displayTitle, supportingDetail }) => (
                 <div className={styles.reviewQueueRow} key={`${alert.opportunityKey}:${alert.type}:${alert.fingerprint}`}>
