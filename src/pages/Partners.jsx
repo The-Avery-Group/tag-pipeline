@@ -13,12 +13,18 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
+import { groupPartners, partnerGroupKey, sharedPartnerWorkspace } from '@/utils/partnerGroups'
+import { getPartnerEnrichment, refreshPartnerEnrichment } from '@/services/partnerWorkspaceService'
+import { startAdaptivePolling } from '@/services/workerClient'
+import { formatDateTime } from '@/utils/kpiHelpers'
 import styles from './Partners.module.css'
 import { useSaveShortcut } from '@/shortcuts/SaveShortcutContext'
 
 const FIELDS = [
   ['Partner Name', 'Partner name', 'input', true, 'identity'],
   ['UEI Number', 'UEI', 'input', true, 'identity'],
+  ['Partner Group', 'Company group (same name for each subsidiary)', 'input', false, 'identity'],
+  ['USAspending Enabled', 'Enable quarterly USAspending refresh for this confirmed UEI', 'checkbox', false, 'identity'],
   ['Contact Information', 'Contact details', 'textarea', false, 'contact'],
   ['Link to website', 'Website', 'input', false, 'contact'],
   ['Link to Partner Folder', 'Partner SharePoint folder', 'input', false, 'contact'],
@@ -97,6 +103,32 @@ export default function Partners({ toast }) {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const saveAction = useAsyncAction()
   const deleteAction = useAsyncAction()
+  const [enrichment, setEnrichment] = useState(null)
+  const [enrichmentError, setEnrichmentError] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const [pollVersion, setPollVersion] = useState(0)
+  const selectedUEI = String(selected?.['UEI Number'] || '').trim().toUpperCase()
+  useEffect(() => {
+    setEnrichment(null); setEnrichmentError('')
+    if (!/^[A-Z0-9]{12}$/.test(selectedUEI)) return undefined
+    let disposed = false
+    const stop = startAdaptivePolling({
+      key: `partner-enrichment:${selectedUEI}`, initialBypassLease: true,
+      poll: async () => {
+        try { return await getPartnerEnrichment(selectedUEI) }
+        catch (err) { if (!disposed) setEnrichmentError(err.message); return { status: { status: 'unavailable' } } }
+      },
+      onResult: result => { if (!disposed) setEnrichment(result) },
+      shouldContinue: result => ['running', 'queued'].includes(result.status?.status),
+    })
+    return () => { disposed = true; stop() }
+  }, [selectedUEI, pollVersion])
+  const refreshEnrichment = async () => {
+    setRefreshing(true); setEnrichmentError('')
+    try { const result = await refreshPartnerEnrichment(selectedUEI); setPollVersion(v => v + 1); toast?.success(result.reused ? 'A partner refresh is already running. Check status before starting another.' : 'Partner research refresh queued') }
+    catch (err) { setEnrichmentError(err.message) }
+    finally { setRefreshing(false) }
+  }
 
   const partnerSearchIndex = useMemo(() => buildSearchIndex(partners), [partners])
   const filtered = useMemo(() => (
@@ -104,6 +136,14 @@ export default function Partners({ toast }) {
       .slice()
       .sort((a, b) => partnerName(a).localeCompare(partnerName(b), undefined, { sensitivity: 'base' }))
   ), [partnerSearchIndex, search])
+  const groups = useMemo(() => groupPartners(partners), [partners])
+  const visibleGroups = useMemo(() => {
+    const matches = new Set(filtered.map(p => p._rowIndex))
+    return groups.filter(group => group.members.some(p => matches.has(p._rowIndex)))
+  }, [groups, filtered])
+  const selectedGroup = groups.find(group => group.key === partnerGroupKey(selected))
+  const groupMembers = selectedGroup?.members || []
+  const sharedWorkspace = sharedPartnerWorkspace(groupMembers)
   const requestedPartnerUEI = String(searchParams.get('partner') || '').trim().toUpperCase()
   useEffect(() => {
     if (!requestedPartnerUEI) return
@@ -153,7 +193,8 @@ export default function Partners({ toast }) {
     if (partners.some((partner) => partner._rowIndex !== selected?._rowIndex && String(partner['UEI Number'] || '').trim().toUpperCase() === uei)) {
       toast?.error('A partner with that UEI already exists'); return
     }
-    const next = { ...form, 'Partner Name': name, 'UEI Number': uei }
+    // Do not resubmit a stale copy of machine-owned fields or unknown workbook columns.
+    const next = { ...Object.fromEntries(FIELDS.map(([key]) => [key, form[key] || ''])), 'Partner Name': name, 'UEI Number': uei }
     try {
       await saveAction.run(() => selected ? update(selected._rowIndex, next, selected) : add(next), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
       setSelected((current) => current ? { ...current, ...next } : null)
@@ -182,18 +223,18 @@ export default function Partners({ toast }) {
       <div className={styles.formSectionTitle}>{SECTIONS.find(([section]) => section === id)?.[1]}</div>
       <div className={styles.formGrid}>{FIELDS.filter(([, , , , section]) => section === id).map(([key, label, type, required]) => <div className={`form-field ${type === 'textarea' ? styles.full : ''}`} key={key}>
         <label className="form-label">{label}{required ? ' *' : ''}</label>
-        {type === 'textarea' ? <AutoTextarea className="form-input" rows={3} value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /> : <input className="form-input" value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />}
+        {type === 'checkbox' ? <input type="checkbox" checked={/^yes$/i.test(form[key] || '')} onChange={event => setForm(current => ({ ...current, [key]: event.target.checked ? 'Yes' : 'No' }))} /> : type === 'textarea' ? <AutoTextarea className="form-input" rows={3} value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /> : <input className="form-input" value={form[key] || ''} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />}
       </div>)}</div>
     </div>
   )
 
   return <>
-    <Topbar title="Partners" subtitle1={`${partners.length} partners`} showFilter={false} showNew newLabel="New partner" onNew={startAdd} />
+    <Topbar title="Partners" subtitle1={`${groups.length} partner pages · ${partners.length} entities`} showFilter={false} showNew newLabel="New partner" onNew={startAdd} />
     <div className={`page-body ${styles.page}`}>
       <div className={`card ${styles.workspace}`}>
         <aside ref={listPanelRef} className={styles.listPanel}>
-          <div className={styles.searchBar}><input className={styles.searchInput} placeholder="Search partners…" value={search} onChange={(event) => setSearchValue(event.target.value)} /><span>{filtered.length}</span></div>
-          {loading ? <div className={styles.listMessage}>Loading partners…</div> : error ? <div className={styles.listMessage}>Could not load partners.<button className="btn btn-ghost text-sm" onClick={refresh}>Retry</button></div> : filtered.length === 0 ? <div className={styles.listMessage}>{search ? 'No matches.' : 'No partners yet.'}</div> : <div className={styles.partnerList}>{filtered.map((partner) => <button key={partner._rowIndex} className={`${styles.listItem} ${selected?._rowIndex === partner._rowIndex ? styles.listItemActive : ''}`} onClick={() => select(partner)}><strong>{partnerName(partner)}</strong><span>UEI: {partner['UEI Number']}</span>{partner.Capabilities && <small>{partner.Capabilities}</small>}</button>)}</div>}
+          <div className={styles.searchBar}><input className={styles.searchInput} placeholder="Search partners…" value={search} onChange={(event) => setSearchValue(event.target.value)} /><span>{visibleGroups.length}</span></div>
+          {loading ? <div className={styles.listMessage}>Loading partners…</div> : error ? <div className={styles.listMessage}>Could not load partners.<button className="btn btn-ghost text-sm" onClick={refresh}>Retry</button></div> : visibleGroups.length === 0 ? <div className={styles.listMessage}>{search ? 'No matches.' : 'No partners yet.'}</div> : <div className={styles.partnerList}>{visibleGroups.map(group => <button key={group.key} className={`${styles.listItem} ${selectedGroup?.key === group.key ? styles.listItemActive : ''}`} onClick={() => select(group.members.find(p => filtered.some(match => match._rowIndex === p._rowIndex)) || group.members[0])}><strong>{group.name}</strong><span>{group.members.length > 1 ? `${group.members.length} subsidiaries` : `UEI: ${group.members[0]['UEI Number']}`}</span><small>{group.members.map(p => p.Capabilities).filter(Boolean).join(' · ')}</small></button>)}</div>}
         </aside>
         <section className={styles.profilePanel}>
           {editing ? <div className={styles.editProfile}>
@@ -201,12 +242,26 @@ export default function Partners({ toast }) {
             {SECTIONS.map(([id]) => formSection(id))}
             <div className={styles.profileActions}><button className="btn" disabled={saveAction.isLoading} onClick={() => { setEditing(false); if (!selected) setForm(EMPTY()) }}>Cancel</button><button className="btn btn-primary" disabled={saveAction.isLoading} onClick={save}>{saveAction.isLoading ? 'Saving…' : selected ? 'Save changes' : 'Add partner'}</button></div>
           </div> : selected ? <div className={styles.profile}>
+            {selectedGroup?.name !== partnerName(selected) && <h2 className={styles.groupTitle}>{selectedGroup?.name}</h2>}
+            {groupMembers.length > 1 && <div className={styles.entitySelector}><label htmlFor="partner-entity">Subsidiary</label><select id="partner-entity" className="form-input" value={selected._rowIndex} onChange={event => select(groupMembers.find(p => String(p._rowIndex) === event.target.value))}>{groupMembers.map(p => <option key={p._rowIndex} value={p._rowIndex}>{partnerName(p)} · {p['UEI Number']}</option>)}</select><small>Agency history, vehicles, notes and edits below belong to this legal entity.</small></div>}
             <div className={styles.profileHeader}><div><div className={styles.eyebrow}>Partner profile</div><h2>{partnerName(selected)}</h2><p>UEI: <CopyValue value={selected['UEI Number']} label="UEI">{selected['UEI Number']}</CopyValue></p></div><div className={styles.headerActions}><button className="btn text-sm" onClick={startEdit}><ActionIcon name="edit" /> Edit</button><button className="btn btn-danger-ghost text-sm"  onClick={() => setDeleteTarget(selected)}>Delete</button></div></div>
             <div className={styles.profileSection}><h3>Contact and links</h3><DetailField label="Contact details" value={selected['Contact Information']} /><DetailField label="Website" value={selected['Link to website']} link="Open website" /><DetailField label="Partner SharePoint folder" value={selected['Link to Partner Folder']} link="Open folder" /></div>
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
             <div className={styles.profileSection}><h3>Capabilities and strengths</h3><DetailField label="Capabilities" value={selected.Capabilities} /><DetailField label="Company strengths" value={selected['Company Strengths']} /></div>
+            <details className={styles.enrichmentSection} open><summary>USAspending agency history and vehicles</summary><div className={styles.enrichmentBody}>
+              <div className={styles.headerActions}><button className="btn text-sm" disabled={refreshing || !/^yes$/i.test(selected['USAspending Enabled'] || '')} onClick={refreshEnrichment}>{refreshing ? 'Starting…' : 'Refresh USAspending'}</button><button className="btn text-sm" onClick={() => setPollVersion(v => v + 1)}>Check status</button></div>
+              {!/^yes$/i.test(selected['USAspending Enabled'] || '') && <p className="text-sm text-muted">Enable quarterly refresh in Edit after confirming this entity’s UEI. Existing research is preserved.</p>}
+              {enrichmentError && <p className="text-sm text-muted">{enrichmentError}</p>}
+              {enrichment?.status && <p className="text-sm text-muted">Refresh: {enrichment.status.status?.replaceAll('_', ' ')}{enrichment.status.error ? ` · ${enrichment.status.error}` : ''}</p>}
+              {enrichment?.status?.failures?.filter(item => item.uei === selectedUEI).map(item => <p key={item.uei} className="text-sm text-muted">{item.error}</p>)}
+              <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot?.agencies?.map(a => a.name).join(', ') || selected['USAspending Agencies']} />
+              <DetailField label="Last successful refresh" value={enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At'] ? formatDateTime(enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At']) : ''} />
+              {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable}><table><thead><tr><th>Contract vehicle / PIID</th><th>Current end</th><th>Potential end</th><th>Last date to order</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><br />{vehicle.PIID}</td><td>{vehicle['Current End Date'] || 'Not reported'}</td><td>{vehicle['Potential End Date'] || 'Not reported'}</td><td>{vehicle['Last Date to Order'] || 'Not reported'}</td></tr>)}</tbody></table></div>}
+              <p className="text-sm text-muted">Direct IDV awards only. Reported dates do not establish current ordering eligibility. Research-only and indirect access remain in Market profile.</p>
+            </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
-            <PartnerFilesPanel key={`partner-files-${selected['UEI Number']}`} partner={selected} onCreated={async (webUrl) => { setSelected({ ...selected, 'Link to Partner Folder': webUrl }); await refresh() }} />
+            {sharedWorkspace.conflict && <p className="text-sm text-muted">This group has different folder links. Existing folders remain separate; select a subsidiary to view its files.</p>}
+            {groupMembers.length > 1 && !sharedWorkspace.partner && !sharedWorkspace.conflict ? <p className="text-sm text-muted">Add the existing shared folder link to a group member using Edit. The app will use that folder for the group without creating subsidiary folders.</p> : <PartnerFilesPanel key={`partner-files-${(sharedWorkspace.partner || selected)['UEI Number']}`} partner={sharedWorkspace.partner || selected} onCreated={async () => { await refresh() }} />}
             <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities match this partner’s UEI or name.</p> : matchedOpportunities.map(({ opportunity, matchLabel }) => <button type="button" key={opportunity._rowIndex || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}?row=${opportunity._rowIndex}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]} · {matchLabel}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
           </div> : <div className={styles.emptyProfile}><div>◇</div><strong>Select a partner</strong><span>Choose one from the list to view its profile, or add a new partner.</span><button className="btn btn-primary" onClick={startAdd}>Add partner</button></div>}
         </section>
