@@ -1,4 +1,7 @@
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
+import { Link } from 'react-router-dom'
+import Modal from '@/components/Common/Modal'
+import { partnerRefreshQueue } from '@/utils/partnerGroups'
 import styles from './Topbar.module.css'
 
 export default function Topbar({
@@ -7,6 +10,11 @@ export default function Topbar({
   onFilter, onNew, greetingLarge = false, rightContent,
 }) {
   const [filterActive, setFilterActive] = useState(false)
+  const [queueOpen, setQueueOpen] = useState(false)
+  const jobs = useSyncExternalStore(partnerRefreshQueue.subscribe, partnerRefreshQueue.getSnapshot)
+  const activeJob = jobs.find(job => job.status === 'running')
+  const waiting = jobs.filter(job => job.status === 'queued').length
+  const failed = jobs.filter(job => job.status === 'failed').length
 
   const handleFilter = () => {
     setFilterActive((v) => !v)
@@ -23,6 +31,9 @@ export default function Topbar({
         </div>
       </div>
       <div className={styles.actions}>
+        {jobs.length > 0 && <button className={`btn ${styles.queueButton}`} onClick={() => setQueueOpen(true)} title="Partner refresh queue" aria-label="Open partner refresh queue">
+          {activeJob ? `Updating ${activeJob.name}` : waiting ? 'Partner updates queued' : 'Partner updates finished'}{waiting > 0 ? ` · ${waiting} queued` : ''}{failed > 0 ? ` · ${failed} failed` : ''}
+        </button>}
         {rightContent}
         {showFilter && (
           <button
@@ -49,6 +60,17 @@ export default function Topbar({
           </button>
         )}
       </div>
+      {queueOpen && <Modal title="Partner refresh queue" onClose={() => setQueueOpen(false)}>
+        <p className={styles.queueHelp}>Updates continue as you move around the CRM. Closing or reloading this browser tab interrupts the queue.</p>
+        <ul className={styles.queueList}>{jobs.map(job => <li key={job.uei}>
+          <Link to={`/partners?partner=${encodeURIComponent(job.uei)}`} onClick={() => setQueueOpen(false)}>{job.name}</Link>
+          <span>{job.status === 'queued' ? 'Queued' : job.status === 'failed' ? job.error : job.progress}</span>
+          {job.status === 'failed' && <button className="btn text-sm" onClick={() => {
+            import('@/services/partnerWorkspaceService').then(module => module.refreshPartnerEnrichment(job.uei, { name: job.name })).catch(() => {})
+          }}>Retry</button>}
+        </li>)}</ul>
+        <button className="btn text-sm" onClick={() => { partnerRefreshQueue.clearFinished(); if (!activeJob && !waiting) setQueueOpen(false) }}>Clear finished results</button>
+      </Modal>}
     </header>
   )
 }
