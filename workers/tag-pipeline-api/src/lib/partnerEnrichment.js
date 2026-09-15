@@ -14,6 +14,18 @@ const STEP = { retries: { limit: 4, delay: '30 seconds', backoff: 'exponential' 
 const clean = value => String(value || '').trim()
 const ueiOf = row => clean(partnerWorkbookValue(row, 'UEI Number')).toUpperCase()
 const validUEI = uei => /^[A-Z0-9]{12}$/.test(uei)
+export const partnerEnrichmentEnabled = row => validUEI(ueiOf(row)) && ['', 'yes'].includes(clean(partnerWorkbookValue(row, 'USAspending Enabled')).toLowerCase())
+// A batch run is shared infrastructure, not the status of every partner.
+export function partnerRunStatus(run, uei, snapshot) {
+  if (!run || (run.requestedUEI ? run.requestedUEI !== uei : !run.partnerUEIs?.includes(uei))) return null
+  const failure = run.failures?.find(item => item.uei === uei)
+  if (failure) return { ...run, status: 'needs_attention', error: failure.error, failures: [failure] }
+  if (snapshot?.checkedAt === run.startedAt) return { ...run, status: 'complete', error: undefined, failures: [] }
+  if (!run.requestedUEI && ['running', 'queued'].includes(run.status)) {
+    return { ...run, status: run.currentUEI === uei ? 'running' : 'queued', failures: [] }
+  }
+  return { ...run, failures: [] }
+}
 const stateEnv = env => ({ ...env, CACHE: undefined }) // Never fall back to KV.
 const statusRead = env => getRuntimeState(stateEnv(env), RUN_KEY, { legacyKv: false })
 const statusWrite = (env, value) => putRuntimeState(stateEnv(env), RUN_KEY, value, { category: 'partner-enrichment', expirationTtl: 180 * 86400 })
@@ -53,15 +65,25 @@ export function vehicleRecord(detail, uei, rules, checkedAt) {
     'Last Seen': checkedAt, Status: 'Reported; ordering eligibility not verified',
   }
 }
-async function usa(path, body) {
-  const response = await fetch(`https://api.usaspending.gov/api/v2${path}`, {
-    method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' },
-    ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(25000),
-  })
-  if (!response.ok) throw new Error(`USAspending request failed (${response.status}); previous snapshot retained`)
-  const data = await response.json()
-  if (body && (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== 'boolean')) throw new Error('USAspending returned an incomplete page')
-  return data
+export async function fetchPartnerUsaspending(path, body) {
+  // The request and body read share a deadline below the two-minute step timeout.
+  // Workflow steps own retries; do not add another retry loop here.
+  const signal = AbortSignal.timeout(60_000)
+  try {
+    const response = await fetch(`https://api.usaspending.gov/api/v2${path}`, {
+      method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}), signal,
+    })
+    if (!response.ok) throw new Error(`USAspending request failed (${response.status}); previous snapshot retained`)
+    const data = await response.json()
+    if (body && (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== 'boolean')) throw new Error('USAspending returned an incomplete page')
+    return data
+  } catch (error) {
+    if (signal.aborted || error.name === 'TimeoutError') {
+      throw new Error('USAspending did not respond within 60 seconds. Previously saved information is unchanged. Try Refresh USAspending again later.', { cause: error })
+    }
+    throw error
+  }
 }
 async function context(env) { return { token: await getAppOnlyGraphToken(env), driveId: driveIdFor(env) } }
 function letter(index) { let out = ''; for (let n = index + 1; n; n = Math.floor((n - 1) / 26)) out = String.fromCharCode(65 + (n - 1) % 26) + out; return out }
@@ -90,7 +112,7 @@ async function partnerRows(env) { const ctx = await context(env); return readWor
 async function enabledPartner(env, uei) {
   const matches = (await partnerRows(env)).filter(row => ueiOf(row) === uei)
   if (matches.length !== 1) throw new Error('Partner UEI is missing or duplicated; refresh stopped')
-  if (!/^yes$/i.test(clean(partnerWorkbookValue(matches[0], 'USAspending Enabled')))) throw new Error('Partner enrichment is disabled')
+  if (!partnerEnrichmentEnabled(matches[0])) throw new Error('Partner enrichment is disabled')
   return matches[0]
 }
 // Write only machine-owned cells, never a whole user-maintained partner row.
@@ -137,11 +159,12 @@ export async function getPartnerEnrichment(env, uei = '') {
     const instance = await env.PARTNER_ENRICHMENT_WORKFLOW.get(status.instanceId)
     const actual = await instance.status().catch(() => null)
     if (actual && ['errored', 'terminated'].includes(actual.status)) status.status = 'needs_attention'
+    if (actual?.status === 'complete') status.status = status.failures?.length ? 'needs_attention' : 'complete'
   }
   if (!uei) return { status }
   if (!validUEI(uei)) throw new Error('A 12-character UEI is required')
   const snapshot = await getRuntimeState(stateEnv(env), `partner-enrichment:snapshot:${uei}`, { legacyKv: false })
-  return { status, snapshot }
+  return { status: partnerRunStatus(status, uei, snapshot), snapshot, busy: ['running', 'queued'].includes(status?.status) }
 }
 export async function startPartnerEnrichment(env, { scheduledTime, uei = '' } = {}) {
   if (!env.EBUY_DB || !env.PARTNER_ENRICHMENT_WORKFLOW) throw new Error('Partner enrichment bindings are not deployed')
@@ -157,7 +180,10 @@ export async function startPartnerEnrichment(env, { scheduledTime, uei = '' } = 
       if (/not found|does not exist/i.test(error.message)) return { status: 'terminated' }
       throw error
     })
-    if (state && !['complete', 'errored', 'terminated'].includes(state.status)) return { ...prior, reused: true }
+    if (state && !['complete', 'errored', 'terminated'].includes(state.status)) {
+      if (uei && prior.requestedUEI !== uei && !prior.partnerUEIs?.includes(uei)) throw new Error('Another partner refresh is in progress. Wait for it to finish, then refresh this partner.')
+      return { ...prior, reused: true }
+    }
   }
   const id = `partner-enrichment-${crypto.randomUUID()}`
   // Atomic D1 lease prevents simultaneous manual/quarterly runs, including the
@@ -170,7 +196,7 @@ export async function startPartnerEnrichment(env, { scheduledTime, uei = '' } = 
     VALUES (?, 'partner-enrichment-lock', ?, ?, ?, ?)
     ON CONFLICT(state_key) DO UPDATE SET payload_json=excluded.payload_json, expires_at=excluded.expires_at, updated_at=excluded.updated_at
     WHERE crm_runtime_state.expires_at <= excluded.updated_at`).bind(LOCK_KEY, JSON.stringify({ instanceId: id }), new Date(Date.now() + 86400000).toISOString(), now, now).run()
-  if (!lock.meta?.changes) return { status: 'queued', reused: true }
+  if (!lock.meta?.changes) throw new Error('A partner refresh is starting. Check status and try again shortly.')
   await statusWrite(env, { instanceId: id, status: 'queued', startedAt: at, requestedUEI: uei })
   try { await env.PARTNER_ENRICHMENT_WORKFLOW.createBatch([{ id, params: { at, quarter, uei, scheduled: Boolean(scheduledTime) } }]) }
   catch (error) {
@@ -187,21 +213,24 @@ export async function runPartnerEnrichment(env, event, step) {
     await step.do('schema', STEP, () => ensureSchema(env))
     const partners = await step.do('partners', STEP, async () => {
       const rows = await partnerRows(env)
-      const selected = rows.filter(row => /^yes$/i.test(clean(partnerWorkbookValue(row, 'USAspending Enabled'))) && validUEI(ueiOf(row)) && (!uei || ueiOf(row) === uei)).map(row => ({ uei: ueiOf(row), name: clean(partnerWorkbookValue(row, 'Partner Name')) }))
+      const selected = rows.filter(row => partnerEnrichmentEnabled(row) && (!uei || ueiOf(row) === uei)).map(row => ({ uei: ueiOf(row), name: clean(partnerWorkbookValue(row, 'Partner Name')) }))
       if (new Set(selected.map(p => p.uei)).size !== selected.length) throw new Error('Duplicate partner UEIs must be resolved before enrichment')
       return selected
     })
     const rules = await step.do('vehicle rules', STEP, () => readContractVehicleRules(env))
+    run.partnerUEIs = partners.map(partner => partner.uei)
     await step.do('started', () => statusWrite(env, { ...run, total: partners.length }))
     for (const partner of partners) {
       const key = partner.uei
+      run.currentUEI = key
+      await step.do(`${key} started`, () => statusWrite(env, { ...run, total: partners.length }))
       try {
         const agencies = new Map(); const vehicleIds = new Set()
         for (const kind of ['contracts', 'vehicles']) {
           let more = true
           for (let page = 1; more; page++) {
             if (page > 500) throw new Error('History exceeds the safe page limit; no partial snapshot published')
-            const data = await step.do(`${key} ${kind} ${page}`, STEP, () => usa('/search/spending_by_award/', {
+            const data = await step.do(`${key} ${kind} ${page}`, STEP, () => fetchPartnerUsaspending('/search/spending_by_award/', {
               filters: { recipient_search_text: [key], award_type_codes: kind === 'contracts' ? ['A', 'B', 'C', 'D'] : ['IDV_A', 'IDV_B', 'IDV_B_A', 'IDV_B_B', 'IDV_B_C', 'IDV_C', 'IDV_D', 'IDV_E'], ...(kind === 'contracts' ? { time_period: [partnerEnrichmentPeriod(at)] } : {}) },
               fields: ['Award ID', 'Recipient UEI', 'Funding Agency', 'Funding Sub Agency', 'Awarding Agency', 'Awarding Sub Agency', 'generated_internal_id'],
               limit: 100, page, sort: 'Award ID', order: 'asc', subawards: false,
@@ -216,7 +245,7 @@ export async function runPartnerEnrichment(env, event, step) {
         }
         const vehicles = []
         for (const id of vehicleIds) {
-          const record = await step.do(`${key} vehicle ${id}`, STEP, async () => vehicleRecord(await usa(`/awards/${encodeURIComponent(id)}/`), key, rules, at))
+          const record = await step.do(`${key} vehicle ${id}`, STEP, async () => vehicleRecord(await fetchPartnerUsaspending(`/awards/${encodeURIComponent(id)}/`), key, rules, at))
           vehicles.push(record)
         }
         const snapshot = { uei: key, checkedAt: at, period: partnerEnrichmentPeriod(at), agencies: [...agencies.values()], vehicles, source: 'USAspending', vehicleScope: 'Direct IDV awards; indirect and research-only access retained separately' }
