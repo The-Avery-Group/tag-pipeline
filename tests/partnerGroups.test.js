@@ -1,8 +1,59 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { groupPartners, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue } from '../src/utils/partnerGroups.js'
+import { groupPartners, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
 import { fetchPartnerAwardEvidence } from '../src/services/usaSpendingService.js'
 import { readFileSync } from 'node:fs'
+
+test('shared queue keeps only one partner running, deduplicates clicks and survives page unsubscribe', async () => {
+  const queue = createPartnerRefreshQueue()
+  let release; const gate = new Promise(resolve => { release = resolve })
+  let firstCalls = 0; let secondCalls = 0; let events = 0
+  const unsubscribe = queue.subscribe(() => { events++ })
+  const first = queue.enqueue('GLGMWJ8EVMR9', 'Liberty', async progress => {
+    firstCalls++; progress('Saving to workbook…'); await gate; return { saved: true }
+  })
+  const second = queue.enqueue('ABCDEFGHIJKL', 'Second partner', async () => { secondCalls++; return { saved: true } })
+  assert.equal(queue.enqueue('glgmwj8evmr9', 'Liberty', () => { throw new Error('Duplicate') }), first)
+  await Promise.resolve()
+  assert.deepEqual(queue.getSnapshot().map(job => [job.uei, job.status]), [['GLGMWJ8EVMR9', 'running'], ['ABCDEFGHIJKL', 'queued']])
+  assert.equal(secondCalls, 0)
+  unsubscribe()
+  const before = events
+  release()
+  await Promise.all([first, second])
+  assert.equal(events, before)
+  assert.equal(firstCalls, 1)
+  assert.equal(secondCalls, 1)
+  assert.deepEqual(queue.getSnapshot().map(job => job.status), ['complete', 'complete'])
+})
+
+test('failed partner does not block the queue and can be explicitly retried', async () => {
+  const queue = createPartnerRefreshQueue()
+  const failed = queue.enqueue('GLGMWJ8EVMR9', 'Liberty', async () => { throw new Error('Network failed') })
+  const next = queue.enqueue('ABCDEFGHIJKL', 'Next', async () => ({ saved: true }))
+  await assert.rejects(failed, /Network failed/)
+  await next
+  assert.deepEqual(queue.getSnapshot().map(job => job.status), ['failed', 'complete'])
+  await queue.enqueue('GLGMWJ8EVMR9', 'Liberty', async () => ({ saved: true }))
+  assert.equal(queue.getSnapshot()[0].error, '')
+  assert.equal(queue.getSnapshot()[0].status, 'complete')
+  queue.clearFinished()
+  assert.deepEqual(queue.getSnapshot(), [])
+})
+
+test('clearing finished queue results retains active and queued partners', async () => {
+  const queue = createPartnerRefreshQueue()
+  let release; const gate = new Promise(resolve => { release = resolve })
+  await queue.enqueue('FINISHED1234', 'Finished', async () => ({}))
+  const first = queue.enqueue('GLGMWJ8EVMR9', 'Liberty', async () => gate)
+  const second = queue.enqueue('ABCDEFGHIJKL', 'Next', async () => ({ skipped: true }))
+  await Promise.resolve()
+  queue.clearFinished()
+  assert.deepEqual(queue.getSnapshot().map(job => job.status), ['running', 'queued'])
+  release()
+  await Promise.all([first, second])
+  assert.equal(queue.getSnapshot()[1].status, 'skipped')
+})
 
 // Exercise the existing Graph persistence functions with a workbook double,
 // without importing the browser-only MSAL configuration into Node.
