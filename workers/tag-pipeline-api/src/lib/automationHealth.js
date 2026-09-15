@@ -9,6 +9,7 @@ export async function getDataRevisions(env) {
     'opportunity-alerts': ['sam-monitor-snapshot', 'follow-on-snapshot'],
     NewOpportunitiesTable: ['sam-status'],
     PipelineTable: ['sam-monitor-snapshot'],
+    PartnersTable: ['partner-enrichment-snapshot'],
   }
   if (!env.EBUY_DB) return { revisions: {} }
   const categories = [...new Set(Object.values(groups).flat())]
