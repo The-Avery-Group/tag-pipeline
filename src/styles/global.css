@@ -318,6 +318,22 @@ button.badge:hover:not(:disabled) { box-shadow: inset 0 0 0 1px currentColor; }
 .section-toggle:hover:not(:disabled) { background: var(--gray-50); }
 .section-toggle-title { flex: 1; font-size: var(--section-heading-size); font-weight: var(--section-heading-weight); color: var(--gray-900); }
 
+.review-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  color: var(--blue-600);
+  font-size: var(--section-heading-size);
+  font-weight: 600;
+}
+.review-section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--blue-200);
+}
+
 /* Form elements */
 .form-field { display: flex; flex-direction: column; gap: 4px; }
 .form-label { font-size: 11px; font-weight: 500; color: var(--gray-600); text-transform: uppercase; letter-spacing: 0.05em; }
