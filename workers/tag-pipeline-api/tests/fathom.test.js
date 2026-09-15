@@ -2,7 +2,7 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Miniflare } from 'miniflare'
-import { fathomEnabled, eligibleMeeting, enqueueMeeting, handleFathom, verifyFathomSignature, boundedBody, runFathomJobs, validateTaskEdit, fathomRecoveryDue, nextFathomRecovery } from '../src/handlers/fathom.js'
+import { fathomEnabled, eligibleMeeting, enqueueMeeting, handleFathom, verifyFathomSignature, boundedBody, runFathomJobs, validateTaskEdit, fathomRecoveryDue, nextFathomRecovery, recoverMeetings } from '../src/handlers/fathom.js'
 
 test('recovery starts after 8 PM Nigeria time and does not repeat hourly', () => {
   const at = value => Date.parse(`2026-09-14T${value}Z`)
@@ -42,6 +42,36 @@ const identity = { displayName: 'Reviewer', userPrincipalName: 'reviewer@example
 const edit = { title: 'Send proposal', description: 'Prepare the requested proposal.', opportunityId: 'O_123', assignee: 'Jamie', dueDate: '2026-09-15', includeMeetingLink: false }
 const request = (path, body) => new Request(`https://crm.test${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer user-test-token', 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
 const proposal = id => ({ id, meetingId: id.split(':')[0], status: 'pending', taskId: `F_${id.replace(':','_')}`, title: 'Send proposal', meetingReference: { url: 'https://fathom.video/share/test' } })
+
+test('daily recovery skips a completed meeting and clears stale recovery errors', async t => {
+  const now = Date.now(), ended = new Date(now).toISOString()
+  await put('fathom:job:skip-test','fathom-job',{status:'done',ended})
+  await put('fathom:recovery','fathom-control',{error:'old error',nextAt:now+900000,windowTo:ended,cursor:'stale'})
+  const real = globalThis.fetch
+  globalThis.fetch = () => { throw new Error('Recovery must not call Fathom') }
+  t.after(async()=>{globalThis.fetch=real;await db.prepare("DELETE FROM crm_runtime_state WHERE state_key IN ('fathom:job:skip-test','fathom:recovery')").run()})
+  await recoverMeetings(envFor(),now)
+  const state = JSON.parse((await row('fathom:recovery')).payload_json)
+  assert.equal(state.error,undefined)
+  assert.equal(state.cursor,undefined)
+  assert.equal(state.nextAt,nextFathomRecovery(now))
+  assert.equal(state.completedDay,new Date(now+3600000).toISOString().slice(0,10))
+  await recoverMeetings(envFor(),now+1000)
+  assert.equal((await (await handleFathom(request('/fathom/review'),envFor(),identity)).json()).recoveryIssue,null)
+})
+
+test('unfinished or previous-day meetings do not suppress recovery', async t => {
+  const now=Date.now(), real=globalThis.fetch
+  let calls=0
+  globalThis.fetch=async()=>{calls++;return Response.json({items:[]})}
+  t.after(async()=>{globalThis.fetch=real;await db.prepare("DELETE FROM crm_runtime_state WHERE state_key IN ('fathom:job:skip-test','fathom:recovery')").run()})
+  for (const job of [{status:'processing',ended:new Date(now).toISOString()},{status:'done',ended:new Date(now-86400000).toISOString()}]) {
+    await put('fathom:job:skip-test','fathom-job',job)
+    await put('fathom:recovery','fathom-control',{error:'retry',nextAt:0,windowTo:new Date(now).toISOString()})
+    await recoverMeetings(envFor(),now)
+  }
+  assert.equal(calls,2)
+})
 
 test('Fathom actions remain private until review completes and replay does not recreate input', async () => {
   const m = { ...meeting(900), transcript: [], action_items: [
