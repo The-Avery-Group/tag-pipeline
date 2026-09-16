@@ -1,3 +1,22 @@
+// Exact contract distinctions verified against the cited published records.
+// Do not extend these to adjacent PIIDs or infer pools from arbitrary digits.
+const CONTRACT_DISTINCTIONS = {
+  GS00Q14OADU101: ['OASIS', 'Unrestricted · Pool 1', 'https://downloads.regulations.gov/FNS-2021-0038-0022/attachment_1.pdf'],
+  GS00Q14OADU202: ['OASIS', 'Unrestricted · Pool 2', 'https://downloads.regulations.gov/FNS-2021-0038-0022/attachment_1.pdf'],
+  GS00Q14OADU301: ['OASIS', 'Unrestricted · Pool 3', 'https://downloads.regulations.gov/FNS-2021-0038-0022/attachment_1.pdf'],
+  '47QFCA22D0067': ['ASTRO', 'Mission Operations Pool', 'https://aas.gsa.gov/assets/pdf_docs/contractors/LinQuest%20Corporation.pdf'],
+  '47QFCA22D0422': ['ASTRO', 'Support Pool', 'https://aas.gsa.gov/assets/pdf_docs/contractors/LinQuest%20Corporation.pdf'],
+}
+
+export function partnerVehicleDistinction(vehicle, resolution) {
+  if (resolution?.status !== 'RESOLVED') return { label: '', source: '' }
+  const name = String(resolution.vehicleName || '').trim().toLowerCase()
+  if (name !== String(vehicle['Vehicle Name'] || '').trim().toLowerCase()) return { label: '', source: '' }
+  const exact = CONTRACT_DISTINCTIONS[String(vehicle.PIID || '').toUpperCase().replace(/[^A-Z0-9]/g, '')]
+  if (exact && exact[0].toLowerCase() === name) return { label: exact[1], source: exact[2] }
+  return { label: String(resolution.vehicleVariant || '').trim(), source: resolution.source || '' }
+}
+
 // Explicit workbook grouping, never inferred from similar names or UEIs.
 export function groupPartnerVehicles(vehicles = []) {
   const groups = new Map()
