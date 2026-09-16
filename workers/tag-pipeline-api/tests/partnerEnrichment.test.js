@@ -1,7 +1,43 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { agencyEvidence, partnerEnrichmentPeriod, vehicleRecord, startPartnerEnrichment, savePartnerSummary, partnerEnrichmentEnabled, partnerRunStatus } from '../src/lib/partnerEnrichment.js'
+import { agencyEvidence, partnerEnrichmentPeriod, vehicleRecord, startPartnerEnrichment, savePartnerSummary, partnerEnrichmentEnabled, partnerRunStatus, fetchPartnerUsaspending } from '../src/lib/partnerEnrichment.js'
 const uei = 'ABCDEFGHIJK1'
+
+test('partner contract and vehicle requests both use a 60-second deadline', async t => {
+  const deadlines = []
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', ms => { deadlines.push(ms); return controller.signal })
+  const calls = []
+  const page = { results: [], page_metadata: { hasNext: false } }
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url, options })
+    return Response.json(options.method === 'POST' ? page : { category: 'idv' })
+  })
+  assert.deepEqual(await fetchPartnerUsaspending('/search/spending_by_award/', { page: 1 }), page)
+  assert.deepEqual(await fetchPartnerUsaspending('/awards/example/'), { category: 'idv' })
+  assert.deepEqual(deadlines, [60_000, 60_000])
+  assert.equal(calls[0].options.method, 'POST')
+  assert.equal(calls[1].options.method, 'GET')
+  assert.equal(calls[0].options.signal, controller.signal)
+})
+test('timeouts during fetch or body reading have a clear retryable error', async t => {
+  t.mock.method(AbortSignal, 'timeout', () => new AbortController().signal)
+  const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+  let calls = 0
+  const mock = t.mock.method(globalThis, 'fetch', async () => { calls++; throw timeout })
+  const check = error => error.message.includes('60 seconds') && error.message.includes('Previously saved information is unchanged') && error.cause === timeout
+  await assert.rejects(fetchPartnerUsaspending('/awards/example/'), check)
+  assert.equal(calls, 1, 'Workflow, not the request helper, owns retries')
+  mock.mock.mockImplementation(async () => ({ ok: true, json: async () => { throw timeout } }))
+  await assert.rejects(fetchPartnerUsaspending('/awards/example/'), check)
+})
+test('HTTP and incomplete-page errors remain distinct from timeouts', async t => {
+  t.mock.method(AbortSignal, 'timeout', () => new AbortController().signal)
+  const mock = t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 503 }))
+  await assert.rejects(fetchPartnerUsaspending('/awards/example/'), /request failed \(503\)/)
+  mock.mock.mockImplementation(async () => Response.json({ results: [] }))
+  await assert.rejects(fetchPartnerUsaspending('/search/spending_by_award/', { page: 1 }), /incomplete page/)
+})
 
 test('refresh defaults on for valid UEIs; explicit opt-out and invalid identifiers are skipped', () => {
   assert.equal(partnerEnrichmentEnabled({ 'UEI Number': uei }), true)
@@ -63,6 +99,7 @@ test('summary publishing patches only machine-owned cells and preserves user col
     if (options.method === 'PATCH') { writes.push({ path, body: JSON.parse(options.body) }); return Response.json({}) }
     if (path.endsWith('/columns')) return Response.json({ value: columns.map(name => ({ name })) })
     if (path.includes('/rows?')) return Response.json({ value: [{ index: 2, values: [[uei, 'Yes', 'Important internal note', 'Old agency', '']] }] })
+    if (path.endsWith('/rows/itemAt(index=2)')) return Response.json({ values: [[uei, 'Yes', 'Newer internal note', 'Old agency', '']] })
     if (path.endsWith('/worksheet')) return Response.json({ id: 'sheet1' })
     if (path.endsWith('/range')) return Response.json({ rowIndex: 4, columnIndex: 1 })
     throw new Error(`Unexpected request ${path}`)
@@ -71,8 +108,8 @@ test('summary publishing patches only machine-owned cells and preserves user col
     const env = { MS_TENANT_ID: 'test', MS_CLIENT_ID: 'test', MS_CLIENT_SECRET: 'test', WORKBOOK_ID: 'test' }
     await savePartnerSummary(env, uei, { 'USAspending Agencies': 'CDC' })
     assert.equal(writes.length, 1)
-    assert.match(writes[0].path, /range\(address='E8'\)/)
-    assert.deepEqual(writes[0].body, { values: [['CDC']] })
+    assert.match(writes[0].path, /rows\/itemAt\(index=2\)/)
+    assert.deepEqual(writes[0].body, { values: [[uei, 'Yes', 'Newer internal note', 'CDC', '']] })
     await assert.rejects(savePartnerSummary(env, uei, { Notes: 'overwrite' }), /Unsafe/)
     assert.equal(writes.length, 1)
   } finally { globalThis.fetch = originalFetch }
