@@ -65,7 +65,7 @@ export function useTasks(contractNumber = null, { enabled = true } = {}) {
   }, [load])
 
   const add = useCallback(async (data, createdBy) => {
-    const notes   = await getNotesForContract(data.ContractNumber)
+    const notes   = data.ContractNumber ? await getNotesForContract(data.ContractNumber) : ''
     const dueDate = data.DueDate
       ? (data.DueDate instanceof Date
           ? data.DueDate.toISOString().split('T')[0]
@@ -140,7 +140,7 @@ export function useTasks(contractNumber = null, { enabled = true } = {}) {
   }, [load])
 
   const refreshContext = useCallback(async (task) => {
-    const notes = await getNotesForContract(task.ContractNumber)
+    const notes = task.ContractNumber ? await getNotesForContract(task.ContractNumber) : ''
     await retryIdempotent(() => updateTask(task._rowIndex, { OpportunityNotes: notes }, task))
     await invalidateCache(['TasksTable'])
   }, [])
