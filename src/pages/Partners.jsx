@@ -295,7 +295,12 @@ export default function Partners({ toast }) {
               </div></details>
               {refreshing && <p className={styles.researchSource} role="status">{refreshJob.status === 'queued' ? 'Queued for a background update.' : 'Updating in the background.'} You can continue using the CRM.</p>}
               {(enrichmentError || refreshJob?.error) && <p className="text-sm text-muted">{enrichmentError || refreshJob.error}</p>}
-              <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
+              <section className={styles.researchSegment} aria-labelledby="partner-agency-history">
+                <h4 id="partner-agency-history" className={styles.researchHeading}>Agency history</h4>
+                <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
+              </section>
+              <section className={styles.researchSegment} aria-labelledby="partner-contract-vehicles">
+                <h4 id="partner-contract-vehicles" className={styles.researchHeading}>Contract vehicles<span className={styles.vehicleCount}>{vehicleGroups.length} group{vehicleGroups.length === 1 ? '' : 's'}</span></h4>
               {vehicleGroups.length > 0 && <div aria-label="Contract vehicles">
                 {vehicleGroups.map(group => <details className={styles.vehicleGroup} key={`${selectedUEI}:${group.key}`}>
                   <summary>{group.name}{group.name === 'Unresolved vehicle' && ` (${group.vehicles[0].PIID || 'No PIID'})`}<span className={styles.vehicleCount}>{group.vehicles.length} contract{group.vehicles.length === 1 ? '' : 's'}</span></summary>
@@ -312,7 +317,9 @@ export default function Partners({ toast }) {
                 </details>)}
               </div>}
               {enrichment?.snapshot?.vehicles?.length > 0 && vehicleGroups.length === 0 && <p className="text-sm text-muted">All recorded vehicle contracts have a past end date.</p>}
+              {enrichment?.snapshot && !enrichment.snapshot.vehicles?.length && <p className="text-sm text-muted">No contract vehicles reported.</p>}
               <p className={styles.researchNote}>Past ordering or contract end dates are hidden. Unknown dates remain visible. Parent references do not prove direct holding or current ordering eligibility.</p>
+              </section>
             </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
             {sharedWorkspace.conflict && <p className="text-sm text-muted">This group has different folder links. Existing folders remain separate; select a subsidiary to view its files.</p>}
