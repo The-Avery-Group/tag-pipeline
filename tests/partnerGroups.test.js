@@ -1,8 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { groupPartners, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
+import { groupPartners, groupPartnerVehicles, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
 import { fetchPartnerAwardEvidence, parentVehicleReference } from '../src/services/usaSpendingService.js'
 import { readFileSync } from 'node:fs'
+
+test('vehicle headings group names without discarding distinct contracts or merging unresolved PIIDs', () => {
+  const rows = [
+    { 'Vehicle Name': 'OASIS', PIID: 'POOL1', 'Current End Date': '2025-03-01', 'Source Link': 'https://example.com/1' },
+    { 'Vehicle Name': ' oasis ', PIID: 'POOL2', 'Current End Date': '2025-04-01' },
+    { 'Vehicle Name': 'OASIS+', PIID: 'PLUS' },
+    { 'Vehicle Name': '', PIID: 'UNKNOWN1' },
+    { 'Vehicle Name': 'Unresolved vehicle', PIID: 'UNKNOWN2' },
+  ]
+  const groups = groupPartnerVehicles(rows)
+  assert.equal(groups.length, 4)
+  assert.deepEqual(groups[0].vehicles, rows.slice(0, 2))
+  assert.equal(groups[0].name, 'OASIS')
+  assert.equal(groups[1].name, 'OASIS+')
+  assert.deepEqual(groupPartnerVehicles(), [])
+  const page = readFileSync(new URL('../src/pages/Partners.jsx', import.meta.url), 'utf8')
+  assert.match(page, /<details className=\{styles.vehicleGroup\} key=\{`\$\{selectedUEI\}:\$\{group.key\}`\}>/)
+})
 
 test('partner links and queued identity remain stable after a UEI correction', async () => {
   const partner = { 'Partner ID': 'P-stable', 'UEI Number': 'ABC123456789' }
