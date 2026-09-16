@@ -241,11 +241,12 @@ test('deleting a workbook rule targets its stable rule ID', async (t) => {
       deleted.push(path)
       return new Response(null, { status: 204 })
     }
+    if (path.endsWith('/rows/itemAt(index=3)')) return Response.json({ values: [RULE_HEADERS.map((_, i) => ['rule-1', 'Yes', 100, 'contains', 'SCRIBD'][i] ?? '')] })
     return Response.json({ error: { message: 'Unexpected request' } }, { status: 500 })
   })
   const removed = await deleteTransactionRuleFromWorkbook({ driveId: 'drive-1', workbookItemId: 'workbook-1', token: 'delegated-token' }, 'rule-1')
   assert.equal(removed, true)
-  assert.match(deleted[0], /rows\/itemAt\(index=3\)$/)
+  assert.match(deleted[0], /rows\/\$\/itemAt\(index=3\)$/)
 })
 
 test('a missing categorization table returns manual setup guidance without changing the workbook', async (t) => {
