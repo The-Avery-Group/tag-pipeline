@@ -1,10 +1,82 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { groupPartners, groupPartnerVehicles, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
-import { fetchPartnerAwardEvidence, parentVehicleReference } from '../src/services/usaSpendingService.js'
+import { fetchPartnerAwardEvidence, parentVehicleReference, createUSAspendingScheduler } from '../src/services/usaSpendingService.js'
 import { readFileSync } from 'node:fs'
-import { partnerVehicleDistinction, partnerVehicleHasEnded } from '../src/utils/partnerGroups.js'
+import { partnerVehicleDistinction, partnerVehicleHasEnded, partnerVehicleNeedsUpdate } from '../src/utils/partnerGroups.js'
 import { mergeContractVehicleRules, resolveContractVehicle } from '../workers/tag-pipeline-api/src/lib/contractVehicleResolver.js'
+
+test('USAspending reserves interactive capacity and prioritizes history over waiting background work', async () => {
+  const acquire = createUSAspendingScheduler()
+  const releaseBackground = await acquire(true)
+  const order = []
+  const background = acquire(true).then(release => { order.push('background'); return release })
+  const releaseHistory = await acquire(false)
+  const history = acquire(false).then(release => { order.push('history'); return release })
+  releaseBackground()
+  const releaseNextHistory = await history
+  assert.deepEqual(order, ['history'])
+  releaseHistory()
+  const releaseNextBackground = await background
+  assert.deepEqual(order, ['history', 'background'])
+  releaseNextHistory(); releaseNextBackground()
+})
+
+test('USAspending cancelled waiters do not fetch or leak scheduler capacity', async () => {
+  const acquire = createUSAspendingScheduler()
+  const release = await acquire(true)
+  const controller = new AbortController()
+  const cancelled = acquire(true, controller.signal)
+  controller.abort()
+  await assert.rejects(cancelled, { name: 'AbortError' })
+  release()
+  const next = await acquire(true)
+  next()
+  await assert.rejects(acquire(false, AbortSignal.abort()), { name: 'AbortError' })
+})
+
+test('partner vehicle display publishes saved records before loading distinction rules', () => {
+  const service = readFileSync(new URL('../src/services/partnerWorkspaceService.js', import.meta.url), 'utf8')
+  const section = service.slice(service.indexOf('export async function getPartnerEnrichment'), service.indexOf('export function refreshPartnerEnrichment'))
+  assert.ok(section.indexOf('onSaved?.') < section.indexOf("getSheetRows('ContractVehicleRulesTable')"))
+  assert.match(service, /getPartnerEnrichment\(uei, \{ force: true \}\)/)
+  const graph = readFileSync(new URL('../src/services/graphService.js', import.meta.url), 'utf8')
+  const read = graph.slice(graph.indexOf('export async function getPartnerResearch'), graph.indexOf('export async function savePartnerResearch'))
+  assert.match(read, /force \|\| Date.now\(\) >= partnerResearchCacheUntil/)
+  assert.match(read, /Promise.all/)
+})
+
+test('repeat vehicle saves ignore observation timestamps and equivalent Excel dates', () => {
+  const saved = { PIID: 'TEST', 'Current End Date': 45889, 'Last Seen': '2026-09-01' }
+  const incoming = { ...saved, 'Current End Date': '2025-08-19', 'Last Seen': '2026-09-16' }
+  // Use the Excel epoch explicitly to keep this fixture exact.
+  incoming['Current End Date'] = new Date((45889 - 25569) * 86400000).toISOString().slice(0, 10)
+  assert.equal(partnerVehicleNeedsUpdate(saved, incoming), false)
+  assert.equal(partnerVehicleNeedsUpdate(saved, { ...incoming, 'Vehicle Name': 'GSA MAS' }), true)
+  assert.equal(partnerVehicleNeedsUpdate(saved, { ...incoming, 'Current End Date': '2030-01-01' }), true)
+  assert.equal(partnerVehicleNeedsUpdate(saved, { ...incoming, 'Current End Date': '' }), true)
+})
+
+test('waiting jobs can be removed without interrupting a running save or blocking later jobs', async () => {
+  const queue = createPartnerRefreshQueue()
+  let release
+  const running = queue.enqueue('ABCDEFGHIJKL', 'Running', () => new Promise(resolve => { release = resolve }), 'P-1')
+  await Promise.resolve()
+  let calls = 0
+  const removed = queue.enqueue('ABCDEFGHIJKM', 'Waiting', async () => { calls++ }, 'P-2')
+  assert.equal(queue.remove('P-1'), false)
+  assert.equal(queue.remove('P-2'), true)
+  const later = queue.enqueue('ABCDEFGHIJKN', 'Later', async () => { calls++; return { saved: true } }, 'P-3')
+  release({ saved: true })
+  await running
+  assert.deepEqual(await removed, { skipped: true, cancelled: true })
+  await later
+  assert.equal(calls, 1)
+  const all = queue.enqueue('ABCDEFGHIJKO', 'Remove all', async () => { calls++ }, 'P-4')
+  queue.removeWaiting()
+  assert.equal((await all).cancelled, true)
+  assert.equal(calls, 1)
+})
 
 test('vehicle visibility excludes either past end date but retains today, future and unknown dates', () => {
   const today = '2026-09-16'
