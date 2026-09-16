@@ -1,4 +1,4 @@
-import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
+import { getAppOnlyGraphToken, mutateWorkbookRecord, graphWorkbookFetch, readWorkbookTable } from './graph.js'
 import {
   DEFAULT_WORKSPACE_DRIVE_ID,
   describeExistingWorkspaceFolder,
@@ -302,10 +302,7 @@ export async function applyLegacyFolderLinks(env, requestedLinks) {
     const values = [...row._values]
     while (values.length < headers.length) values.push('')
     values[linkIndex] = folder.webUrl
-    await graphWorkbookFetch(env, driveId, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
-      method: 'PATCH',
-      body: JSON.stringify({ values: [values] }),
-    })
+    await mutateWorkbookRecord(env, driveId, token, 'PipelineTable', row, { 'Link to Folder': folder.webUrl }, { headers })
     row['Link to Folder'] = folder.webUrl
     row._values = values
     results.push({
