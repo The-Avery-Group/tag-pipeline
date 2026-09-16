@@ -121,6 +121,14 @@ export function createFingerprint(values) {
     .join('|')
 }
 
+export function workbookRetryDelay(retryAfter, fallback = 400, now = Date.now()) {
+  if (retryAfter === null || retryAfter === undefined || retryAfter === '') return fallback
+  const seconds = Number(retryAfter)
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+  const date = Date.parse(retryAfter)
+  return Number.isFinite(date) ? Math.max(0, date - now) : fallback
+}
+
 /**
  * Retry only operations whose repeated execution is safe, such as a patch to
  * the same row or deleting the same known row. Never use this for appends.
@@ -132,6 +140,12 @@ export async function retryIdempotent(operation, attempts = 3) {
       return await operation()
     } catch (error) {
       lastError = error
+      // Validation, permission and edit-conflict errors will not improve by
+      // repeating the same mutation. Avoid multiplying inner retry loops.
+      const transient = [429, 500, 502, 503, 504].includes(Number(error?.status)) ||
+        (error instanceof TypeError && /fetch|network/i.test(error.message))
+      if (!transient || error.retryExhausted || attempt === attempts - 1) throw error
+      await new Promise(resolve => setTimeout(resolve, error.retryAfterMs ?? 400 * (attempt + 1)))
     }
   }
   throw lastError
