@@ -137,14 +137,16 @@ export default function Partners({ toast }) {
     let disposed = false
     const load = async () => {
       try {
-        const saved = await getPartnerEnrichment(selectedUEI)
+        const saved = await getPartnerEnrichment(selectedUEI, {
+          onSaved: result => { if (!disposed) setEnrichment(result) },
+        })
         if (disposed) return
         setEnrichment(saved)
         const existing = partnerRefreshQueue.getSnapshot().find(job => job.partnerId ? job.partnerId === selected?.['Partner ID'] : job.uei === selectedUEI)
         if (!partnerRefreshDue(saved.partner) && !['queued', 'running'].includes(existing?.status)) return
-        if (existing?.status === 'failed') return
+        if (['failed', 'cancelled'].includes(existing?.status)) return
         const result = await refreshPartnerEnrichment(selectedUEI, { automatic: true, partnerId: saved.partner['Partner ID'], name: partnerName(saved.partner) })
-        if (!disposed) setEnrichment(result)
+        if (!disposed && !result.cancelled) setEnrichment(result)
       } catch (err) { if (!disposed) setEnrichmentError(err.message) }
     }
     load()
@@ -155,7 +157,7 @@ export default function Partners({ toast }) {
     setEnrichmentError('')
     try {
       const result = await refreshPartnerEnrichment(uei, { name: partnerName(selected), partnerId: selected?.['Partner ID'] })
-      if (activeUEI.current === uei) setEnrichment(result)
+      if (activeUEI.current === uei && !result.cancelled) setEnrichment(result)
       if (!result.skipped) toast?.success('Partner USAspending information saved to workbook')
     }
     catch (err) { if (activeUEI.current === uei) setEnrichmentError(err.message) }
@@ -300,7 +302,8 @@ export default function Partners({ toast }) {
                 <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
               </section>
               <section className={styles.researchSegment} aria-labelledby="partner-contract-vehicles">
-                <h4 id="partner-contract-vehicles" className={styles.researchHeading}>Contract vehicles<span className={styles.vehicleCount}>{vehicleGroups.length} group{vehicleGroups.length === 1 ? '' : 's'}</span></h4>
+                <h4 id="partner-contract-vehicles" className={styles.researchHeading}>Contract vehicles{enrichment?.snapshot && <span className={styles.vehicleCount}>{vehicleGroups.length} group{vehicleGroups.length === 1 ? '' : 's'}</span>}</h4>
+              {!enrichment?.snapshot && !enrichmentError && /^[A-Z0-9]{12}$/.test(selectedUEI) && <p className="text-sm text-muted" role="status">Loading contract vehicles…</p>}
               {vehicleGroups.length > 0 && <div aria-label="Contract vehicles">
                 {vehicleGroups.map(group => <details className={styles.vehicleGroup} key={`${selectedUEI}:${group.key}`}>
                   <summary>{group.name}{group.name === 'Unresolved vehicle' && ` (${group.vehicles[0].PIID || 'No PIID'})`}<span className={styles.vehicleCount}>{group.vehicles.length} contract{group.vehicles.length === 1 ? '' : 's'}</span></summary>
@@ -309,7 +312,7 @@ export default function Partners({ toast }) {
                       <thead><tr><th scope="col">Contract number / PIID</th><th scope="col">Pool / service area</th><th scope="col">Current end date</th></tr></thead>
                       <tbody>{group.vehicles.map(vehicle => <tr key={vehicle['Record ID']}>
                         <td>{vehicle['Source Link'] ? <a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle.PIID}</a> : vehicle.PIID}</td>
-                        <td className={styles.vehicleDistinction}>{vehicle.distinction?.label || 'Not identified'}</td>
+                        <td className={styles.vehicleDistinction}>{vehicle.distinction?.label || (enrichment?.distinctionsLoading ? 'Loading…' : 'Not identified')}</td>
                         <td>{vehicleDate(vehicle['Current End Date'])}</td>
                       </tr>)}</tbody>
                     </table>
@@ -318,7 +321,6 @@ export default function Partners({ toast }) {
               </div>}
               {enrichment?.snapshot?.vehicles?.length > 0 && vehicleGroups.length === 0 && <p className="text-sm text-muted">All recorded vehicle contracts have a past end date.</p>}
               {enrichment?.snapshot && !enrichment.snapshot.vehicles?.length && <p className="text-sm text-muted">No contract vehicles reported.</p>}
-              <p className={styles.researchNote}>Past ordering or contract end dates are hidden. Unknown dates remain visible. Parent references do not prove direct holding or current ordering eligibility.</p>
               </section>
             </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
