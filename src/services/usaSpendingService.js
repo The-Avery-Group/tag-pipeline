@@ -90,6 +90,7 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
   start.setUTCFullYear(start.getUTCFullYear() - 5)
   const period = { start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10) }
   const agencies = new Map(); const ids = new Set(); const references = new Map()
+  let matchedAwards = 0; let excludedAwards = 0
   for (const kind of ['contracts', 'vehicles']) {
     let more = true
     for (let page = 1; more; page++) {
@@ -102,7 +103,12 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
       }, signal, 3, 60_000)
       if (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== 'boolean' || (data.page_metadata.hasNext && !data.results.length)) throw new Error('USAspending returned an incomplete page. No results saved.')
       for (const row of data.results) {
-        if (String(row['Recipient UEI'] || '').trim().toUpperCase() !== uei) throw new Error('USAspending recipient does not match this partner. No results saved.')
+        const recipientUEI = String(row['Recipient UEI'] || '').trim().toUpperCase()
+        if (!validUEI(recipientUEI)) throw new Error('USAspending omitted a valid recipient UEI. No results saved.')
+        // Recipient search can include other registrations. Filter individual
+        // awards by exact UEI before collecting agencies or parent vehicles.
+        if (recipientUEI !== uei) { excludedAwards++; continue }
+        matchedAwards++
         if (kind === 'vehicles') {
           if (!row.generated_internal_id) throw new Error('Vehicle source identifier is missing')
           ids.add(row.generated_internal_id)
@@ -116,6 +122,7 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
       more = data.page_metadata.hasNext
     }
   }
+  if (excludedAwards && !matchedAwards) throw new Error('USAspending recipient does not match this partner. No results saved.')
   const details = []
   for (const id of ids) {
     onProgress(`Reading vehicle ${details.length + 1} of ${ids.size}…`)
@@ -123,7 +130,7 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
     if (String(detail.recipient?.recipient_uei || '').trim().toUpperCase() !== uei || detail.category !== 'idv' || !detail.piid || detail.generated_unique_award_id !== id) throw new Error('Vehicle identity could not be verified. No results saved.')
     details.push(detail)
   }
-  return { uei, checkedAt: at, period, agencies: [...agencies.values()], details, references: [...references.values()] }
+  return { uei, checkedAt: at, period, agencies: [...agencies.values()], details, references: [...references.values()], excludedAwards }
 }
 
 function money(value) { return Number(value || 0) }
