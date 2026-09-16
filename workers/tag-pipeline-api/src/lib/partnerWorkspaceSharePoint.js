@@ -1,4 +1,4 @@
-import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
+import { getAppOnlyGraphToken, mutateWorkbookRecord, graphWorkbookFetch, readWorkbookTable } from './graph.js'
 import {
   childByName,
   driveIdFor,
@@ -31,6 +31,14 @@ export function partnerWorkbookValue(row, header, ...fallbackHeaders) {
   const wanted = [header, ...fallbackHeaders].map(normalizedHeader)
   const sourceHeader = Object.keys(row || {}).find((key) => wanted.includes(normalizedHeader(key)))
   return sourceHeader ? row[sourceHeader] : ''
+}
+
+export function findPartnerRecord(partners, identifier) {
+  const key = String(identifier || '').trim().toUpperCase()
+  if (!key) return null
+  const matches = partners.filter(row => ['Partner ID', 'UEI Number'].some(header => String(partnerWorkbookValue(row, header)).trim().toUpperCase() === key))
+  if (matches.length > 1) throw Object.assign(new Error('Duplicate partner identity. Resolve it before changing a workspace.'), { status: 409 })
+  return matches[0] || null
 }
 
 export function normalizePartnerFolderName(value) {
@@ -111,10 +119,7 @@ export async function migratePartnerWorkspaceSchema(env) {
       while (values.length < partnerHeaders.length) values.push('')
       if (String(values[canonicalIndex] || '').trim() || !String(values[legacyIndex] || '').trim()) continue
       values[canonicalIndex] = values[legacyIndex]
-      await graphWorkbookFetch(env, driveId, token, `/tables/PartnersTable/rows/itemAt(index=${row._rowIndex})`, {
-        method: 'PATCH',
-        body: JSON.stringify({ values: [values] }),
-      })
+      await mutateWorkbookRecord(env, driveId, token, 'PartnersTable', row, { [partnerHeaders[canonicalIndex]]: values[legacyIndex] }, { headers: partnerHeaders })
       migratedLinks += 1
     }
   }
@@ -180,7 +185,7 @@ export async function applyPartnerFolderLinks(env, mappings) {
   for (const mapping of mappings || []) {
     const uei = String(mapping?.uei || '').trim().toUpperCase()
     const folder = folderById.get(String(mapping?.folderId || '').trim())
-    const row = rows.find((candidate) => String(partnerWorkbookValue(candidate, 'UEI Number')).trim().toUpperCase() === uei)
+    const row = findPartnerRecord(rows, mapping?.partnerId || uei)
     if (!uei || !folder || !row) {
       skipped += 1
       results.push({ uei, status: 'skipped', reason: !row ? 'Partner no longer exists' : 'Selected SharePoint folder is unavailable' })
@@ -200,10 +205,7 @@ export async function applyPartnerFolderLinks(env, mappings) {
     const values = [...row._values]
     while (values.length < headers.length) values.push('')
     values[linkIndex] = folder.webUrl || ''
-    await graphWorkbookFetch(env, driveId, token, `/tables/PartnersTable/rows/itemAt(index=${row._rowIndex})`, {
-      method: 'PATCH',
-      body: JSON.stringify({ values: [values] }),
-    })
+    await mutateWorkbookRecord(env, driveId, token, 'PartnersTable', row, { [headers[linkIndex]]: folder.webUrl || '' }, { headers })
     updated += 1
     results.push({ uei, status: 'updated', webUrl: folder.webUrl || '' })
   }
@@ -213,7 +215,7 @@ export async function applyPartnerFolderLinks(env, mappings) {
 export async function createPartnerFolder(env, uei) {
   const { token, driveId, root } = await workbookContext(env)
   const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
-  const partner = partners.find((row) => String(partnerWorkbookValue(row, 'UEI Number')).trim().toUpperCase() === String(uei).trim().toUpperCase())
+  const partner = findPartnerRecord(partners, uei)
   if (!partner) throw Object.assign(new Error('Partner not found'), { status: 404 })
   const current = partnerSharedFolderLink(partner, partners)
   if (current) return { webUrl: current, reused: true }
@@ -243,7 +245,7 @@ export async function createPartnerFolder(env, uei) {
 async function partnerFolder(env, uei) {
   const { token, driveId, root } = await workbookContext(env)
   const partners = await readWorkbookTable(env, driveId, token, 'PartnersTable')
-  const partner = partners.find((candidate) => String(partnerWorkbookValue(candidate, 'UEI Number')).trim().toUpperCase() === String(uei || '').trim().toUpperCase())
+  const partner = findPartnerRecord(partners, uei)
   if (!partner) throw Object.assign(new Error('Partner was not found in PartnersTable'), { status: 404 })
   const link = partnerSharedFolderLink(partner, partners)
   if (!link) throw Object.assign(new Error('Link this partner to its SharePoint folder before uploading files'), { status: 409 })
