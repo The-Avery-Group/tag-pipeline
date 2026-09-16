@@ -303,7 +303,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       const repairs = reconciled.filter((item) => Object.keys(item.patch || {}).length && Number.isInteger(item.draft._rowIndex))
       if (repairs.length) {
         void Promise.allSettled(repairs.map((item) =>
-          updateEmailFollowUpDraft(item.draft._rowIndex, item.patch, 'Automatic template sync')
+          updateEmailFollowUpDraft(item.draft, item.patch, 'Automatic template sync')
         ))
       }
       const matching = loadedDrafts
@@ -444,7 +444,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
     setSaving(true)
     try {
       const patch = { From: form.From, To: form.To, CC: form.CC, Subject: form.Subject, Body: sanitizeEmailHtml(form.Body), Status: status }
-      await updateEmailFollowUpDraft(form._rowIndex, patch, user?.displayName)
+      await updateEmailFollowUpDraft(form, patch, user?.displayName)
       const updated = { ...form, ...patch }
       setDrafts((previous) => previous.map((draft) => draft['Draft ID'] === form['Draft ID'] ? updated : draft))
       setForm(updated)
@@ -560,7 +560,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       resetUndo()
 
       try {
-        await updateEmailFollowUpDraft(updated._rowIndex, patch, user?.displayName)
+        await updateEmailFollowUpDraft(updated, patch, user?.displayName)
         toast?.success(outlookDraft.created ? 'Outlook draft created' : 'Outlook draft updated')
       } catch (error) {
         toast?.info(`Outlook opened, but the CRM could not save its draft link: ${error.message}`)
