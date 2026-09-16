@@ -8,7 +8,6 @@ function eligible(opportunity) {
 
 function payload(opportunity) {
   return {
-    _rowIndex: opportunity._rowIndex,
     'Notice ID': opportunity['Notice ID'],
     'Solicitation Number': opportunity['Solicitation Number'],
     Title: opportunity.Title,
@@ -21,7 +20,7 @@ function payload(opportunity) {
 }
 
 export function useSAMChangeMonitor(opportunities) {
-  const [changesByRow, setChangesByRow] = useState({})
+  const [changesById, setChangesById] = useState({})
   const [run, setRun] = useState(null)
   const [checking, setChecking] = useState(false)
   const [progress, setProgress] = useState(null)
@@ -34,7 +33,7 @@ export function useSAMChangeMonitor(opportunities) {
   const dismissedIds = useMemo(() => (opportunities || [])
     .filter((opportunity) => String(opportunity.Status || '').toLowerCase() === 'dismissed')
     .map((opportunity) => opportunity['Notice ID'] || opportunity['Solicitation Number'])
-    .filter((rowIndex) => rowIndex !== null && rowIndex !== undefined), [opportunities])
+    .filter((recordId) => recordId !== null && recordId !== undefined), [opportunities])
 
   const loadStatus = useCallback(async () => {
     if (!WORKER_URL) return null
@@ -52,7 +51,7 @@ export function useSAMChangeMonitor(opportunities) {
         next[String(watch.noticeId || watch.solicitationNumber || '').trim()] = watch
       }
     })
-    setChangesByRow(next)
+    setChangesById(next)
     setRun(data.run || null)
     return data
   }, [])
@@ -101,18 +100,18 @@ export function useSAMChangeMonitor(opportunities) {
     })
     if (!response.ok) throw new Error('Could not mark this SAM update as reviewed')
     const result = await response.json().catch(() => ({}))
-    const rowIndex = String(opportunity['Notice ID'] || opportunity['Solicitation Number'] || '').trim()
+    const recordId = String(opportunity['Notice ID'] || opportunity['Solicitation Number'] || '').trim()
     const reviewedAt = result?.watch?.change?.reviewedAt || new Date().toISOString()
-    const changedAt = result?.watch?.change?.changedAt || changesByRow[rowIndex]?.change?.changedAt || ''
-    locallyReviewed.current.set(rowIndex, { changedAt, reviewedAt })
-    setChangesByRow((current) => ({
+    const changedAt = result?.watch?.change?.changedAt || changesById[recordId]?.change?.changedAt || ''
+    locallyReviewed.current.set(recordId, { changedAt, reviewedAt })
+    setChangesById((current) => ({
       ...current,
-      [rowIndex]: result?.watch || {
-        ...current[rowIndex],
-        change: { ...current[rowIndex]?.change, reviewedAt },
+      [recordId]: result?.watch || {
+        ...current[recordId],
+        change: { ...current[recordId]?.change, reviewedAt },
       },
     }))
-  }, [changesByRow])
+  }, [changesById])
 
   // Sync exactly when the monitored list changes. New rows are not marked as
   // changed until a later SAM response differs from their first baseline.
@@ -135,5 +134,5 @@ export function useSAMChangeMonitor(opportunities) {
     }).catch(() => {})
   }, [checkChanges, loadStatus, monitored.length])
 
-  return { changesByRow, checking, progress, checkError, run, checkChanges, markReviewed, loadStatus }
+  return { changesById, checking, progress, checkError, run, checkChanges, markReviewed, loadStatus }
 }
