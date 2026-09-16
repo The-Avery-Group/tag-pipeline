@@ -1,7 +1,7 @@
 import { fetchAwards, groupByAwardFamily, latestValue, normalizeIdentifier } from './awards.js'
 import { findAwardNotice } from './awards.js'
 import { sendTeamsNotification } from './notify.js'
-import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from '../lib/graph.js'
+import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable, mutateWorkbookRecord } from '../lib/graph.js'
 import { alertFingerprint, alertStorageReady, upsertOpportunityAlert } from '../lib/opportunityAlerts.js'
 import { getRuntimeState, putRuntimeState } from '../lib/automationHealth.js'
 
@@ -34,9 +34,8 @@ async function patchPipelineRow(env, token, row, patch) {
     const value = patch[header] !== undefined ? patch[header] : row[header]
     return header === 'Contract End Date*' ? excelSerial(value) : value ?? ''
   })
-  await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
-    method: 'PATCH', body: JSON.stringify({ values: [values] }),
-  })
+  await mutateWorkbookRecord(env, DRIVE_ID, token, 'PipelineTable', row,
+    Object.fromEntries(Object.keys(patch).map(key => [key, values[headers.indexOf(key)]])), { headers })
 }
 
 export async function runPendingAwardMonitor(env) {
