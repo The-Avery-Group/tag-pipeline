@@ -1,4 +1,4 @@
-import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
+import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable, mutateWorkbookRecord } from './graph.js'
 import { driveIdFor } from './opportunityWorkspaceSharePoint.js'
 import { partnerWorkbookValue } from './partnerWorkspaceSharePoint.js'
 import { getRuntimeState, putRuntimeState } from './automationHealth.js'
@@ -119,20 +119,15 @@ async function enabledPartner(env, uei) {
 export async function savePartnerSummary(env, uei, patch) {
   const row = await enabledPartner(env, uei)
   const ctx = await context(env)
-  const [headers, range, sheet] = await Promise.all([
-    headersFor(env, ctx, 'PartnersTable'),
-    graphWorkbookFetch(env, ctx.driveId, ctx.token, '/tables/PartnersTable/range'),
-    graphWorkbookFetch(env, ctx.driveId, ctx.token, '/tables/PartnersTable/worksheet'),
-  ])
+  const headers = await headersFor(env, ctx, 'PartnersTable')
   for (const [name, value] of Object.entries(patch)) {
     if (!['USAspending Agencies', 'USAspending Vehicles', 'USAspending Refreshed At'].includes(name)) throw new Error('Unsafe partner update')
     if (clean(row[name]) === value) continue
     if (value.length > 32000) throw new Error('Partner summary exceeds workbook cell capacity')
     const column = headers.indexOf(name)
     if (column < 0) throw new Error(`Missing ${name}`)
-    const cell = `${letter(range.columnIndex + column)}${range.rowIndex + row._rowIndex + 2}`
-    await graphWorkbookFetch(env, ctx.driveId, ctx.token, `/worksheets/${sheet.id}/range(address='${cell}')`, { method: 'PATCH', body: JSON.stringify({ values: [[value]] }) })
   }
+  await mutateWorkbookRecord(env, ctx.driveId, ctx.token, 'PartnersTable', row, patch, { headers })
 }
 async function saveVehicles(env, uei, vehicles, checkedAt) {
   await enabledPartner(env, uei)
@@ -146,8 +141,9 @@ async function saveVehicles(env, uei, vehicles, checkedAt) {
     const merged = { ...old, ...record }
     const values = headers.map(h => merged[h] ?? '')
     if (old && headers.every((h, i) => String(old[h] ?? '') === String(values[i]))) continue
-    await graphWorkbookFetch(env, ctx.driveId, ctx.token, old ? `/tables/${PARTNER_VEHICLE_TABLE}/rows/itemAt(index=${old._rowIndex})` : `/tables/${PARTNER_VEHICLE_TABLE}/rows/add`, {
-      method: old ? 'PATCH' : 'POST', body: JSON.stringify(old ? { values: [values] } : { index: null, values: [values] }),
+    if (old) await mutateWorkbookRecord(env, ctx.driveId, ctx.token, PARTNER_VEHICLE_TABLE, old, record, { headers })
+    else await graphWorkbookFetch(env, ctx.driveId, ctx.token, `/tables/${PARTNER_VEHICLE_TABLE}/rows/add`, {
+      method: 'POST', body: JSON.stringify({ index: null, values: [values] }),
     })
   }
   // Keep historical records. A missing result does not prove that access ended.
