@@ -10,6 +10,7 @@ import {
 } from '@/services/workbookMutations'
 import { deterministicDraftId } from '@/utils/followUpEmails'
 import { parsePOCNames } from '@/utils/contactOpportunityLinks'
+import { partnerVehicleNeedsUpdate } from '@/utils/partnerGroups'
 
 export { parsePOCNames } from '@/utils/contactOpportunityLinks'
 
@@ -1264,18 +1265,26 @@ export async function getPartners() {
 
 const PARTNER_VEHICLE_TABLE = 'PartnerVehiclesTable'
 const PARTNER_VEHICLE_HEADERS = ['Record ID', 'Partner UEI', 'Vehicle Name', 'PIID', 'Relationship', 'Current End Date', 'Potential End Date', 'Last Date to Order', 'Source Link', 'Last Seen', 'Status']
+let partnerResearchCacheUntil = 0
 
-export async function getPartnerResearch(uei) {
-  invalidate('PartnersTable')
-  const matches = (await getPartners()).filter(row => String(row['UEI Number'] || '').trim().toUpperCase() === uei)
+export async function getPartnerResearch(uei, { force = false } = {}) {
+  if (force || Date.now() >= partnerResearchCacheUntil) {
+    invalidate('PartnersTable')
+    invalidate(PARTNER_VEHICLE_TABLE)
+    partnerResearchCacheUntil = Date.now() + 300_000
+  }
+  // Shared table reads are coalesced by getSheetRows across partner pages.
+  const [partners, vehicles] = await Promise.all([
+    getPartners(),
+    getSheetRows(PARTNER_VEHICLE_TABLE).catch(error => {
+      if (!isMissingWorkbookTable(error)) throw error
+      return []
+    }),
+  ])
+  const matches = partners.filter(row => String(row['UEI Number'] || '').trim().toUpperCase() === uei)
   if (matches.length !== 1) throw new Error('Partner UEI is missing or duplicated in the workbook')
   const partner = matches[0]
-  let vehicles = []
-  try {
-    invalidate(PARTNER_VEHICLE_TABLE)
-    vehicles = (await getSheetRows(PARTNER_VEHICLE_TABLE)).filter(row => String(row['Partner UEI'] || '').trim().toUpperCase() === uei)
-  } catch (error) { if (!isMissingWorkbookTable(error)) throw error }
-  return { partner, snapshot: { uei, checkedAt: partner['USAspending Refreshed At'], agencies: String(partner['USAspending Agencies'] || '').split(',').map(name => ({ name: name.trim() })).filter(a => a.name), vehicles } }
+  return { partner, snapshot: { uei, checkedAt: partner['USAspending Refreshed At'], agencies: String(partner['USAspending Agencies'] || '').split(',').map(name => ({ name: name.trim() })).filter(a => a.name), vehicles: vehicles.filter(row => String(row['Partner UEI'] || '').trim().toUpperCase() === uei) } }
 }
 
 export async function savePartnerResearch(snapshot) {
@@ -1319,7 +1328,7 @@ export async function savePartnerResearch(snapshot) {
     for (const vehicle of vehicles) {
       const existing = indexed.get(vehicle['Record ID'])
       if (existing) {
-        if (Object.entries(vehicle).every(([key, value]) => String(existing[key] ?? '') === String(value ?? ''))) continue
+        if (!partnerVehicleNeedsUpdate(existing, vehicle)) continue
         // One table read locates every row. The row-level read still verifies
         // identity and detects conflicting edits before each PATCH.
         await updateRowUnlocked(PARTNER_VEHICLE_TABLE, existing._rowIndex, vehicle, headers, { original: existing, prelocated: true })
