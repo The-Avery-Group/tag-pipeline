@@ -1,3 +1,17 @@
+import { dateOnly } from './opportunityDates.js'
+
+export function partnerVehicleHasEnded(vehicle, today = dateOnly(new Date())) {
+  return ['Ordering Period End Date', 'Last Date to Order', 'Current End Date'].some(field => {
+    const value = vehicle[field]
+    if (value === null || value === undefined || String(value).trim() === '') return false
+    const date = dateOnly(value)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
+    const parsed = new Date(`${date}T00:00:00Z`)
+    // Ignore invalid dates instead of silently rolling them into another month.
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date && date < today
+  })
+}
+
 // Exact contract distinctions verified against the cited published records.
 // Do not extend these to adjacent PIIDs or infer pools from arbitrary digits.
 const CONTRACT_DISTINCTIONS = {
