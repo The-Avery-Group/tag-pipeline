@@ -7,7 +7,7 @@
  */
 
 import { sendTeamsNotification } from './notify.js'
-import { getAppOnlyGraphToken as appOnlyToken } from '../lib/graph.js'
+import { getAppOnlyGraphToken as appOnlyToken, mutateWorkbookRecord } from '../lib/graph.js'
 import { putAutomationRun } from '../lib/automationHealth.js'
 import { buildScheduledDraft, deterministicDraftId, normalizedDate as followUpDate } from '../lib/followUpEmails.js'
 import { isRfiWorkflowOpportunity, normalizeNoticeType } from '../lib/noticeTypes.js'
@@ -128,11 +128,7 @@ async function table(env, token, name, optional = false) {
 }
 
 async function updateTableRow(env, token, record, patch) {
-  const values = record._values.map((value, index) => patch[record.headers?.[index]] ?? value)
-  // table() records do not retain headers, so callers attach them once.
-  await graph(env, token, `/tables/${record._tableName}/rows/itemAt(index=${record._rowIndex})`, {
-    method: 'PATCH', body: JSON.stringify({ values: [values] }),
-  })
+  await mutateWorkbookRecord(env, DRIVE_ID, token, record._tableName, record, patch, { headers: record.headers })
 }
 
 function attachTableMeta(data) {
@@ -143,9 +139,8 @@ function attachTableMeta(data) {
 async function writeLog(env, token, data, key, value) {
   if (!data.headers.includes('Key') || !data.headers.includes('LastSent')) return false
   const existing = data.rows.find((row) => clean(row.Key) === key)
-  const blank = data.rows.find((row) => !clean(row.Key))
-  if (existing || blank) {
-    const record = existing || blank
+  if (existing) {
+    const record = existing
     await updateTableRow(env, token, record, { Key: key, LastSent: value })
     record.Key = key
     record.LastSent = value
