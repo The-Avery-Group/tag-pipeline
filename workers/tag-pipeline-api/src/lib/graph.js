@@ -1,4 +1,5 @@
 /** Shared Microsoft Graph helpers for Worker jobs. */
+import { recordIdentity, externallyChangedPatchedFields } from '../../../../src/utils/recordConflict.js'
 let cachedAppToken = { value: '', expiresAt: 0 }
 
 export async function getAppOnlyGraphToken(env) {
@@ -72,4 +73,41 @@ export async function readWorkbookTable(env, driveId, token, tableName, { pageSi
     _values: [...(row.values?.[0] || [])],
     ...Object.fromEntries(headers.map((header, index) => [header, row.values?.[0]?.[index] ?? ''])),
   }))
+}
+
+// Background jobs carry record identity across awaits, never an authoritative
+// row number. Re-read the hint and relocate only when the record has moved.
+export async function mutateWorkbookRecord(env, driveId, token, tableName, original, patch, { headers, remove = false, guard } = {}) {
+  const identity = recordIdentity(tableName, original)
+  if (!identity) throw new Error(`A stable record ID is required for ${tableName}`)
+  if (!headers) headers = (await graphWorkbookFetch(env, driveId, token, `/tables/${tableName}/columns`)).value.map(column => column.name)
+  let current = null
+  if (Number.isInteger(original._rowIndex) && original._rowIndex >= 0) {
+    try {
+      const response = await graphWorkbookFetch(env, driveId, token, `/tables/${tableName}/rows/itemAt(index=${original._rowIndex})`)
+      const values = response?.values?.[0]
+      if (values?.length === headers.length) current = { _rowIndex: original._rowIndex, ...Object.fromEntries(headers.map((header, i) => [header, values[i]])) }
+    } catch (error) { if (error.status !== 404) throw error }
+  }
+  if (!current || recordIdentity(tableName, current) !== identity) {
+    const rows = await readWorkbookTable(env, driveId, token, tableName)
+    const matches = rows.filter(row => recordIdentity(tableName, row) === identity)
+    if (matches.length > 1) throw new Error(`Duplicate record ID in ${tableName}`)
+    current = matches[0]
+    if (!current && remove) return { alreadyDeleted: true }
+    if (!current) throw new Error(`Record no longer exists in ${tableName}`)
+  }
+  if (guard && !guard(current)) throw new Error('Record changed since this operation was requested. No changes made.')
+  if (remove) {
+    await graphWorkbookFetch(env, driveId, token, `/tables/${tableName}/rows/$/itemAt(index=${current._rowIndex})`, { method: 'DELETE' })
+    return { deleted: true }
+  }
+  const conflicts = externallyChangedPatchedFields(original, current, patch)
+  if (conflicts.length) throw new Error(`Workbook record changed (${conflicts.join(', ')}). Retry with current information.`)
+  if (Object.entries(patch).every(([key, value]) => String(current[key] ?? '') === String(value ?? ''))) return { unchanged: true }
+  const merged = { ...current, ...patch }
+  await graphWorkbookFetch(env, driveId, token, `/tables/${tableName}/rows/itemAt(index=${current._rowIndex})`, {
+    method: 'PATCH', body: JSON.stringify({ values: [headers.map(header => merged[header] ?? '')] }),
+  })
+  return { updated: true }
 }
