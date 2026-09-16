@@ -57,25 +57,50 @@ test('clearing finished queue results retains active and queued partners', async
 
 // Exercise the existing Graph persistence functions with a workbook double,
 // without importing the browser-only MSAL configuration into Node.
-function workbookResearchHarness({ disabled = false, failVehicle = false } = {}) {
+function workbookResearchHarness({ disabled = false, failVehicle = false, uncertainAppend = false } = {}) {
   const source = readFileSync(new URL('../src/services/graphService.js', import.meta.url), 'utf8')
   const section = source.slice(source.indexOf("const PARTNER_VEHICLE_TABLE ="), source.indexOf('async function partnerSchema()')).replaceAll('export async function', 'async function')
   const writes = []
+  let rows = []; let reads = 0
   const partner = { 'UEI Number': 'GLGMWJ8EVMR9', 'USAspending Enabled': disabled ? 'No' : '', Notes: 'Keep research', _rowIndex: 2 }
   const headers = ['Record ID', 'Partner UEI', 'Vehicle Name', 'PIID', 'Relationship', 'Current End Date', 'Potential End Date', 'Last Date to Order', 'Source Link', 'Last Seen', 'Status']
   const dependencies = {
-    invalidate: () => {}, getPartners: async () => [partner], getSheetRows: async () => [],
-    isMissingWorkbookTable: () => false, ensureTableColumns: async () => {}, PARTNER_ENRICHMENT_HEADERS: [],
+    invalidate: () => {}, getPartners: async () => [partner], getSheetRows: async () => { reads++; return rows },
+    isMissingWorkbookTable: () => false, ensureTableColumns: async () => ({ headers: ['USAspending Agencies', 'USAspending Vehicles', 'USAspending Refreshed At'] }), PARTNER_ENRICHMENT_HEADERS: [],
+    normalizeTableHeader: value => value, partnerValuesForWorkbook: value => value,
     queueTableMutation: async (_table, fn) => fn(), getTableHeaders: async () => headers,
-    graphFetch: async () => { throw new Error('Unexpected Graph request') },
+    graphFetch: async (path, options) => {
+      assert.equal(path, '/tables/PartnerVehiclesTable/rows/add')
+      if (failVehicle) throw new Error('Workbook unavailable')
+      const values = JSON.parse(options.body).values
+      writes.push({ vehicle: values })
+      rows = values.map(values => Object.fromEntries(headers.map((header, index) => [header, values[index]])))
+      if (uncertainAppend) throw new Error('Response lost after save')
+    },
     updateRowUnlocked: async () => { throw new Error('Unexpected row update') },
     appendWithReconciliation: async ({ append }) => append(),
     appendRow: async (_table, vehicle) => { if (failVehicle) throw new Error('Workbook unavailable'); writes.push({ vehicle }) },
-    updatePartner: async (_index, patch) => writes.push({ patch }),
+    updateRow: async (_table, _index, patch) => writes.push({ patch }),
   }
   const api = new Function(...Object.keys(dependencies), `${section}; return { getPartnerResearch, savePartnerResearch }`)(...Object.values(dependencies))
-  return { ...api, writes, partner }
+  return { ...api, writes, partner, reads: () => reads }
 }
+
+test('multiple new vehicles use one batch write and one vehicle table read', async () => {
+  const workbook = workbookResearchHarness()
+  await workbook.savePartnerResearch({ uei: 'GLGMWJ8EVMR9', checkedAt: '2026-09-16T12:00:00Z', agencies: [], vehicles: Array.from({ length: 4 }, (_, index) => ({ 'Record ID': `IDV${index}`, PIID: `PIID${index}` })) })
+  assert.equal(workbook.reads(), 1)
+  assert.equal(workbook.writes.filter(write => write.vehicle).length, 1)
+  assert.equal(workbook.writes[0].vehicle.length, 4)
+})
+
+test('uncertain batch append is reconciled without appending duplicates', async () => {
+  const workbook = workbookResearchHarness({ uncertainAppend: true })
+  await workbook.savePartnerResearch({ uei: 'GLGMWJ8EVMR9', checkedAt: '2026-09-16T12:00:00Z', agencies: [], vehicles: [{ 'Record ID': 'IDV1', PIID: 'PIID1' }, { 'Record ID': 'IDV2', PIID: 'PIID2' }] })
+  assert.equal(workbook.writes.filter(write => write.vehicle).length, 1)
+  assert.equal(workbook.reads(), 2)
+  assert.ok(workbook.writes[1].patch)
+})
 
 test('workbook publication writes vehicles before only the machine-owned summary fields', async () => {
   const workbook = workbookResearchHarness()
