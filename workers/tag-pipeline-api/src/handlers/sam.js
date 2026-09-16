@@ -27,7 +27,7 @@
  */
 
 const SAM_BASE  = 'https://api.sam.gov/opportunities/v2/search'
-import { getAppOnlyGraphToken, readWorkbookTable } from '../lib/graph.js'
+import { getAppOnlyGraphToken, readWorkbookTable, mutateWorkbookRecord } from '../lib/graph.js'
 import { getRuntimeState, putAutomationRun, putRuntimeState } from '../lib/automationHealth.js'
 import { isRfiWorkflowNoticeType } from '../lib/noticeTypes.js'
 import { fetchSAMStructuredResources, isSAMApiUrl, normalizeSAMOpportunityDetail, samDescriptionText } from '../lib/samOpportunityDetail.js'
@@ -294,15 +294,16 @@ export async function deleteDismissedSAMDiscoveryRows(env, archives = []) {
     if (String(row.Status || '').trim().toLowerCase() !== 'dismissed') continue
     const archive = archives.find((candidate) => samDiscoveryRowMatchesArchive(row, candidate))
     if (!archive) continue
-    targets.push({ rowIndex: row._rowIndex, opportunityKey: archive.opportunity_key, responseDate: row['Response Date'] })
+    targets.push({ original: row, opportunityKey: archive.opportunity_key, responseDate: row['Response Date'] })
     matchedKeys.add(keyForLog(archive.opportunity_key))
   }
 
   const failures = []
   let deleted = 0
-  for (const target of targets.sort((a, b) => b.rowIndex - a.rowIndex)) {
+  for (const target of targets.sort((a, b) => b.original._rowIndex - a.original._rowIndex)) {
     try {
-      await graphFetch(env, token, `/tables/NewOpportunitiesTable/rows/itemAt(index=${target.rowIndex})`, { method: 'DELETE' })
+      await mutateWorkbookRecord(env, DRIVE_ID, token, 'NewOpportunitiesTable', target.original, {}, { remove: true,
+        guard: current => String(current.Status || '').trim().toLowerCase() === 'dismissed' })
       deleted++
     } catch (error) {
       failures.push({ opportunityKey: target.opportunityKey, message: error.message })
@@ -358,10 +359,9 @@ async function cleanupRows(env, token, existingRows, dedupDeleteRowIndices = new
     .slice(0, MAX_DELETES_PER_RUN)
 
   for (const rowIndex of allIndices) {
-    await graphFetch(env, token,
-      `/tables/NewOpportunitiesTable/rows/itemAt(index=${rowIndex})`,
-      { method: 'DELETE' }
-    )
+    const original = existingRows.find(row => row._rowIndex === rowIndex)
+    await mutateWorkbookRecord(env, DRIVE_ID, token, 'NewOpportunitiesTable', original, {}, { remove: true,
+      guard: current => !isFlaggedSAMOpportunity(current) && String(current.Status || '') === String(original.Status || '') && String(current['Response Date'] || '') === String(original['Response Date'] || '') })
   }
   return allIndices.length
 }
@@ -397,7 +397,7 @@ export async function refreshSAMDiscoveryRow(env, noticeId, snapshot) {
   const changed = Object.keys(patches).some((key) => key in row && String(row[key] ?? '') !== String(patches[key]))
   if (!changed) return { updated: false }
   const columns = await graphFetch(env, token, '/tables/NewOpportunitiesTable/columns')
-  await updateOpportunityRow(env, token, row._rowIndex, { ...row, ...patches }, columns.value.map((column) => column.name))
+  await updateOpportunityRow(env, token, row, patches, columns.value.map((column) => column.name))
   return { updated: true }
 }
 
@@ -409,15 +409,8 @@ async function appendOpportunity(env, token, data, headers = NEW_OPP_HEADERS) {
   })
 }
 
-async function updateOpportunityRow(env, token, rowIndex, data, headers = NEW_OPP_HEADERS) {
-  const row = headers.map((header) => data[header] ?? '')
-  await graphFetch(env, token,
-    `/tables/NewOpportunitiesTable/rows/itemAt(index=${rowIndex})`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({ values: [row] }),
-    },
-  )
+async function updateOpportunityRow(env, token, original, patch, headers = NEW_OPP_HEADERS) {
+  return mutateWorkbookRecord(env, DRIVE_ID, token, 'NewOpportunitiesTable', original, patch, { headers })
 }
 
 // ── SAM API fetcher ───────────────────────────────────────────────────────
@@ -1391,6 +1384,7 @@ async function runSAMPull(
           const needsTypeRepair = hasNoticeTypeColumn && normalizedNoticeType(existing['Notice Type']) !== mapped['Notice Type']
           if (needsTypeRepair) {
             typeRepairs.push({
+              original: existing,
               rowIndex: existing._rowIndex,
               row: {
                 ...existing,
@@ -1471,7 +1465,7 @@ async function runSAMPull(
   if (!fatalError && (toWrite.length > 0 || typeRepairs.length > 0)) {
     for (const repair of typeRepairs) {
       try {
-        await updateOpportunityRow(env, token, repair.rowIndex, repair.row, existingHeaders)
+        await updateOpportunityRow(env, token, repair.original, { 'Notice Type': repair.row['Notice Type'] }, existingHeaders)
         totalRepaired++
       } catch (err) {
         console.error(`[SAM] Notice type repair failed for row ${repair.rowIndex}:`, err.message)
