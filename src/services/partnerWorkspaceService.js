@@ -20,12 +20,19 @@ function cachedSAMContracts() {
   return samReferencesPromise
 }
 
-export async function getPartnerEnrichment(uei) {
-  const result = await getPartnerResearch(uei)
+export async function getPartnerEnrichment(uei, { onSaved, force = false } = {}) {
+  const result = await getPartnerResearch(uei, { force })
+  onSaved?.({ ...result, uei, distinctionsLoading: Boolean(result.snapshot?.vehicles?.length) })
   if (!result.snapshot?.vehicles?.length) return { ...result, uei }
   let workbookRules
   try { workbookRules = await getSheetRows('ContractVehicleRulesTable') }
-  catch (error) { if (error.status !== 404) throw error; workbookRules = [] }
+  catch (error) {
+    if (error.status !== 404) {
+      onSaved?.({ ...result, uei, distinctionsLoading: false })
+      throw error
+    }
+    workbookRules = []
+  }
   const rules = mergeContractVehicleRules(workbookRules)
   return { ...result, uei, snapshot: { ...result.snapshot, vehicles: result.snapshot.vehicles.map(vehicle => ({
     ...vehicle,
@@ -37,7 +44,7 @@ export function refreshPartnerEnrichment(uei, { automatic = false, name = '', pa
   uei = String(uei || '').trim().toUpperCase()
   return partnerRefreshQueue.enqueue(uei, name, async onProgress => {
   const run = async () => {
-    const saved = await getPartnerEnrichment(uei)
+    const saved = await getPartnerEnrichment(uei, { force: true })
     if (partnerId && saved.partner['Partner ID'] !== partnerId) throw new Error('Partner UEI changed while queued. Refresh the current partner instead.')
     if (!partnerRefreshEnabled(saved.partner)) return { ...saved, skipped: true }
     if (automatic && (!partnerRefreshDue(saved.partner) || Date.now() - (autoAttempts.get(uei) || 0) < 3600_000)) return { ...saved, skipped: true }
