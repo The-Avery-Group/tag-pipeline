@@ -162,7 +162,9 @@ export async function publishCacheUpdate(tableNames = []) {
     lastTableRefreshAt.set(tableName, updatedAt)
     dirtyTables.delete(tableName)
   })
-  await notify(targets)
+  // Persistence already completed. A mounted consumer may need another read;
+  // do not keep the successful Save action waiting for that UI refresh.
+  void notify(targets)
   return targets
 }
 
