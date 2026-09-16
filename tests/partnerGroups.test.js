@@ -3,6 +3,28 @@ import assert from 'node:assert/strict'
 import { groupPartners, groupPartnerVehicles, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
 import { fetchPartnerAwardEvidence, parentVehicleReference } from '../src/services/usaSpendingService.js'
 import { readFileSync } from 'node:fs'
+import { partnerVehicleDistinction } from '../src/utils/partnerGroups.js'
+import { mergeContractVehicleRules, resolveContractVehicle } from '../workers/tag-pipeline-api/src/lib/contractVehicleResolver.js'
+
+test('contract distinctions use verified exact mappings and existing vehicle variants', () => {
+  const rules = mergeContractVehicleRules([])
+  for (const [PIID, name, expected] of [
+    ['GS00Q14OADU101', 'OASIS', 'Unrestricted · Pool 1'],
+    ['GS00Q14OADU202', 'OASIS', 'Unrestricted · Pool 2'],
+    ['GS00Q14OADU301', 'OASIS', 'Unrestricted · Pool 3'],
+    ['47QFCA22D0067', 'ASTRO', 'Mission Operations Pool'],
+    ['47QFCA22D0422', 'ASTRO', 'Support Pool'],
+    ['19AQMM25D0773', 'EVOLVE', 'FC2 Cloud & Data Center'],
+    ['19AQMM26D0070', 'EVOLVE', 'FC3 Application Development'],
+  ]) {
+    const distinction = partnerVehicleDistinction({ PIID, 'Vehicle Name': name }, resolveContractVehicle(PIID, rules))
+    assert.equal(distinction.label, expected)
+    assert.ok(distinction.source)
+  }
+  assert.equal(partnerVehicleDistinction({ PIID: '47QFCA22D0068', 'Vehicle Name': 'ASTRO' }, resolveContractVehicle('47QFCA22D0068', rules)).label, '')
+  assert.equal(partnerVehicleDistinction({ PIID: 'GS00Q14OADU101', 'Vehicle Name': 'OASIS' }, { status: 'UNRESOLVED_CONFLICT' }).label, '')
+  assert.equal(partnerVehicleDistinction({ PIID: 'GS00Q14OADU101', 'Vehicle Name': 'Other' }, resolveContractVehicle('GS00Q14OADU101', rules)).label, '')
+})
 
 test('vehicle headings group names without discarding distinct contracts or merging unresolved PIIDs', () => {
   const rows = [
