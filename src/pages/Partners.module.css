@@ -12,7 +12,10 @@
 .enrichmentSection .refreshSettings > summary { padding: 0; font-size: 11px; font-weight: 400; color: var(--gray-500); }
 .refreshSettingsBody { display: grid; gap: 10px; padding-top: 10px; }
 .vehicleTable { overflow-x: auto; min-width: 0; }
-.vehicleTable table { width: 100%; min-width: 580px; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
+.vehicleGroup { border-bottom: .5px solid var(--gray-200); }
+.enrichmentSection .vehicleGroup > summary { padding: 10px 0; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.vehicleCount { margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--gray-500); white-space: nowrap; }
+.vehicleTable table { width: 100%; min-width: 300px; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
 .vehicleTable th, .vehicleTable td { text-align: left; vertical-align: top; padding: 9px; border-bottom: .5px solid var(--gray-200); }
 .vehicleTable th { color: var(--gray-500); font-weight: 500; background: var(--gray-50); }
 .vehicleTable th:first-child { width: 40%; }
