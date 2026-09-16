@@ -57,7 +57,7 @@ function FileTree({ items, uei, refreshToken }) {
 }
 
 export default function PartnerFilesPanel({ partner, onCreated }) {
-  const uei = String(partner?.['UEI Number'] || '').trim()
+  const uei = String(partner?.['Partner ID'] || partner?.['UEI Number'] || '').trim()
   const folderLink = String(partner?.['Link to Partner Folder'] || '').trim()
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState(null)
