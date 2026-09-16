@@ -1,8 +1,33 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { groupPartners, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
-import { fetchPartnerAwardEvidence } from '../src/services/usaSpendingService.js'
+import { fetchPartnerAwardEvidence, parentVehicleReference } from '../src/services/usaSpendingService.js'
 import { readFileSync } from 'node:fs'
+
+test('partner links and queued identity remain stable after a UEI correction', async () => {
+  const partner = { 'Partner ID': 'P-stable', 'UEI Number': 'ABC123456789' }
+  assert.equal(partnerProfilePath(partner), '/partners?partner=P-stable')
+  assert.equal(partnerProfilePath({ ...partner, 'UEI Number': 'DEF123456789' }), partnerProfilePath(partner))
+  const queue = createPartnerRefreshQueue()
+  let release
+  const first = queue.enqueue('ABC123456789', 'Company', () => new Promise(resolve => { release = resolve }), 'P-stable')
+  await Promise.resolve()
+  const second = queue.enqueue('DEF123456789', 'Company', () => { throw new Error('must not duplicate') }, 'P-stable')
+  assert.equal(first, second)
+  assert.equal(queue.getSnapshot()[0].partnerId, 'P-stable')
+  release({})
+  await first
+})
+
+test('parent references use the reported parent, never the delivery-order number or dates', () => {
+  const ref = parentVehicleReference({ generated_internal_id: 'CONT_AWD_ORDER1_7529_GS35F474CA_4732', 'End Date': '2027-10-01' })
+  assert.equal(ref.piid, 'GS35F474CA')
+  assert.equal(ref.agency, '4732')
+  assert.equal(ref.endDate, undefined)
+  assert.equal(parentVehicleReference({ generated_internal_id: 'CONT_AWD_ORDER1_7529_-NONE-_-NONE-' }), null)
+  assert.equal(parentVehicleReference({ generated_internal_id: 'CONT_IDV_GS35F474CA_4732' }), null)
+  assert.equal(parentVehicleReference({ generated_internal_id: '1234' }), null)
+})
 
 test('shared queue keeps only one partner running, deduplicates clicks and survives page unsubscribe', async () => {
   const queue = createPartnerRefreshQueue()
