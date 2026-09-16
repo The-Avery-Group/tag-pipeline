@@ -95,7 +95,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
     const payload = { ...form, Body: body, 'Days After Submission': days }
     try {
       if (selected) {
-        await updateEmailFollowUpTemplate(selected._rowIndex, payload, user?.displayName, selected['Template ID'])
+        await updateEmailFollowUpTemplate(selected, payload, user?.displayName, selected['Template ID'])
         setTemplates((previous) => previous.map((item) =>
           item['Template ID'] === selected['Template ID'] ? { ...item, ...payload } : item
         ))
@@ -129,7 +129,7 @@ export default function FollowUpEmailTemplates({ user, toast }) {
     if (!window.confirm(`Delete "${selected['Template Name']}"? Existing drafts will not be deleted.`)) return
     setDeleting(true)
     try {
-      await deleteEmailFollowUpTemplate(selected._rowIndex)
+      await deleteEmailFollowUpTemplate(selected)
       const remaining = templates.filter((item) => item['Template ID'] !== selected['Template ID'])
       setTemplates(remaining)
       choose(remaining[0] || null)
