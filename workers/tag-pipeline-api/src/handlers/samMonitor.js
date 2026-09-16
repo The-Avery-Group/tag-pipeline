@@ -266,7 +266,6 @@ async function updateStatusSnapshotEntry(env, watch) {
   if (!snapshot) return
   const next = publicWatch(watch)
   const index = snapshot.watches.findIndex((item) =>
-    Number(item.rowIndex) === Number(next.rowIndex) ||
     (next.noticeId && normalized(item.noticeId) === normalized(next.noticeId)) ||
     (next.solicitationNumber && normalized(item.solicitationNumber) === normalized(next.solicitationNumber))
   )
@@ -409,8 +408,7 @@ async function startAttachmentRefresh(env, watch, revision, { portalOnly = false
 async function sync(req, env) {
   const body = await req.json()
   const items = Array.isArray(body?.opportunities) ? body.opportunities : []
-  const dismissedRowIndices = new Set((Array.isArray(body?.dismissedRowIndices) ? body.dismissedRowIndices : [])
-    .map((rowIndex) => Number(rowIndex)).filter(Number.isFinite))
+  const dismissedIds = new Set((Array.isArray(body?.dismissedIds) ? body.dismissedIds : []).map(normalized).filter(Boolean))
   const eligible = items.filter((item) => ['new', 'tracked', 'added_to_pipeline'].includes(clean(item.Status ?? item.status).toLowerCase()))
   if (eligible.length > 200) return json({ error: 'Too many opportunities to monitor at once' }, 400)
 
@@ -418,9 +416,10 @@ async function sync(req, env) {
   // A record can be added or tracked first and dismissed later. Explicitly
   // delete its existing watch so it cannot be checked again by an autonomous
   // Worker batch or retain an outdated SAM-updated badge.
-  const removed = currentWatches.filter((watch) => dismissedRowIndices.has(Number(watch.rowIndex)))
+  const isDismissed = watch => dismissedIds.has(normalized(watch.noticeId || watch.solicitationNumber))
+  const removed = currentWatches.filter(isDismissed)
   await Promise.all(removed.map((watch) => deleteRuntimeState(env, watch.key)))
-  const activeWatches = currentWatches.filter((watch) => !dismissedRowIndices.has(Number(watch.rowIndex)))
+  const activeWatches = currentWatches.filter(watch => !isDismissed(watch))
   let synchronized = 0
   let unchanged = 0
   for (const item of eligible) {
@@ -635,10 +634,8 @@ export async function handleSAMMonitor(req, env) {
     if (!watch) {
       const notice = normalized(body?.['Notice ID'] ?? body?.noticeId)
       const solicitation = normalized(body?.['Solicitation Number'] ?? body?.solicitationNumber)
-      const rowIndex = Number(body?._rowIndex ?? body?.rowIndex)
       watch = (await listWatches(env)).find((item) =>
-        (Number.isFinite(rowIndex) && Number(item.rowIndex) === rowIndex) ||
-        normalized(item.noticeId) === notice ||
+        (notice && normalized(item.noticeId) === notice) ||
         (solicitation && normalized(item.solicitationNumber) === solicitation)
       )
     }
