@@ -408,7 +408,7 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   const cached = options.original || cachedAtIndex
   let targetRowIndex = rowIndex
   const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
-  if (identity) {
+  if (identity && !options.prelocated) {
     invalidate(tableName)
     const liveRows = await getSheetRows(tableName)
     const located = liveRows.find((row) => recordIdentity(tableName, row) === identity)
@@ -1201,39 +1201,63 @@ export async function savePartnerResearch(snapshot) {
   }
   if (Object.values(patch).some(value => value.length > 32000)) throw new Error('Partner summary exceeds workbook cell capacity')
   // Re-read identity and opt-out immediately before publication.
-  const { partner } = await getPartnerResearch(uei)
+  invalidate('PartnersTable')
+  const partners = (await getPartners()).filter(row => String(row['UEI Number'] || '').trim().toUpperCase() === uei)
+  if (partners.length !== 1) throw new Error('Partner UEI is missing or duplicated in the workbook')
+  const partner = partners[0]
   if (!['', 'yes'].includes(String(partner['USAspending Enabled'] || '').trim().toLowerCase())) throw new Error('Refresh was turned off. Results were not saved.')
-  await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
+  const partnerColumns = await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
   await queueTableMutation(PARTNER_VEHICLE_TABLE, async () => {
-    try { await getTableHeaders(PARTNER_VEHICLE_TABLE, { force: true }) }
+    let headers
+    try { headers = await getTableHeaders(PARTNER_VEHICLE_TABLE, { force: true }) }
     catch (error) {
       if (!isMissingWorkbookTable(error)) throw error
       const sheet = await graphFetch('/worksheets/add', { method: 'POST', body: JSON.stringify({ name: `Partner vehicles ${Date.now().toString(36)}` }) })
       await graphFetch(`/worksheets/${sheet.id}/range(address='A1:K1')`, { method: 'PATCH', body: JSON.stringify({ values: [PARTNER_VEHICLE_HEADERS] }) })
       const table = await graphFetch(`/worksheets/${sheet.id}/tables/add`, { method: 'POST', body: JSON.stringify({ address: 'A1:K1', hasHeaders: true }) })
       await graphFetch(`/tables/${table.id}`, { method: 'PATCH', body: JSON.stringify({ name: PARTNER_VEHICLE_TABLE }) })
+      headers = PARTNER_VEHICLE_HEADERS
+      headerCache.set(PARTNER_VEHICLE_TABLE, headers)
     }
-    const headers = await getTableHeaders(PARTNER_VEHICLE_TABLE, { force: true })
     if (PARTNER_VEHICLE_HEADERS.some(h => !headers.includes(h))) throw new Error('Partner vehicle table schema is incomplete')
-    for (const vehicle of vehicles) {
-      invalidate(PARTNER_VEHICLE_TABLE)
-      const rows = await getSheetRows(PARTNER_VEHICLE_TABLE)
-      const matches = rows.filter(row => row['Record ID'] === vehicle['Record ID'])
-      if (matches.length > 1) throw new Error('Duplicate vehicle records need review')
-      if (matches.length) await updateRowUnlocked(PARTNER_VEHICLE_TABLE, matches[0]._rowIndex, vehicle, headers, { original: matches[0] })
-      else await createPartnerVehicleRow(vehicle, headers)
+    invalidate(PARTNER_VEHICLE_TABLE)
+    const rows = await getSheetRows(PARTNER_VEHICLE_TABLE)
+    const indexed = new Map()
+    for (const row of rows) {
+      const id = row['Record ID']
+      if (indexed.has(id)) throw new Error('Duplicate vehicle records need review')
+      indexed.set(id, row)
     }
+    const additions = []
+    for (const vehicle of vehicles) {
+      const existing = indexed.get(vehicle['Record ID'])
+      if (existing) {
+        if (Object.entries(vehicle).every(([key, value]) => String(existing[key] ?? '') === String(value ?? ''))) continue
+        // One table read locates every row. The row-level read still verifies
+        // identity and detects conflicting edits before each PATCH.
+        await updateRowUnlocked(PARTNER_VEHICLE_TABLE, existing._rowIndex, vehicle, headers, { original: existing, prelocated: true })
+      } else additions.push(vehicle)
+    }
+    for (let start = 0; start < additions.length; start += 100) await createPartnerVehicleRows(additions.slice(start, start + 100), headers)
   })
-  await updatePartner(partner._rowIndex, patch, partner)
+  const byNormalizedHeader = new Map(partnerColumns.headers.map(header => [normalizeTableHeader(header), header]))
+  await updateRow('PartnersTable', partner._rowIndex, partnerValuesForWorkbook(patch, { headers: partnerColumns.headers, byNormalizedHeader }), partnerColumns.headers, { original: partner })
 }
 
-async function createPartnerVehicleRow(vehicle, headers) {
-  // Reconcile an uncertain append before retrying to avoid duplicate vehicle rows.
-  return appendWithReconciliation({
-    idColumn: 'Record ID', idValue: vehicle['Record ID'],
-    append: () => appendRow(PARTNER_VEHICLE_TABLE, vehicle, headers),
-    readRows: async () => { invalidate(PARTNER_VEHICLE_TABLE); return getSheetRows(PARTNER_VEHICLE_TABLE) },
-  })
+async function createPartnerVehicleRows(vehicles, headers) {
+  try {
+    await graphFetch(`/tables/${PARTNER_VEHICLE_TABLE}/rows/add`, {
+      method: 'POST', body: JSON.stringify({ values: vehicles.map(vehicle => headers.map(header => vehicle[header] ?? '')) }),
+    })
+  } catch (error) {
+    // Excel may have committed despite an interrupted response. Never blindly
+    // retry a batch append; confirm every ID before treating it as successful.
+    invalidate(PARTNER_VEHICLE_TABLE)
+    let rows
+    try { rows = await getSheetRows(PARTNER_VEHICLE_TABLE) }
+    catch { throw new Error('Vehicle save could not be verified. Retry refresh to reconcile the workbook.', { cause: error }) }
+    if (!vehicles.every(vehicle => rows.some(row => Object.entries(vehicle).every(([key, value]) => String(row[key] ?? '') === String(value ?? ''))))) throw error
+  } finally { invalidate(PARTNER_VEHICLE_TABLE) }
 }
 
 async function partnerSchema() {
