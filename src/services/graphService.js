@@ -6,6 +6,7 @@ import {
   createFingerprint,
   createStableId,
   queueTableMutation,
+  workbookRetryDelay,
 } from '@/services/workbookMutations'
 import { deterministicDraftId } from '@/utils/followUpEmails'
 import { parsePOCNames } from '@/utils/contactOpportunityLinks'
@@ -36,6 +37,11 @@ const pendingSheetReads = new Map()
 // Table schemas change far less often than table rows. Keep headers across
 // routine data refreshes so polling does not double every Graph request.
 const headerCache = new Map()
+const pendingHeaderReads = new Map()
+const pendingSchemas = new Map()
+const schemaCheckedAt = new Map()
+const rowVersions = new Map()
+let cacheEpoch = 0
 const sessionRefreshListeners = new Set()
 let sessionRefreshRequired = false
 let silentTokenRequest = null
@@ -65,15 +71,19 @@ export function requestSessionRefresh(error) {
 
 function invalidate(sheet) {
   cache.delete(sheet)
+  rowVersions.set(sheet, (rowVersions.get(sheet) || 0) + 1)
 }
 
 /** Clear the entire cache — called by dataCache before a full re-fetch. */
 export function invalidateAll() {
+  cacheEpoch++
   cache.clear()
   // A workbook table can gain or lose columns while the app is open. Keeping
   // the old schema after a full refresh makes row PATCH payloads the wrong
   // width, which Excel rejects with a range-dimensions error.
   headerCache.clear()
+  pendingHeaderReads.clear()
+  schemaCheckedAt.clear()
   notificationRecipientsUnavailable = false
   contactInteractionsUnavailable = false
 }
@@ -118,13 +128,25 @@ async function createWorkbookRecord({ tableName, idColumn, idValue, ...options }
 
 async function getTableHeaders(tableName, { force = false } = {}) {
   if (!force && headerCache.has(tableName)) return headerCache.get(tableName)
-  const headerData = await graphFetch(`/tables/${tableName}/columns`)
-  const headers = headerData.value.map((column) => column.name)
-  headerCache.set(tableName, headers)
-  return headers
+  if (pendingHeaderReads.has(tableName)) return pendingHeaderReads.get(tableName)
+  const epoch = cacheEpoch
+  const request = graphFetch(`/tables/${tableName}/columns`).then(headerData => {
+    const headers = headerData.value.map(column => column.name)
+    if (epoch === cacheEpoch) headerCache.set(tableName, headers)
+    return headers
+  })
+  pendingHeaderReads.set(tableName, request)
+  try { return await request }
+  finally { if (pendingHeaderReads.get(tableName) === request) pendingHeaderReads.delete(tableName) }
 }
 
 export async function ensureTableColumns(tableName, columnNames = []) {
+  // Serialize schema changes per table and briefly reuse confirmed schemas.
+  // Different requested columns still get their own check after the prior one.
+  const previous = pendingSchemas.get(tableName) || Promise.resolve()
+  const operation = previous.catch(() => {}).then(async () => {
+  const cached = headerCache.get(tableName)
+  if (Date.now() - (schemaCheckedAt.get(tableName) || 0) < 60_000 && cached && columnNames.every(name => cached.includes(name))) return { headers: cached, added: [] }
   let headers = await getTableHeaders(tableName, { force: true })
   const added = []
   for (const name of columnNames) {
@@ -138,7 +160,12 @@ export async function ensureTableColumns(tableName, columnNames = []) {
     headers = await getTableHeaders(tableName, { force: true })
   }
   if (added.length) invalidate(tableName)
+  schemaCheckedAt.set(tableName, Date.now())
   return { headers, added }
+  })
+  pendingSchemas.set(tableName, operation)
+  try { return await operation }
+  finally { if (pendingSchemas.get(tableName) === operation) pendingSchemas.delete(tableName) }
 }
 
 // ── Token helper ───────────────────────────────────────────────────────────
@@ -208,7 +235,7 @@ async function graphFetch(path, options = {}) {
     if (shouldRetry) {
       // Consume the response before retrying so the browser can release it.
       await res.text().catch(() => '')
-      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)))
+      await new Promise((resolve) => setTimeout(resolve, workbookRetryDelay(res.headers.get('Retry-After'), 350 * (attempt + 1))))
       continue
     }
 
@@ -219,6 +246,8 @@ async function graphFetch(path, options = {}) {
     const graphError = new Error(err?.error?.message || fallback)
     graphError.status = res.status
     graphError.code = err?.error?.code || ''
+    if (res.headers.has('Retry-After')) graphError.retryAfterMs = workbookRetryDelay(res.headers.get('Retry-After'))
+    if (retryableRead && attempt === 2) graphError.retryExhausted = true
     throw graphError
   }
 }
@@ -334,7 +363,10 @@ export async function getSheetRows(tableName) {
     cache.set(tableName, fixed)
     return fixed
   }
-  if (pendingSheetReads.has(tableName)) return pendingSheetReads.get(tableName)
+  const version = rowVersions.get(tableName) || 0
+  const epoch = cacheEpoch
+  const pending = pendingSheetReads.get(tableName)
+  if (pending?.version === version && pending.epoch === epoch) return pending.promise
 
   const request = (async () => {
     const getRows = async () => {
@@ -367,14 +399,14 @@ export async function getSheetRows(tableName) {
       obj._rowIndex = row.index
       return obj
     }).filter(Boolean)
-    cache.set(tableName, rows)
+    if (epoch === cacheEpoch && version === (rowVersions.get(tableName) || 0)) cache.set(tableName, rows)
     return rows
   })()
-  pendingSheetReads.set(tableName, request)
+  pendingSheetReads.set(tableName, { promise: request, version, epoch })
   try {
     return await request
   } finally {
-    pendingSheetReads.delete(tableName)
+    if (pendingSheetReads.get(tableName)?.promise === request) pendingSheetReads.delete(tableName)
   }
 }
 
@@ -408,14 +440,14 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   const cached = options.original || cachedAtIndex
   let targetRowIndex = rowIndex
   const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
-  if (identity && !options.prelocated) {
-    invalidate(tableName)
-    const liveRows = await getSheetRows(tableName)
-    const located = liveRows.find((row) => recordIdentity(tableName, row) === identity)
-    if (!located) throw new Error('This record could not be located by its identifier. Refresh and review it before saving.')
-    targetRowIndex = located._rowIndex
+  // Most edits keep their row position. Verify that row directly; only scan
+  // the table when Excel sorting/deletion has actually moved the record.
+  let response
+  try { response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, { retryReads: true }) }
+  catch (error) {
+    if (!identity || (error.status !== 404 && !/index.*(bounds|range)|row.*not found/i.test(error.message))) throw error
+    response = { values: [Array.from({ length: headers.length }, () => '')] }
   }
-  const response = await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, { retryReads: true })
   const values = response?.values?.[0]
   if (!values) throw new Error(`Row ${targetRowIndex} not found in ${tableName}`)
   let activeHeaders = Array.isArray(headers) ? headers : []
@@ -442,10 +474,11 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
     // field-level conflict check below so external edits are still protected.
     invalidate(tableName)
     const freshRows = await getSheetRows(tableName)
-    const relocated = freshRows.find((row) => recordIdentity(tableName, row) === identity)
-    if (!relocated) {
+    const matches = freshRows.filter(row => recordIdentity(tableName, row) === identity)
+    if (matches.length !== 1) {
       throw new Error('This record changed position in the workbook and could not be located. Refresh and review it before saving.')
     }
+    const relocated = matches[0]
     targetRowIndex = relocated._rowIndex
     current = relocated
     // getSheetRows() above used the newly refreshed header list. Keep the
@@ -459,11 +492,12 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   }
 
   const merged = { ...current, ...patch }
+  const unchanged = Object.keys(patch).every(key => String(current[key] ?? '') === String(patch[key] ?? ''))
   const row = activeHeaders.map((h) => {
     const val = merged[h] ?? ''
     return DATE_COLUMNS.has(h) ? isoToExcelSerial(val) : val
   })
-  await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, {
+  if (!unchanged) await graphFetch(`/tables/${tableName}/rows/itemAt(index=${targetRowIndex})`, {
     method: 'PATCH',
     body: JSON.stringify({ values: [row] }),
   })
@@ -471,6 +505,8 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   // forces every mounted consumer to wait for another Graph read and leaves
   // universal search temporarily indexing the old row.
   const cachedRows = cache.get(tableName)
+  // A read begun before this write must not overwrite its successful result.
+  invalidate(tableName)
   if (cachedRows) {
     cache.set(tableName, cachedRows.map((cachedRow) =>
       cachedRow._rowIndex === targetRowIndex
@@ -493,9 +529,9 @@ export function updateRow(tableName, rowIndex, patch, headers, options = {}) {
  * reached the workbook. Stable record identity prevents retrying against a
  * different row after workbook sorting or row insertion.
  */
-export async function updateRowWithReconciliation(tableName, rowIndex, patch, headers, { attempts = 3 } = {}) {
+export async function updateRowWithReconciliation(tableName, rowIndex, patch, headers, { attempts = 3, original: suppliedOriginal } = {}) {
   return queueTableMutation(tableName, async () => {
-    const original = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+    const original = suppliedOriginal || cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
     const identity = recordIdentity(tableName, original)
     let targetRowIndex = rowIndex
     let lastError
@@ -507,9 +543,12 @@ export async function updateRowWithReconciliation(tableName, rowIndex, patch, he
       } catch (error) {
         lastError = error
         const transient = [429, 502, 503, 504].includes(Number(error?.status))
-        if (!transient || !identity || attempt >= attempts - 1) throw error
+        if (!transient || !identity || attempt >= attempts - 1) {
+          if (transient && attempt >= attempts - 1) error.retryExhausted = true
+          throw error
+        }
 
-        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+        await new Promise((resolve) => setTimeout(resolve, error.retryAfterMs ?? 400 * (attempt + 1)))
         invalidate(tableName)
         const freshRows = await getSheetRows(tableName)
         const current = freshRows.find((row) => recordIdentity(tableName, row) === identity)
@@ -1261,9 +1300,7 @@ async function createPartnerVehicleRows(vehicles, headers) {
 }
 
 async function partnerSchema() {
-  await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
-  headerCache.delete('PartnersTable')
-  const headers = await getTableHeaders('PartnersTable')
+  const { headers } = await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
   const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
   const missing = PARTNER_HEADERS.filter((header) => {
     if (byNormalizedHeader.has(normalizeTableHeader(header))) return false
