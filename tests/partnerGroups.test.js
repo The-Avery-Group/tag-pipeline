@@ -175,6 +175,31 @@ test('direct partner fetch follows every page, exact UEI and direct IDV details 
   assert.equal(calls[2].body.filters.time_period, undefined)
 })
 
+test('mixed recipient results exclude foreign agencies and vehicles across all pages', async t => {
+  const uei = 'RNWHQLZYPQ47'; let pages = 0
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    assert.ok(options.body, 'Excluded vehicles must not trigger detail requests')
+    const body = JSON.parse(options.body)
+    if (!body.filters.award_type_codes.includes('A')) return Response.json({ results: [{ 'Recipient UEI': 'NZP5VWUSEWJ4', generated_internal_id: 'FOREIGN_IDV' }], page_metadata: { hasNext: false } })
+    pages++
+    const row = body.page === 1
+      ? { 'Recipient UEI': 'NZP5VWUSEWJ4', 'Funding Sub Agency': 'Foreign agency', generated_internal_id: 'CONT_AWD_WRONG_1900_FOREIGN_1900' }
+      : { 'Recipient UEI': uei, 'Funding Sub Agency': 'Department of the Army', generated_internal_id: 'CONT_AWD_W9124J22F0049_9700_W9124J22D0011_9700' }
+    return Response.json({ results: [row], page_metadata: { hasNext: body.page === 1 } })
+  })
+  const result = await fetchPartnerAwardEvidence(uei)
+  assert.equal(pages, 2)
+  assert.deepEqual(result.agencies, [{ name: 'Department of the Army' }])
+  assert.deepEqual(result.references.map(ref => ref.piid), ['W9124J22D0011'])
+  assert.deepEqual(result.details, [])
+  assert.equal(result.excludedAwards, 2)
+})
+
+test('missing recipient identity still prevents saving even with a matching award', async t => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ results: [{ 'Recipient UEI': 'RNWHQLZYPQ47' }, { 'Recipient UEI': null }], page_metadata: { hasNext: false } }))
+  await assert.rejects(fetchPartnerAwardEvidence('RNWHQLZYPQ47'), /omitted a valid recipient UEI/)
+})
+
 test('direct partner fetch rejects wrong recipients and incomplete pages', async t => {
   const mock = t.mock.method(globalThis, 'fetch', async () => Response.json({ results: [{ 'Recipient UEI': 'WRONG0000000' }], page_metadata: { hasNext: false } }))
   await assert.rejects(fetchPartnerAwardEvidence('GLGMWJ8EVMR9'), /recipient does not match/)
