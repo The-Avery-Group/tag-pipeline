@@ -12,10 +12,52 @@ const CONTRACT_CODES = ['A', 'B', 'C', 'D']
 const PAGE_SIZE = 100
 const MAX_AWARD_PAGES = 20
 const PAGE_CONCURRENCY = 3
-const REQUEST_TIMEOUT_MS = 15_000
+const REQUEST_TIMEOUT_MS = 45_000
+
+// Reserve capacity for interactive history while background refreshes run.
+// This scheduler is shared by all consumers in this browser tab.
+export function createUSAspendingScheduler() {
+  let active = 0; let backgroundActive = 0
+  const waiting = []
+  const drain = () => {
+    while (active < 2) {
+      let index = waiting.findIndex(job => !job.background)
+      if (index < 0 && backgroundActive === 0) index = waiting.findIndex(job => job.background)
+      if (index < 0) return
+      const job = waiting.splice(index, 1)[0]
+      job.signal?.removeEventListener('abort', job.cancel)
+      active++; if (job.background) backgroundActive++
+      let released = false
+      job.resolve(() => {
+        if (released) return
+        released = true; active--; if (job.background) backgroundActive--
+        drain()
+      })
+    }
+  }
+  return (background = false, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Request cancelled', 'AbortError')); return }
+    const job = { background, signal, resolve }
+    job.cancel = () => {
+      const index = waiting.indexOf(job)
+      if (index >= 0) waiting.splice(index, 1)
+      reject(new DOMException('Request cancelled', 'AbortError'))
+    }
+    signal?.addEventListener('abort', job.cancel, { once: true })
+    waiting.push(job); drain()
+  })
+}
+const acquireRequest = createUSAspendingScheduler()
 
 function validUEI(value) { return /^[A-Z0-9]{12}$/.test(String(value || '').trim().toUpperCase()) }
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Request cancelled', 'AbortError')); return }
+    const cancel = () => { clearTimeout(timer); reject(new DOMException('Request cancelled', 'AbortError')) }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve() }, ms)
+    signal?.addEventListener('abort', cancel, { once: true })
+  })
+}
 
 function readCache(key) {
   try {
@@ -44,10 +86,13 @@ function filters(uei, yearType) {
   return { time_period: [period(yearType)], recipient_search_text: [uei], award_type_codes: CONTRACT_CODES }
 }
 
-async function post(path, body, signal, attempts = 3, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function post(path, body, signal, attempts = 3, timeoutMs = REQUEST_TIMEOUT_MS, background = false) {
   let lastStatus = null
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError')
+    const release = await acquireRequest(background, signal)
+    if (signal?.aborted) { release(); throw new DOMException('Request cancelled', 'AbortError') }
+    let retryDelay = 1000 * (2 ** attempt)
     const controller = new AbortController()
     const forwardAbort = () => controller.abort(signal?.reason || 'Request cancelled')
     signal?.addEventListener('abort', forwardAbort, { once: true })
@@ -58,17 +103,28 @@ async function post(path, body, signal, attempts = 3, timeoutMs = REQUEST_TIMEOU
       })
       if (response.ok) return await response.json()
       lastStatus = response.status
+      const retryAfter = response.headers?.get?.('Retry-After')
+      if (retryAfter) {
+        const seconds = Number(retryAfter)
+        const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now()
+        if (Number.isFinite(delay)) retryDelay = Math.max(retryDelay, delay)
+      }
       if (![429, 502, 503, 504, 525].includes(response.status) || attempt === attempts - 1) break
     } catch (error) {
       if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError')
-      if (attempt === attempts - 1) throw new Error('USAspending is temporarily unavailable. Please try again.')
+      if (attempt === attempts - 1) throw new Error(controller.signal.aborted
+        ? 'USAspending did not respond before the request timed out. Please retry.'
+        : 'Could not reach USAspending. Check your connection and retry.', { cause: error })
     } finally {
       clearTimeout(timeout)
       signal?.removeEventListener('abort', forwardAbort)
+      release()
     }
-    await sleep(300 * (attempt + 1))
+    await sleep(retryDelay, signal)
   }
-  throw new Error(lastStatus === 525 ? 'USAspending is temporarily unavailable. Please try again.' : `USAspending API error ${lastStatus || 'unavailable'}`)
+  throw new Error(lastStatus === 429
+    ? 'USAspending is limiting requests. Please try again shortly.'
+    : `USAspending returned HTTP ${lastStatus || 'unknown'}. Please retry.`)
 }
 
 /** Complete partner evidence, fetched directly without Worker or persistent cache. */
@@ -100,7 +156,7 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
         filters: { recipient_search_text: [uei], award_type_codes: kind === 'contracts' ? CONTRACT_CODES : ['IDV_A', 'IDV_B', 'IDV_B_A', 'IDV_B_B', 'IDV_B_C', 'IDV_C', 'IDV_D', 'IDV_E'], ...(kind === 'contracts' ? { time_period: [period] } : {}) },
         fields: ['Award ID', 'Recipient UEI', 'Funding Agency', 'Funding Sub Agency', 'Awarding Agency', 'Awarding Sub Agency', 'generated_internal_id'],
         page, limit: 100, sort: 'Award ID', order: 'asc', subawards: false,
-      }, signal, 3, 60_000)
+      }, signal, 3, 60_000, true)
       if (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== 'boolean' || (data.page_metadata.hasNext && !data.results.length)) throw new Error('USAspending returned an incomplete page. No results saved.')
       for (const row of data.results) {
         const recipientUEI = String(row['Recipient UEI'] || '').trim().toUpperCase()
@@ -126,7 +182,7 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
   const details = []
   for (const id of ids) {
     onProgress(`Reading vehicle ${details.length + 1} of ${ids.size}…`)
-    const detail = await post(`/awards/${encodeURIComponent(id)}/`, null, signal, 3, 60_000)
+    const detail = await post(`/awards/${encodeURIComponent(id)}/`, null, signal, 3, 60_000, true)
     if (String(detail.recipient?.recipient_uei || '').trim().toUpperCase() !== uei || detail.category !== 'idv' || !detail.piid || detail.generated_unique_award_id !== id) throw new Error('Vehicle identity could not be verified. No results saved.')
     details.push(detail)
   }
