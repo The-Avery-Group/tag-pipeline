@@ -1,4 +1,5 @@
 const DEFAULT_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
+import { mutateWorkbookRecord } from './graph.js'
 const WORKSPACE_NAME = 'Transaction Coding'
 const WORKBOOK_NAME = 'Transaction Coding.xlsx'
 const EXPORTS_NAME = 'Exports'
@@ -167,9 +168,8 @@ export async function saveTransactionRuleToWorkbook(workspace, values) {
   const compatibleValues = alignTransactionRuleValues(headers, values)
   const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(values[0] || '').trim())
   if (existing) {
-    await workbookJson(workspace, workbookTablePath(tableKey, `/rows/itemAt(index=${existing._rowIndex})/range`), {
-      method: 'PATCH', body: JSON.stringify({ values: [compatibleValues] }),
-    })
+    await mutateWorkbookRecord({ WORKBOOK_ID: workspace.workbookItemId }, workspace.driveId, workspace.token, RULE_TABLE_NAME, existing,
+      Object.fromEntries(headers.map((header, i) => [header, compatibleValues[i]])), { headers })
   } else {
     await workbookJson(workspace, workbookTablePath(tableKey, '/rows/add'), {
       method: 'POST', body: JSON.stringify({ index: null, values: [compatibleValues] }),
@@ -181,9 +181,7 @@ export async function deleteTransactionRuleFromWorkbook(workspace, ruleId) {
   const { tableKey, rows } = await readTransactionRuleTable(workspace)
   const existing = rows.find((row) => String(row['Rule ID'] || '').trim() === String(ruleId || '').trim())
   if (!existing) return false
-  await workbookJson(workspace, workbookTablePath(tableKey, `/rows/itemAt(index=${existing._rowIndex})`), {
-    method: 'DELETE',
-  })
+  await mutateWorkbookRecord({ WORKBOOK_ID: workspace.workbookItemId }, workspace.driveId, workspace.token, RULE_TABLE_NAME, existing, {}, { remove: true })
   return true
 }
 
