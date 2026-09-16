@@ -2,7 +2,7 @@ import { workerJson } from '@/services/workerClient'
 import { getPartnerResearch, savePartnerResearch, getSheetRows, invalidateTables } from '@/services/graphService'
 import { publishCacheUpdate } from '@/services/dataCache'
 import { fetchPartnerAwardEvidence } from './usaSpendingService.js'
-import { partnerRefreshDue, partnerRefreshEnabled, partnerRefreshQueue } from '../utils/partnerGroups.js'
+import { partnerRefreshDue, partnerRefreshEnabled, partnerRefreshQueue, partnerVehicleDistinction } from '../utils/partnerGroups.js'
 import { mergeContractVehicleRules, resolveContractVehicle } from '../../workers/tag-pipeline-api/src/lib/contractVehicleResolver.js'
 
 const autoAttempts = new Map()
@@ -22,7 +22,15 @@ function cachedSAMContracts() {
 
 export async function getPartnerEnrichment(uei) {
   const result = await getPartnerResearch(uei)
-  return { ...result, uei }
+  if (!result.snapshot?.vehicles?.length) return { ...result, uei }
+  let workbookRules
+  try { workbookRules = await getSheetRows('ContractVehicleRulesTable') }
+  catch (error) { if (error.status !== 404) throw error; workbookRules = [] }
+  const rules = mergeContractVehicleRules(workbookRules)
+  return { ...result, uei, snapshot: { ...result.snapshot, vehicles: result.snapshot.vehicles.map(vehicle => ({
+    ...vehicle,
+    distinction: partnerVehicleDistinction(vehicle, resolveContractVehicle(vehicle.PIID, rules)),
+  })) } }
 }
 
 export function refreshPartnerEnrichment(uei, { automatic = false, name = '', partnerId = '' } = {}) {
