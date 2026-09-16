@@ -65,13 +65,16 @@ export default function Topbar({
       </div>
       {queueOpen && <Modal title="Partner refresh queue" onClose={() => setQueueOpen(false)}>
         <p className={styles.queueHelp}>Updates continue as you move around the CRM. Closing or reloading this browser tab interrupts the queue.</p>
+        <p className={styles.queueHelp}>You can remove waiting updates. The update currently running will finish safely.</p>
         <ul className={styles.queueList}>{jobs.map(job => <li key={job.partnerId || job.uei}>
           <Link to={`/partners?partner=${encodeURIComponent(job.partnerId || job.uei)}`} onClick={() => setQueueOpen(false)}>{job.name}</Link>
           <span>{job.status === 'queued' ? 'Queued' : job.status === 'failed' ? job.error : job.progress}</span>
+          {job.status === 'queued' && <button className="btn text-sm" onClick={() => partnerRefreshQueue.remove(job.partnerId || job.uei)}>Remove from queue</button>}
           {job.status === 'failed' && <button className="btn text-sm" onClick={() => {
             import('@/services/partnerWorkspaceService').then(module => module.refreshPartnerEnrichment(job.uei, { name: job.name, partnerId: job.partnerId })).catch(() => {})
           }}>Retry</button>}
         </li>)}</ul>
+        {waiting > 0 && <button className="btn text-sm" onClick={() => partnerRefreshQueue.removeWaiting()}>Remove all waiting</button>}
         <button className="btn text-sm" onClick={() => { partnerRefreshQueue.clearFinished(); if (!activeJob && !waiting) setQueueOpen(false) }}>Clear finished results</button>
       </Modal>}
     </header>
