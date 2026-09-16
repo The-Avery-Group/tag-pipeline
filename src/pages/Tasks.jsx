@@ -281,7 +281,7 @@ function OppPicker({ pipeline, value, onChange }) {
               const isSelected = cn === value
               return (
                 <div
-                  key={`${cn}-${o._rowIndex}`}
+                  key={o['Opportunity ID'] || cn}
                   onClick={() => { onChange(cn); setSearch('') }}
                   style={{
                     padding: '8px 12px',
@@ -596,7 +596,7 @@ export default function Tasks({ toast }) {
                   const isActive = selected?.TaskID === task.TaskID
                   return (
                     <div
-                      key={`${task.TaskID}-${task._rowIndex}`}
+                      key={task.TaskID}
                       className={`${styles.taskRow} ${isActive ? styles.taskRowActive : ''}`}
                       onClick={() => setSelected(task)}
                     >

@@ -532,7 +532,6 @@ export default function Dashboard({ toast }) {
         opportunity,
         identifier,
         samNoticeId: alert.details?.noticeId || samOpportunity?.['Notice ID'] || alert.opportunityKey,
-        samRowIndex: alert.details?.discoveryRowIndex ?? samOpportunity?._rowIndex,
         displayTitle: opportunityTitle || alert.summary || identifier,
         supportingDetail: opportunityTitle && supportingDetail !== opportunityTitle
           ? supportingDetail
@@ -590,18 +589,16 @@ export default function Dashboard({ toast }) {
           {reviewQueue.loading ? <div className={`skeleton ${styles.rowSkeleton}`} />
             : reviewQueue.alerts.length === 0 ? <p className="text-sm text-muted">No opportunity changes waiting for review.</p>
             : <div className={styles.reviewQueue}>
-              {reviewQueueEntries.map(({ alert, opportunity, identifier, samNoticeId, samRowIndex, displayTitle, supportingDetail }) => (
+              {reviewQueueEntries.map(({ alert, opportunity, identifier, samNoticeId, displayTitle, supportingDetail }) => (
                 <div className={styles.reviewQueueRow} key={`${alert.opportunityKey}:${alert.type}:${alert.fingerprint}`}>
                   <button type="button" className={styles.reviewQueueLink} onClick={() => {
                     if (!opportunity && ['sam_change', 'sam_files'].includes(alert.type)) {
                       const samParams = new URLSearchParams({ returnTo: '/opportunities?tab=New&source=sam' })
-                      if (samRowIndex != null) samParams.set('row', samRowIndex)
                       navigate(`/opportunities/sam/${encodeURIComponent(samNoticeId)}?${samParams.toString()}`)
                       return
                     }
                     const key = encodeURIComponent(identifier)
                     const params = new URLSearchParams()
-                    if (opportunity?._rowIndex != null) params.set('row', opportunity._rowIndex)
                     if (alert.type?.includes('file')) {
                       params.set('focus', 'files')
                       params.set('alert', alert.type)

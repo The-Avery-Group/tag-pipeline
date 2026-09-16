@@ -117,7 +117,7 @@ export default function Contacts({ toast }) {
     const interactionId = searchParams.get('interactionId')
     if (!interactionId || !selected || engagement.loading) return undefined
     const interaction = selectedInteractions.find((row) =>
-      String(row.InteractionID || row._rowIndex) === interactionId
+      String(row.InteractionID || '') === interactionId
     )
     if (!interaction) return undefined
     setFocusedInteractionId(interactionId)
@@ -480,7 +480,7 @@ export default function Contacts({ toast }) {
                             {selectedInteractions.length === 0
                               ? <p className="text-sm text-muted">No interactions logged.</p>
                               : selectedInteractions.map((row) => (
-                                <div id={`contact-interaction-${row.InteractionID || row._rowIndex}`} key={row.InteractionID || row._rowIndex} className={`${styles.interactionRow} ${String(row.InteractionID || row._rowIndex) === focusedInteractionId ? styles.interactionFocused : ''}`}>
+                                <div id={`contact-interaction-${row.InteractionID || ''}`} key={row.InteractionID || ''} className={`${styles.interactionRow} ${String(row.InteractionID || '') === focusedInteractionId ? styles.interactionFocused : ''}`}>
                                   <div><strong>{row['Interaction Type'] || 'Interaction'}</strong><span>{formatDate(row['Interaction Date'])}{row['Logged By'] ? ` · ${row['Logged By']}` : ''}</span></div>
                                   {row.Notes && <p><RichText value={row.Notes} /></p>}
                                   {row['Follow-up Date'] && <small>Follow up {formatDate(row['Follow-up Date'])}</small>}

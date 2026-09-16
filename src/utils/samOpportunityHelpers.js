@@ -15,15 +15,14 @@ export function samNoticeIdFromValue(value) {
   } catch { return '' }
 }
 
-export function selectSAMDiscoveryRow(rows, routeIdentifier, rowIndex = null) {
+export function selectSAMDiscoveryRow(rows, routeIdentifier) {
   const route = String(routeIdentifier || '').trim().toLowerCase()
   if (!route) return null
   const notice = samNoticeIdFromValue(route)
   const matches = rows.filter((row) => notice
     ? [row['Notice ID'], row['SAM.gov URL']].some((value) => samNoticeIdFromValue(value) === notice)
     : String(row['Solicitation Number'] || '').trim().toLowerCase() === route)
-  // A row number is only a tie-breaker among identity-verified records.
-  return matches.find((row) => rowIndex !== null && Number(row._rowIndex) === rowIndex) || matches[0] || null
+  return matches[0] || null
 }
 
 export function samDetailLookupInput(row, routeIdentifier) {

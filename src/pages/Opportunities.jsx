@@ -530,14 +530,12 @@ export default function Opportunities({ toast }) {
     setAgencyFilterOpen(false)
   }
 
-  // The visible contract/notice number may contain whitespace or characters
-  // that Excel/URLs normalize differently. Carrying the stable table row
-  // index makes detail navigation reliable while retaining the readable URL.
+  // Navigate by record identifier, never by a mutable workbook row position.
   const openOpportunity = (opp, { focusFollowUps = false, focusSAMChanges = false } = {}) => {
     const cn = opp[C.contractNum] || ''
     // Keep the complete list URL so the detail page's own back button can
     // restore the exact tab, search, and filters the user came from.
-    const detailParams = new URLSearchParams({ row: String(opp._rowIndex) })
+    const detailParams = new URLSearchParams()
     if (focusFollowUps) detailParams.set('focus', 'follow-ups')
     if (focusSAMChanges) detailParams.set('focus', 'sam-changes')
     const currentListQuery = searchParams.toString()
@@ -548,7 +546,7 @@ export default function Opportunities({ toast }) {
   const openSAMOpportunity = (opportunity) => {
     saveScroll()
     const noticeId = opportunity['Notice ID'] || opportunity['Solicitation Number'] || ''
-    const detailParams = new URLSearchParams({ row: String(opportunity._rowIndex) })
+    const detailParams = new URLSearchParams()
     const currentListQuery = searchParams.toString()
     detailParams.set('returnTo', `/opportunities${currentListQuery ? `?${currentListQuery}` : ''}`)
     navigate(`/opportunities/sam/${encodeURIComponent(noticeId)}?${detailParams.toString()}`)
@@ -650,7 +648,7 @@ export default function Opportunities({ toast }) {
       : { ...opportunity, Status: status }
   }), [pipelineByOpportunityKey, samOpps])
 
-  const { changesByRow: samChangesByRow, checking: checkingSAMChanges, progress: samCheckProgress, checkError: samCheckError, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(reconciledSAMOpps)
+  const { changesById: samChangesById, checking: checkingSAMChanges, progress: samCheckProgress, checkError: samCheckError, checkChanges: checkSAMChanges, markReviewed: markSAMChangeReviewed } = useSAMChangeMonitor(reconciledSAMOpps)
   const { statusByOpportunity: rfiFollowUpStatus, markSeen: markFollowUpsSeen } = useRfiFollowUpMonitor(pipeline, contacts, { replace: true })
 
   const [showDismissed, setShowDismissed] = useState(false)
@@ -660,7 +658,7 @@ export default function Opportunities({ toast }) {
   const [actioningRow,  setActioningRow]  = useState(null)
   const [flaggingRows, setFlaggingRows] = useState(new Set())
   const flaggingRowsRef = useRef(new Set())
-  const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of _rowIndex
+  const [selectedRows,  setSelectedRows]  = useState(new Set())   // bulk select: Set of record IDs
   const [selectionMode, setSelectionMode] = useState(false)
   const [bulkProgress, setBulkProgress] = useState(null)
   const [showSyncDetails, setShowSyncDetails] = useState(false)
@@ -688,13 +686,13 @@ export default function Opportunities({ toast }) {
       const storedStatus = String(opportunity.Status || 'new').toLowerCase()
       const linked = linkedPipelineOpportunity(opportunity, pipelineByOpportunityKey)
       const expectedStatus = reconciledSAMStatus(opportunity, linked)
-      const rowIndex = opportunity._rowIndex
-      if (expectedStatus === storedStatus || rowIndex === null || rowIndex === undefined) return
-      if (reconcilingSAMStatusesRef.current.get(rowIndex) === expectedStatus) return
-      reconcilingSAMStatusesRef.current.set(rowIndex, expectedStatus)
+      const recordId = recordIdentity('NewOpportunitiesTable', opportunity)
+      if (expectedStatus === storedStatus || !recordId) return
+      if (reconcilingSAMStatusesRef.current.get(recordId) === expectedStatus) return
+      reconcilingSAMStatusesRef.current.set(recordId, expectedStatus)
       updateSAMStatus(opportunity, expectedStatus)
         .catch((error) => console.warn('[SAM] Pipeline status reconciliation failed:', error.message))
-        .finally(() => reconcilingSAMStatusesRef.current.delete(rowIndex))
+        .finally(() => reconcilingSAMStatusesRef.current.delete(recordId))
     })
   }, [loading, pipelineByOpportunityKey, samLoading, samOpps, updateSAMStatus])
 
@@ -744,8 +742,8 @@ export default function Opportunities({ toast }) {
   }, [])
 
   const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(reconciledSAMOpps.map((opportunity) =>
-    applySAMSnapshot(opportunity, samChangesByRow[String(opportunity['Notice ID'] || opportunity['Solicitation Number'] || '').trim()]?.latest)
-  )), [reconciledSAMOpps, samChangesByRow])
+    applySAMSnapshot(opportunity, samChangesById[String(opportunity['Notice ID'] || opportunity['Solicitation Number'] || '').trim()]?.latest)
+  )), [reconciledSAMOpps, samChangesById])
   const samSearchIndex = useMemo(() => buildSearchIndex(currentSAMOpps), [currentSAMOpps])
   const samRowsMatchingSearch = useMemo(
     () => new Set(filterSearchIndex(samSearchIndex, search)),
@@ -886,9 +884,9 @@ export default function Opportunities({ toast }) {
   }
 
   const handleToggleFlag = async (row) => {
-    const rowIndex = recordIdentity('NewOpportunitiesTable', row)
-    if (flaggingRowsRef.current.has(rowIndex)) return
-    flaggingRowsRef.current.add(rowIndex)
+    const recordId = recordIdentity('NewOpportunitiesTable', row)
+    if (flaggingRowsRef.current.has(recordId)) return
+    flaggingRowsRef.current.add(recordId)
     setFlaggingRows(new Set(flaggingRowsRef.current))
     saveScroll()
     try {
@@ -896,7 +894,7 @@ export default function Opportunities({ toast }) {
     } catch (error) {
       toast?.error(`Could not update the team flag: ${error.message}`)
     } finally {
-      flaggingRowsRef.current.delete(rowIndex)
+      flaggingRowsRef.current.delete(recordId)
       setFlaggingRows(new Set(flaggingRowsRef.current))
     }
   }
@@ -1003,7 +1001,7 @@ export default function Opportunities({ toast }) {
   const samStatusBadge = (status) => <DiscoveryReviewBadge state={status} />
 
   const samChangeBadge = (opportunity) => {
-    const change = samChangesByRow[opportunity._rowIndex]?.change
+    const change = samChangesById[recordIdentity('NewOpportunitiesTable', opportunity)]?.change
     if (!change || change.reviewedAt) return null
     return (
       <button

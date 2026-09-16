@@ -126,12 +126,10 @@ export default function SAMOpportunityDetail({ toast }) {
   const archiveStartedRef = useRef(false)
   const detailRequestRef = useRef(0)
   const decodedNoticeId = decodeURIComponent(routeNoticeId)
-  const rowParam = searchParams.get('row')
-  const rowIndex = rowParam !== null && /^\d+$/.test(rowParam) ? Number(rowParam) : null
   const returnCandidate = searchParams.get('returnTo') || '/opportunities?tab=New&source=sam'
   const returnTo = returnCandidate.startsWith('/opportunities') ? returnCandidate : '/opportunities?tab=New&source=sam'
 
-  const row = useMemo(() => selectSAMDiscoveryRow(opportunities, decodedNoticeId, rowIndex), [decodedNoticeId, opportunities, rowIndex])
+  const row = useMemo(() => selectSAMDiscoveryRow(opportunities, decodedNoticeId), [decodedNoticeId, opportunities])
   const rowRef = useRef(row)
   rowRef.current = row
   const { noticeId: savedNoticeId, solicitationNumber: savedSolicitationNumber, samUrl: savedSamUrl } = samDetailLookupInput(row, decodedNoticeId)
@@ -357,7 +355,7 @@ export default function SAMOpportunityDetail({ toast }) {
           {!linkedPipeline && row && row.Status !== 'dismissed' && <button className="btn btn-primary" onClick={() => add('New')} disabled={actioning}>+ Add to pipeline</button>}
           {!linkedPipeline && row && row.Status !== 'dismissed' && <button className="btn" onClick={() => add('Tracking')} disabled={actioning}>Track</button>}
           {row && <button className={row.Status === 'dismissed' ? 'btn' : styles.dismiss} onClick={changeDismissed} disabled={actioning}>{row.Status === 'dismissed' ? 'Restore' : 'Dismiss'}</button>}
-          {linkedPipeline && <button className="btn btn-primary" onClick={() => navigate(`/opportunities/${encodeURIComponent(linkedPipeline['Contract Number / Notice ID'])}?row=${linkedPipeline._rowIndex}`)}>View in pipeline</button>}
+          {linkedPipeline && <button className="btn btn-primary" onClick={() => navigate(`/opportunities/${encodeURIComponent(linkedPipeline['Contract Number / Notice ID'])}`)}>View in pipeline</button>}
           {detail.samUrl && <a className="btn" href={detail.samUrl} target="_blank" rel="noreferrer">Open on SAM.gov</a>}
         </div>
       </section>

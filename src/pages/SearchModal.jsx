@@ -168,7 +168,7 @@ export default function SearchModal({ onClose }) {
 
   const selectableResults = useMemo(() => [
     ...results.opportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}` })),
-    ...results.archivedOpportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}?row=${o._rowIndex}` })),
+    ...results.archivedOpportunities.map((o) => ({ path: `/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}` })),
     ...results.samOpportunities.map((opportunity) => ({
       path: `/opportunities?tab=New&search=${encodeURIComponent(newOpportunityNoticeId(opportunity) || opportunity.Title || '')}`,
     })),
@@ -176,13 +176,13 @@ export default function SearchModal({ onClose }) {
       path: `/opportunities/ebuy/${encodeURIComponent(ebuyOpportunityId(opportunity))}`,
     })),
     ...results.partners.map((partner) => ({ path: partnerProfilePath(partner) })),
-    ...results.contacts.map((c) => ({ path: `/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}` })),
+    ...results.contacts.map((c) => ({ path: `/contacts?contactId=${encodeURIComponent(c.ContactID || '')}` })),
     ...results.tasks.map((t) => ({ path: `/tasks?taskId=${encodeURIComponent(t.TaskID)}` })),
     ...results.interactions.map((interaction) => ({
-      path: `/contacts?contactId=${encodeURIComponent(interaction.contact.ContactID || interaction.contact._rowIndex)}&interactionId=${encodeURIComponent(interaction.InteractionID || interaction._rowIndex)}`,
+      path: `/contacts?contactId=${encodeURIComponent(interaction.contact.ContactID || '')}&interactionId=${encodeURIComponent(interaction.InteractionID || '')}`,
     })),
     ...results.notes.map((n) => ({
-      path: n.opportunity ? `/opportunities/${encodeURIComponent(n.opportunity['Contract Number / Notice ID'])}?row=${n.opportunity._rowIndex}` : null,
+      path: n.opportunity ? `/opportunities/${encodeURIComponent(n.opportunity['Contract Number / Notice ID'])}` : null,
     })),
   ], [results])
 
@@ -274,10 +274,10 @@ export default function SearchModal({ onClose }) {
               <div className={styles.groupLabel}>Archived opportunities</div>
               {results.archivedOpportunities.map((o, i) => {
                 const index = results.opportunities.length + i
-                return <button key={o['Opportunity ID'] || o._rowIndex}
+                return <button key={o['Opportunity ID'] || o['Contract Number / Notice ID']}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                   onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => go(`/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}?row=${o._rowIndex}`)}>
+                  onClick={() => go(`/opportunities/${encodeURIComponent(o['Contract Number / Notice ID'])}`)}>
                   <div className={styles.resultTitle}>{o['Project Title / Description*']}</div>
                   <div className={styles.resultMeta}>{o['Contract Number / Notice ID']} · Archived</div>
                   <div className={styles.resultMeta}>{o['Department*'] || o['Agency*'] || '-'}</div>
@@ -298,7 +298,7 @@ export default function SearchModal({ onClose }) {
                 const index = results.opportunities.length + results.archivedOpportunities.length + i
                 const identifier = newOpportunityNoticeId(opportunity)
                 return (
-                  <button key={(opportunity._rowIndex ?? identifier) || opportunity.Title || i}
+                  <button key={identifier}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => go(`/opportunities?tab=New&search=${encodeURIComponent(identifier || opportunity.Title || '')}`)}>
@@ -348,7 +348,7 @@ export default function SearchModal({ onClose }) {
               {results.partners.map((partner, i) => {
                 const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.ebuyOpportunities.length + i
                 return (
-                  <button key={partner._rowIndex || partner['Partner Name']}
+                  <button key={partner['Partner ID'] || partner['UEI Number'] || partner['Partner Name']}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => go(partnerProfilePath(partner))}>
@@ -376,7 +376,7 @@ export default function SearchModal({ onClose }) {
                 <button key={c.ContactID || c.Name}
                   className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                   onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => go(`/contacts?contactId=${encodeURIComponent(c.ContactID || c._rowIndex)}`)}>
+                  onClick={() => go(`/contacts?contactId=${encodeURIComponent(c.ContactID || '')}`)}>
                   <div className={styles.resultTitle}>{c.Name}</div>
                   <div className={styles.resultMeta}>{c.Email || '-'}</div>
                   <div className={styles.resultMeta}>{c.Agency || '-'}</div>
@@ -424,10 +424,10 @@ export default function SearchModal({ onClose }) {
                 const index = results.opportunities.length + results.archivedOpportunities.length + results.samOpportunities.length + results.ebuyOpportunities.length + results.partners.length + results.contacts.length + results.tasks.length + i
                 const preview = String(interaction.Notes || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
-                  <button key={interaction.InteractionID || interaction._rowIndex}
+                  <button key={interaction.InteractionID || ''}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                     onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => go(`/contacts?contactId=${encodeURIComponent(interaction.contact.ContactID || interaction.contact._rowIndex)}&interactionId=${encodeURIComponent(interaction.InteractionID || interaction._rowIndex)}`)}>
+                    onClick={() => go(`/contacts?contactId=${encodeURIComponent(interaction.contact.ContactID || '')}&interactionId=${encodeURIComponent(interaction.InteractionID || '')}`)}>
                     <div className={styles.resultTitle}>{interaction.contact.Name}</div>
                     <div className={styles.resultMeta}>{interaction['Interaction Type'] || 'Interaction'}{interaction['Interaction Date'] ? ` · ${formatDate(interaction['Interaction Date'])}` : ''}</div>
                     <div className={styles.resultMeta}>{preview || 'No notes'}</div>
@@ -451,11 +451,11 @@ export default function SearchModal({ onClose }) {
                 const title = target?.['Project Title / Description*'] || n.ContractNumber || 'Unlinked opportunity'
                 const preview = String(n.NoteText || '').replace(/\s+/g, ' ').slice(0, 120)
                 return (
-                  <button key={n.NoteID || n._rowIndex}
+                  <button key={n.NoteID}
                     className={`${styles.result} ${activeIndex === index ? styles.resultActive : ''}`}
                     onMouseEnter={() => setActiveIndex(index)}
                     disabled={!target}
-                    onClick={() => target && go(`/opportunities/${encodeURIComponent(target['Contract Number / Notice ID'])}?row=${target._rowIndex}`)}>
+                    onClick={() => target && go(`/opportunities/${encodeURIComponent(target['Contract Number / Notice ID'])}`)}>
                     <div className={styles.resultTitle}>{title}</div>
                     <div className={styles.resultMeta}>{preview}{preview.length >= 120 ? '…' : ''}</div>
                     <div className={styles.resultMeta}>{n.ContractNumber || 'No linked opportunity'}</div>

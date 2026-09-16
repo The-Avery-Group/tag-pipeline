@@ -176,11 +176,11 @@ export default function OpportunityDossier() {
       </Section>
 
       <Section title="Capture intelligence">
-        {notesLoading ? <div className="skeleton" style={{ height: 70 }} /> : notes.length ? <div className={styles.noteList}>{notes.map((note) => <article key={note.NoteID || note._rowIndex} className={styles.note}><div><strong>{note.Author || 'Unknown author'}</strong><time>{formatDate(note.Date || note.CreatedDate)}</time></div><RichText value={note.NoteText} /></article>)}</div> : <p className="text-muted text-sm">No notes have been added.</p>}
+        {notesLoading ? <div className="skeleton" style={{ height: 70 }} /> : notes.length ? <div className={styles.noteList}>{notes.map((note) => <article key={note.NoteID} className={styles.note}><div><strong>{note.Author || 'Unknown author'}</strong><time>{formatDate(note.Date || note.CreatedDate)}</time></div><RichText value={note.NoteText} /></article>)}</div> : <p className="text-muted text-sm">No notes have been added.</p>}
       </Section>
 
       <Section title="Tasks and activity">
-        {tasksLoading ? <div className="skeleton" style={{ height: 60 }} /> : tasks.length ? <div className={styles.taskList}>{tasks.map((task) => <div key={task.TaskID || task._rowIndex} className={styles.task}><div><strong>{task.Title}</strong><span>{[task.AssignedTo, task.Priority, task.DueDate && `Due ${formatDate(task.DueDate)}`].filter(Boolean).join(' · ')}</span></div><span className="badge badge-tracking">{task.Status || 'To do'}</span></div>)}</div> : <p className="text-muted text-sm">No tasks for this opportunity.</p>}
+        {tasksLoading ? <div className="skeleton" style={{ height: 60 }} /> : tasks.length ? <div className={styles.taskList}>{tasks.map((task) => <div key={task.TaskID} className={styles.task}><div><strong>{task.Title}</strong><span>{[task.AssignedTo, task.Priority, task.DueDate && `Due ${formatDate(task.DueDate)}`].filter(Boolean).join(' · ')}</span></div><span className="badge badge-tracking">{task.Status || 'To do'}</span></div>)}</div> : <p className="text-muted text-sm">No tasks for this opportunity.</p>}
       </Section>
 
       <div ref={filesRef} className={styles.focusTarget}><Section title={`Files${fileData.files?.length ? ` · ${fileData.files.length}` : ''}`}>

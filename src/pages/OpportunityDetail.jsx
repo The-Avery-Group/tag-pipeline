@@ -245,7 +245,7 @@ function officeMatch(left, right) {
 }
 
 function contactKey(contact) {
-  return String(contact?.ContactID || contact?._rowIndex || contact?.Email || contact?.Name || '')
+  return String(contact?.ContactID || contact?.Email || contact?.Name || '')
 }
 
 function findIncumbentPartner(incumbentUEI, partners) {
@@ -391,8 +391,6 @@ export default function OpportunityDetail({ toast }) {
   const { contractNumber } = useParams()
   const [searchParams] = useSearchParams()
   const decodedCN = decodeURIComponent(contractNumber || '')
-  const rowParam = searchParams.get('row')
-  const routeRowIndex = rowParam !== null && /^\d+$/.test(rowParam) ? Number(rowParam) : null
   const returnTo = opportunityReturnPath(searchParams.get('returnTo'))
   const navigate  = useNavigate()
   const { user }  = useAuth()
@@ -489,7 +487,7 @@ export default function OpportunityDetail({ toast }) {
           .some((value) => normalizeOpportunityKey(value) === normalizeOpportunityKey(decodedCN))
       )
     },
-    [allPipeline, decodedCN, routeRowIndex]
+    [allPipeline, decodedCN]
   )
   const archived = /^(yes|true|1)$/i.test(String(opp?.Archived || '').trim())
   const opportunityRelationships = useOpportunityRelationships(
@@ -922,7 +920,7 @@ export default function OpportunityDetail({ toast }) {
           : 'Saved'
       )
       if (newIdentifier !== opp[C.contractNum]) {
-        const detailParams = new URLSearchParams({ row: String(opp._rowIndex) })
+        const detailParams = new URLSearchParams()
         if (returnTo !== '/opportunities') detailParams.set('returnTo', returnTo)
         navigate(`/opportunities/${encodeURIComponent(newIdentifier)}?${detailParams.toString()}`, { replace: true })
       }
@@ -1198,7 +1196,7 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const openContactPanel = (contactRecord) => {
-    const contactId = String(contactRecord?.ContactID ?? contactRecord?._rowIndex ?? '').trim()
+    const contactId = String(contactRecord?.ContactID ?? '').trim()
     if (!contactId) return
     navigate(`/contacts?contactId=${encodeURIComponent(contactId)}`)
   }
@@ -1525,7 +1523,7 @@ export default function OpportunityDetail({ toast }) {
         {archived && <div className={styles.archivedNotice}>
           <span><strong>Archived opportunity</strong><small>Read-only · notes, tasks, drafts, and SharePoint files are retained.</small></span>
           <button className="btn btn-primary" onClick={async () => {
-            try { await restoreOpp(opp); toast?.success('Opportunity restored'); navigate(`/opportunities/${encodeURIComponent(decodedCN)}?row=${opp._rowIndex}`, { replace: true }) }
+            try { await restoreOpp(opp); toast?.success('Opportunity restored'); navigate(`/opportunities/${encodeURIComponent(decodedCN)}`, { replace: true }) }
             catch (error) { toast?.error(`Could not restore: ${error.message}`) }
           }}>Restore</button>
         </div>}

@@ -135,7 +135,7 @@ export default function EbuyOpportunityDetail({ toast }) {
           {inPipeline && <button className="btn btn-primary" onClick={() => {
             const keys = [opportunity.pipelineContractId, decodedRequestId].filter(Boolean).map((value) => String(value).trim().toLowerCase())
             const linked = pipeline.find((item) => keys.includes(String(item['Contract Number / Notice ID'] || '').trim().toLowerCase()))
-            if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}?row=${linked._rowIndex}`)
+            if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}`)
             else toast?.error('The linked pipeline opportunity could not be found. Refresh the pipeline and try again.')
           }}>Open pipeline</button>}
           {opportunity.reviewState !== 'dismissed' && <button className={styles.dismiss} onClick={() => changeState('dismissed')} disabled={actioning}>Dismiss</button>}
