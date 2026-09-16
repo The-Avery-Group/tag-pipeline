@@ -1,4 +1,16 @@
 // Explicit workbook grouping, never inferred from similar names or UEIs.
+export function groupPartnerVehicles(vehicles = []) {
+  const groups = new Map()
+  for (const vehicle of vehicles) {
+    const name = String(vehicle['Vehicle Name'] || '').trim().replace(/\s+/g, ' ')
+    const resolved = name && name.toLowerCase() !== 'unresolved vehicle'
+    const key = resolved ? `name:${name.toLowerCase()}` : `unresolved:${vehicle.PIID || vehicle['Record ID']}`
+    if (!groups.has(key)) groups.set(key, { key, name: resolved ? name : 'Unresolved vehicle', vehicles: [] })
+    groups.get(key).vehicles.push(vehicle)
+  }
+  return [...groups.values()]
+}
+
 export function partnerRefreshEnabled(partner) {
   return ['', 'yes'].includes(String(partner?.['USAspending Enabled'] || '').trim().toLowerCase())
 }
