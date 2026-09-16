@@ -8,6 +8,23 @@ import {
   workbookRetryDelay,
 } from '../src/services/workbookMutations.js'
 import { readFileSync } from 'node:fs'
+
+test('record navigation and UI selection do not depend on workbook row positions', () => {
+  const files = [
+    'pages/Opportunities.jsx', 'pages/SearchModal.jsx', 'pages/Dashboard.jsx',
+    'pages/OpportunityDetail.jsx', 'pages/SAMOpportunityDetail.jsx',
+    'pages/EbuyOpportunityDetail.jsx', 'pages/Contacts.jsx', 'pages/Tasks.jsx',
+    'pages/OpportunityDossier.jsx', 'components/Opportunity/EbuyDiscovery.jsx',
+    'components/Opportunity/FollowUpEmailComposer.jsx', 'hooks/useSAMChangeMonitor.js',
+  ]
+  for (const file of files) {
+    const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(source, /_rowIndex|\?row=|searchParams\.get\('row'\)/, file)
+  }
+  const opportunities = readFileSync(new URL('../src/pages/Opportunities.jsx', import.meta.url), 'utf8')
+  assert.match(opportunities, /samChangesById\[recordIdentity\('NewOpportunitiesTable', opportunity\)\]/)
+  assert.match(opportunities, /reconcilingSAMStatusesRef\.current\.set\(recordId, expectedStatus\)/)
+})
 import { recordIdentity, externallyChangedPatchedFields, mutationTarget } from '../src/utils/recordConflict.js'
 import { mutateWorkbookRecord } from '../workers/tag-pipeline-api/src/lib/graph.js'
 
@@ -109,6 +126,38 @@ test('no-op edit skips PATCH but refreshes the local row; conflicting edit never
   const conflict = rowHarness({ conflict: true })
   await assert.rejects(conflict.run(), /changed in Excel/)
   assert.deepEqual(conflict.calls, ['GET'])
+})
+
+test('missing Partner ID columns use the Graph add action and are not created twice', async () => {
+  const headers = ['Partner Name', 'UEI Number']
+  const writes = []
+  const deps = {
+    headerCache: new Map(), pendingHeaderReads: new Map(), pendingSchemas: new Map(), schemaCheckedAt: new Map(), cacheEpoch: 0,
+    graphFetch: async (path, options = {}) => {
+      if (options.method === 'POST') {
+        assert.equal(path, '/tables/PartnersTable/columns/add')
+        const { name } = JSON.parse(options.body)
+        assert.ok(!headers.includes(name))
+        headers.push(name); writes.push(name)
+        return { name }
+      }
+      assert.equal(path, '/tables/PartnersTable/columns')
+      return { value: headers.map(name => ({ name })) }
+    }, invalidate: () => {},
+  }
+  const section = graphSource.slice(graphSource.indexOf('async function getTableHeaders('), graphSource.indexOf('// ── Token helper')).replace('export async function', 'async function')
+  const ensure = new Function(...Object.keys(deps), `${section}; return ensureTableColumns`)(...Object.values(deps))
+  await Promise.all([ensure('PartnersTable', ['Partner ID', 'Legacy Partner References']), ensure('PartnersTable', ['Partner ID', 'Legacy Partner References'])])
+  assert.deepEqual(writes, ['Partner ID', 'Legacy Partner References'])
+})
+
+test('Partner ID setup failures expose the failed endpoint instead of a generic blank page', async () => {
+  const deps = {
+    ensurePartnerIdentities: async () => { throw Object.assign(new Error('Not found'), { status: 404, requestPath: '/tables/PartnersTable/columns/add', requestMethod: 'POST' }) },
+  }
+  const section = graphSource.slice(graphSource.indexOf('export async function getPartners()'), graphSource.indexOf('const PARTNER_VEHICLE_TABLE')).replace('export async function', 'async function')
+  const getPartners = new Function(...Object.keys(deps), `${section}; return getPartners`)(...Object.values(deps))
+  await assert.rejects(getPartners(), /Partner ID setup.*POST \/tables\/PartnersTable\/columns\/add, HTTP 404/)
 })
 
 test('concurrent and repeated schema checks share one header request', async () => {

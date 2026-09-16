@@ -20,6 +20,14 @@ test('SAM detail identifies a moved workbook row by notice rather than stale row
   assert.equal(selectSAMDiscoveryRow([correct], 'c'.repeat(32), 8), null)
 })
 
+test('SAM detail ignores legacy row hints even among matching notices', () => {
+  const notice = 'a'.repeat(32)
+  const first = { _rowIndex: 8, 'Notice ID': notice }
+  const duplicate = { _rowIndex: 2, 'Notice ID': notice }
+  assert.equal(selectSAMDiscoveryRow([first, duplicate], notice, 2), first)
+  assert.equal(selectSAMDiscoveryRow([{ ...first, _rowIndex: 99 }], notice)['Notice ID'], notice)
+})
+
 test('SAM detail recovers notice from the saved SAM URL and keeps solicitation routes out of noticeid', () => {
   const notice = 'a'.repeat(32)
   const row = { 'Notice ID': 'RFP-1', 'SAM.gov URL': `https://sam.gov/workspace/contract/opp/${notice}/view`, 'Solicitation Number': 'RFP-1' }
