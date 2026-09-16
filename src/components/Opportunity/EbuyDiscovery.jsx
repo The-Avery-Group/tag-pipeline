@@ -244,7 +244,7 @@ export default function EbuyDiscovery({ search, pipeline, pipelineLoading = fals
                       ? <button className={`${styles.action} ${styles.pipeline}`} onClick={() => {
                         const keys = [opportunity.pipelineContractId, opportunity.requestId].filter(Boolean).map((value) => String(value).trim().toLowerCase())
                         const linked = pipeline.find((row) => [row['Contract Number / Notice ID'], row['Opportunity ID']].some((value) => keys.includes(String(value || '').trim().toLowerCase())))
-                        if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}?row=${linked._rowIndex}`)
+                        if (linked) navigate(`/opportunities/${encodeURIComponent(linked['Contract Number / Notice ID'])}`)
                         else toast?.error('The linked pipeline record could not be found. Refresh the pipeline and try again.')
                       }}>Open pipeline</button>
                       : <button className={`${styles.action} ${styles.pipeline}`} onClick={() => addToPipeline(opportunity, 'New')} disabled={busy}>+ Pipeline</button>}
