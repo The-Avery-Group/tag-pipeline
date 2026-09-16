@@ -13,7 +13,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
-import { groupPartners, groupPartnerVehicles, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled, partnerRefreshDue, partnerRefreshQueue } from '@/utils/partnerGroups'
+import { groupPartners, groupPartnerVehicles, partnerVehicleHasEnded, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled, partnerRefreshDue, partnerRefreshQueue } from '@/utils/partnerGroups'
 import { getPartnerEnrichment, refreshPartnerEnrichment, refreshAllPartnerEnrichment } from '@/services/partnerWorkspaceService'
 import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
 import { dateOnly } from '@/utils/opportunityDates'
@@ -116,7 +116,8 @@ export default function Partners({ toast }) {
   const activeUEI = useRef(selectedUEI)
   activeUEI.current = selectedUEI
   const enrichment = enrichmentResult?.uei === selectedUEI ? enrichmentResult : null
-  const vehicleGroups = useMemo(() => groupPartnerVehicles(enrichment?.snapshot?.vehicles), [enrichment?.snapshot?.vehicles])
+  const vehicleToday = dateOnly(new Date())
+  const vehicleGroups = useMemo(() => groupPartnerVehicles((enrichment?.snapshot?.vehicles || []).filter(vehicle => !partnerVehicleHasEnded(vehicle, vehicleToday))), [enrichment?.snapshot?.vehicles, vehicleToday])
   const refreshJob = refreshJobs.find(job => job.partnerId ? job.partnerId === selected?.['Partner ID'] : job.uei === selectedUEI)
   const refreshing = ['queued', 'running'].includes(refreshJob?.status)
   const refreshEnabled = partnerRefreshEnabled(selected)
@@ -310,7 +311,8 @@ export default function Partners({ toast }) {
                   </div>
                 </details>)}
               </div>}
-              <p className={styles.researchNote}>Direct vehicle awards and reported parent references. References do not prove direct holding. Dates do not establish current ordering eligibility.</p>
+              {enrichment?.snapshot?.vehicles?.length > 0 && vehicleGroups.length === 0 && <p className="text-sm text-muted">All recorded vehicle contracts have a past end date.</p>}
+              <p className={styles.researchNote}>Past ordering or contract end dates are hidden. Unknown dates remain visible. Parent references do not prove direct holding or current ordering eligibility.</p>
             </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
             {sharedWorkspace.conflict && <p className="text-sm text-muted">This group has different folder links. Existing folders remain separate; select a subsidiary to view its files.</p>}
