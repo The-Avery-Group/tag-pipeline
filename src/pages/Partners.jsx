@@ -300,9 +300,10 @@ export default function Partners({ toast }) {
                   <summary>{group.name}{group.name === 'Unresolved vehicle' && ` (${group.vehicles[0].PIID || 'No PIID'})`}<span className={styles.vehicleCount}>{group.vehicles.length} contract{group.vehicles.length === 1 ? '' : 's'}</span></summary>
                   <div className={styles.vehicleTable} tabIndex={0} role="region" aria-label={`${group.name} contracts`}>
                     <table aria-label={`${group.name} contract numbers and dates`}>
-                      <thead><tr><th scope="col">Contract number / PIID</th><th scope="col">Current end date</th></tr></thead>
+                      <thead><tr><th scope="col">Contract number / PIID</th><th scope="col">Pool / service area</th><th scope="col">Current end date</th></tr></thead>
                       <tbody>{group.vehicles.map(vehicle => <tr key={vehicle['Record ID']}>
                         <td>{vehicle['Source Link'] ? <a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle.PIID}</a> : vehicle.PIID}</td>
+                        <td className={styles.vehicleDistinction}>{vehicle.distinction?.label || 'Not identified'}</td>
                         <td>{vehicleDate(vehicle['Current End Date'])}</td>
                       </tr>)}</tbody>
                     </table>
