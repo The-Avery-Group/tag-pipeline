@@ -1,5 +1,18 @@
 import { dateOnly } from './opportunityDates.js'
 
+// The partner refresh timestamp records a successful check of the snapshot.
+// Do not rewrite every vehicle just to advance its observation timestamp.
+export function partnerVehicleNeedsUpdate(existing, incoming) {
+  return Object.entries(incoming).some(([key, value]) => {
+    if (key === 'Last Seen') return false
+    const previous = existing[key]
+    if (['Current End Date', 'Potential End Date', 'Last Date to Order'].includes(key)) {
+      return dateOnly(previous) !== dateOnly(value)
+    }
+    return String(previous ?? '') !== String(value ?? '')
+  })
+}
+
 export function partnerVehicleHasEnded(vehicle, today = dateOnly(new Date())) {
   return ['Ordering Period End Date', 'Last Date to Order', 'Current End Date'].some(field => {
     const value = vehicle[field]
@@ -66,6 +79,19 @@ export function createPartnerRefreshQueue() {
   return {
     getSnapshot: () => snapshot,
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
+    remove(key) {
+      const job = jobs.get(key)
+      if (!job || job.status !== 'queued') return false
+      job.status = 'cancelled'; job.progress = 'Removed from queue'
+      emit()
+      return true
+    },
+    removeWaiting() {
+      for (const job of jobs.values()) if (job.status === 'queued') {
+        job.status = 'cancelled'; job.progress = 'Removed from queue'
+      }
+      emit()
+    },
     clearFinished: () => { for (const [uei, job] of jobs) if (!['queued', 'running'].includes(job.status)) jobs.delete(uei); emit() },
     enqueue(uei, name, operation, partnerId = '') {
       uei = String(uei || '').trim().toUpperCase()
@@ -76,6 +102,7 @@ export function createPartnerRefreshQueue() {
       const job = { uei, partnerId, name: name || uei, status: 'queued', progress: 'Waiting to refresh', error: '' }
       jobs.set(key, job)
       const execute = async () => {
+        if (job.status === 'cancelled') return { skipped: true, cancelled: true }
         job.status = 'running'; job.progress = 'Checking saved information…'; emit()
         try {
           const result = await operation(message => { job.progress = message; emit() })
