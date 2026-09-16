@@ -3,8 +3,24 @@ import assert from 'node:assert/strict'
 import { groupPartners, groupPartnerVehicles, sharedPartnerWorkspace, partnerProfilePath, partnerRefreshEnabled, partnerRefreshDue, createPartnerRefreshQueue } from '../src/utils/partnerGroups.js'
 import { fetchPartnerAwardEvidence, parentVehicleReference } from '../src/services/usaSpendingService.js'
 import { readFileSync } from 'node:fs'
-import { partnerVehicleDistinction } from '../src/utils/partnerGroups.js'
+import { partnerVehicleDistinction, partnerVehicleHasEnded } from '../src/utils/partnerGroups.js'
 import { mergeContractVehicleRules, resolveContractVehicle } from '../workers/tag-pipeline-api/src/lib/contractVehicleResolver.js'
+
+test('vehicle visibility excludes either past end date but retains today, future and unknown dates', () => {
+  const today = '2026-09-16'
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': '2025-03-01' }, today), true)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': '2031-11-14', 'Last Date to Order': '2026-09-15' }, today), true)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': '2026-09-15', 'Last Date to Order': '2031-11-14' }, today), true)
+  assert.equal(partnerVehicleHasEnded({ 'Ordering Period End Date': '2026-09-15' }, today), true)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': '2026-09-16' }, today), false)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': '2031-11-14' }, today), false)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': 45889 }, today), true)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': 'Not reported', 'Last Date to Order': '' }, today), false)
+  assert.equal(partnerVehicleHasEnded({ 'Current End Date': '2026-02-30' }, today), false)
+  assert.equal(partnerVehicleHasEnded({ 'Potential End Date': '2025-01-01' }, today), false)
+  const rows = [{ 'Vehicle Name': 'OASIS', 'Current End Date': '2025-03-01' }, { 'Vehicle Name': 'ASTRO', 'Current End Date': '2031-11-14' }]
+  assert.deepEqual(groupPartnerVehicles(rows.filter(row => !partnerVehicleHasEnded(row, today))).map(group => group.name), ['ASTRO'])
+})
 
 test('contract distinctions use verified exact mappings and existing vehicle variants', () => {
   const rules = mergeContractVehicleRules([])
