@@ -1,4 +1,4 @@
-import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from './graph.js'
+import { getAppOnlyGraphToken, mutateWorkbookRecord, graphWorkbookFetch, readWorkbookTable } from './graph.js'
 import { opportunityWorkspaceFolderName, organizationFolderKey, safeSharePointSegment, workspaceType } from './opportunityWorkspaceDomain.js'
 
 export const DEFAULT_WORKSPACE_DRIVE_ID = 'b!DvVPmhUD7k2Va33gQGDdB3rFM6P2zkVNvlMvEl7p-levrO3tXf_USZvsR_Sr0bTe'
@@ -700,10 +700,7 @@ export async function updatePipelineFolderLink(env, workspace, webUrl) {
   const values = [...row._values]
   while (values.length < headers.length) values.push('')
   values[folderIndex] = webUrl
-  await graphWorkbookFetch(env, driveId, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
-    method: 'PATCH',
-    body: JSON.stringify({ values: [values] }),
-  })
+  await mutateWorkbookRecord(env, driveId, token, 'PipelineTable', row, { 'Link to Folder': webUrl }, { headers })
   return { updated: true }
 }
 
@@ -740,9 +737,7 @@ export async function updatePipelineSAMFields(env, workspace, snapshot) {
     values[index] = value
     changed.push(name)
   }
-  if (changed.length) await graphWorkbookFetch(env, driveId, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
-    method: 'PATCH', body: JSON.stringify({ values: [values] }),
-  })
+  if (changed.length) await mutateWorkbookRecord(env, driveId, token, 'PipelineTable', row, Object.fromEntries(changed.map(key => [key, updates[key]])), { headers })
   return { updated: Boolean(changed.length), fields: changed }
 }
 
