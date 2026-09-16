@@ -15,6 +15,8 @@ export default function Topbar({
   const activeJob = jobs.find(job => job.status === 'running')
   const waiting = jobs.filter(job => job.status === 'queued').length
   const failed = jobs.filter(job => job.status === 'failed').length
+  const queueStatus = activeJob ? `Updating ${activeJob.name}` : waiting ? 'Partner updates queued' : 'Partner updates finished'
+  const queueCounts = [waiting > 0 && `${waiting} queued`, failed > 0 && `${failed} failed`].filter(Boolean).join(' · ')
 
   const handleFilter = () => {
     setFilterActive((v) => !v)
@@ -31,8 +33,9 @@ export default function Topbar({
         </div>
       </div>
       <div className={styles.actions}>
-        {jobs.length > 0 && <button className={`btn ${styles.queueButton}`} onClick={() => setQueueOpen(true)} title="Partner refresh queue" aria-label="Open partner refresh queue">
-          {activeJob ? `Updating ${activeJob.name}` : waiting ? 'Partner updates queued' : 'Partner updates finished'}{waiting > 0 ? ` · ${waiting} queued` : ''}{failed > 0 ? ` · ${failed} failed` : ''}
+        {jobs.length > 0 && <button className={`btn ${styles.queueButton}`} onClick={() => setQueueOpen(true)} title={[queueStatus, queueCounts].filter(Boolean).join(' · ')} aria-label={`Open partner refresh queue: ${queueStatus}${queueCounts ? `, ${queueCounts}` : ''}`}>
+          <span className={styles.queueStatus}>{queueStatus}</span>
+          {queueCounts && <span className={styles.queueCounts}>{queueCounts}</span>}
         </button>}
         {rightContent}
         {showFilter && (
