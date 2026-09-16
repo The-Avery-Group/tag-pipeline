@@ -13,7 +13,7 @@ import { usePipeline } from '@/hooks/usePipeline'
 import { useAsyncAction } from '@/hooks/useAsyncAction'
 import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import { buildSearchIndex, filterSearchIndex } from '@/utils/searchHelpers'
-import { groupPartners, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled, partnerRefreshDue, partnerRefreshQueue } from '@/utils/partnerGroups'
+import { groupPartners, groupPartnerVehicles, partnerGroupKey, sharedPartnerWorkspace, partnerRefreshEnabled, partnerRefreshDue, partnerRefreshQueue } from '@/utils/partnerGroups'
 import { getPartnerEnrichment, refreshPartnerEnrichment, refreshAllPartnerEnrichment } from '@/services/partnerWorkspaceService'
 import { formatDate, formatDateTime } from '@/utils/kpiHelpers'
 import { dateOnly } from '@/utils/opportunityDates'
@@ -116,6 +116,7 @@ export default function Partners({ toast }) {
   const activeUEI = useRef(selectedUEI)
   activeUEI.current = selectedUEI
   const enrichment = enrichmentResult?.uei === selectedUEI ? enrichmentResult : null
+  const vehicleGroups = useMemo(() => groupPartnerVehicles(enrichment?.snapshot?.vehicles), [enrichment?.snapshot?.vehicles])
   const refreshJob = refreshJobs.find(job => job.partnerId ? job.partnerId === selected?.['Partner ID'] : job.uei === selectedUEI)
   const refreshing = ['queued', 'running'].includes(refreshJob?.status)
   const refreshEnabled = partnerRefreshEnabled(selected)
@@ -294,7 +295,20 @@ export default function Partners({ toast }) {
               {refreshing && <p className={styles.researchSource} role="status">{refreshJob.status === 'queued' ? 'Queued for a background update.' : 'Updating in the background.'} You can continue using the CRM.</p>}
               {(enrichmentError || refreshJob?.error) && <p className="text-sm text-muted">{enrichmentError || refreshJob.error}</p>}
               <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
-              {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable} tabIndex={0} role="region" aria-label="Contract vehicles"><table aria-label="Reported contract vehicles and dates"><thead><tr><th scope="col">Contract vehicle / PIID</th><th scope="col">Current end date</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><span className={styles.vehiclePiid}>{vehicle.PIID}</span></td><td>{vehicleDate(vehicle['Current End Date'])}</td></tr>)}</tbody></table></div>}
+              {vehicleGroups.length > 0 && <div aria-label="Contract vehicles">
+                {vehicleGroups.map(group => <details className={styles.vehicleGroup} key={`${selectedUEI}:${group.key}`}>
+                  <summary>{group.name}{group.name === 'Unresolved vehicle' && ` (${group.vehicles[0].PIID || 'No PIID'})`}<span className={styles.vehicleCount}>{group.vehicles.length} contract{group.vehicles.length === 1 ? '' : 's'}</span></summary>
+                  <div className={styles.vehicleTable} tabIndex={0} role="region" aria-label={`${group.name} contracts`}>
+                    <table aria-label={`${group.name} contract numbers and dates`}>
+                      <thead><tr><th scope="col">Contract number / PIID</th><th scope="col">Current end date</th></tr></thead>
+                      <tbody>{group.vehicles.map(vehicle => <tr key={vehicle['Record ID']}>
+                        <td>{vehicle['Source Link'] ? <a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle.PIID}</a> : vehicle.PIID}</td>
+                        <td>{vehicleDate(vehicle['Current End Date'])}</td>
+                      </tr>)}</tbody>
+                    </table>
+                  </div>
+                </details>)}
+              </div>}
               <p className={styles.researchNote}>Direct vehicle awards and reported parent references. References do not prove direct holding. Dates do not establish current ordering eligibility.</p>
             </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
