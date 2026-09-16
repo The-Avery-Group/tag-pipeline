@@ -38,7 +38,7 @@ export default function OpportunityNotesSection({
   const fileInputRef = useRef(null)
   const [attachments, setAttachments] = useState([])
   const [fileError, setFileError] = useState('')
-  const editingNote = notes.find((note) => note._rowIndex === editingNoteId)
+  const editingNote = notes.find((note) => note.NoteID === editingNoteId)
   const canAdd = (Boolean(newNote.trim()) || attachments.length > 0) && !addingNote
   const progressPercent = useMemo(() => {
     if (!uploadProgress?.totalBytes) return 0
@@ -85,13 +85,13 @@ export default function OpportunityNotesSection({
               <div key={note.NoteID} className={styles.noteItem}>
                 <div className={styles.noteMeta} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>{note.Date} · {note.Author}</span>
-                  {!note._temp && editingNoteId !== note._rowIndex && (
+                  {!note._temp && editingNoteId !== note.NoteID && (
                     <button
                       type="button"
                       className="btn btn-ghost btn-icon"
                       style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--blue-600)', marginLeft: 'auto' }}
                       onClick={() => startEditNote(note)}
-                      disabled={savingNoteId !== null || deletingNoteId === note._rowIndex}
+                      disabled={savingNoteId !== null || deletingNoteId === note.NoteID}
                       aria-label="Edit note"
                       title="Edit note"
                     ><ActionIcon name="edit" /></button>
@@ -102,20 +102,20 @@ export default function OpportunityNotesSection({
                       className="btn btn-danger-ghost btn-icon"
                       style={{ width: 18, height: 18, padding: 0, fontSize: 11, color: 'var(--red-600)' }}
                       onClick={() => deleteNote(note)}
-                      disabled={deletingNoteId === note._rowIndex || savingNoteId !== null}
+                      disabled={deletingNoteId === note.NoteID || savingNoteId !== null}
                       aria-label="Delete note"
                       title="Delete note"
                     >
-                      {deletingNoteId === note._rowIndex ? '…' : <ActionIcon name="delete" />}
+                      {deletingNoteId === note.NoteID ? '…' : <ActionIcon name="delete" />}
                     </button>
                   )}
                 </div>
-                {editingNoteId === note._rowIndex
+                {editingNoteId === note.NoteID
                   ? <div ref={noteEditorRef} className={styles.noteEditor}>
-                      <AutoTextarea className="form-input" rows={3} value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} disabled={savingNoteId === note._rowIndex} />
+                      <AutoTextarea className="form-input" rows={3} value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} disabled={savingNoteId === note.NoteID} />
                       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                        <button type="button" className="btn btn-primary text-sm" onClick={() => saveNote(note)} disabled={savingNoteId === note._rowIndex || !noteDraft.trim()}>{savingNoteId === note._rowIndex ? 'Saving…' : 'Save note'}</button>
-                        <button type="button" className="btn text-sm" onClick={cancelEdit} disabled={savingNoteId === note._rowIndex}>Cancel</button>
+                        <button type="button" className="btn btn-primary text-sm" onClick={() => saveNote(note)} disabled={savingNoteId === note.NoteID || !noteDraft.trim()}>{savingNoteId === note.NoteID ? 'Saving…' : 'Save note'}</button>
+                        <button type="button" className="btn text-sm" onClick={cancelEdit} disabled={savingNoteId === note.NoteID}>Cancel</button>
                       </div>
                     </div>
                   : <div className={styles.noteText}><RichText value={note.NoteText} /></div>}
