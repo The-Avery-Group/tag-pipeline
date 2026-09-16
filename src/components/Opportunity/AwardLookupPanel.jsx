@@ -36,7 +36,7 @@ export default function AwardLookupPanel({
     setUpdating(piid, fieldKey, true)
     try {
       const value = field.column === columns.endDate ? dateOnly(field.value) : field.value
-      await updateOpp(opp._rowIndex, { [field.column]: value }, opp)
+      await updateOpp(opp, { [field.column]: value }, opp)
       setUpdated(piid, fieldKey)
       toast?.success(`${field.column.replace(/\*$/, '')} updated`)
     } catch (error) {
@@ -57,7 +57,7 @@ export default function AwardLookupPanel({
     }
     setUpdating(piid, fieldKey, true)
     try {
-      await updateOpp(opp._rowIndex, { [columns.otherLinks]: joinLinks([...existing, link]) }, opp)
+      await updateOpp(opp, { [columns.otherLinks]: joinLinks([...existing, link]) }, opp)
       setUpdated(piid, fieldKey)
       toast?.success('Award notice link added to other links')
     } catch (error) {

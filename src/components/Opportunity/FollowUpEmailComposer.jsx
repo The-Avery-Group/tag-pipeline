@@ -300,7 +300,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       setTemplates(loadedTemplates)
       setDrafts(loadedDrafts)
       if (!templateToPrepare && loadedTemplates.length) setTemplateToPrepare(loadedTemplates.find((item) => clean(item.Active).toLowerCase() !== 'no')?.['Template ID'] || '')
-      const repairs = reconciled.filter((item) => Object.keys(item.patch || {}).length && Number.isInteger(item.draft._rowIndex))
+      const repairs = reconciled.filter((item) => Object.keys(item.patch || {}).length && clean(item.draft['Draft ID']))
       if (repairs.length) {
         void Promise.allSettled(repairs.map((item) =>
           updateEmailFollowUpDraft(item.draft, item.patch, 'Automatic template sync')
@@ -349,7 +349,7 @@ export default function FollowUpEmailComposer({ opportunity, linkedContacts = []
       setForm(next)
       resetUndo()
     }
-  }, [selectedId, selected?._rowIndex])
+  }, [selectedId, selected?.['Draft ID']])
 
   useEffect(() => {
     const handleEditorShortcut = (event) => {
