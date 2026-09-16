@@ -159,7 +159,7 @@ export default function Contacts({ toast }) {
     const contactId = searchParams.get('contactId')
     if (!contactId) return
     const match = contacts.find((contact) =>
-      contact.ContactID === contactId || String(contact._rowIndex) === contactId
+      contact.ContactID === contactId
     )
     if (!match) return
     setSelected(match)
@@ -185,7 +185,7 @@ export default function Contacts({ toast }) {
   const saveEdit = async () => {
     setSaving(true)
     try {
-      await update(selected._rowIndex, form)
+      await update(selected, form)
       setSelected((prev) => ({ ...prev, ...form }))
       setEditing(false)
       toast?.success('Contact updated')
@@ -215,7 +215,7 @@ export default function Contacts({ toast }) {
 
   const handleDelete = async () => {
     try {
-      await deleteAction.run(() => remove(selected._rowIndex), {
+      await deleteAction.run(() => remove(selected), {
         onError: (err) => toast?.error(`Failed: ${err.message}`),
       })
       toast?.success('Contact deleted')
@@ -230,7 +230,7 @@ export default function Contacts({ toast }) {
   const handleLinkOpp = async (opp) => {
     if (linkAction.isLoading) return
     try {
-      await linkAction.run(() => addContactToPOC(opp._rowIndex, opp[C_POC], selected.Name), {
+      await linkAction.run(() => addContactToPOC(opp, opp[C_POC], selected.Name), {
         onError: (err) => toast?.error(`Failed: ${err.message}`),
       })
       toast?.success('Opportunity linked')
@@ -242,7 +242,7 @@ export default function Contacts({ toast }) {
 
   const handleUnlinkOpp = async (opp) => {
     try {
-      await unlinkAction.run(opp[C_CN], () => removeContactFromPOC(opp._rowIndex, opp[C_POC], selected.Name), {
+      await unlinkAction.run(opp[C_CN], () => removeContactFromPOC(opp, opp[C_POC], selected.Name), {
         onError: (err) => toast?.error(`Failed: ${err.message}`),
       })
       toast?.success('Opportunity unlinked')
