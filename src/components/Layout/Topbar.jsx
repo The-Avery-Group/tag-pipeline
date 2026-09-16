@@ -62,11 +62,11 @@ export default function Topbar({
       </div>
       {queueOpen && <Modal title="Partner refresh queue" onClose={() => setQueueOpen(false)}>
         <p className={styles.queueHelp}>Updates continue as you move around the CRM. Closing or reloading this browser tab interrupts the queue.</p>
-        <ul className={styles.queueList}>{jobs.map(job => <li key={job.uei}>
-          <Link to={`/partners?partner=${encodeURIComponent(job.uei)}`} onClick={() => setQueueOpen(false)}>{job.name}</Link>
+        <ul className={styles.queueList}>{jobs.map(job => <li key={job.partnerId || job.uei}>
+          <Link to={`/partners?partner=${encodeURIComponent(job.partnerId || job.uei)}`} onClick={() => setQueueOpen(false)}>{job.name}</Link>
           <span>{job.status === 'queued' ? 'Queued' : job.status === 'failed' ? job.error : job.progress}</span>
           {job.status === 'failed' && <button className="btn text-sm" onClick={() => {
-            import('@/services/partnerWorkspaceService').then(module => module.refreshPartnerEnrichment(job.uei, { name: job.name })).catch(() => {})
+            import('@/services/partnerWorkspaceService').then(module => module.refreshPartnerEnrichment(job.uei, { name: job.name, partnerId: job.partnerId })).catch(() => {})
           }}>Retry</button>}
         </li>)}</ul>
         <button className="btn text-sm" onClick={() => { partnerRefreshQueue.clearFinished(); if (!activeJob && !waiting) setQueueOpen(false) }}>Clear finished results</button>
