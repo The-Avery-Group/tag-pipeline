@@ -7,7 +7,7 @@ import {
   normalizedIdentifier,
   recordDate,
 } from './awards.js'
-import { getAppOnlyGraphToken, graphWorkbookFetch, readWorkbookTable } from '../lib/graph.js'
+import { getAppOnlyGraphToken, mutateWorkbookRecord, graphWorkbookFetch, readWorkbookTable } from '../lib/graph.js'
 import {
   CONTRACT_VEHICLE_RULE_HEADERS,
   DEFAULT_CONTRACT_VEHICLE_RULES,
@@ -236,6 +236,7 @@ export function summarizeAwardFamily(records, now = new Date()) {
     awardType: latest(sorted, (record) => record?.coreData?.awardOrIDVType?.name),
     solicitationNumber: latest(sorted, (record) => record?.coreData?.solicitationId),
     referencedIdvPiid: latest(sorted, (record) => record?.contractId?.referencedIDVPiid),
+    referencedIdvAgencyCode: latest(sorted, (record) => record?.contractId?.referencedIDVSubtier?.code),
     fiscalYear: latest(sorted, (record) => record?.awardDetails?.dates?.fiscalYear),
     setAside: latest(sorted, (record) => record?.coreData?.competitionInformation?.typeOfSetAside?.name),
     samLink: buildSamGovLink(latestRecord),
@@ -751,9 +752,7 @@ async function saveContractVehicleRule(env, input) {
   const existing = rules.find((rule) => clean(rule.RULE_ID) === ruleId)
   const values = CONTRACT_VEHICLE_RULE_HEADERS.map((header) => record[header] ?? '')
   if (existing) {
-    await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${VEHICLE_RULES_TABLE}/rows/itemAt(index=${existing._rowIndex})`, {
-      method: 'PATCH', body: JSON.stringify({ values: [values] }),
-    })
+    await mutateWorkbookRecord(env, DRIVE_ID, token, VEHICLE_RULES_TABLE, existing, record, { headers: CONTRACT_VEHICLE_RULE_HEADERS })
   } else {
     await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/${VEHICLE_RULES_TABLE}/rows/add`, {
       method: 'POST', body: JSON.stringify({ index: null, values: [values] }),
@@ -786,9 +785,7 @@ export async function backfillPipelineVehicleNames(env, rules = null, limit = 40
     const values = [...row._values]
     while (values.length < headers.length) values.push('')
     values[vehicleIndex] = resolution.vehicleName
-    await graphWorkbookFetch(env, DRIVE_ID, token, `/tables/PipelineTable/rows/itemAt(index=${row._rowIndex})`, {
-      method: 'PATCH', body: JSON.stringify({ values: [values] }),
-    })
+    await mutateWorkbookRecord(env, DRIVE_ID, token, 'PipelineTable', row, { 'Contract Vehicle': resolution.vehicleName }, { headers })
     updated += 1
   }
   return { updated, remaining: Math.max(0, candidates.length - updated) }
@@ -1214,6 +1211,7 @@ export async function startExpiringContractsRefresh(env, { agencies, scheduledTi
 }
 
 export function inSelectedRange(contract, range, now = new Date()) {
+  if (range === 'all') return true
   const [minimum, maximum] = clean(range || '6-12').split('-').map(Number)
   const date = dateValue(contract.ultimateCompletionDate)
   const minimumMonths = Number.isFinite(minimum) ? minimum : 6
