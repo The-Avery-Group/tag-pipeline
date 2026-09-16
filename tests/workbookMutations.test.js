@@ -8,9 +8,63 @@ import {
   workbookRetryDelay,
 } from '../src/services/workbookMutations.js'
 import { readFileSync } from 'node:fs'
-import { recordIdentity, externallyChangedPatchedFields } from '../src/utils/recordConflict.js'
+import { recordIdentity, externallyChangedPatchedFields, mutationTarget } from '../src/utils/recordConflict.js'
+import { mutateWorkbookRecord } from '../workers/tag-pipeline-api/src/lib/graph.js'
 
 const graphSource = readFileSync(new URL('../src/services/graphService.js', import.meta.url), 'utf8')
+
+test('Partner IDs migrate once, survive corrections and resume without rewriting completed IDs', async () => {
+  const rows = [{ 'UEI Number': 'ABC123456789', 'Partner Name': 'One', _rowIndex: 0 }, { 'Partner Name': 'No UEI yet', _rowIndex: 1 }]
+  const writes = []
+  const deps = { recordIdentity, normalizeTableHeader: key => key.toLowerCase().replace(/[^a-z0-9]/g, ''),
+    ensureTableColumns: async () => ({ headers: ['Partner ID', 'UEI Number', 'Partner Name', 'Legacy Partner References'] }),
+    getSheetRows: async () => rows.map(row => ({ ...row })), invalidate: () => {},
+    updateRow: async (table, target, patch) => { const row = mutationTarget(table, recordIdentity(table, target), rows); writes.push(patch); Object.assign(rows.find(item => item._rowIndex === row._rowIndex), patch) },
+  }
+  const source = graphSource.slice(graphSource.indexOf('let partnerIdentityMigration ='), graphSource.indexOf('export async function getPartners()'))
+  const migrate = new Function(...Object.keys(deps), `${source}; return ensurePartnerIdentities`)(...Object.values(deps))
+  await Promise.all([migrate(), migrate()])
+  assert.equal(writes.length, 2)
+  assert.match(rows[0]['Partner ID'], /^P-[a-f0-9]{32}$/)
+  const id = rows[0]['Partner ID']
+  rows[0]['UEI Number'] = 'DEF123456789'
+  await migrate()
+  assert.equal(writes.length, 2)
+  assert.equal(rows[0]['Partner ID'], id)
+  assert.equal(rows[0]['Legacy Partner References'], 'ABC123456789')
+})
+
+test('background jobs relocate by ID and preserve unrelated live fields', async t => {
+  const headers = ['ContactID', 'Name', 'Notes']
+  const writes = []
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const path = String(url)
+    if (options.method === 'PATCH') { writes.push({ path, values: JSON.parse(options.body).values }); return Response.json({}) }
+    if (path.endsWith('/columns')) return Response.json({ value: headers.map(name => ({ name })) })
+    if (path.includes('/rows?')) return Response.json({ value: [{ index: 8, values: [['C1', 'Old name', 'New note from Excel']] }] })
+    if (path.endsWith('/rows/itemAt(index=0)')) return Response.json({ values: [['OTHER', 'Other person', 'Do not touch']] })
+    throw new Error(`Unexpected call ${path}`)
+  })
+  await mutateWorkbookRecord({ WORKBOOK_ID: 'test' }, 'drive', 'token', 'ContactsTable', { _rowIndex: 0, ContactID: 'C1', Name: 'Old name' }, { Name: 'New name' }, { headers })
+  assert.equal(writes.length, 1)
+  assert.match(writes[0].path, /index=8/)
+  assert.deepEqual(writes[0].values, [['C1', 'New name', 'New note from Excel']])
+})
+
+test('background deletion cannot delete a restored or duplicate record', async t => {
+  const headers = ['Notice ID', 'Status']
+  let duplicates = false
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    assert.notEqual(options.method, 'DELETE')
+    if (String(url).endsWith('/columns')) return Response.json({ value: headers.map(name => ({ name })) })
+    if (String(url).includes('/rows?')) return Response.json({ value: [{ index: 1, values: [['N1', 'new']] }, { index: 2, values: [['N1', 'dismissed']] }] })
+    return Response.json({ values: [[duplicates ? 'OTHER' : 'N1', 'new']] })
+  })
+  const run = () => mutateWorkbookRecord({ WORKBOOK_ID: 'test' }, 'drive', 'token', 'NewOpportunitiesTable', { _rowIndex: 0, 'Notice ID': 'N1', Status: 'dismissed' }, {}, { headers, remove: true, guard: row => row.Status === 'dismissed' })
+  await assert.rejects(run(), /Record changed/)
+  duplicates = true
+  await assert.rejects(run(), /Duplicate/)
+})
 function rowHarness({ moved = false, missingIndex = false, conflict = false, unchanged = false } = {}) {
   const original = { ContactID: 'C1', Name: 'Original', Notes: 'Old', _rowIndex: 0 }
   const live = { ContactID: 'C1', Name: conflict ? 'Someone else' : unchanged ? 'Updated' : 'Original', Notes: 'Keep newest notes', _rowIndex: moved || missingIndex ? 4 : 0 }
@@ -30,7 +84,7 @@ function rowHarness({ moved = false, missingIndex = false, conflict = false, unc
       return { values: [headers.map(header => row[header])] }
     },
   }
-  const fn = graphSource.slice(graphSource.indexOf('async function updateRowUnlocked('), graphSource.indexOf('export function updateRow('))
+  const fn = graphSource.slice(graphSource.indexOf('async function updateRowUnlocked('), graphSource.indexOf('export async function updateRow('))
   const update = new Function(...Object.keys(deps), `${fn}; return updateRowUnlocked`)(...Object.values(deps))
   return { original, headers, cache, calls, run: () => update('ContactsTable', 0, { Name: 'Updated' }, headers, { original }) }
 }
