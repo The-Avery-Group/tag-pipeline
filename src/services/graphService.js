@@ -151,7 +151,7 @@ export async function ensureTableColumns(tableName, columnNames = []) {
   const added = []
   for (const name of columnNames) {
     if (headers.includes(name)) continue
-    await graphFetch(`/tables/${tableName}/columns`, {
+    await graphFetch(`/tables/${tableName}/columns/add`, {
       method: 'POST',
       body: JSON.stringify({ name }),
     })
@@ -246,6 +246,8 @@ async function graphFetch(path, options = {}) {
     const graphError = new Error(err?.error?.message || fallback)
     graphError.status = res.status
     graphError.code = err?.error?.code || ''
+    graphError.requestPath = path
+    graphError.requestMethod = method
     if (res.headers.has('Retry-After')) graphError.retryAfterMs = workbookRetryDelay(res.headers.get('Retry-After'))
     if (retryableRead && attempt === 2) graphError.retryExhausted = true
     throw graphError
@@ -1232,7 +1234,14 @@ async function ensurePartnerIdentities() {
 }
 
 export async function getPartners() {
-  await ensurePartnerIdentities()
+  try {
+    await ensurePartnerIdentities()
+  } catch (error) {
+    const request = error.requestPath ? ` (${error.requestMethod || 'GET'} ${error.requestPath}${error.status ? `, HTTP ${error.status}` : ''})` : ''
+    const failure = new Error(`Partner ID setup could not complete: ${error.message}${request}. Retry after the workbook is available.`)
+    failure.cause = error
+    throw failure
+  }
   const rows = await getSheetRows('PartnersTable')
   // Excel table headers can carry invisible trailing spaces or different
   // capitalization after users edit a workbook. Map those harmless variants
