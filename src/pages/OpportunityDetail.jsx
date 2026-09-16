@@ -484,10 +484,7 @@ export default function OpportunityDetail({ toast }) {
 
   const opp = useMemo(
     () => {
-      const byRow = routeRowIndex !== null
-        ? allPipeline.find((o) => Number(o._rowIndex) === routeRowIndex)
-        : null
-      return byRow || allPipeline.find((o) =>
+      return allPipeline.find((o) =>
         [o[C.contractNum], o[C.solNum], o['Opportunity ID']]
           .some((value) => normalizeOpportunityKey(value) === normalizeOpportunityKey(decodedCN))
       )
@@ -807,7 +804,7 @@ export default function OpportunityDetail({ toast }) {
         [C.slideDeck]: linkDraft[C.slideDeck] || '',
         [C.otherLinks]: joinLinks(linkDraft.other.map(({ label, url }) => namedLinkLine(label, url)).filter(Boolean)),
       }
-      await updateOpp(opp._rowIndex, patch, opp)
+      await updateOpp(opp, patch, opp)
       let folderConnectionError = ''
       if (patch[C.folder] && patch[C.folder].trim() !== String(opp[C.folder] || '').trim()) {
         try {
@@ -833,7 +830,7 @@ export default function OpportunityDetail({ toast }) {
     if (!patch || Object.keys(patch).length === 0 || applyingSAMUpdate) return
     setApplyingSAMUpdate(true)
     try {
-      await updateOpp(opp._rowIndex, patch, opp)
+      await updateOpp(opp, patch, opp)
       await samChangeSuggestion.markReviewed()
       toast?.success('Pipeline updated with the latest SAM.gov information')
     } catch (error) {
@@ -861,7 +858,7 @@ export default function OpportunityDetail({ toast }) {
     try {
       // Strip any blank draft rows left over from editing Other Links
       // (e.g. an "+ Add link" row the user never filled in) before saving.
-      await updateOpp(opp._rowIndex, nextForm, opp)
+      await updateOpp(opp, nextForm, opp)
       toast?.success('Saved')
       setEditing(false)
       setForm(null)
@@ -887,7 +884,7 @@ export default function OpportunityDetail({ toast }) {
 
     setSaving(true)
     try {
-      const preview = await previewOpportunityRename(opp._rowIndex, cleanedRenameForm)
+      const preview = await previewOpportunityRename(opp, cleanedRenameForm)
       setRenamePreview(preview)
       setPendingRenameSave(cleanedRenameForm)
     } catch (err) {
@@ -903,7 +900,7 @@ export default function OpportunityDetail({ toast }) {
     setRenameProgress('Preparing linked record updates…')
     try {
       const preview = await renameOpportunityWithReferences(
-        opp._rowIndex,
+        opp,
         pendingRenameSave,
         ({ completed, total, label }) => {
           setRenameProgress(label === 'complete'
@@ -955,7 +952,7 @@ export default function OpportunityDetail({ toast }) {
   const handleDeleteOpportunity = async () => {
     setDeleting(true)
     try {
-      await archiveOpp(opp._rowIndex)
+      await archiveOpp(opp)
       toast?.success('Opportunity archived')
       navigate('/opportunities?tab=All&archived=1')
     } catch (err) {
@@ -970,7 +967,7 @@ export default function OpportunityDetail({ toast }) {
     setSaving(true)
     try {
       const nextFlagged = !isSAMOpportunityFlagged(opp[C.flagged])
-      await updateOpp(opp._rowIndex, { [C.flagged]: nextFlagged ? 'Yes' : '' })
+      await updateOpp(opp, { [C.flagged]: nextFlagged ? 'Yes' : '' })
       toast?.success(nextFlagged ? 'Opportunity flagged for the team' : 'Team flag removed')
     } catch (err) {
       toast?.error(`Could not update flag: ${err.message}`)
@@ -989,7 +986,7 @@ export default function OpportunityDetail({ toast }) {
     }
     setSaving(true)
     try {
-      await updateOpp(opp._rowIndex, {
+      await updateOpp(opp, {
         [C.submDate]: submittedDate.trim(),
         [C.phase]: 'Pending Award',
         [C.actPhase]: 'Proposal Submitted',
@@ -1010,7 +1007,7 @@ export default function OpportunityDetail({ toast }) {
     if (!phaseByOutcome[outcome] || saving) return
     setSaving(true)
     try {
-      await updateOpp(opp._rowIndex, { [C.outcome]: outcome, [C.phase]: phaseByOutcome[outcome] }, opp)
+      await updateOpp(opp, { [C.outcome]: outcome, [C.phase]: phaseByOutcome[outcome] }, opp)
       toast?.success(`Outcome recorded as ${outcome}`)
     } catch (error) {
       toast?.error(`Could not record outcome: ${error.message}`)
@@ -1107,7 +1104,7 @@ export default function OpportunityDetail({ toast }) {
       }
       patch[C.outcome] = 'Won'
       patch[C.phase] = 'Contract Awarded'
-      await updateOpp(opp._rowIndex, patch, opp)
+      await updateOpp(opp, patch, opp)
       setAwardOutcomeOpen(false); setAwardIdentifier(''); setAwardFiles([]); setAwardMatches([]); setAwardUploadProgress(null)
       toast?.success(archiveWarning ? `Award information saved. ${archiveWarning}` : 'Award information saved')
     } catch (error) {
@@ -1167,9 +1164,9 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const handleDeleteNote = async (note) => {
-    setDeletingNoteId(note._rowIndex)
+    setDeletingNoteId(note.NoteID)
     try {
-      await removeNote(note._rowIndex)
+      await removeNote(note)
       toast?.success('Note deleted')
     } catch (err) {
       toast?.error(`Failed to delete note: ${err.message}`)
@@ -1179,17 +1176,17 @@ export default function OpportunityDetail({ toast }) {
   }
 
   const startEditNote = (note) => {
-    if (note._temp || note._rowIndex === undefined) return
-    setEditingNoteId(note._rowIndex)
+    if (note._temp || note.NoteID === undefined) return
+    setEditingNoteId(note.NoteID)
     setNoteDraft(note.NoteText || '')
   }
 
   const handleSaveNote = async (note) => {
     const text = noteDraft.trim()
     if (!text || savingNoteId !== null) return
-    setSavingNoteId(note._rowIndex)
+    setSavingNoteId(note.NoteID)
     try {
-      await updateNote(note._rowIndex, { NoteText: text }, note)
+      await updateNote(note, { NoteText: text }, note)
       setEditingNoteId(null)
       setNoteDraft('')
       toast?.success('Note updated')
@@ -1209,7 +1206,7 @@ export default function OpportunityDetail({ toast }) {
   const handleTaskStatusChange = async (task, newStatus) => {
     setUpdatingTaskId(task.TaskID)
     try {
-      await updateTask(task._rowIndex, { Status: newStatus })
+      await updateTask(task, { Status: newStatus })
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
@@ -1225,7 +1222,7 @@ export default function OpportunityDetail({ toast }) {
     setContactSearch('')
     try {
       const nextPOC = addPOCName(opp[C.poc], c.Name)
-      await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      await retryIdempotent(() => updateOpp(opp, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} linked`)
     } catch (err) {
@@ -1243,7 +1240,7 @@ export default function OpportunityDetail({ toast }) {
     setLinkingContactId(key)
     try {
       const nextPOC = parsePOCNames(opp[C.poc]).filter((name) => name !== c.Name).join(', ')
-      await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      await retryIdempotent(() => updateOpp(opp, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       toast?.success(`${c.Name} unlinked`)
     } catch (err) {
@@ -1278,7 +1275,7 @@ export default function OpportunityDetail({ toast }) {
     try {
       creation = await addContactRecord({ ...contactData, Name: name })
       const nextPOC = addPOCName(opp[C.poc], name)
-      await retryIdempotent(() => updateOpp(opp._rowIndex, { [C.poc]: nextPOC }, opp))
+      await retryIdempotent(() => updateOpp(opp, { [C.poc]: nextPOC }, opp))
       setForm((prev) => prev ? { ...prev, [C.poc]: nextPOC } : prev)
       if (!quiet) toast?.success(`${name} added and linked`)
       return { ...creation, name, nextPOC, linked: true }
@@ -1396,7 +1393,7 @@ export default function OpportunityDetail({ toast }) {
     if (!deleteTaskTarget || deletingTaskId) return
     setDeletingTaskId(deleteTaskTarget.TaskID)
     try {
-      await removeTask(deleteTaskTarget._rowIndex)
+      await removeTask(deleteTaskTarget)
       toast?.success('Task deleted')
       setDeleteTaskTarget(null)
     } catch (error) {
@@ -1417,7 +1414,7 @@ export default function OpportunityDetail({ toast }) {
     setSavingTask(true)
     try {
       if (editingTask) {
-        await updateTask(editingTask._rowIndex, {
+        await updateTask(editingTask, {
           Title: taskForm.Title.trim(),
           Description: taskForm.Description,
           AssignedTo: taskForm.AssignedTo,
@@ -1528,7 +1525,7 @@ export default function OpportunityDetail({ toast }) {
         {archived && <div className={styles.archivedNotice}>
           <span><strong>Archived opportunity</strong><small>Read-only · notes, tasks, drafts, and SharePoint files are retained.</small></span>
           <button className="btn btn-primary" onClick={async () => {
-            try { await restoreOpp(opp._rowIndex); toast?.success('Opportunity restored'); navigate(`/opportunities/${encodeURIComponent(decodedCN)}?row=${opp._rowIndex}`, { replace: true }) }
+            try { await restoreOpp(opp); toast?.success('Opportunity restored'); navigate(`/opportunities/${encodeURIComponent(decodedCN)}?row=${opp._rowIndex}`, { replace: true }) }
             catch (error) { toast?.error(`Could not restore: ${error.message}`) }
           }}>Restore</button>
         </div>}

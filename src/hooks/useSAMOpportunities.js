@@ -1,3 +1,4 @@
+import { mutationTarget, sameRecord } from '@/utils/recordConflict'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   getSAMOpportunities, updateSAMOpportunity, updateSAMOpportunityFlag,
@@ -270,19 +271,19 @@ export function useSAMOpportunities() {
   // ── Optimistic status update ─────────────────────────────────────────
   // No rollback on failure — visual state stays changed for smooth UX.
   // Retries 3 times silently; throws after that so caller can toast.
-  const updateStatus = useCallback(async (rowIndex, status) => {
-    const original = opportunitiesRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+  const updateStatus = useCallback(async (target, status) => {
+    const original = mutationTarget('NewOpportunitiesTable', target, opportunitiesRef.current)
     const identity = String(original?.['Notice ID'] || original?.['Solicitation Number'] || '').trim()
     if (identity) pendingStatus.current.set(identity, status)
     setOpportunities((prev) =>
-      prev.map((o) => o._rowIndex === rowIndex ? { ...o, Status: status } : o)
+      prev.map((o) => sameRecord('NewOpportunitiesTable', o, target) ? { ...o, Status: status } : o)
     )
     try {
-      await retryIdempotent(() => updateSAMOpportunity(rowIndex, { Status: status }, original))
+      await retryIdempotent(() => updateSAMOpportunity(target, { Status: status }, original))
       setFailedStatuses((previous) => {
-        if (!previous[rowIndex]) return previous
+        if (!previous[identity]) return previous
         const next = { ...previous }
-        delete next[rowIndex]
+        delete next[identity]
         return next
       })
       debouncedInvalidate()
@@ -294,30 +295,30 @@ export function useSAMOpportunities() {
       // with the "no rollback on failure" behavior this hook already had.
       setFailedStatuses((previous) => ({
         ...previous,
-        [rowIndex]: { status, message: err.message || 'Could not save this status' },
+        [identity]: { status, message: err.message || 'Could not save this status' },
       }))
       throw err
     }
   }, [debouncedInvalidate])
 
-  const updateFlag = useCallback(async (rowIndex, flagged) => {
-    const original = opportunitiesRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+  const updateFlag = useCallback(async (target, flagged) => {
+    const original = mutationTarget('NewOpportunitiesTable', target, opportunitiesRef.current)
     if (!original) throw new Error('This SAM.gov opportunity could not be located')
     const identity = String(original['Notice ID'] || original['Solicitation Number'] || '').trim()
     if (identity) pendingFlags.current.set(identity, Boolean(flagged))
     setOpportunities((previous) => previous.map((opportunity) =>
-      opportunity._rowIndex === rowIndex
+      sameRecord('NewOpportunitiesTable', opportunity, target)
         ? { ...opportunity, Flagged: flagged ? 'Yes' : '' }
         : opportunity
     ))
     try {
-      await retryIdempotent(() => updateSAMOpportunityFlag(rowIndex, flagged, original))
+      await retryIdempotent(() => updateSAMOpportunityFlag(target, flagged, original))
       await publishCacheUpdate(['NewOpportunitiesTable'])
       verifyCacheInBackground(['NewOpportunitiesTable'])
     } catch (error) {
       if (identity) pendingFlags.current.delete(identity)
       setOpportunities((previous) => previous.map((opportunity) =>
-        opportunity._rowIndex === rowIndex
+        sameRecord('NewOpportunitiesTable', opportunity, target)
           ? { ...opportunity, Flagged: original.Flagged || '' }
           : opportunity
       ))
@@ -361,7 +362,7 @@ export function useSAMOpportunities() {
     verifyCacheInBackground(['PipelineTable'])
 
     const monitoringStatus = outlook === 'Tracking' ? 'tracked' : 'added_to_pipeline'
-    await updateStatus(row._rowIndex, monitoringStatus)
+    await updateStatus(row, monitoringStatus)
     // Register this watch with the background Worker now. Monitoring must not
     // depend on somebody returning to the New tab after the pursuit decision.
     if (WORKER_URL) {
@@ -533,12 +534,13 @@ export function useSAMOpportunities() {
     })()
   }, [pullProgress, triggerPull])
 
-  const dismiss   = useCallback((rowIndex) => updateStatus(rowIndex, 'dismissed'), [updateStatus])
-  const undismiss = useCallback((rowIndex, restoredStatus = 'new') => updateStatus(rowIndex, restoredStatus), [updateStatus])
-  const retryStatus = useCallback((rowIndex) => {
-    const failed = failedStatuses[rowIndex]
+  const dismiss   = useCallback((target) => updateStatus(target, 'dismissed'), [updateStatus])
+  const undismiss = useCallback((target, restoredStatus = 'new') => updateStatus(target, restoredStatus), [updateStatus])
+  const retryStatus = useCallback((target) => {
+    const original = mutationTarget('NewOpportunitiesTable', target, opportunitiesRef.current)
+    const failed = failedStatuses[String(original['Notice ID'] || original['Solicitation Number'] || '').trim()]
     if (!failed) return Promise.resolve()
-    return updateStatus(rowIndex, failed.status)
+    return updateStatus(target, failed.status)
   }, [failedStatuses, updateStatus])
 
   // Stable reference — only changes when data actually changes.

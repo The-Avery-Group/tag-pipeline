@@ -550,7 +550,7 @@ export default function Dashboard({ toast }) {
   const handleCloseTask = async (task) => {
     setClosingTask(task.TaskID)
     try {
-      await updateTask(task._rowIndex, { Status: 'Done' })
+      await updateTask(task, { Status: 'Done' })
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {

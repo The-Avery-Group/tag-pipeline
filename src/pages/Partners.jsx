@@ -116,7 +116,7 @@ export default function Partners({ toast }) {
   const activeUEI = useRef(selectedUEI)
   activeUEI.current = selectedUEI
   const enrichment = enrichmentResult?.uei === selectedUEI ? enrichmentResult : null
-  const refreshJob = refreshJobs.find(job => job.uei === selectedUEI)
+  const refreshJob = refreshJobs.find(job => job.partnerId ? job.partnerId === selected?.['Partner ID'] : job.uei === selectedUEI)
   const refreshing = ['queued', 'running'].includes(refreshJob?.status)
   const refreshEnabled = partnerRefreshEnabled(selected)
   useEffect(() => {
@@ -138,10 +138,10 @@ export default function Partners({ toast }) {
         const saved = await getPartnerEnrichment(selectedUEI)
         if (disposed) return
         setEnrichment(saved)
-        const existing = partnerRefreshQueue.getSnapshot().find(job => job.uei === selectedUEI)
+        const existing = partnerRefreshQueue.getSnapshot().find(job => job.partnerId ? job.partnerId === selected?.['Partner ID'] : job.uei === selectedUEI)
         if (!partnerRefreshDue(saved.partner) && !['queued', 'running'].includes(existing?.status)) return
         if (existing?.status === 'failed') return
-        const result = await refreshPartnerEnrichment(selectedUEI, { automatic: true, name: partnerName(saved.partner) })
+        const result = await refreshPartnerEnrichment(selectedUEI, { automatic: true, partnerId: saved.partner['Partner ID'], name: partnerName(saved.partner) })
         if (!disposed) setEnrichment(result)
       } catch (err) { if (!disposed) setEnrichmentError(err.message) }
     }
@@ -152,7 +152,7 @@ export default function Partners({ toast }) {
     const uei = selectedUEI
     setEnrichmentError('')
     try {
-      const result = await refreshPartnerEnrichment(uei, { name: partnerName(selected) })
+      const result = await refreshPartnerEnrichment(uei, { name: partnerName(selected), partnerId: selected?.['Partner ID'] })
       if (activeUEI.current === uei) setEnrichment(result)
       if (!result.skipped) toast?.success('Partner USAspending information saved to workbook')
     }
@@ -167,8 +167,8 @@ export default function Partners({ toast }) {
   ), [partnerSearchIndex, search])
   const groups = useMemo(() => groupPartners(partners), [partners])
   const visibleGroups = useMemo(() => {
-    const matches = new Set(filtered.map(p => p._rowIndex))
-    return groups.filter(group => group.members.some(p => matches.has(p._rowIndex)))
+    const matches = new Set(filtered.map(p => p['Partner ID']))
+    return groups.filter(group => group.members.some(p => matches.has(p['Partner ID'])))
   }, [groups, filtered])
   const selectedGroup = groups.find(group => group.key === partnerGroupKey(selected))
   const groupMembers = selectedGroup?.members || []
@@ -176,12 +176,12 @@ export default function Partners({ toast }) {
   const requestedPartnerUEI = String(searchParams.get('partner') || '').trim().toUpperCase()
   useEffect(() => {
     if (!requestedPartnerUEI) return
-    const match = partners.find((partner) => String(partner['UEI Number'] || '').trim().toUpperCase() === requestedPartnerUEI)
+    const match = partners.find((partner) => [partner['Partner ID'], partner['UEI Number']].some(value => String(value || '').trim().toUpperCase() === requestedPartnerUEI))
     if (match) {
-      setSelected((current) => current?._rowIndex === match._rowIndex ? { ...current, ...match } : match)
-      if (match._rowIndex !== selected?._rowIndex) setEditing(false)
+      setSelected((current) => current?.['Partner ID'] === match['Partner ID'] ? { ...current, ...match } : match)
+      if (match['Partner ID'] !== selected?.['Partner ID']) setEditing(false)
     }
-  }, [partners, requestedPartnerUEI, selected?._rowIndex])
+  }, [partners, requestedPartnerUEI, selected?.['Partner ID']])
   const matchedOpportunities = useMemo(() => {
     const uei = String(selected?.['UEI Number'] || '').trim().toUpperCase()
     const name = selected?.['Partner Name'] || ''
@@ -197,7 +197,7 @@ export default function Partners({ toast }) {
     setSelected(partner); setEditing(false)
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
-      next.set('partner', String(partner['UEI Number'] || '').trim().toUpperCase())
+      next.set('partner', String(partner['Partner ID'] || partner['UEI Number'] || '').trim())
       return next
     }, { replace: true })
   }
@@ -219,13 +219,13 @@ export default function Partners({ toast }) {
     const name = String(form['Partner Name'] || '').trim()
     const uei = String(form['UEI Number'] || '').trim().toUpperCase()
     if (!name || !uei) { toast?.error('Partner name and UEI number are required'); return }
-    if (partners.some((partner) => partner._rowIndex !== selected?._rowIndex && String(partner['UEI Number'] || '').trim().toUpperCase() === uei)) {
+    if (partners.some((partner) => partner['Partner ID'] !== selected?.['Partner ID'] && String(partner['UEI Number'] || '').trim().toUpperCase() === uei)) {
       toast?.error('A partner with that UEI already exists'); return
     }
     // Do not resubmit a stale copy of machine-owned fields or unknown workbook columns.
     const next = { ...Object.fromEntries(FIELDS.map(([key]) => [key, form[key] || ''])), 'Partner Name': name, 'UEI Number': uei }
     try {
-      await saveAction.run(() => selected ? update(selected._rowIndex, next, selected) : add(next), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
+      await saveAction.run(() => selected ? update(selected, next, selected) : add(next), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
       setSelected((current) => current ? { ...current, ...next } : null)
       setEditing(false)
       toast?.success(selected ? 'Partner updated' : 'Partner added')
@@ -238,8 +238,8 @@ export default function Partners({ toast }) {
   })
   const deletePartner = async () => {
     try {
-      await deleteAction.run(() => remove(deleteTarget._rowIndex, deleteTarget), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
-      if (selected?._rowIndex === deleteTarget._rowIndex) {
+      await deleteAction.run(() => remove(deleteTarget, deleteTarget), { onError: (err) => toast?.error(`Failed: ${err.message}`) })
+      if (selected?.['Partner ID'] === deleteTarget['Partner ID']) {
         setSelected(null)
         setSearchParams((current) => { const next = new URLSearchParams(current); next.delete('partner'); return next }, { replace: true })
       }
@@ -263,7 +263,7 @@ export default function Partners({ toast }) {
       <div className={`card ${styles.workspace}`}>
         <aside ref={listPanelRef} className={styles.listPanel}>
           <div className={styles.searchBar}><input className={styles.searchInput} placeholder="Search partners…" value={search} onChange={(event) => setSearchValue(event.target.value)} /><span>{visibleGroups.length}</span></div>
-          {loading ? <div className={styles.listMessage}>Loading partners…</div> : error ? <div className={styles.listMessage}>Could not load partners.<button className="btn btn-ghost text-sm" onClick={refresh}>Retry</button></div> : visibleGroups.length === 0 ? <div className={styles.listMessage}>{search ? 'No matches.' : 'No partners yet.'}</div> : <div className={styles.partnerList}>{visibleGroups.map(group => <button key={group.key} className={`${styles.listItem} ${selectedGroup?.key === group.key ? styles.listItemActive : ''}`} onClick={() => select(group.members.find(p => filtered.some(match => match._rowIndex === p._rowIndex)) || group.members[0])}><strong>{group.name}</strong><span>{group.members.length > 1 ? `${group.members.length} subsidiaries` : `UEI: ${group.members[0]['UEI Number']}`}</span><small>{group.members.map(p => p.Capabilities).filter(Boolean).join(' · ')}</small></button>)}</div>}
+          {loading ? <div className={styles.listMessage}>Loading partners…</div> : error ? <div className={styles.listMessage}>Could not load partners.<button className="btn btn-ghost text-sm" onClick={refresh}>Retry</button></div> : visibleGroups.length === 0 ? <div className={styles.listMessage}>{search ? 'No matches.' : 'No partners yet.'}</div> : <div className={styles.partnerList}>{visibleGroups.map(group => <button key={group.key} className={`${styles.listItem} ${selectedGroup?.key === group.key ? styles.listItemActive : ''}`} onClick={() => select(group.members.find(p => filtered.some(match => match['Partner ID'] === p['Partner ID'])) || group.members[0])}><strong>{group.name}</strong><span>{group.members.length > 1 ? `${group.members.length} subsidiaries` : `UEI: ${group.members[0]['UEI Number']}`}</span><small>{group.members.map(p => p.Capabilities).filter(Boolean).join(' · ')}</small></button>)}</div>}
         </aside>
         <section className={styles.profilePanel}>
           {editing ? <div className={styles.editProfile}>
@@ -272,7 +272,7 @@ export default function Partners({ toast }) {
             <div className={styles.profileActions}><button className="btn" disabled={saveAction.isLoading} onClick={() => { setEditing(false); if (!selected) setForm(EMPTY()) }}>Cancel</button><button className="btn btn-primary" disabled={saveAction.isLoading} onClick={save}>{saveAction.isLoading ? 'Saving…' : selected ? 'Save changes' : 'Add partner'}</button></div>
           </div> : selected ? <div className={styles.profile}>
             {selectedGroup?.name !== partnerName(selected) && <h2 className={styles.groupTitle}>{selectedGroup?.name}</h2>}
-            {groupMembers.length > 1 && <div className={styles.entitySelector}><label htmlFor="partner-entity">Subsidiary</label><select id="partner-entity" className="form-input" value={selected._rowIndex} onChange={event => select(groupMembers.find(p => String(p._rowIndex) === event.target.value))}>{groupMembers.map(p => <option key={p._rowIndex} value={p._rowIndex}>{partnerName(p)} · {p['UEI Number']}</option>)}</select><small>Agency history, vehicles, notes and edits below belong to this legal entity.</small></div>}
+            {groupMembers.length > 1 && <div className={styles.entitySelector}><label htmlFor="partner-entity">Subsidiary</label><select id="partner-entity" className="form-input" value={selected['Partner ID']} onChange={event => select(groupMembers.find(p => String(p['Partner ID']) === event.target.value))}>{groupMembers.map(p => <option key={p['Partner ID']} value={p['Partner ID']}>{partnerName(p)} · {p['UEI Number']}</option>)}</select><small>Agency history, vehicles, notes and edits below belong to this legal entity.</small></div>}
             <div className={styles.profileHeader}><div><div className={styles.eyebrow}>Partner profile</div><h2>{partnerName(selected)}</h2><p>UEI: <CopyValue value={selected['UEI Number']} label="UEI">{selected['UEI Number']}</CopyValue></p></div><div className={styles.headerActions}><button className="btn text-sm" onClick={startEdit}><ActionIcon name="edit" /> Edit</button><button className="btn btn-danger-ghost text-sm"  onClick={() => setDeleteTarget(selected)}>Delete</button></div></div>
             <div className={styles.profileSection}><h3>Contact and links</h3><DetailField label="Contact details" value={selected['Contact Information']} /><DetailField label="Website" value={selected['Link to website']} link="Open website" /><DetailField label="Partner SharePoint folder" value={selected['Link to Partner Folder']} link="Open folder" /></div>
             <div className={styles.profileSection}><h3>Market profile</h3><DetailField label="NAICS codes" value={selected['NAICS Codes']} /><DetailField label="Agencies worked with" value={selected['Agencies Worked with']} /><DetailField label="Contract vehicles" value={selected['Contracts Vehicles']} /><DetailField label="Keywords" value={selected.Keywords} /></div>
@@ -285,9 +285,9 @@ export default function Partners({ toast }) {
               <label className="text-sm"><input type="checkbox" checked={refreshEnabled} disabled={saveAction.isLoading} onChange={async event => {
                 const partner = selected
                 const patch = { 'USAspending Enabled': event.target.checked ? 'Yes' : 'No' }
-                setSelected(current => current?._rowIndex === partner._rowIndex ? { ...current, ...patch } : current)
-                try { await saveAction.run(() => update(partner._rowIndex, patch, partner)); setPollVersion(v => v + 1) }
-                catch (err) { setSelected(current => current?._rowIndex === partner._rowIndex ? partner : current); toast?.error(`Could not save refresh setting: ${err.message}`) }
+                setSelected(current => current?.['Partner ID'] === partner['Partner ID'] ? { ...current, ...patch } : current)
+                try { await saveAction.run(() => update(partner, patch, partner)); setPollVersion(v => v + 1) }
+                catch (err) { setSelected(current => current?.['Partner ID'] === partner['Partner ID'] ? partner : current); toast?.error(`Could not save refresh setting: ${err.message}`) }
               }} /> Quarterly refresh</label>
               <small className={styles.researchSource}>Last successful refresh: {enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At'] ? formatDateTime(enrichment?.snapshot?.checkedAt || selected['USAspending Refreshed At']) : 'Not yet refreshed'}</small>
               </div></details>
@@ -295,12 +295,12 @@ export default function Partners({ toast }) {
               {(enrichmentError || refreshJob?.error) && <p className="text-sm text-muted">{enrichmentError || refreshJob.error}</p>}
               <DetailField label="Reported agencies (last five years)" value={enrichment?.snapshot ? enrichment.snapshot.agencies.map(a => a.name).join('\n') || 'None reported' : String(selected['USAspending Agencies'] || '').split(',').map(name => name.trim()).filter(Boolean).join('\n')} />
               {enrichment?.snapshot?.vehicles?.length > 0 && <div className={styles.vehicleTable} tabIndex={0} role="region" aria-label="Contract vehicles"><table aria-label="Reported contract vehicles and dates"><thead><tr><th scope="col">Contract vehicle / PIID</th><th scope="col">Current end date</th><th scope="col">Potential end date</th><th scope="col">Last date to order</th></tr></thead><tbody>{enrichment.snapshot.vehicles.map(vehicle => <tr key={vehicle['Record ID']}><td><a href={vehicle['Source Link']} target="_blank" rel="noreferrer">{vehicle['Vehicle Name'] || 'Unresolved vehicle'}</a><span className={styles.vehiclePiid}>{vehicle.PIID}</span></td><td>{vehicleDate(vehicle['Current End Date'])}</td><td>{vehicleDate(vehicle['Potential End Date'])}</td><td>{vehicleDate(vehicle['Last Date to Order'])}</td></tr>)}</tbody></table></div>}
-              <p className={styles.researchNote}>Direct IDV awards only. Reported dates do not establish current ordering eligibility. Research-only and indirect access remain in Market profile.</p>
+              <p className={styles.researchNote}>Direct vehicle awards and reported parent references. References do not prove direct holding. Dates do not establish current ordering eligibility.</p>
             </div></details>
             <PartnerNotesPanel key={`partner-notes-${selected['UEI Number']}`} partner={selected} toast={toast} />
             {sharedWorkspace.conflict && <p className="text-sm text-muted">This group has different folder links. Existing folders remain separate; select a subsidiary to view its files.</p>}
             {groupMembers.length > 1 && !sharedWorkspace.partner && !sharedWorkspace.conflict ? <p className="text-sm text-muted">Add the existing shared folder link to a group member using Edit. The app will use that folder for the group without creating subsidiary folders.</p> : <PartnerFilesPanel key={`partner-files-${(sharedWorkspace.partner || selected)['UEI Number']}`} partner={sharedWorkspace.partner || selected} onCreated={async () => { await refresh() }} />}
-            <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities match this partner’s UEI or name.</p> : matchedOpportunities.map(({ opportunity, matchLabel }) => <button type="button" key={opportunity._rowIndex || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}?row=${opportunity._rowIndex}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]} · {matchLabel}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
+            <div className={`${styles.profileSection} ${styles.matchedOpportunities}`}><h3>Matched opportunities</h3>{matchedOpportunities.length === 0 ? <p className="text-sm text-muted">No pipeline opportunities match this partner’s UEI or name.</p> : matchedOpportunities.map(({ opportunity, matchLabel }) => <button type="button" key={opportunity['Opportunity ID'] || opportunity[OPPORTUNITY_ID]} className={styles.matchedOpportunity} onClick={() => navigate(`/opportunities/${encodeURIComponent(opportunity[OPPORTUNITY_ID])}`)}><span><strong>{opportunity[OPPORTUNITY_TITLE] || 'Untitled opportunity'}</strong><small>{opportunity[OPPORTUNITY_ID]} · {matchLabel}</small></span><em>{opportunity[OPPORTUNITY_PHASE] || 'View opportunity'} ↗</em></button>)}</div>
           </div> : <div className={styles.emptyProfile}><div>◇</div><strong>Select a partner</strong><span>Choose one from the list to view its profile, or add a new partner.</span><button className="btn btn-primary" onClick={startAdd}>Add partner</button></div>}
         </section>
       </div>

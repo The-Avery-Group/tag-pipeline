@@ -1,3 +1,4 @@
+import { mutationTarget, sameRecord } from '@/utils/recordConflict'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPartners, addPartner, updatePartner, deletePartner } from '@/services/graphService'
 import {
@@ -23,7 +24,7 @@ export function usePartners({ enabled = true } = {}) {
     try {
       const data = await getPartners()
       setPartners(data.map((partner) => {
-        const identity = String(partner['UEI Number'] || '').trim()
+        const identity = String(partner['Partner ID'] || '').trim()
         const patch = pendingPatches.current.get(identity)
         if (!patch) return partner
         const confirmed = Object.keys(patch).every((key) => partner[key] === patch[key])
@@ -56,29 +57,31 @@ export function usePartners({ enabled = true } = {}) {
     return saved
   }, [])
 
-  const update = useCallback(async (rowIndex, patch, original) => {
-    const identity = String(original?.['UEI Number'] || '').trim()
+  const update = useCallback(async (target, patch, original) => {
+    original = mutationTarget('PartnersTable', original || target)
+    const identity = String(original?.['Partner ID'] || '').trim()
     if (identity) pendingPatches.current.set(identity, patch)
     setPartners((current) => current.map((partner) =>
-      partner._rowIndex === rowIndex ? { ...partner, ...patch } : partner
+      sameRecord('PartnersTable', partner, target) ? { ...partner, ...patch } : partner
     ))
     try {
-      await retryIdempotent(() => updatePartner(rowIndex, patch, original))
+      await retryIdempotent(() => updatePartner(target, patch, original))
       await publishCacheUpdate(['PartnersTable'])
       verifyCacheInBackground(['PartnersTable'])
     } catch (err) {
       if (identity) pendingPatches.current.delete(identity)
       setPartners((current) => current.map((partner) =>
-        partner._rowIndex === rowIndex ? original : partner
+        sameRecord('PartnersTable', partner, target) ? original : partner
       ))
       throw err
     }
   }, [])
 
-  const remove = useCallback(async (rowIndex, original) => {
-    setPartners((current) => current.filter((partner) => partner._rowIndex !== rowIndex))
+  const remove = useCallback(async (target, original) => {
+    original = mutationTarget('PartnersTable', original || target)
+    setPartners((current) => current.filter((partner) => !sameRecord('PartnersTable', partner, target)))
     try {
-      await retryIdempotent(() => deletePartner(rowIndex, original))
+      await retryIdempotent(() => deletePartner(target, original))
       await publishCacheUpdate(['PartnersTable'])
       verifyCacheInBackground(['PartnersTable'])
     } catch (err) {

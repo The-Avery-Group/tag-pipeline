@@ -1,3 +1,4 @@
+import { mutationTarget, sameRecord } from '@/utils/recordConflict'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getPipeline, addOpportunity, updateOpportunity, deleteOpportunity } from '@/services/graphService'
 import { notifyNewOpportunity, notifyPhaseChange } from '@/services/notifyService'
@@ -94,7 +95,8 @@ export function usePipeline() {
     return saved
   }, [])
 
-  const update = useCallback(async (rowIndex, patch, original) => {
+  const update = useCallback(async (target, patch, original) => {
+    original = mutationTarget('PipelineTable', original || target)
     const phaseCol = 'TAG Opportunity Phase'
     const identity = opportunityIdentity(original)
     if (identity) pendingPatches.current.set(identity, patch)
@@ -118,7 +120,7 @@ export function usePipeline() {
     }
 
     try {
-      await retryIdempotent(() => updateOpportunity(rowIndex, patch, original))
+      await retryIdempotent(() => updateOpportunity(target, patch, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
     } catch (err) {
@@ -133,8 +135,8 @@ export function usePipeline() {
     }
   }, [])
 
-  const archive = useCallback(async (rowIndex, reason = '') => {
-    const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+  const archive = useCallback(async (target, reason = '') => {
+    const original = mutationTarget('PipelineTable', target, pipelineRef.current)
     if (!original) throw new Error('The opportunity could not be located')
     const patch = {
       Archived: 'Yes',
@@ -147,7 +149,7 @@ export function usePipeline() {
       opportunityIdentity(opportunity) === identity ? { ...opportunity, ...patch } : opportunity
     ))
     try {
-      await retryIdempotent(() => updateOpportunity(rowIndex, patch, original))
+      await retryIdempotent(() => updateOpportunity(target, patch, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
     } catch (error) {
@@ -156,8 +158,8 @@ export function usePipeline() {
     }
   }, [load, user])
 
-  const restore = useCallback(async (rowIndex) => {
-    const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
+  const restore = useCallback(async (target) => {
+    const original = mutationTarget('PipelineTable', target, pipelineRef.current)
     if (!original) throw new Error('The opportunity could not be located')
     const patch = { Archived: '', 'Archived At': '', 'Archived By': '', 'Archive Reason': '' }
     const identity = opportunityIdentity(original)
@@ -165,7 +167,7 @@ export function usePipeline() {
       opportunityIdentity(opportunity) === identity ? { ...opportunity, ...patch } : opportunity
     ))
     try {
-      await retryIdempotent(() => updateOpportunity(rowIndex, patch, original))
+      await retryIdempotent(() => updateOpportunity(target, patch, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
     } catch (error) {
@@ -174,11 +176,11 @@ export function usePipeline() {
     }
   }, [load])
 
-  const permanentRemove = useCallback(async (rowIndex) => {
-    const original = pipelineRef.current.find((opportunity) => opportunity._rowIndex === rowIndex)
-    setRecords((current) => current.filter((opportunity) => opportunity._rowIndex !== rowIndex))
+  const permanentRemove = useCallback(async (target) => {
+    const original = mutationTarget('PipelineTable', target, pipelineRef.current)
+    setRecords((current) => current.filter((opportunity) => !sameRecord('PipelineTable', opportunity, target)))
     try {
-      await retryIdempotent(() => deleteOpportunity(rowIndex, original))
+      await retryIdempotent(() => deleteOpportunity(target, original))
       await publishCacheUpdate(['PipelineTable'])
       verifyCacheInBackground(['PipelineTable'])
       const identifier = String(original?.['Contract Number / Notice ID'] || '').trim()

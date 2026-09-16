@@ -84,7 +84,7 @@ export function useOpportunityRelationships(opportunityId = '', pipeline = [], e
     const splitFolders = relationship['Relationship Type'] === 'Follow-on' && leftKey && rightKey
     if (splitFolders) await splitRelatedOpportunityWorkspace(leftKey, rightKey)
     try {
-      await deleteOpportunityRelationship(relationship._rowIndex, relationship)
+      await deleteOpportunityRelationship(relationship, relationship)
     } catch (error) {
       if (splitFolders) await shareRelatedOpportunityWorkspace(leftKey, rightKey, 'Follow-on').catch(() => {})
       throw error
@@ -102,7 +102,7 @@ export function useOpportunityRelationships(opportunityId = '', pipeline = [], e
     const splitFolders = previousType === 'Follow-on' && relationshipType !== 'Follow-on' && leftKey && rightKey
     if (splitFolders) await splitRelatedOpportunityWorkspace(leftKey, rightKey)
     try {
-      await updateOpportunityRelationshipType(relationship._rowIndex, relationship, relationshipType)
+      await updateOpportunityRelationshipType(relationship, relationship, relationshipType)
     } catch (error) {
       if (splitFolders) await shareRelatedOpportunityWorkspace(leftKey, rightKey, 'Follow-on').catch(() => {})
       throw error

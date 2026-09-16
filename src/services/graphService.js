@@ -1,6 +1,6 @@
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { msalInstance, loginRequest, silentTokenOptions } from '@/auth/msalConfig'
-import { externallyChangedPatchedFields, recordIdentity } from '@/utils/recordConflict'
+import { externallyChangedPatchedFields, recordIdentity, mutationTarget } from '@/utils/recordConflict'
 import {
   appendWithReconciliation,
   createFingerprint,
@@ -432,14 +432,15 @@ export async function appendRow(tableName, values, headers) {
  * Update a row in a named table by row index.
  * patch: object with only the fields to update.
  */
-async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = {}) {
+async function updateRowUnlocked(tableName, target, patch, headers, options = {}) {
   // Never rebuild an Excel row from a stale browser cache. A direct workbook
   // edit can happen while this app is open; read the current row immediately
   // before writing so unrelated changes are retained.
-  const cachedAtIndex = cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
+  const cachedAtIndex = cache.get(tableName)?.find((row) => row._rowIndex === target) || null
   const cached = options.original || cachedAtIndex
-  let targetRowIndex = rowIndex
+  let targetRowIndex = target
   const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
+  if (!identity) throw new Error(`A stable record ID is required for ${tableName}`)
   // Most edits keep their row position. Verify that row directly; only scan
   // the table when Excel sorting/deletion has actually moved the record.
   let response
@@ -487,6 +488,7 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   }
 
   const conflictedFields = externallyChangedPatchedFields(cached, current, patch)
+  if (options.guard && !options.guard(current)) throw new Error('Record changed during processing. Refresh and try again.')
   if (conflictedFields.length) {
     throw new Error(`This record was changed in Excel (${conflictedFields.join(', ')}). Refresh and review it before saving.`)
   }
@@ -516,10 +518,9 @@ async function updateRowUnlocked(tableName, rowIndex, patch, headers, options = 
   }
 }
 
-export function updateRow(tableName, rowIndex, patch, headers, options = {}) {
-  return queueTableMutation(tableName, () =>
-    updateRowUnlocked(tableName, rowIndex, patch, headers, options)
-  )
+export async function updateRow(tableName, target, patch, headers, options = {}) {
+  const original = mutationTarget(tableName, options.original || target, cache.get(tableName) || await getSheetRows(tableName))
+  return queueTableMutation(tableName, () => updateRowUnlocked(tableName, original._rowIndex, patch, headers, { ...options, original }))
 }
 
 /**
@@ -529,11 +530,11 @@ export function updateRow(tableName, rowIndex, patch, headers, options = {}) {
  * reached the workbook. Stable record identity prevents retrying against a
  * different row after workbook sorting or row insertion.
  */
-export async function updateRowWithReconciliation(tableName, rowIndex, patch, headers, { attempts = 3, original: suppliedOriginal } = {}) {
+export async function updateRowWithReconciliation(tableName, target, patch, headers, { attempts = 3, original: suppliedOriginal } = {}) {
+  const original = mutationTarget(tableName, suppliedOriginal || target, cache.get(tableName) || await getSheetRows(tableName))
   return queueTableMutation(tableName, async () => {
-    const original = suppliedOriginal || cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
     const identity = recordIdentity(tableName, original)
-    let targetRowIndex = rowIndex
+    let targetRowIndex = original._rowIndex
     let lastError
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -551,7 +552,7 @@ export async function updateRowWithReconciliation(tableName, rowIndex, patch, he
         await new Promise((resolve) => setTimeout(resolve, error.retryAfterMs ?? 400 * (attempt + 1)))
         invalidate(tableName)
         const freshRows = await getSheetRows(tableName)
-        const current = freshRows.find((row) => recordIdentity(tableName, row) === identity)
+        const current = mutationTarget(tableName, identity, freshRows)
         if (!current) throw new Error('This record moved in the workbook and could not be located during retry.')
 
         const applied = Object.entries(patch).every(([field, value]) =>
@@ -569,17 +570,20 @@ export async function updateRowWithReconciliation(tableName, rowIndex, patch, he
 /**
  * Delete a row from a named table by row index.
  */
-export function deleteRow(tableName, rowIndex, options = {}) {
+export async function deleteRow(tableName, target, options = {}) {
+  const requested = options.original || target
+  const identity = typeof requested === 'string' ? requested.trim() : recordIdentity(tableName, requested)
+  if (!identity || typeof requested === 'number') throw new Error(`A stable record ID is required for ${tableName}`)
   return queueTableMutation(tableName, async () => {
-    const cached = options.original || cache.get(tableName)?.find((row) => row._rowIndex === rowIndex) || null
-    const identity = String(options.identity || recordIdentity(tableName, cached) || '').trim()
-    let targetRowIndex = rowIndex
+    let targetRowIndex
 
     // Resolve the target by stable identity immediately before deleting it.
     if (identity) {
       invalidate(tableName)
       const currentRows = await getSheetRows(tableName)
-      const current = currentRows.find((row) => recordIdentity(tableName, row) === identity)
+      const matches = currentRows.filter((row) => recordIdentity(tableName, row) === identity)
+      if (matches.length > 1) throw new Error('Duplicate record ID. Resolve the duplicate before deleting.')
+      const current = matches[0]
       // A retried delete after an ambiguous Graph response is successful when
       // the stable identity is already absent.
       if (!current) return { alreadyDeleted: true }
@@ -709,8 +713,9 @@ export const CONTACT_INTERACTION_HEADERS = [
 ]
 
 // Keep this schema aligned with the PartnersTable headers in the workbook.
-// UEI Number is the unique partner identifier. Partner Name is display data.
+// Partner ID is immutable. UEI identifies the external legal-entity research.
 export const PARTNER_HEADERS = [
+  'Partner ID',
   'Partner Name',
   'UEI Number',
   'Contact Information',
@@ -727,6 +732,7 @@ export const PARTNER_HEADERS = [
 
 export const LEGACY_PARTNER_FOLDER_HEADER = 'Link to onedrive folder'
 export const PARTNER_ENRICHMENT_HEADERS = [
+  'Legacy Partner References',
   'Partner Group', 'USAspending Enabled', 'USAspending Agencies',
   'USAspending Vehicles', 'USAspending Refreshed At',
 ]
@@ -1040,13 +1046,11 @@ export async function setNotifLog(key, dateStr) {
     const rows = await getSheetRows(VALIDATION_TABLE)
     const existing = rows.find((row) => String(row['Key'] || '').trim() === key)
     if (existing) {
-      await updateRow(VALIDATION_TABLE, existing._rowIndex, { Key: key, LastSent: dateStr }, headers)
+      await updateRow(VALIDATION_TABLE, existing, { Key: key, LastSent: dateStr }, headers)
     } else {
       // Reuse an empty table row if one exists. Otherwise append a row through
       // the Table API so the log remains visible to future app sessions.
-      const blank = rows.find((row) => !String(row['Key'] || '').trim())
-      if (blank) await updateRow(VALIDATION_TABLE, blank._rowIndex, { Key: key, LastSent: dateStr }, headers)
-      else await appendRow(VALIDATION_TABLE, { Key: key, LastSent: dateStr }, headers)
+      await appendRow(VALIDATION_TABLE, { Key: key, LastSent: dateStr }, headers)
     }
     invalidate(VALIDATION_TABLE)
     return true
@@ -1063,17 +1067,17 @@ const POC_SEP = ', '
 const RELATED_OPPORTUNITY_PREFIX = '[TAG_RELATED_OPPORTUNITY]'
 
 /** Add a contact name to an opportunity's POC column */
-export async function addContactToPOC(rowIndex, currentPOC, contactName) {
+export async function addContactToPOC(target, currentPOC, contactName) {
   const names = parsePOCNames(currentPOC)
   if (names.includes(contactName)) return  // already linked
   const newValue = [...names, contactName].join(POC_SEP)
-  return updateOpportunity(rowIndex, { [POC_COL]: newValue })
+  return updateOpportunity(target, { [POC_COL]: newValue })
 }
 
 /** Remove a contact name from an opportunity's POC column */
-export async function removeContactFromPOC(rowIndex, currentPOC, contactName) {
+export async function removeContactFromPOC(target, currentPOC, contactName) {
   const names = parsePOCNames(currentPOC).filter((n) => n !== contactName)
-  return updateOpportunity(rowIndex, { [POC_COL]: names.join(POC_SEP) })
+  return updateOpportunity(target, { [POC_COL]: names.join(POC_SEP) })
 }
 
 /**
@@ -1133,17 +1137,18 @@ export async function getOpportunityRelationships() {
   return getSheetRows(OPPORTUNITY_RELATIONSHIPS_TABLE)
 }
 
-export async function deleteOpportunityRelationship(rowIndex, original) {
-  return deleteRow('OpportunityRelationshipsTable', rowIndex, {
+export async function deleteOpportunityRelationship(target, original) {
+  return deleteRow('OpportunityRelationshipsTable', target, {
     original,
     identity: String(original?.['Relationship ID'] || '').trim(),
   })
 }
 
-export async function updateOpportunityRelationshipType(rowIndex, original, relationshipType) {
-  return updateRow('OpportunityRelationshipsTable', rowIndex, {
+export async function updateOpportunityRelationshipType(target, original, relationshipType) {
+  const { headers } = await ensureOpportunityRelationshipsSchema()
+  return updateRow('OpportunityRelationshipsTable', target, {
     'Relationship Type': String(relationshipType || 'Related only').trim(),
-  }, original)
+  }, headers, { original })
 }
 
 export async function migrateLegacyOpportunityRelationships(pipeline = [], createdBy = 'System migration') {
@@ -1158,7 +1163,7 @@ export async function migrateLegacyOpportunityRelationships(pipeline = [], creat
       { opportunityId: source['Opportunity ID'], createdBy },
       { opportunityId: target['Opportunity ID'], createdBy },
     )
-    await deleteNote(item.note._rowIndex, item.note)
+    await deleteNote(item.note, item.note)
     migrated += 1
   }
   return migrated
@@ -1194,7 +1199,40 @@ function normalizeTableHeader(value) {
     .replace(/[^a-z0-9]/g, '')
 }
 
+let partnerIdentityMigration = null
+
+async function ensurePartnerIdentities() {
+  if (partnerIdentityMigration) return partnerIdentityMigration
+  partnerIdentityMigration = (async () => {
+    const { headers } = await ensureTableColumns('PartnersTable', ['Partner ID', 'Legacy Partner References'])
+    const rows = await getSheetRows('PartnersTable')
+    for (const row of rows) {
+      if (String(row['Partner ID'] || '').trim()) continue
+      const ueiKey = Object.keys(row).find(key => normalizeTableHeader(key) === normalizeTableHeader('UEI Number'))
+      const legacy = String(row[ueiKey] || '').trim()
+      const seed = recordIdentity('PartnersTable', row)
+      if (!seed) continue // Never assign identity to an empty spreadsheet row.
+      if (rows.filter(item => recordIdentity('PartnersTable', item) === seed).length !== 1) {
+        throw new Error('Duplicate partner identity. Resolve it before assigning Partner IDs.')
+      }
+      // Deterministic only for migration: concurrent tabs produce the same ID.
+      // Once persisted, correcting the UEI must never regenerate this ID.
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`partner:${legacy ? 'uei' : 'name'}:${seed.toUpperCase()}`))
+      const id = `P-${Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('').slice(0, 32)}`
+      try {
+        await updateRow('PartnersTable', row, { 'Partner ID': id, 'Legacy Partner References': legacy }, headers)
+      } catch (error) {
+        invalidate('PartnersTable')
+        const migrated = (await getSheetRows('PartnersTable')).filter(item => item['Partner ID'] === id)
+        if (migrated.length !== 1) throw error
+      }
+    }
+  })().finally(() => { partnerIdentityMigration = null })
+  return partnerIdentityMigration
+}
+
 export async function getPartners() {
+  await ensurePartnerIdentities()
   const rows = await getSheetRows('PartnersTable')
   // Excel table headers can carry invisible trailing spaces or different
   // capitalization after users edit a workbook. Map those harmless variants
@@ -1244,6 +1282,7 @@ export async function savePartnerResearch(snapshot) {
   const partners = (await getPartners()).filter(row => String(row['UEI Number'] || '').trim().toUpperCase() === uei)
   if (partners.length !== 1) throw new Error('Partner UEI is missing or duplicated in the workbook')
   const partner = partners[0]
+  if (snapshot.partnerId && partner['Partner ID'] !== snapshot.partnerId) throw new Error('Partner identity changed during research. Refresh again before saving.')
   if (!['', 'yes'].includes(String(partner['USAspending Enabled'] || '').trim().toLowerCase())) throw new Error('Refresh was turned off. Results were not saved.')
   const partnerColumns = await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
   await queueTableMutation(PARTNER_VEHICLE_TABLE, async () => {
@@ -1280,7 +1319,10 @@ export async function savePartnerResearch(snapshot) {
     for (let start = 0; start < additions.length; start += 100) await createPartnerVehicleRows(additions.slice(start, start + 100), headers)
   })
   const byNormalizedHeader = new Map(partnerColumns.headers.map(header => [normalizeTableHeader(header), header]))
-  await updateRow('PartnersTable', partner._rowIndex, partnerValuesForWorkbook(patch, { headers: partnerColumns.headers, byNormalizedHeader }), partnerColumns.headers, { original: partner })
+  await updateRow('PartnersTable', partner, partnerValuesForWorkbook(patch, { headers: partnerColumns.headers, byNormalizedHeader }), partnerColumns.headers, {
+    original: partner,
+    guard: current => String(current['UEI Number'] || '').trim().toUpperCase() === uei && ['', 'yes'].includes(String(current['USAspending Enabled'] || '').trim().toLowerCase()),
+  })
 }
 
 async function createPartnerVehicleRows(vehicles, headers) {
@@ -1300,7 +1342,7 @@ async function createPartnerVehicleRows(vehicles, headers) {
 }
 
 async function partnerSchema() {
-  const { headers } = await ensureTableColumns('PartnersTable', PARTNER_ENRICHMENT_HEADERS)
+  const { headers } = await ensureTableColumns('PartnersTable', ['Partner ID', ...PARTNER_ENRICHMENT_HEADERS])
   const byNormalizedHeader = new Map(headers.map((header) => [normalizeTableHeader(header), header]))
   const missing = PARTNER_HEADERS.filter((header) => {
     if (byNormalizedHeader.has(normalizeTableHeader(header))) return false
@@ -1358,7 +1400,7 @@ export async function ensurePartnerWorkspaceSchema() {
       const canonical = String(row['Link to Partner Folder'] || '').trim()
       const legacy = String(row[LEGACY_PARTNER_FOLDER_HEADER] || '').trim()
       if (canonical || !legacy) continue
-      await updateRow('PartnersTable', row._rowIndex, { 'Link to Partner Folder': legacy }, partnerColumns.headers, { original: row })
+      await updateRow('PartnersTable', row, { 'Link to Partner Folder': legacy }, partnerColumns.headers, { original: row })
       migratedLinks += 1
     }
   }
@@ -1372,14 +1414,17 @@ export async function ensurePartnerWorkspaceSchema() {
 
 export async function addPartner(data) {
   const schema = await partnerSchema()
-  const record = partnerValuesForWorkbook(data, schema)
+  const record = partnerValuesForWorkbook({ ...data, 'Partner ID': createStableId('P') }, schema)
   const uei = String(record['UEI Number'] || '').trim().toUpperCase()
   if (!uei) throw new Error('UEI Number is required before creating a partner')
+  const existing = (await getPartners()).filter(row => String(row['UEI Number'] || '').trim().toUpperCase() === uei)
+  if (existing.length > 1) throw new Error('Duplicate partner UEI. Resolve the duplicate first.')
+  if (existing.length === 1) return { ...existing[0], _alreadyExisted: true }
   return createWorkbookRecord({
     tableName: 'PartnersTable',
     operationKey: `partner:${uei}`,
-    idColumn: 'UEI Number',
-    idValue: uei,
+    idColumn: 'Partner ID',
+    idValue: record['Partner ID'],
     record: { ...record, 'UEI Number': uei },
     append: () => appendRow('PartnersTable', { ...record, 'UEI Number': uei }, schema.headers),
     readRows: async () => {
@@ -1390,13 +1435,26 @@ export async function addPartner(data) {
   })
 }
 
-export async function updatePartner(rowIndex, patch, original) {
+export async function updatePartner(target, patch, original) {
   const schema = await partnerSchema()
-  return updateRow('PartnersTable', rowIndex, partnerValuesForWorkbook(patch, schema), schema.headers, { original })
+  original = mutationTarget('PartnersTable', original || target, await getPartners())
+  if (patch['Partner ID'] && patch['Partner ID'] !== original['Partner ID']) throw new Error('Partner ID cannot be changed.')
+  const next = { ...patch, 'Partner ID': original['Partner ID'] }
+  if ('UEI Number' in patch && patch['UEI Number'] !== original['UEI Number']) {
+    const uei = String(patch['UEI Number'] || '').trim().toUpperCase()
+    if (!/^[A-Z0-9]{12}$/.test(uei)) throw new Error('A valid 12-character UEI is required.')
+    const matches = (await getPartners()).filter(row => row['Partner ID'] !== original['Partner ID'] && String(row['UEI Number'] || '').trim().toUpperCase() === uei)
+    if (matches.length) throw new Error('This UEI is already assigned to another partner.')
+    next['UEI Number'] = uei
+    next['Legacy Partner References'] = [...new Set([...String(original['Legacy Partner References'] || '').split(','), original['UEI Number'] || ''].map(value => value.trim()).filter(Boolean))].join(', ')
+    // Old-entity research must not masquerade as evidence for the corrected UEI.
+    next['USAspending Agencies'] = ''; next['USAspending Vehicles'] = ''; next['USAspending Refreshed At'] = ''
+  }
+  return updateRow('PartnersTable', original, partnerValuesForWorkbook(next, schema), schema.headers, { original })
 }
 
-export async function deletePartner(rowIndex, original) {
-  return deleteRow('PartnersTable', rowIndex, { original })
+export async function deletePartner(target, original) {
+  return deleteRow('PartnersTable', target, { original })
 }
 
 const CONTACT_INTERACTIONS_TABLE = 'ContactInteractionsTable'
@@ -1470,16 +1528,16 @@ export async function addOpportunity(data) {
   })
 }
 
-export async function updateOpportunity(rowIndex, patch, original) {
+export async function updateOpportunity(target, patch, original) {
   const schema = await ensurePipelineSchema()
-  return updateRowWithReconciliation('PipelineTable', rowIndex, {
+  return updateRowWithReconciliation('PipelineTable', target, {
     ...patch,
     'Last Modified*': new Date().toISOString().split('T')[0],
   }, schema.headers, { original })
 }
 
-export async function deleteOpportunity(rowIndex, original) {
-  return deleteRow('PipelineTable', rowIndex, { original })
+export async function deleteOpportunity(target, original) {
+  return deleteRow('PipelineTable', target, { original })
 }
 
 export async function addNote(contractNumber, author, text, noteId = createStableId('N'), relationship = {}) {
@@ -1509,13 +1567,13 @@ export async function addNote(contractNumber, author, text, noteId = createStabl
   })
 }
 
-export async function updateNote(rowIndex, patch, original) {
+export async function updateNote(target, patch, original) {
   const { headers } = await ensureNotesRelationshipSchema()
-  return updateRow('NotesTable', rowIndex, patch, headers, { original })
+  return updateRow('NotesTable', target, patch, headers, { original })
 }
 
-export async function deleteNote(rowIndex, original) {
-  return deleteRow('NotesTable', rowIndex, { original })
+export async function deleteNote(target, original) {
+  return deleteRow('NotesTable', target, { original })
 }
 
 export async function addTask(data, createdBy, taskId = createStableId('T')) {
@@ -1542,9 +1600,9 @@ export async function addTask(data, createdBy, taskId = createStableId('T')) {
   })
 }
 
-export async function updateTask(rowIndex, patch, original) {
+export async function updateTask(target, patch, original) {
   await ensureTasksSchema()
-  return updateRow('TasksTable', rowIndex, {
+  return updateRow('TasksTable', target, {
     ...patch,
     UpdatedDate: new Date().toISOString().split('T')[0],
   }, TASKS_HEADERS, { original })
@@ -1590,7 +1648,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
   if (!newTitle) throw new Error('Opportunity title is required')
 
   const duplicate = identifierChanged && pipeline.find((opportunity) =>
-    opportunity._rowIndex !== current._rowIndex &&
+    recordIdentity('PipelineTable', opportunity) !== recordIdentity('PipelineTable', current) &&
     normalizedValue(opportunity[OPPORTUNITY_ID_COL]) === normalizedValue(newId)
   )
   if (duplicate) {
@@ -1601,7 +1659,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     ? tasks
       .filter((task) => String(task.ContractNumber ?? '').trim() === oldId)
       .map((task) => ({
-        rowIndex: task._rowIndex,
+        original: task,
         patch: {
           ...(identifierChanged ? { ContractNumber: newId } : {}),
           ...(titleChanged ? { ContractTitle: newTitle } : {}),
@@ -1633,10 +1691,10 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     if (related && String(related.contractNumber ?? '').trim() === oldId && (identifierChanged || titleChanged)) {
       patch.NoteText = relatedOpportunityNote({ contractNumber: newId, title: newTitle })
       rollback.NoteText = note.NoteText
-      relationshipRows.add(note._rowIndex)
+      relationshipRows.add(note.NoteID)
     }
     if (Object.keys(patch).length > 0) {
-      notePatchMap.set(note._rowIndex, { rowIndex: note._rowIndex, patch, rollback })
+      notePatchMap.set(note.NoteID, { original: note, patch, rollback })
     }
   })
 
@@ -1645,7 +1703,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     ? followUpOverrides
       .filter((row) => String(row['Opportunity ID'] ?? '').trim() === oldId)
       .map((row) => ({
-        rowIndex: row._rowIndex,
+        original: row,
         patch: { 'Opportunity ID': newId },
         rollback: { 'Opportunity ID': row['Opportunity ID'] },
       }))
@@ -1654,7 +1712,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     ? followUpDecisions
       .filter((row) => String(row['Opportunity ID'] ?? '').trim() === oldId)
       .map((row) => ({
-        rowIndex: row._rowIndex,
+        original: row,
         patch: { 'Opportunity ID': newId },
         rollback: { 'Opportunity ID': row['Opportunity ID'] },
       }))
@@ -1663,7 +1721,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
     ? emailDrafts
       .filter((row) => String(row['Opportunity ID'] ?? '').trim() === oldId)
       .map((row) => ({
-        rowIndex: row._rowIndex,
+        original: row,
         patch: {
           'Opportunity ID': newId,
           'Draft ID': deterministicDraftId(newId, row['Template ID']),
@@ -1704,7 +1762,7 @@ function createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, 
  * Read current workbook data and return the impact of a proposed title and/or
  * identifier change. The UI uses this before asking for confirmation.
  */
-export async function previewOpportunityRename(rowIndex, nextForm) {
+export async function previewOpportunityRename(target, nextForm) {
   // Do not base a destructive identifier check on a potentially 30-second-old
   // cache. Header metadata remains cached, while these rows are read fresh.
   invalidate('PipelineTable')
@@ -1716,7 +1774,7 @@ export async function previewOpportunityRename(rowIndex, nextForm) {
   const [pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts] = await Promise.all([
     getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(), getEmailFollowUpDrafts(),
   ])
-  const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
+  const current = mutationTarget('PipelineTable', typeof target === 'string' ? target : recordIdentity('PipelineTable', target), pipeline)
   if (!current) throw new Error('Opportunity no longer exists in the pipeline')
   return createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts || []).preview
 }
@@ -1726,7 +1784,7 @@ export async function previewOpportunityRename(rowIndex, nextForm) {
  * write fails, completed dependent writes are best-effort rolled back and the
  * caller receives an error that can be shown to the user.
  */
-export async function renameOpportunityWithReferences(rowIndex, nextForm, onProgress = () => {}) {
+export async function renameOpportunityWithReferences(target, nextForm, onProgress = () => {}) {
   // Re-read immediately after confirmation to catch direct workbook edits that
   // happened while the confirmation dialog was open.
   invalidate('PipelineTable')
@@ -1738,39 +1796,39 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
   const [pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts] = await Promise.all([
     getPipeline(), getTasks(), getNotes(), getRFIFollowUpOverrides(), getRFIFollowUpDecisions(), getEmailFollowUpDrafts(),
   ])
-  const current = pipeline.find((opportunity) => opportunity._rowIndex === rowIndex)
+  const current = mutationTarget('PipelineTable', typeof target === 'string' ? target : recordIdentity('PipelineTable', target), pipeline)
   if (!current) throw new Error('Opportunity no longer exists in the pipeline')
   const plan = createOpportunityRenamePlan(current, nextForm, pipeline, tasks, notes, followUpOverrides, followUpDecisions, emailDrafts || [])
 
   const operations = [
     ...plan.taskPatches.map((item) => ({
       label: 'linked task',
-      apply: () => updateWithRetry(() => updateTask(item.rowIndex, item.patch)),
-      rollback: () => updateWithRetry(() => updateTask(item.rowIndex, item.rollback)),
+      apply: () => updateWithRetry(() => updateTask(item.original, item.patch)),
+      rollback: () => updateWithRetry(() => updateTask({ ...item.original, ...item.patch }, item.rollback)),
     })),
     ...plan.notePatches.map((item) => ({
       label: 'linked note',
-      apply: () => updateWithRetry(() => updateNote(item.rowIndex, item.patch)),
-      rollback: () => updateWithRetry(() => updateNote(item.rowIndex, item.rollback)),
+      apply: () => updateWithRetry(() => updateNote(item.original, item.patch)),
+      rollback: () => updateWithRetry(() => updateNote({ ...item.original, ...item.patch }, item.rollback)),
     })),
     ...plan.overridePatches.map((item) => ({
       label: 'RFI follow-on override',
-      apply: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
-      rollback: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
+      apply: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', item.original, item.patch, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
+      rollback: () => updateWithRetry(() => updateRow('RFIFollowUpOverridesTable', { ...item.original, ...item.patch }, item.rollback, RFI_FOLLOW_UP_OVERRIDE_HEADERS)),
     })),
     ...plan.followUpDecisionPatches.map((item) => ({
       label: 'RFI follow-on decision',
-      apply: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.patch, RFI_FOLLOW_UP_DECISION_HEADERS)),
-      rollback: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.rowIndex, item.rollback, RFI_FOLLOW_UP_DECISION_HEADERS)),
+      apply: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', item.original, item.patch, RFI_FOLLOW_UP_DECISION_HEADERS)),
+      rollback: () => updateWithRetry(() => updateRow('RFIFollowUpDecisionsTable', { ...item.original, ...item.patch }, item.rollback, RFI_FOLLOW_UP_DECISION_HEADERS)),
     })),
     ...plan.emailDraftPatches.map((item) => ({
       label: 'follow-up email draft',
-      apply: () => updateWithRetry(() => updateEmailFollowUpDraft(item.rowIndex, item.patch, 'Opportunity rename')),
-      rollback: () => updateWithRetry(() => updateEmailFollowUpDraft(item.rowIndex, item.rollback, 'Opportunity rename rollback')),
+      apply: () => updateWithRetry(() => updateEmailFollowUpDraft(item.original, item.patch, 'Opportunity rename')),
+      rollback: () => updateWithRetry(() => updateEmailFollowUpDraft({ ...item.original, ...item.patch }, item.rollback, 'Opportunity rename rollback')),
     })),
     {
       label: 'opportunity',
-      apply: () => updateWithRetry(() => updateOpportunity(rowIndex, nextForm)),
+      apply: () => updateWithRetry(() => updateOpportunity(current, nextForm)),
       // The opportunity is always last, so there is no later operation that
       // would require rolling it back after a successful save.
       rollback: null,
@@ -1804,8 +1862,8 @@ export async function renameOpportunityWithReferences(rowIndex, nextForm, onProg
   }
 }
 
-export async function deleteTask(rowIndex, original) {
-  return deleteRow('TasksTable', rowIndex, { original })
+export async function deleteTask(target, original) {
+  return deleteRow('TasksTable', target, { original })
 }
 
 export async function addContact(data, contactId = createStableId('C')) {
@@ -1861,17 +1919,17 @@ export async function addContactInteraction(data, interactionId = createStableId
   })
 }
 
-export async function updateContact(rowIndex, patch, original) {
+export async function updateContact(target, patch, original) {
   headerCache.delete('ContactsTable')
   const headers = await getTableHeaders('ContactsTable')
   if (String(patch.Offices || '').trim() && !headers.includes('Offices')) {
     throw new Error('Add an "Offices" column to ContactsTable before saving office assignments')
   }
-  return updateRow('ContactsTable', rowIndex, patch, headers, { original })
+  return updateRow('ContactsTable', target, patch, headers, { original })
 }
 
-export async function deleteContact(rowIndex, original) {
-  return deleteRow('ContactsTable', rowIndex, { original })
+export async function deleteContact(target, original) {
+  return deleteRow('ContactsTable', target, { original })
 }
 
 /**
@@ -1934,27 +1992,27 @@ export async function addSAMOpportunity(data) {
   })
 }
 
-export async function updateSAMOpportunity(rowIndex, patch, original) {
+export async function updateSAMOpportunity(target, patch, original) {
   const headers = await getTableHeaders('NewOpportunitiesTable')
-  return updateRow('NewOpportunitiesTable', rowIndex, patch, headers, { original })
+  return updateRow('NewOpportunitiesTable', target, patch, headers, { original })
 }
 
-export async function updateSAMOpportunityFlag(rowIndex, flagged, original) {
+export async function updateSAMOpportunityFlag(target, flagged, original) {
   const { headers } = await ensureTableColumns('NewOpportunitiesTable', ['Flagged'])
   const normalizedOriginal = original
     ? { ...original, Flagged: original.Flagged ?? '' }
     : original
   return updateRow(
     'NewOpportunitiesTable',
-    rowIndex,
+    target,
     { Flagged: flagged ? 'Yes' : '' },
     headers,
     { original: normalizedOriginal },
   )
 }
 
-export async function deleteSAMOpportunity(rowIndex, original) {
-  return deleteRow('NewOpportunitiesTable', rowIndex, { original })
+export async function deleteSAMOpportunity(target, original) {
+  return deleteRow('NewOpportunitiesTable', target, { original })
 }
 
 // ── SAMConfig tables ──────────────────────────────────────────────────────
@@ -2081,7 +2139,7 @@ export async function updateSAMSettings(skipDays, windowDays, rfiFollowUp = null
   }
   for (const [setting, value] of Object.entries(values)) {
     const row = rows.find((item) => String(item.Setting || '').trim() === setting)
-    if (row) await updateRow('SAMSettingsTable', row._rowIndex, { Setting: setting, Value: value }, SAM_SETTINGS_HEADERS)
+    if (row) await updateRow('SAMSettingsTable', row, { Setting: setting, Value: value }, SAM_SETTINGS_HEADERS)
     else await appendRow('SAMSettingsTable', { Setting: setting, Value: value }, SAM_SETTINGS_HEADERS)
   }
 }
@@ -2101,7 +2159,7 @@ export async function saveRFIFollowUpOverride(opportunityId, values) {
     'Opportunity ID': opportunityId,
     'Updated At': new Date().toISOString(),
   }
-  if (existing) return updateRow('RFIFollowUpOverridesTable', existing._rowIndex, payload, RFI_FOLLOW_UP_OVERRIDE_HEADERS)
+  if (existing) return updateRow('RFIFollowUpOverridesTable', existing, payload, RFI_FOLLOW_UP_OVERRIDE_HEADERS)
   return appendRow('RFIFollowUpOverridesTable', payload, RFI_FOLLOW_UP_OVERRIDE_HEADERS)
 }
 
@@ -2120,7 +2178,7 @@ export async function saveRFIFollowUpDecision(values) {
     normalizedValue(row['Follow-up Solicitation Number']) === normalizedValue(values['Follow-up Solicitation Number'])
   )
   const payload = { ...values, 'Decided At': new Date().toISOString() }
-  if (sameDecision) return updateRow('RFIFollowUpDecisionsTable', sameDecision._rowIndex, payload, RFI_FOLLOW_UP_DECISION_HEADERS)
+  if (sameDecision) return updateRow('RFIFollowUpDecisionsTable', sameDecision, payload, RFI_FOLLOW_UP_DECISION_HEADERS)
   return appendRow('RFIFollowUpDecisionsTable', payload, RFI_FOLLOW_UP_DECISION_HEADERS)
 }
 
@@ -2219,20 +2277,12 @@ export async function addEmailFollowUpTemplate(values, updatedBy, templateId = c
   })
 }
 
-export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy, templateId = '') {
+export async function updateEmailFollowUpTemplate(target, patch, updatedBy) {
   const schema = await emailTableSchema(
     'EmailFollowUpTemplatesTable',
     EMAIL_FOLLOW_UP_TEMPLATE_HEADERS,
     { force: false },
   )
-  let targetRowIndex = rowIndex
-  const stableId = String(templateId || patch?.['Template ID'] || '').trim().toLowerCase()
-  if (stableId) {
-    const rows = await getEmailFollowUpTemplates({ force: true })
-    const current = rows?.find((row) => String(row?.['Template ID'] || '').trim().toLowerCase() === stableId)
-    if (!current) throw new Error('This template could not be found in the workbook. Refresh the template list and try again.')
-    targetRowIndex = current._rowIndex
-  }
   const nextPatch = {
     ...patch,
     'Last Updated': new Date().toISOString(),
@@ -2240,14 +2290,14 @@ export async function updateEmailFollowUpTemplate(rowIndex, patch, updatedBy, te
   }
   return updateRow(
     'EmailFollowUpTemplatesTable',
-    targetRowIndex,
+    target,
     emailPatchForWorkbook(nextPatch, schema),
     schema.headers,
   )
 }
 
-export async function deleteEmailFollowUpTemplate(rowIndex) {
-  return deleteRow('EmailFollowUpTemplatesTable', rowIndex)
+export async function deleteEmailFollowUpTemplate(target) {
+  return deleteRow('EmailFollowUpTemplatesTable', target)
 }
 
 export async function getEmailFollowUpDrafts({ force = false } = {}) {
@@ -2293,7 +2343,7 @@ export async function addEmailFollowUpDraft(record) {
   })
 }
 
-export async function updateEmailFollowUpDraft(rowIndex, patch, updatedBy) {
+export async function updateEmailFollowUpDraft(target, patch, updatedBy) {
   const schema = await emailTableSchema(
     'EmailFollowUpDraftsTable',
     EMAIL_FOLLOW_UP_DRAFT_HEADERS,
@@ -2306,7 +2356,7 @@ export async function updateEmailFollowUpDraft(rowIndex, patch, updatedBy) {
   }
   return updateRow(
     'EmailFollowUpDraftsTable',
-    rowIndex,
+    target,
     emailPatchForWorkbook(nextPatch, schema),
     schema.headers,
   )

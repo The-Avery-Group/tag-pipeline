@@ -1,3 +1,4 @@
+import { mutationTarget, sameRecord } from '@/utils/recordConflict'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getContacts, addContact, updateContact, deleteContact } from '@/services/graphService'
 import {
@@ -112,16 +113,16 @@ export function useContacts({ enabled = true } = {}) {
     }
   }, [])
 
-  const update = useCallback(async (rowIndex, patch) => {
-    const original = contactsRef.current.find((contact) => contact._rowIndex === rowIndex)
+  const update = useCallback(async (target, patch) => {
+    const original = mutationTarget('ContactsTable', target, contactsRef.current)
     const identity = String(original?.ContactID || '').trim()
     if (identity) pendingPatches.current.set(identity, patch)
     // Optimistic: apply patch immediately
     setContacts((prev) =>
-      prev.map((c) => c._rowIndex === rowIndex ? { ...c, ...patch } : c)
+      prev.map((c) => sameRecord('ContactsTable', c, target) ? { ...c, ...patch } : c)
     )
     try {
-      await retryIdempotent(() => updateContact(rowIndex, patch, original))
+      await retryIdempotent(() => updateContact(target, patch, original))
       await publishCacheUpdate(['ContactsTable'])
       verifyCacheInBackground(['ContactsTable'])
     } catch (err) {
@@ -132,12 +133,12 @@ export function useContacts({ enabled = true } = {}) {
     }
   }, [load])
 
-  const remove = useCallback(async (rowIndex) => {
-    const original = contactsRef.current.find((contact) => contact._rowIndex === rowIndex)
+  const remove = useCallback(async (target) => {
+    const original = mutationTarget('ContactsTable', target, contactsRef.current)
     // Optimistic: remove immediately
-    setContacts((prev) => prev.filter((c) => c._rowIndex !== rowIndex))
+    setContacts((prev) => prev.filter((c) => !sameRecord('ContactsTable', c, target)))
     try {
-      await retryIdempotent(() => deleteContact(rowIndex, original))
+      await retryIdempotent(() => deleteContact(target, original))
       await publishCacheUpdate(['ContactsTable'])
       verifyCacheInBackground(['ContactsTable'])
     } catch (err) {

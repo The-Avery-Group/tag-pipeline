@@ -1,3 +1,4 @@
+import { mutationTarget, sameRecord } from '@/utils/recordConflict'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getNotes, addNote, updateNote, deleteNote } from '@/services/graphService'
 import {
@@ -38,6 +39,7 @@ function normalizeRelationship(value) {
   return {
     type,
     id,
+    aliases: (value?.aliases || []).map(item => String(item).trim().toLowerCase()).filter(Boolean),
     contractNumber: String(value?.contractNumber || (type === 'Opportunity' ? id : '')).trim(),
   }
 }
@@ -49,6 +51,7 @@ function noteMatchesRelationship(note, relationship) {
   const targetType = relationship.type.toLowerCase()
   const targetId = relationship.id.toLowerCase()
   if (targetType && targetId && noteType === targetType && noteId === targetId) return true
+  if (noteType === targetType && relationship.aliases?.includes(noteId)) return true
   // Rows created before the relationship columns existed remain available to
   // their opportunity through the original ContractNumber field.
   return targetType === 'opportunity' && relationship.contractNumber &&
@@ -57,7 +60,7 @@ function noteMatchesRelationship(note, relationship) {
 
 export function useNotes(relationshipValue, { enabled = true } = {}) {
   const relationship = normalizeRelationship(relationshipValue)
-  const relationshipKey = `${relationship.type}:${relationship.id}:${relationship.contractNumber}`
+  const relationshipKey = `${relationship.type}:${relationship.id}:${relationship.contractNumber}:${relationship.aliases?.join(',') || ''}`
   const [notes, setNotes]     = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
@@ -145,13 +148,13 @@ export function useNotes(relationshipValue, { enabled = true } = {}) {
     }
   }, [relationshipKey, relationship.type, relationship.id, relationship.contractNumber])
 
-  const remove = useCallback(async (rowIndex) => {
-    const original = notesRef.current.find((note) => note._rowIndex === rowIndex)
+  const remove = useCallback(async (target) => {
+    const original = mutationTarget('NotesTable', target, notesRef.current)
     const identity = String(original?.NoteID || '').trim()
     if (identity) pendingDeletes.current.add(identity)
-    setNotes((prev) => prev.filter((n) => n._rowIndex !== rowIndex))
+    setNotes((prev) => prev.filter((n) => !sameRecord('NotesTable', n, target)))
     try {
-      await retryIdempotent(() => deleteNote(rowIndex, original))
+      await retryIdempotent(() => deleteNote(target, original))
       await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
       if (identity) pendingDeletes.current.delete(identity)
@@ -164,17 +167,18 @@ export function useNotes(relationshipValue, { enabled = true } = {}) {
     }
   }, [load])
 
-  const update = useCallback(async (rowIndex, patch, original) => {
+  const update = useCallback(async (target, patch, original) => {
+    original = mutationTarget('NotesTable', original || target)
     const identity = String(original?.NoteID || '').trim()
     if (identity) pendingPatches.current.set(identity, patch)
-    setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? { ...note, ...patch } : note))
+    setNotes((prev) => prev.map((note) => sameRecord('NotesTable', note, target) ? { ...note, ...patch } : note))
     try {
-      await retryIdempotent(() => updateNote(rowIndex, patch, original))
+      await retryIdempotent(() => updateNote(target, patch, original))
       await publishCacheUpdate(['NotesTable'])
       verifyCacheInBackground(['NotesTable'])
     } catch (err) {
       if (identity) pendingPatches.current.delete(identity)
-      setNotes((prev) => prev.map((note) => note._rowIndex === rowIndex ? original : note))
+      setNotes((prev) => prev.map((note) => sameRecord('NotesTable', note, target) ? original : note))
       throw err
     }
   }, [])

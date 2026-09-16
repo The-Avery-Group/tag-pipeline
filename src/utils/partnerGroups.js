@@ -15,20 +15,21 @@ export function createPartnerRefreshQueue() {
   const jobs = new Map(); const listeners = new Set()
   let snapshot = []; let tail = Promise.resolve()
   const emit = () => {
-    snapshot = [...jobs.values()].map(({ uei, name, status, progress, error }) => ({ uei, name, status, progress, error }))
+    snapshot = [...jobs.values()].map(({ uei, partnerId, name, status, progress, error }) => ({ uei, partnerId, name, status, progress, error }))
     listeners.forEach(listener => listener())
   }
   return {
     getSnapshot: () => snapshot,
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
     clearFinished: () => { for (const [uei, job] of jobs) if (!['queued', 'running'].includes(job.status)) jobs.delete(uei); emit() },
-    enqueue(uei, name, operation) {
+    enqueue(uei, name, operation, partnerId = '') {
       uei = String(uei || '').trim().toUpperCase()
       if (!/^[A-Z0-9]{12}$/.test(uei)) return Promise.reject(new Error('A valid 12-character UEI is required'))
-      const existing = jobs.get(uei)
+      const key = partnerId || uei
+      const existing = jobs.get(key)
       if (existing && ['queued', 'running'].includes(existing.status)) return existing.promise
-      const job = { uei, name: name || uei, status: 'queued', progress: 'Waiting to refresh', error: '' }
-      jobs.set(uei, job)
+      const job = { uei, partnerId, name: name || uei, status: 'queued', progress: 'Waiting to refresh', error: '' }
+      jobs.set(key, job)
       const execute = async () => {
         job.status = 'running'; job.progress = 'Checking saved information…'; emit()
         try {
@@ -54,7 +55,7 @@ export const partnerRefreshQueue = createPartnerRefreshQueue()
 
 export function partnerGroupKey(partner) {
   const group = String(partner?.['Partner Group'] || '').trim()
-  return group ? `group:${group.toLocaleLowerCase()}` : `entity:${partner?.['UEI Number'] || partner?._rowIndex}`
+  return group ? `group:${group.toLocaleLowerCase()}` : `entity:${partner?.['Partner ID'] || partner?.['UEI Number'] || ''}`
 }
 
 export function groupPartners(partners) {
@@ -68,7 +69,7 @@ export function groupPartners(partners) {
 }
 
 export function partnerProfilePath(partner) {
-  return `/partners?partner=${encodeURIComponent(String(partner['UEI Number'] || '').trim())}`
+  return `/partners?partner=${encodeURIComponent(String(partner['Partner ID'] || partner['UEI Number'] || '').trim())}`
 }
 
 export function sharedPartnerWorkspace(members) {

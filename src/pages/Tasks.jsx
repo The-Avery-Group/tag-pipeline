@@ -85,7 +85,7 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
   const handleSave = async () => {
     setSaving(true)
     try {
-      await onUpdate(task._rowIndex, form)
+      await onUpdate(task, form)
       toast?.success('Task updated')
       onClose()
     } catch (err) {
@@ -103,7 +103,7 @@ function DetailPanel({ task, pipeline, onClose, onUpdate, onDelete, toast, assig
 
   const handleDelete = async () => {
     try {
-      await onDelete(task._rowIndex)
+      await onDelete(task)
       toast?.success('Task deleted')
       onClose()
     } catch (err) {
@@ -438,7 +438,7 @@ export default function Tasks({ toast }) {
 
   const handleStatusCycle = async (task) => {
     try {
-      await update(task._rowIndex, { Status: STATUS_NEXT[task.Status] || 'To Do' })
+      await update(task, { Status: STATUS_NEXT[task.Status] || 'To Do' })
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     }

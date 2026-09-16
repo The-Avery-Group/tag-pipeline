@@ -40,7 +40,10 @@ export function useSAMChangeSuggestion(opportunity, columns, { enabled = true } 
       const response = await workerFetch(`/sam/changes/status?${statusParams.toString()}`)
       if (!response.ok) throw new Error('Could not load the latest SAM change status')
       const status = await response.json()
-      const watch = (status.watches || []).find((item) => Number(item.rowIndex) === Number(sourceRow._rowIndex))
+      const watch = (status.watches || []).find((item) =>
+        (sourceRow['Notice ID'] && normalized(item.noticeId) === normalized(sourceRow['Notice ID'])) ||
+        (sourceRow['Solicitation Number'] && normalized(item.solicitationNumber) === normalized(sourceRow['Solicitation Number']))
+      )
       if (!watch?.change || watch.change.reviewedAt || !watch.latest) {
         setSuggestion(null)
         return null

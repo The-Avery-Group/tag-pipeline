@@ -72,13 +72,24 @@ async function post(path, body, signal, attempts = 3, timeoutMs = REQUEST_TIMEOU
 }
 
 /** Complete partner evidence, fetched directly without Worker or persistent cache. */
+export function parentVehicleReference(award) {
+  // USAspending's documented unique key includes the reported parent PIID
+  // and parent agency. Never derive a parent from the delivery-order PIID.
+  const id = String(award.generated_internal_id || award.generated_unique_award_id || '')
+  const match = /^CONT_AWD_([^_]+)_([^_]+)_([^_]+)_([^_]+)$/.exec(id)
+  const piid = award.parent_award?.piid || match?.[3]
+  const agency = award.parent_award?.sub_agency_id || match?.[4]
+  if (!piid || !agency || /^(?:-?NONE-?|NULL)$/i.test(piid) || /^(?:-?NONE-?|NULL)$/i.test(agency)) return null
+  return { piid, agency, sourceAwardId: id, source: 'USAspending' }
+}
+
 export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () => {}, at = new Date().toISOString() } = {}) {
   uei = String(uei || '').trim().toUpperCase()
   if (!validUEI(uei)) throw new Error('A valid 12-character UEI is required')
   const end = new Date(at); const start = new Date(end)
   start.setUTCFullYear(start.getUTCFullYear() - 5)
   const period = { start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10) }
-  const agencies = new Map(); const ids = new Set()
+  const agencies = new Map(); const ids = new Set(); const references = new Map()
   for (const kind of ['contracts', 'vehicles']) {
     let more = true
     for (let page = 1; more; page++) {
@@ -96,6 +107,8 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
           if (!row.generated_internal_id) throw new Error('Vehicle source identifier is missing')
           ids.add(row.generated_internal_id)
         } else {
+          const parent = parentVehicleReference(row)
+          if (parent) references.set(`${parent.agency}:${parent.piid}`, parent)
           const name = row['Funding Sub Agency'] || row['Funding Agency'] || row['Awarding Sub Agency'] || row['Awarding Agency']
           if (name) agencies.set(name, { name })
         }
@@ -110,7 +123,7 @@ export async function fetchPartnerAwardEvidence(uei, { signal, onProgress = () =
     if (String(detail.recipient?.recipient_uei || '').trim().toUpperCase() !== uei || detail.category !== 'idv' || !detail.piid || detail.generated_unique_award_id !== id) throw new Error('Vehicle identity could not be verified. No results saved.')
     details.push(detail)
   }
-  return { uei, checkedAt: at, period, agencies: [...agencies.values()], details }
+  return { uei, checkedAt: at, period, agencies: [...agencies.values()], details, references: [...references.values()] }
 }
 
 function money(value) { return Number(value || 0) }

@@ -224,7 +224,7 @@ export default function SAMOpportunityDetail({ toast }) {
           _workspaceNoticeId: refreshed.noticeId || identifier.noticeId,
         }
         if (Object.keys(patch).length) {
-          await updatePipeline(pipelineOpportunity._rowIndex, patch, pipelineOpportunity)
+          await updatePipeline(pipelineOpportunity, patch, pipelineOpportunity)
         }
         setArchiving(true)
         archiveStartedRef.current = true
@@ -312,8 +312,8 @@ export default function SAMOpportunityDetail({ toast }) {
     const dismissed = row.Status === 'dismissed'
     if (!dismissed && isSAMOpportunityFlagged(row.Flagged) && !window.confirm(`This opportunity is flagged for the team. Dismiss “${detail?.title || row.Title}” anyway?`)) return
     try {
-      if (dismissed) await undismiss(row._rowIndex, linkedPipeline ? 'added_to_pipeline' : 'new')
-      else await dismiss(row._rowIndex)
+      if (dismissed) await undismiss(row, linkedPipeline ? 'added_to_pipeline' : 'new')
+      else await dismiss(row)
       updateSAMOpportunityArchiveReview({
         ...identifier,
         responseDate: detail?.responseDeadline || row?.['Response Date'],
@@ -324,7 +324,7 @@ export default function SAMOpportunityDetail({ toast }) {
   })
 
   const toggleFlag = () => act(async () => {
-    try { await updateFlag(row._rowIndex, !isSAMOpportunityFlagged(row.Flagged)) }
+    try { await updateFlag(row, !isSAMOpportunityFlagged(row.Flagged)) }
     catch (error) { toast?.error(`Could not update the team flag: ${error.message}`) }
   })
 

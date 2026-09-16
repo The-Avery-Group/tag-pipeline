@@ -87,7 +87,7 @@ export default function PipelineBoard({ toast }) {
     if (newActivity === opp[C.actPhase]) return
     setMovingActivity((prev) => ({ ...prev, [cn]: true }))
     try {
-      await update(opp._rowIndex, { [C.actPhase]: newActivity }, opp)
+      await update(opp, { [C.actPhase]: newActivity }, opp)
       toast?.success(`Activity phase updated`)
     } catch (err) {
       toast?.error(`Failed to update: ${err.message}`)
@@ -107,7 +107,7 @@ export default function PipelineBoard({ toast }) {
     // Optimistic update — move immediately in local state
     // usePipeline will reconcile after the write completes
     try {
-      await update(opp._rowIndex, { [C.phase]: newPhase }, opp)
+      await update(opp, { [C.phase]: newPhase }, opp)
       toast?.success(`Moved to ${newPhase}`)
     } catch (err) {
       toast?.error(`Failed to move: ${err.message}`)

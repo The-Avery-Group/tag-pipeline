@@ -1,3 +1,4 @@
+import { recordIdentity } from '@/utils/recordConflict'
 import AutoTextarea from '@/components/Common/AutoTextarea'
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -604,7 +605,7 @@ export default function Opportunities({ toast }) {
   const handleDelete = async () => {
     if (!confirmDelete) return
     try {
-      await deleteAction.run(() => remove(confirmDelete._rowIndex), {
+      await deleteAction.run(() => remove(confirmDelete), {
         onError: (err) => toast?.error(`Failed to delete: ${err.message}`),
       })
       toast?.success('Opportunity archived')
@@ -618,7 +619,7 @@ export default function Opportunities({ toast }) {
     event.stopPropagation()
     const flagged = /^(yes|true|1)$/i.test(String(opportunity[C.flagged] || ''))
     try {
-      await update(opportunity._rowIndex, { [C.flagged]: flagged ? '' : 'Yes' }, opportunity)
+      await update(opportunity, { [C.flagged]: flagged ? '' : 'Yes' }, opportunity)
       toast?.success(flagged ? 'Flag removed' : 'Opportunity flagged for the team')
     } catch (error) {
       toast?.error(`Could not update flag: ${error.message}`)
@@ -691,7 +692,7 @@ export default function Opportunities({ toast }) {
       if (expectedStatus === storedStatus || rowIndex === null || rowIndex === undefined) return
       if (reconcilingSAMStatusesRef.current.get(rowIndex) === expectedStatus) return
       reconcilingSAMStatusesRef.current.set(rowIndex, expectedStatus)
-      updateSAMStatus(rowIndex, expectedStatus)
+      updateSAMStatus(opportunity, expectedStatus)
         .catch((error) => console.warn('[SAM] Pipeline status reconciliation failed:', error.message))
         .finally(() => reconcilingSAMStatusesRef.current.delete(rowIndex))
     })
@@ -743,7 +744,7 @@ export default function Opportunities({ toast }) {
   }, [])
 
   const currentSAMOpps = useMemo(() => dedupeSAMOpportunities(reconciledSAMOpps.map((opportunity) =>
-    applySAMSnapshot(opportunity, samChangesByRow[opportunity._rowIndex]?.latest)
+    applySAMSnapshot(opportunity, samChangesByRow[String(opportunity['Notice ID'] || opportunity['Solicitation Number'] || '').trim()]?.latest)
   )), [reconciledSAMOpps, samChangesByRow])
   const samSearchIndex = useMemo(() => buildSearchIndex(currentSAMOpps), [currentSAMOpps])
   const samRowsMatchingSearch = useMemo(
@@ -778,30 +779,30 @@ export default function Opportunities({ toast }) {
   }
 
   const handleAddToPipeline = async (row, outlook) => {
-    if (actioningRow === row._rowIndex || addingPipelineRowsRef.current.has(row._rowIndex)) return
-    addingPipelineRowsRef.current.add(row._rowIndex)
-    setActioningRow(row._rowIndex)
+    if (actioningRow === recordIdentity('NewOpportunitiesTable', row) || addingPipelineRowsRef.current.has(recordIdentity('NewOpportunitiesTable', row))) return
+    addingPipelineRowsRef.current.add(recordIdentity('NewOpportunitiesTable', row))
+    setActioningRow(recordIdentity('NewOpportunitiesTable', row))
     try {
       await addToPipeline(row, outlook)
       toast?.success(outlook === 'Tracking' ? 'Added to pipeline as Tracking' : 'Added to pipeline')
     } catch (err) {
       toast?.error(`Failed: ${err.message}`)
     } finally {
-      addingPipelineRowsRef.current.delete(row._rowIndex)
+      addingPipelineRowsRef.current.delete(recordIdentity('NewOpportunitiesTable', row))
       setActioningRow(null)
     }
   }
 
   const handleDismiss = async (row) => {
-    if (actioningRow === row._rowIndex) return
+    if (actioningRow === recordIdentity('NewOpportunitiesTable', row)) return
     if (isSAMOpportunityFlagged(row.Flagged)) {
       const confirmed = window.confirm(`This opportunity is flagged for the team. Dismiss "${row.Title || 'this opportunity'}" anyway?`)
       if (!confirmed) return
     }
-    setActioningRow(row._rowIndex)
+    setActioningRow(recordIdentity('NewOpportunitiesTable', row))
     saveScroll()
     try {
-      await dismiss(row._rowIndex)
+      await dismiss(row)
       updateSAMOpportunityArchiveReview({
         noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
         responseDate: row['Response Date'],
@@ -815,7 +816,7 @@ export default function Opportunities({ toast }) {
 
   const handleBulkAction = async (kind) => {
     if (selectedRows.size === 0 || bulkProgress) return
-    const rows = visibleSAMOpps.filter((row) => selectedRows.has(row._rowIndex) && !['dismissed', 'added_to_pipeline', 'tracked'].includes(row.Status || 'new'))
+    const rows = visibleSAMOpps.filter((row) => selectedRows.has(recordIdentity('NewOpportunitiesTable', row)) && !['dismissed', 'added_to_pipeline', 'tracked'].includes(row.Status || 'new'))
     if (!rows.length) return
     if (kind === 'dismiss') {
       const flaggedCount = rows.filter((row) => isSAMOpportunityFlagged(row.Flagged)).length
@@ -830,7 +831,7 @@ export default function Opportunities({ toast }) {
     for (const [index, row] of rows.entries()) {
       try {
         if (kind === 'dismiss') {
-          await dismiss(row._rowIndex)
+          await dismiss(row)
           updateSAMOpportunityArchiveReview({
             noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
             responseDate: row['Response Date'],
@@ -852,14 +853,14 @@ export default function Opportunities({ toast }) {
   }
 
   const handleUndismiss = async (row) => {
-    if (actioningRow === row._rowIndex) return
-    setActioningRow(row._rowIndex)
+    if (actioningRow === recordIdentity('NewOpportunitiesTable', row)) return
+    setActioningRow(recordIdentity('NewOpportunitiesTable', row))
     try {
       const pipelineRecord = linkedPipelineOpportunity(row, pipelineByOpportunityKey)
       const restoredStatus = pipelineRecord
         ? (pipelineRecord[C.outlook] === 'Tracking' ? 'tracked' : 'added_to_pipeline')
         : 'new'
-      await undismiss(row._rowIndex, restoredStatus)
+      await undismiss(row, restoredStatus)
       updateSAMOpportunityArchiveReview({
         noticeId: row['Notice ID'], solicitationNumber: row['Solicitation Number'],
       }, 'new').catch(() => {})
@@ -872,10 +873,10 @@ export default function Opportunities({ toast }) {
   }
 
   const handleRetryStatus = async (row) => {
-    if (actioningRow === row._rowIndex) return
-    setActioningRow(row._rowIndex)
+    if (actioningRow === recordIdentity('NewOpportunitiesTable', row)) return
+    setActioningRow(recordIdentity('NewOpportunitiesTable', row))
     try {
-      await retryStatus(row._rowIndex)
+      await retryStatus(row)
       toast?.success('Status saved')
     } catch (err) {
       toast?.error(`Still unable to save: ${err.message}`)
@@ -885,13 +886,13 @@ export default function Opportunities({ toast }) {
   }
 
   const handleToggleFlag = async (row) => {
-    const rowIndex = row._rowIndex
+    const rowIndex = recordIdentity('NewOpportunitiesTable', row)
     if (flaggingRowsRef.current.has(rowIndex)) return
     flaggingRowsRef.current.add(rowIndex)
     setFlaggingRows(new Set(flaggingRowsRef.current))
     saveScroll()
     try {
-      await updateFlag(rowIndex, !isSAMOpportunityFlagged(row.Flagged))
+      await updateFlag(row, !isSAMOpportunityFlagged(row.Flagged))
     } catch (error) {
       toast?.error(`Could not update the team flag: ${error.message}`)
     } finally {
@@ -1180,9 +1181,9 @@ export default function Opportunities({ toast }) {
                       {selectionMode && <th style={{ width: 28, position: 'sticky', top: 0, background: 'var(--gray-50)', boxShadow: '0 1px 0 var(--gray-200)', padding: '8px 4px' }}>
                         <input type="checkbox"
                           style={{ cursor: 'pointer' }}
-                          checked={selectedRows.size > 0 && visibleSAMOpps.filter(o => !['dismissed', 'added_to_pipeline', 'tracked'].includes(o.Status || 'new')).every(o => selectedRows.has(o._rowIndex))}
+                          checked={selectedRows.size > 0 && visibleSAMOpps.filter(o => !['dismissed', 'added_to_pipeline', 'tracked'].includes(o.Status || 'new')).every(o => selectedRows.has(recordIdentity('NewOpportunitiesTable', o)))}
                           onChange={(e) => {
-                            const actionable = visibleSAMOpps.filter(o => !['dismissed', 'added_to_pipeline', 'tracked'].includes(o.Status || 'new')).map(o => o._rowIndex)
+                            const actionable = visibleSAMOpps.filter(o => !['dismissed', 'added_to_pipeline', 'tracked'].includes(o.Status || 'new')).map(o => recordIdentity('NewOpportunitiesTable', o))
                             setSelectedRows(e.target.checked ? new Set(actionable) : new Set())
                           }}
                           title="Select all"
@@ -1212,28 +1213,28 @@ export default function Opportunities({ toast }) {
                     {visibleSAMOpps.map((opp) => {
                       const isDismissed = opp.Status === 'dismissed'
                       const isActioned  = ['added_to_pipeline', 'tracked'].includes(opp.Status)
-                      const syncFailure = failedStatuses[opp._rowIndex]
+                      const syncFailure = failedStatuses[String(opp['Notice ID'] || opp['Solicitation Number'] || '').trim()]
                       const linkedOpportunity = linkedPipelineOpportunity(opp, pipelineByOpportunityKey)
-                      const isActioning = actioningRow === opp._rowIndex
+                      const isActioning = actioningRow === recordIdentity('NewOpportunitiesTable', opp)
                       const isFlagged = isSAMOpportunityFlagged(opp.Flagged)
-                      const isFlagSaving = flaggingRows.has(opp._rowIndex)
+                      const isFlagSaving = flaggingRows.has(recordIdentity('NewOpportunitiesTable', opp))
                       const pocDisplay = samPOCDisplayNames(opp['Point of Contact']).join(', ')
                       // All buttons same size, text centered
                       const btnSm = { padding: '3px 6px', fontSize: '10.5px', textAlign: 'center', justifyContent: 'center' }
                       return (
-                        <tr key={`${opp['Notice ID'] || opp['Solicitation Number'] || 'sam'}:${opp._rowIndex}`}
+                        <tr key={`${opp['Notice ID'] || opp['Solicitation Number'] || 'sam'}:${recordIdentity('NewOpportunitiesTable', opp)}`}
                           style={{ opacity: isDismissed ? 0.55 : 1 }}>
                           {selectionMode && <td className={styles.checkCell} onClick={(e) => e.stopPropagation()}>
                             <input type="checkbox"
                               className={`${styles.rowCheckbox} ${styles.rowCheckboxVisible}`}
                               style={{ cursor: 'pointer' }}
-                              checked={selectedRows.has(opp._rowIndex)}
+                              checked={selectedRows.has(recordIdentity('NewOpportunitiesTable', opp))}
                               onChange={() => {
                                 if (isDismissed || isActioned) return
                                 saveScroll()
                                 setSelectedRows((prev) => {
                                   const next = new Set(prev)
-                                  next.has(opp._rowIndex) ? next.delete(opp._rowIndex) : next.add(opp._rowIndex)
+                                  next.has(recordIdentity('NewOpportunitiesTable', opp)) ? next.delete(recordIdentity('NewOpportunitiesTable', opp)) : next.add(recordIdentity('NewOpportunitiesTable', opp))
                                   return next
                                 })
                               }}
@@ -1428,7 +1429,7 @@ export default function Opportunities({ toast }) {
         {filtered.map((opp) => {
           const cn = opp[C.contractNum]
           return (
-            <tr key={`${cn}-${opp._rowIndex}`}
+            <tr key={`${cn}-${recordIdentity('PipelineTable', opp)}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 240 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
@@ -1476,7 +1477,7 @@ export default function Opportunities({ toast }) {
         {filtered.map((opp) => {
           const cn = opp[C.contractNum]
           return (
-            <tr key={`${cn}-${opp._rowIndex}`}
+            <tr key={`${cn}-${recordIdentity('PipelineTable', opp)}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 300 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1513,7 +1514,7 @@ export default function Opportunities({ toast }) {
         {filtered.map((opp) => {
           const cn = opp[C.contractNum]
           return (
-            <tr key={`${cn}-${opp._rowIndex}`}
+            <tr key={`${cn}-${recordIdentity('PipelineTable', opp)}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
@@ -1555,7 +1556,7 @@ export default function Opportunities({ toast }) {
         {filtered.map((opp) => {
           const cn = opp[C.contractNum]
           return (
-            <tr key={`${cn}-${opp._rowIndex}`}
+            <tr key={`${cn}-${recordIdentity('PipelineTable', opp)}`}
               onClick={() => openOpportunity(opp)}>
               <td style={{ fontWeight: 500, maxWidth: 260 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
               <td className="text-xs text-muted" style={{ whiteSpace: 'nowrap' }}><CopyValue value={cn} label="contract or notice ID">{cn}</CopyValue></td>
@@ -1586,7 +1587,7 @@ export default function Opportunities({ toast }) {
     <table className="data-table">
       <thead><tr><th>Opportunity</th><th>ID</th><th>Agency</th><th>Archived</th><th>Archived by</th><th>Reason</th><th /></tr></thead>
       <tbody>{filtered.map((opp) => (
-        <tr key={opp['Opportunity ID'] || opp._rowIndex} onClick={() => openOpportunity(opp)}>
+        <tr key={opp['Opportunity ID'] || recordIdentity('PipelineTable', opp)} onClick={() => openOpportunity(opp)}>
           <td style={{ fontWeight: 500, maxWidth: 300 }}><OpportunityTitle opportunity={opp}>{opp[C.title]}</OpportunityTitle></td>
           <td className="text-xs text-muted"><CopyValue value={opp[C.contractNum]} label="contract or notice ID">{opp[C.contractNum]}</CopyValue></td>
           <td className="text-sm text-muted">{opp[C.agency] || '-'}</td>
@@ -1596,7 +1597,7 @@ export default function Opportunities({ toast }) {
           <td onClick={(event) => event.stopPropagation()}>
             <div style={{ display: 'flex', gap: 6 }}>
               <button className="btn btn-sm" onClick={async () => {
-                try { await restore(opp._rowIndex); toast?.success('Opportunity restored') }
+                try { await restore(opp); toast?.success('Opportunity restored') }
                 catch (error) { toast?.error(`Could not restore: ${error.message}`) }
               }}>Restore</button>
               <button className="btn btn-ghost btn-icon" title="Permanently delete CRM record" onClick={async () => {
@@ -1606,7 +1607,7 @@ export default function Opportunities({ toast }) {
                   await deleteOpportunityWorkspace(opp[C.contractNum], { deleteSharePoint }).catch((error) => {
                     if (deleteSharePoint) throw error
                   })
-                  await permanentRemove(opp._rowIndex)
+                  await permanentRemove(opp)
                   toast?.success(deleteSharePoint ? 'Opportunity and SharePoint workspace deleted' : 'CRM record deleted; SharePoint files retained')
                 }
                 catch (error) { toast?.error(`Could not delete: ${error.message}`) }

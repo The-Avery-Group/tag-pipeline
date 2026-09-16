@@ -158,7 +158,7 @@ export function useAgingNotifications() {
             // Write the notification date only after Teams accepted the card.
             await Promise.all(
               rfiDue.map((o) =>
-                updateOpportunity(o._rowIndex, { 'RFI Notified': today })
+                updateOpportunity(o, { 'RFI Notified': today })
                   .catch((err) => console.warn('[AgingNotif] RFI Notified update failed:', err.message))
               )
             )

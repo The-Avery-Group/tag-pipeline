@@ -31,9 +31,9 @@ export function useSAMChangeMonitor(opportunities) {
   const locallyReviewed = useRef(new Map())
 
   const monitored = useMemo(() => (opportunities || []).filter(eligible), [opportunities])
-  const dismissedRowIndices = useMemo(() => (opportunities || [])
+  const dismissedIds = useMemo(() => (opportunities || [])
     .filter((opportunity) => String(opportunity.Status || '').toLowerCase() === 'dismissed')
-    .map((opportunity) => opportunity._rowIndex)
+    .map((opportunity) => opportunity['Notice ID'] || opportunity['Solicitation Number'])
     .filter((rowIndex) => rowIndex !== null && rowIndex !== undefined), [opportunities])
 
   const loadStatus = useCallback(async () => {
@@ -43,13 +43,13 @@ export function useSAMChangeMonitor(opportunities) {
     const data = await response.json()
     const next = {}
     ;(data.watches || []).forEach((watch) => {
-      const local = locallyReviewed.current.get(Number(watch.rowIndex))
+      const local = locallyReviewed.current.get(String(watch.noticeId || watch.solicitationNumber || '').trim())
       const changedAt = watch?.change?.changedAt || ''
       if (local && changedAt && local.changedAt === changedAt && !watch.change.reviewedAt) {
-        next[watch.rowIndex] = { ...watch, change: { ...watch.change, reviewedAt: local.reviewedAt } }
+        next[String(watch.noticeId || watch.solicitationNumber || '').trim()] = { ...watch, change: { ...watch.change, reviewedAt: local.reviewedAt } }
       } else {
-        if (local && (!changedAt || local.changedAt !== changedAt || watch?.change?.reviewedAt)) locallyReviewed.current.delete(Number(watch.rowIndex))
-        next[watch.rowIndex] = watch
+        if (local && (!changedAt || local.changedAt !== changedAt || watch?.change?.reviewedAt)) locallyReviewed.current.delete(String(watch.noticeId || watch.solicitationNumber || '').trim())
+        next[String(watch.noticeId || watch.solicitationNumber || '').trim()] = watch
       }
     })
     setChangesByRow(next)
@@ -58,13 +58,13 @@ export function useSAMChangeMonitor(opportunities) {
   }, [])
 
   const synchronize = useCallback(async () => {
-    if (!WORKER_URL || (monitored.length === 0 && dismissedRowIndices.length === 0)) return
+    if (!WORKER_URL || (monitored.length === 0 && dismissedIds.length === 0)) return
     const response = await workerFetch('/sam/changes/sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ opportunities: monitored.map(payload), dismissedRowIndices }),
+      body: JSON.stringify({ opportunities: monitored.map(payload), dismissedIds }),
     })
     if (!response.ok) throw new Error('Could not synchronize SAM monitoring')
-  }, [dismissedRowIndices, monitored])
+  }, [dismissedIds, monitored])
 
   const checkChanges = useCallback(async () => {
     if (!WORKER_URL || checking || monitored.length === 0) return
@@ -101,7 +101,7 @@ export function useSAMChangeMonitor(opportunities) {
     })
     if (!response.ok) throw new Error('Could not mark this SAM update as reviewed')
     const result = await response.json().catch(() => ({}))
-    const rowIndex = Number(opportunity._rowIndex)
+    const rowIndex = String(opportunity['Notice ID'] || opportunity['Solicitation Number'] || '').trim()
     const reviewedAt = result?.watch?.change?.reviewedAt || new Date().toISOString()
     const changedAt = result?.watch?.change?.changedAt || changesByRow[rowIndex]?.change?.changedAt || ''
     locallyReviewed.current.set(rowIndex, { changedAt, reviewedAt })
@@ -117,12 +117,12 @@ export function useSAMChangeMonitor(opportunities) {
   // Sync exactly when the monitored list changes. New rows are not marked as
   // changed until a later SAM response differs from their first baseline.
   useEffect(() => {
-    if (!WORKER_URL || (monitored.length === 0 && dismissedRowIndices.length === 0)) return
-    const fingerprint = `${monitored.map((item) => `${item._rowIndex}:${item.Status}:${item['Notice ID']}:${item['Solicitation Number']}`).join('|')}|dismissed:${dismissedRowIndices.join(',')}`
+    if (!WORKER_URL || (monitored.length === 0 && dismissedIds.length === 0)) return
+    const fingerprint = `${monitored.map((item) => `${item.Status}:${item['Notice ID']}:${item['Solicitation Number']}`).join('|')}|dismissed:${dismissedIds.join(',')}`
     if (fingerprint === lastSyncFingerprint.current) return
     lastSyncFingerprint.current = fingerprint
     synchronize().then(loadStatus).catch(() => {})
-  }, [dismissedRowIndices, loadStatus, monitored, synchronize])
+  }, [dismissedIds, loadStatus, monitored, synchronize])
 
   // Daily while the application is in use. The on-demand button remains
   // available for immediate verification without triggering a discovery pull.

@@ -1,3 +1,4 @@
+import { mutationTarget, sameRecord } from '@/utils/recordConflict'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getTasks, addTask, updateTask, deleteTask, getNotesForContract } from '@/services/graphService'
 import { notifyTaskCreated } from '@/services/notifyService'
@@ -100,8 +101,8 @@ export function useTasks(contractNumber = null, { enabled = true } = {}) {
     }
   }, [])
 
-  const update = useCallback(async (rowIndex, patch) => {
-    const original = tasksRef.current.find((task) => task._rowIndex === rowIndex)
+  const update = useCallback(async (target, patch) => {
+    const original = mutationTarget('TasksTable', target, tasksRef.current)
     const identity = String(original?.TaskID || '').trim()
     const safePatch = { ...patch }
     if (safePatch.DueDate instanceof Date) {
@@ -110,10 +111,10 @@ export function useTasks(contractNumber = null, { enabled = true } = {}) {
     if (identity) pendingPatches.current.set(identity, safePatch)
     // Optimistic update — apply patch immediately
     setTasks((prev) =>
-      prev.map((t) => t._rowIndex === rowIndex ? { ...t, ...safePatch } : t)
+      prev.map((t) => sameRecord('TasksTable', t, target) ? { ...t, ...safePatch } : t)
     )
     try {
-      await retryIdempotent(() => updateTask(rowIndex, safePatch, original))
+      await retryIdempotent(() => updateTask(target, safePatch, original))
       await publishCacheUpdate(['TasksTable'])
       verifyCacheInBackground(['TasksTable'])
     } catch (err) {
@@ -126,11 +127,11 @@ export function useTasks(contractNumber = null, { enabled = true } = {}) {
     }
   }, [load])
 
-  const remove = useCallback(async (rowIndex) => {
-    const original = tasksRef.current.find((task) => task._rowIndex === rowIndex)
-    setTasks((current) => current.filter((task) => task._rowIndex !== rowIndex))
+  const remove = useCallback(async (target) => {
+    const original = mutationTarget('TasksTable', target, tasksRef.current)
+    setTasks((current) => current.filter((task) => !sameRecord('TasksTable', task, target)))
     try {
-      await retryIdempotent(() => deleteTask(rowIndex, original))
+      await retryIdempotent(() => deleteTask(target, original))
       await publishCacheUpdate(['TasksTable'])
       verifyCacheInBackground(['TasksTable'])
     } catch (error) {
@@ -141,7 +142,7 @@ export function useTasks(contractNumber = null, { enabled = true } = {}) {
 
   const refreshContext = useCallback(async (task) => {
     const notes = task.ContractNumber ? await getNotesForContract(task.ContractNumber) : ''
-    await retryIdempotent(() => updateTask(task._rowIndex, { OpportunityNotes: notes }, task))
+    await retryIdempotent(() => updateTask(task, { OpportunityNotes: notes }, task))
     await invalidateCache(['TasksTable'])
   }, [])
 
