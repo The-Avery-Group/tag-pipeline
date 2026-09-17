@@ -1,3 +1,0 @@
-# TAG Pipeline
-
-Sample content
